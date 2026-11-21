@@ -65,17 +65,31 @@ def test_new_required_param_and_param_changes(spec):
     assert not any("opt" in w for w, _ in got)
 
 
+def _findings_schemas(spec):
+    """(page schema name, item schema name) behind GET /v1/findings -> 200.
+
+    Resolved from the spec instead of hard-coded, so renaming a response
+    model (e.g. FindingPage -> FindingLifecyclePage) can't break these tests.
+    """
+    ref = spec["paths"]["/v1/findings"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    page = ref.rsplit("/", 1)[1]
+    items = spec["components"]["schemas"][page]["properties"]["items"]["items"]["$ref"].rsplit("/", 1)[1]
+    return page, items
+
+
 def test_response_field_removed_via_ref(spec):
     head = copy.deepcopy(spec)
-    head["components"]["schemas"]["FindingOut"]["properties"].pop("title")
+    _, item = _findings_schemas(spec)
+    head["components"]["schemas"][item]["properties"].pop("title")
     got = _breaking(spec, head)
-    # FindingOut is reached through a $ref'd page -> items[] -> FindingOut
+    # the item schema is reached through a $ref'd page -> items[] -> item
     assert any(w.startswith("GET /v1/findings -> 200") and w.endswith(".title") for w, _ in got), got
 
 
 def test_response_type_change_and_new_field_is_additive(spec):
     head = copy.deepcopy(spec)
-    props = head["components"]["schemas"]["FindingPage"]["properties"]
+    page, _ = _findings_schemas(spec)
+    props = head["components"]["schemas"][page]["properties"]
     props["total"] = {"type": "string", "title": "Total"}
     props["cursor"] = {"type": "string"}
     changes = oad.diff(spec, head)
