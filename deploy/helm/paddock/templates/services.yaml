@@ -1,0 +1,91 @@
+{{- /* intel (NVD/EPSS/KEV, egress), correlation (internal), otdiscovery
+       (Sentry ingest). Each has a small HTTP server with /healthz. */ -}}
+{{- if .Values.intel.enabled }}
+{{- $v := .Values.intel -}}
+{{- $env := include "paddock.commonPythonEnv" . -}}
+{{- range $k, $val := $v.env }}
+{{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
+{{- end }}
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "intel" "values" $v
+  "env" $env
+  "initContainers" (include "paddock.waitForSchemaInit" .)
+  "extraVolumes" (include "paddock.schemaVolume" .)
+  "probes" (include "paddock.httpProbes" (dict "live" "/healthz"))) }}
+---
+{{ include "paddock.service" (dict "root" $ "component" "intel" "values" $v) }}
+{{- end }}
+{{- if .Values.correlation.enabled }}
+{{- $v := .Values.correlation -}}
+{{- $env := include "paddock.commonPythonEnv" . -}}
+{{- $env = printf "%s\n- name: POLICIES_DIR\n  value: /policies\n- name: HTTP_PORT\n  value: %s\n- name: HOME\n  value: /tmp" $env ($v.port | quote) -}}
+{{- range $k, $val := $v.env }}
+{{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
+{{- end }}
+{{- $pol := "- name: policies\n  emptyDir: {}" -}}
+{{- if $v.policiesConfigMap }}
+{{- $pol = printf "- name: policies\n  configMap:\n    name: %s" $v.policiesConfigMap -}}
+{{- end }}
+---
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "correlation" "values" $v
+  "env" $env
+  "probes" (include "paddock.httpProbes" (dict "live" "/healthz"))
+  "extraMounts" "- name: policies\n  mountPath: /policies\n  readOnly: true"
+  "extraVolumes" $pol) }}
+---
+{{ include "paddock.service" (dict "root" $ "component" "correlation" "values" $v) }}
+{{- end }}
+{{- if .Values.otdiscovery.enabled }}
+{{- $v := .Values.otdiscovery -}}
+{{- $sel := dict "root" $ "component" "otdiscovery" -}}
+{{- $env := include "paddock.commonPythonEnv" . -}}
+{{- $env = printf "%s\n- name: OTDISCOVERY_HTTP_PORT\n  value: %s\n- name: REQUIRE_SENTRY_TOKEN\n  value: %s\n- name: BASELINE_PATH\n  value: /var/lib/otdiscovery/baselines.json" $env ($v.port | quote) ($v.requireSentryToken | quote) -}}
+{{- $env = printf "%s\n%s\n%s" $env (include "paddock.secretEnv" (dict "root" $ "name" "SENTRY_TOKENS" "optional" true)) (include "paddock.secretEnv" (dict "root" $ "name" "METRICS_TOKEN" "optional" true)) -}}
+{{- range $k, $val := $v.env }}
+{{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
+{{- end }}
+---
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "otdiscovery" "values" $v
+  "env" $env
+  "probes" (include "paddock.httpProbes" (dict "live" "/healthz" "ready" "/readyz"))
+  "extraMounts" "- name: state\n  mountPath: /var/lib/otdiscovery"
+  "extraVolumes" "- name: state\n  emptyDir: {}") }}
+---
+{{ include "paddock.service" (dict "root" $ "component" "otdiscovery" "values" $v) }}
+{{- if $v.ingress.enabled }}
+---
+# Public ingest for Paddock Sentry sensors: ONLY POST /ingest is routed
+# (health, /stats, /analyze and /metrics stay cluster-internal).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "paddock.componentName" $sel }}-ingest
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+  {{- with $v.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $v.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $v.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ $v.ingress.host | quote }}]
+      secretName: {{ $v.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ $v.ingress.host | quote }}
+      http:
+        paths:
+          - path: /ingest
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "paddock.componentName" $sel }}
+                port: {name: http}
+{{- end }}
+{{- end }}

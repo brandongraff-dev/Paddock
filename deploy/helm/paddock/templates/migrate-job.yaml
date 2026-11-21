@@ -1,0 +1,110 @@
+{{- if .Values.migrations.enabled }}
+{{- $m := .Values.migrations -}}
+{{- $sel := dict "root" $ "component" "migrate" -}}
+{{- /* With bundled Postgres the database does not exist before install, so
+       the fresh install is migrated by the pods' `migrate` init container
+       (same runner, advisory-locked); upgrades always migrate in this Job
+       BEFORE any new pod starts. */ -}}
+{{- $hook := ternary "pre-upgrade" "pre-install,pre-upgrade" .Values.postgresql.enabled -}}
+# Current schema files for the pods' `migrate` init container.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "paddock.fullname" . }}-schema
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/schema/*.sql" }}
+  {{ base $path }}: |-
+    {{- $.Files.Get $path | nindent 4 }}
+  {{- end }}
+---
+# Hook copy of the schema for the Job (pre-install/pre-upgrade hooks run
+# before regular resources are created or updated).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "paddock.componentName" $sel }}-schema
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+  annotations:
+    helm.sh/hook: {{ $hook }}
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  {{- range $path, $_ := .Files.Glob "files/schema/*.sql" }}
+  {{ base $path }}: |-
+    {{- $.Files.Get $path | nindent 4 }}
+  {{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "paddock.componentName" $sel }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+  annotations:
+    helm.sh/hook: {{ $hook }}
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ $m.backoffLimit }}
+  activeDeadlineSeconds: {{ $m.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "paddock.componentLabels" $sel | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      # Hook pods run before the chart's ServiceAccount exists: use the
+      # namespace default SA, with no API token mounted.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "paddock.podSecurityContext" (dict "root" $) | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "paddock.image" (dict "root" $ "image" .Values.orchestrator.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - python
+            - -m
+            - app.migrate
+            - up
+            - --wait
+            - {{ $m.waitSeconds | quote }}
+            - --lock-timeout
+            - {{ $m.lockTimeoutSeconds | quote }}
+          env:
+            {{- include "paddock.databaseEnv" (dict "root" $ "secret" (include "paddock.migrateSecretName" .)) | nindent 12 }}
+            {{- if not .Values.postgresql.enabled }}
+            - name: MIGRATE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "paddock.migrateSecretName" . }}
+                  key: MIGRATE_DATABASE_URL
+                  optional: true
+            {{- end }}
+            - name: SCHEMA_DIR
+              value: /schema
+            - name: MIGRATE_ALLOW_CHECKSUM_DRIFT
+              value: {{ $m.allowChecksumDrift | quote }}
+          securityContext:
+            {{- include "paddock.containerSecurityContext" (dict "root" $) | nindent 12 }}
+          resources:
+            {{- toYaml $m.resources | nindent 12 }}
+          volumeMounts:
+            - name: schema
+              mountPath: /schema
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: schema
+          configMap:
+            name: {{ include "paddock.componentName" $sel }}-schema
+        - name: tmp
+          emptyDir: {}
+      {{- include "paddock.scheduling" . | nindent 6 }}
+{{- end }}

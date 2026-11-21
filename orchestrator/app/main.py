@@ -18,10 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import auth as auth_svc
+from . import metrics as metrics_svc
 from .auth import GovernanceMiddleware
 from .config import settings
 from .db import create_pool
 from .middleware import RequestContextMiddleware, configure_logging
+from .migrate import run_startup_migrations
+from .opsconfig import ops_settings
 from .queue import create_redis, read_events
 from .routers import ask as ask_router
 from .routers import assets as assets_router
@@ -61,6 +64,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     logger.info("orchestrator_startup", extra={"version": "0.1.0", "auth_mode": settings.auth_mode})
+    # Versioned schema migrations (app/migrate.py). Advisory-locked, so N
+    # replicas starting at once is safe; a failure (e.g. checksum drift)
+    # aborts startup rather than serving against an unknown schema.
+    if ops_settings.migrate_on_startup:
+        await run_startup_migrations()
     app.state.pool = await create_pool()
     app.state.redis = await create_redis()
 
@@ -136,6 +144,9 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Justification", "X-Request-ID"],
     )
+    # Prometheus: outermost, so it times auth + audit too and serves /metrics
+    # (METRICS_TOKEN-protected) without touching the user-auth middleware.
+    metrics_svc.install(app)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

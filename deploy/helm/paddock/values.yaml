@@ -1,0 +1,295 @@
+# Paddock Helm chart values. See docs/OPERATIONS.md for the install guide.
+#
+# Defaults are production-shaped: EXTERNAL Postgres + Redis (connection strings
+# from a Secret), AUTH_MODE=enforce, non-root / read-only / drop-ALL pods,
+# NetworkPolicies on, migrations in a pre-install/pre-upgrade Job.
+
+global:
+  # Registry prefix for every Paddock image ("" = Docker Hub / implicit).
+  imageRegistry: ""
+  # Default tag for every Paddock image; "" = .Chart.AppVersion.
+  imageTag: ""
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# --------------------------------------------------------------------------- #
+# Connection + application secrets
+# --------------------------------------------------------------------------- #
+secrets:
+  # Use a Secret you manage (recommended: sealed-secrets / external-secrets).
+  # Expected keys (all optional except DATABASE_URL and REDIS_URL):
+  #   DATABASE_URL, REDIS_URL, JWT_SECRET, ADMIN_BOOTSTRAP_PASSWORD,
+  #   SERVICE_API_KEY, METRICS_TOKEN, SENTRY_TOKENS, PADDOCK_SECRET_KEY,
+  #   MIGRATE_DATABASE_URL (direct, non-pgbouncer DSN for migrations)
+  existingSecret: ""
+  # ...or let the chart create one from these values (ignored when
+  # existingSecret is set). Empty JWT_SECRET / METRICS_TOKEN are generated
+  # once and preserved across upgrades.
+  create: true
+  databaseUrl: ""         # postgresql://user:pass@host:5432/db?sslmode=require
+  migrateDatabaseUrl: ""  # optional direct DSN for the migration Job
+  redisUrl: ""            # redis://:pass@host:6379/0  (rediss:// for TLS)
+  jwtSecret: ""
+  adminBootstrapPassword: ""
+  serviceApiKey: ""
+  metricsToken: ""
+  sentryTokens: ""        # comma-separated, one per Sentry sensor
+  paddockSecretKey: ""      # PADDOCK_SECRET_KEY: 32-byte urlsafe-b64 (integration secrets at rest)
+
+# --------------------------------------------------------------------------- #
+# Optional bundled data services (dev / evaluation; use managed services or
+# an operator such as CloudNativePG for production).
+# --------------------------------------------------------------------------- #
+postgresql:
+  enabled: false
+  image: postgres:16-alpine
+  database: asm
+  username: asm
+  password: ""            # generated once if empty
+  persistence:
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+
+redis:
+  enabled: false
+  image: redis:7-alpine
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 512Mi}
+
+# --------------------------------------------------------------------------- #
+# Schema migrations (orchestrator/app/migrate.py)
+# --------------------------------------------------------------------------- #
+migrations:
+  enabled: true
+  # Seconds the Job waits for the database to accept connections.
+  waitSeconds: 300
+  # Seconds to wait for another runner's advisory lock.
+  lockTimeoutSeconds: 600
+  # Comma list of applied files whose checksum may differ (see OPERATIONS.md
+  # "Checksum drift"). Leave empty.
+  allowChecksumDrift: ""
+  backoffLimit: 2
+  activeDeadlineSeconds: 1800
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+# --------------------------------------------------------------------------- #
+# Shared pod hardening
+# --------------------------------------------------------------------------- #
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile: {type: RuntimeDefault}
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  privileged: false
+  capabilities: {drop: ["ALL"]}
+
+# Application settings shared by the Python services.
+config:
+  authMode: enforce          # never "dev" outside a laptop
+  logLevel: INFO
+  corsOrigins: ""            # default: https://<ingress host>
+  trustedProxyCidrs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  retention:
+    enabled: true
+    scopeDecisionsDays: 180
+    outboundLogDays: 180
+    integrationDeliveriesDays: 90
+    observationsDays: 30
+    extra: ""                # "table:column:days,..."
+  extraEnv: {}               # added to every Python service
+
+# --------------------------------------------------------------------------- #
+# Components
+# --------------------------------------------------------------------------- #
+orchestrator:
+  image: {repository: paddock/orchestrator, tag: ""}
+  replicas: 2
+  port: 8080
+  resources:
+    requests: {cpu: 250m, memory: 384Mi}
+    limits: {memory: 1Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 0   # 0 = off
+  pdb: {enabled: true, maxUnavailable: 1}
+  # The scheduler (continuous monitoring + retention) runs in every replica;
+  # both are safe concurrently (scope-checked dispatch, advisory-locked purge).
+  schedulerEnabled: true
+  env: {}
+
+dashboard:
+  enabled: true
+  image: {repository: paddock/dashboard, tag: ""}
+  replicas: 2
+  port: 3000
+  podSecurityContext: {runAsUser: 101, runAsGroup: 101, fsGroup: 101}
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  pdb: {enabled: true, maxUnavailable: 1}
+
+workerPassive:
+  enabled: true
+  image: {repository: paddock/worker-passive, tag: ""}
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  pdb: {enabled: true, maxUnavailable: 1}
+  env: {}
+
+workerActive:
+  enabled: true
+  image: {repository: paddock/worker-active, tag: ""}
+  replicas: 1
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+  pdb: {enabled: true, maxUnavailable: 1}
+  # NET_RAW is the ONLY capability added anywhere in this chart (naabu SYN
+  # scans). With allowPrivilegeEscalation=false and a non-root user the kernel
+  # will not grant it to exec'd binaries, so naabu falls back to CONNECT
+  # scans -- the same behaviour as the hardened compose profile.
+  addNetRaw: true
+  env:
+    MAX_CONCURRENCY_PER_TARGET: "2"
+    POLITENESS_DELAY_MS: "250"
+  screenshots:
+    persistence: false       # true -> PVC for /data
+    size: 10Gi
+    storageClass: ""
+
+intel:
+  enabled: true
+  image: {repository: paddock/intel, tag: ""}
+  replicas: 1
+  port: 8090
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  pdb: {enabled: true, maxUnavailable: 1}
+  env:
+    SYNC_INTERVAL_MIN: "60"
+
+correlation:
+  enabled: true
+  image: {repository: paddock/correlation, tag: ""}
+  replicas: 1
+  port: 8091
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  pdb: {enabled: true, maxUnavailable: 1}
+  env: {}
+
+otdiscovery:
+  enabled: true
+  image: {repository: paddock/otdiscovery, tag: ""}
+  replicas: 1                # in-memory observation store: keep at 1
+  port: 8101
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  pdb: {enabled: false, maxUnavailable: 1}
+  requireSentryToken: true
+  env: {}
+  # Public ingest endpoint for Paddock Sentry sensors. ONLY /ingest is routed.
+  ingress:
+    enabled: false
+    className: ""
+    host: sentry.paddock.example.com
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    tls:
+      enabled: true
+      secretName: paddock-sentry-tls
+
+integrationsWorker:
+  enabled: true
+  # Same image as the orchestrator.
+  command: ["python", "-m", "app.integrations.worker"]
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  pdb: {enabled: true, maxUnavailable: 1}
+  env: {}
+
+# --------------------------------------------------------------------------- #
+# Ingress: dashboard on "/", orchestrator API on "/v1". /metrics, /docs and
+# health endpoints are NOT routed.
+# --------------------------------------------------------------------------- #
+ingress:
+  enabled: true
+  className: ""
+  host: paddock.example.com
+  annotations: {}
+  tls:
+    enabled: true
+    secretName: paddock-tls
+
+# --------------------------------------------------------------------------- #
+# NetworkPolicies: mirror docker-compose's edge / internal / egress tiers.
+# --------------------------------------------------------------------------- #
+networkPolicy:
+  enabled: true
+  # Namespace labels of the ingress controller (edge tier ingress).
+  ingressControllerNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: ingress-nginx
+  # Namespace labels of Prometheus (scrapes /metrics).
+  monitoringNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: monitoring
+  # External Postgres/Redis: restrict egress to these CIDRs (empty = any
+  # address, still port-restricted to 5432 / 6379).
+  databaseCIDRs: []
+  redisCIDRs: []
+  databasePort: 5432
+  redisPort: 6379
+  # Services with internet egress (worker-passive, worker-active, intel,
+  # integrations worker) may reach 0.0.0.0/0 EXCEPT these (cloud metadata).
+  # Scan targets can be private ranges, so RFC1918 is not excluded here --
+  # the scope allowlist is the control for what workers may touch.
+  egressExcept:
+    - 169.254.169.254/32
+    - fd00:ec2::254/128
+
+# --------------------------------------------------------------------------- #
+# Prometheus Operator integration (optional)
+# --------------------------------------------------------------------------- #
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

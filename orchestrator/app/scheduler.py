@@ -287,6 +287,41 @@ def kick_integration_syncs(pool, r) -> bool:
 # Background loop
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# Data retention (app/retention.py), piggy-backed on the scheduler tick
+# --------------------------------------------------------------------------- #
+
+_retention_last_run: float | None = None
+
+
+async def maybe_run_retention(pool, now: float | None = None) -> dict | None:
+    """Run the retention purge if enabled and RETENTION_INTERVAL_SEC elapsed.
+
+    The first tick after startup runs it; later ticks wait for the interval.
+    Never raises (the scheduler loop must not die on a purge failure).
+    """
+    import time
+
+    from . import retention
+    from .opsconfig import ops_settings
+
+    global _retention_last_run
+    if not ops_settings.retention_enabled:
+        return None
+    now = time.monotonic() if now is None else now
+    if (
+        _retention_last_run is not None
+        and now - _retention_last_run < ops_settings.retention_interval_sec
+    ):
+        return None
+    _retention_last_run = now
+    try:
+        return await retention.run_retention(pool)
+    except Exception:  # noqa: BLE001
+        logger.exception("retention_run_failed")
+        return None
+
+
 async def scheduler_loop(app) -> None:
     """Forever: sleep one interval, then run the due schedules.
 
@@ -304,6 +339,7 @@ async def scheduler_loop(app) -> None:
                 continue
             await run_due_schedules(pool, r)
             kick_integration_syncs(pool, r)
+            await maybe_run_retention(pool)
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

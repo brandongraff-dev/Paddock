@@ -1,0 +1,123 @@
+# Paddock Prometheus alert rules. Load as a plain rule file
+# (rule_files: [paddock-alerts.yml]) or via the Helm chart's PrometheusRule
+# (metrics.prometheusRule.enabled=true), which embeds this same file.
+# Validate with: promtool check rules deploy/prometheus/paddock-alerts.yml
+groups:
+  - name: paddock-api
+    rules:
+      - alert: PaddockOrchestratorDown
+        expr: up{job=~".*orchestrator.*"} == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Paddock orchestrator target {{ $labels.instance }} is down"
+          description: "Prometheus cannot scrape the orchestrator. Check pods / `make status`; see docs/OPERATIONS.md#troubleshooting."
+
+      - alert: PaddockAPIErrorRateHigh
+        expr: |
+          sum(rate(paddock_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(paddock_http_requests_total[5m])), 1e-9) > 0.05
+          and sum(rate(paddock_http_requests_total[5m])) > 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Paddock API 5xx rate is {{ $value | humanizePercentage }}"
+          description: "More than 5% of API requests failed with 5xx for 10 minutes. Top routes: sum by (route) (rate(paddock_http_requests_total{status=~\"5..\"}[5m]))."
+
+      - alert: PaddockAPIErrorRateCritical
+        expr: |
+          sum(rate(paddock_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(paddock_http_requests_total[5m])), 1e-9) > 0.25
+          and sum(rate(paddock_http_requests_total[5m])) > 0.1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Paddock API 5xx rate is {{ $value | humanizePercentage }}"
+
+      - alert: PaddockAPILatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(paddock_http_request_duration_seconds_bucket{route!="/v1/events"}[5m]))) > 2
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Paddock API p95 latency is {{ $value | humanizeDuration }}"
+          description: "p95 over all routes (SSE excluded) above 2s for 15m. Check DB pool saturation and slow routes on the Grafana dashboard."
+
+      - alert: PaddockDBPoolSaturated
+        expr: |
+          max by (instance) (paddock_db_pool_connections{state="in_use"})
+            / max by (instance) (paddock_db_pool_connections{state="max"}) > 0.9
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Orchestrator {{ $labels.instance }} DB pool >90% in use"
+          description: "Raise DB_POOL_MAX (and Postgres max_connections) or add replicas."
+
+  - name: paddock-governance
+    rules:
+      - alert: PaddockAuditAppendFailures
+        expr: increase(paddock_audit_append_failures_total[10m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Audit log appends are failing on {{ $labels.instance }}"
+          description: "Requests are being served WITHOUT an audit record. Investigate the database immediately (disk full? permissions? lock timeouts?). Then GET /v1/audit/verify."
+
+      - alert: PaddockSchemaMigrationsPending
+        expr: max(paddock_schema_migrations_pending) > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} schema migration(s) not applied"
+          description: "Run `make migrate` / check the migrate Job logs (docs/OPERATIONS.md#upgrades)."
+
+      - alert: PaddockRetentionNotRunning
+        expr: time() - max(paddock_retention_last_run_timestamp_seconds) > 86400
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Data-retention purge has not completed for >24h"
+          description: "scope_decisions / outbound_log will grow without bound. Check RETENTION_ENABLED, SCHEDULER_ENABLED and orchestrator logs for retention_run_failed."
+
+  - name: paddock-pipeline
+    rules:
+      - alert: PaddockScanQueueBacklog
+        expr: max(paddock_scan_oldest_queued_age_seconds) > 1800
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Oldest queued scan has waited {{ $value | humanizeDuration }}"
+          description: "Workers are not draining the queue. Check worker-passive / worker-active pods and paddock_queue_lag."
+
+      - alert: PaddockQueueLagHigh
+        expr: max by (queue) (paddock_queue_lag + paddock_queue_pending) > 1000
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Redis queue {{ $labels.queue }} has {{ $value }} undelivered/unacked jobs"
+
+      - alert: PaddockIntegrationDeliveriesDead
+        expr: delta(max(paddock_integration_deliveries{status="dead"})[1h:]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Integration deliveries are dead-lettering"
+          description: "Outbound integrations (Slack/Jira/webhooks) exhausted retries in the last hour. Check integrations.last_error."
+
+  - name: paddock-sentry
+    rules:
+      - alert: PaddockSentrySilent
+        expr: time() - paddock_sentry_last_ingest_timestamp_seconds > 900
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "Sentry sensor {{ $labels.sensor }} ({{ $labels.site }}) silent for >15 min"
+          description: "No batch from this sensor for 15 minutes. Sensor down, mirror port lost, or link/token problem. See docs/SENTRY.md."
+
+      - alert: PaddockSentryAllSilent
+        expr: |
+          max(paddock_otdiscovery_sensors) == 0
+          and on() max(max_over_time(paddock_otdiscovery_sensors[6h])) > 0
+          and on() min(time() - paddock_otdiscovery_start_timestamp_seconds) > 900
+        labels: {severity: warning}
+        annotations:
+          summary: "No Sentry sensor has reported since otdiscovery restarted (>15 min)"

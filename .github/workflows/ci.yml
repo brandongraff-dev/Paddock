@@ -240,3 +240,31 @@ jobs:
           python-version: "3.12"
       - run: pip install -r docs/requirements.txt
       - run: mkdocs build --strict
+  # Deploy artefacts: Helm chart (lint + template in 4 profiles +
+  # kubeconform + hardening invariants), Prometheus rules (promtool check +
+  # unit tests), Grafana dashboard JSON, compose file syntax.
+  deploy:
+    name: deploy (helm + kubeconform + promtool)
+      HELM_VERSION: v3.16.4
+      KUBECONFORM_VERSION: v0.6.7
+      PROM_VERSION: 2.53.3
+      - name: Install helm, kubeconform, promtool
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && cd "$(mktemp -d)"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz
+          mv linux-amd64/helm "$HOME/bin/"
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz
+          mv kubeconform "$HOME/bin/"
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" | tar -xz
+          mv "prometheus-${PROM_VERSION}.linux-amd64/promtool" "$HOME/bin/"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Helm chart
+        run: bash deploy/helm/ci-check.sh
+      - name: Prometheus rules
+        working-directory: deploy/prometheus
+          promtool check rules paddock-alerts.yml
+          promtool test rules paddock-alerts.test.yml
+      - name: Grafana dashboard is valid JSON
+        run: python3 -c "import json; d=json.load(open('deploy/grafana/paddock-overview.json')); assert d['uid'] and d['panels']"
+      - name: Backup/restore scripts parse
+        run: bash -n scripts/backup.sh && bash -n scripts/restore.sh

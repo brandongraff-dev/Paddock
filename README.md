@@ -173,7 +173,9 @@ flowchart LR
 ```
 
 Full service map, ports, networks, and the discover→probe→correlate→surface data
-flow: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
+flow: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**. Running it for real
+(Helm chart, versioned migrations, backups + restore drill, Prometheus/Grafana,
+retention, sizing): **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)**.
 
 ## Scan your own stuff
 

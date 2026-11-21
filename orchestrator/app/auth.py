@@ -617,6 +617,9 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
             )
         except Exception:  # noqa: BLE001 -- never fail the request on audit
             logger.exception("audit_record_failed", extra={"path": request.url.path})
+            from .metrics import audit_append_failed
+
+            audit_append_failed()
 
 
 def _trusted_proxies() -> tuple:

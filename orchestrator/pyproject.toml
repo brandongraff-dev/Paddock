@@ -15,6 +15,7 @@ dependencies = [
     "bcrypt>=4.0",
     "httpx>=0.27",          # outbound integrations
     "cryptography>=42",     # integration secrets at rest (AES-GCM)
+    "prometheus_client>=0.20",  # GET /metrics (app/metrics.py)
 ]
 
 [project.optional-dependencies]

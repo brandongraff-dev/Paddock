@@ -1,0 +1,85 @@
+{{- $v := .Values.orchestrator -}}
+{{- $sel := dict "root" $ "component" "orchestrator" -}}
+{{- $env := include "paddock.orchestratorEnv" . -}}
+{{- define "paddock.orchestratorEnv" -}}
+{{ include "paddock.commonPythonEnv" . }}
+- name: AUTH_MODE
+  value: {{ .Values.config.authMode | quote }}
+- name: ALLOW_NO_AUTH
+  value: "false"
+- name: CORS_ORIGINS
+  value: {{ .Values.config.corsOrigins | default (printf "https://%s" .Values.ingress.host) | quote }}
+- name: TRUSTED_PROXY_CIDRS
+  value: {{ .Values.config.trustedProxyCidrs | quote }}
+# Migrations run in the pre-install/pre-upgrade Job; pods only wait for them.
+- name: MIGRATE_ON_STARTUP
+  value: "false"
+- name: SCHEDULER_ENABLED
+  value: {{ .Values.orchestrator.schedulerEnabled | quote }}
+- name: RETENTION_ENABLED
+  value: {{ .Values.config.retention.enabled | quote }}
+- name: RETENTION_SCOPE_DECISIONS_DAYS
+  value: {{ .Values.config.retention.scopeDecisionsDays | quote }}
+- name: RETENTION_OUTBOUND_LOG_DAYS
+  value: {{ .Values.config.retention.outboundLogDays | quote }}
+- name: RETENTION_INTEGRATION_DELIVERIES_DAYS
+  value: {{ .Values.config.retention.integrationDeliveriesDays | quote }}
+- name: RETENTION_OBSERVATIONS_DAYS
+  value: {{ .Values.config.retention.observationsDays | quote }}
+- name: RETENTION_EXTRA
+  value: {{ .Values.config.retention.extra | quote }}
+- name: CORRELATION_URL
+  value: {{ printf "http://%s:%v" (include "paddock.componentName" (dict "root" . "component" "correlation")) .Values.correlation.port | quote }}
+- name: OTDISCOVERY_URL
+  value: {{ printf "http://%s:%v" (include "paddock.componentName" (dict "root" . "component" "otdiscovery")) .Values.otdiscovery.port | quote }}
+{{ include "paddock.secretEnv" (dict "root" . "name" "JWT_SECRET" "optional" true) }}
+{{ include "paddock.secretEnv" (dict "root" . "name" "ADMIN_BOOTSTRAP_PASSWORD" "optional" true) }}
+{{ include "paddock.secretEnv" (dict "root" . "name" "METRICS_TOKEN" "optional" true) }}
+{{ include "paddock.secretEnv" (dict "root" . "name" "PADDOCK_SECRET_KEY" "optional" true) }}
+{{- range $k, $val := .Values.orchestrator.env }}
+- name: {{ $k }}
+  value: {{ $val | quote }}
+{{- end }}
+{{- end -}}
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "orchestrator" "values" $v
+  "env" $env
+  "initContainers" (include "paddock.waitForSchemaInit" .)
+  "extraVolumes" (include "paddock.schemaVolume" .)
+  "probes" (include "paddock.httpProbes" (dict "live" "/healthz" "ready" "/readyz"))) }}
+---
+{{ include "paddock.service" (dict "root" $ "component" "orchestrator" "values" $v) }}
+{{- if $v.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "paddock.componentName" $sel }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "paddock.componentName" $sel }}
+  minReplicas: {{ $v.autoscaling.minReplicas }}
+  maxReplicas: {{ $v.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $v.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if $v.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $v.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+{{- end }}

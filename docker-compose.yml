@@ -50,13 +50,32 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./schema:/docker-entrypoint-initdb.d:ro
+      # Schema is NOT applied by initdb any more: the `migrate` one-shot below
+      # owns it (versioned, checksummed, advisory-locked; docs/OPERATIONS.md).
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U asm -d asm"]
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # One-shot: apply pending schema/NNN_*.sql via the versioned runner
+  # (orchestrator/app/migrate.py), then exit 0. Services that read Postgres
+  # wait for it with `condition: service_completed_successfully`. It baselines
+  # databases created by the old initdb path on first run.
+  migrate:
+    build: ./orchestrator
+    <<: *hardened-py
+    restart: "no"
+    command: ["python", "-m", "app.migrate", "up"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      SCHEMA_DIR: /schema
+    volumes:
+      - ./schema:/schema:ro
+    networks: [internal]
+    depends_on:
+      postgres: {condition: service_healthy}
 
   redis:
     image: redis:7-alpine
@@ -117,11 +136,18 @@ services:
       # Optional commercial license (unset = Community; see docs/EDITIONS.md).
       PADDOCK_LICENSE_KEY: ${PADDOCK_LICENSE_KEY:-}
       PADDOCK_LICENSE_PUBLIC_KEYS: ${PADDOCK_LICENSE_PUBLIC_KEYS:-}
+      # Startup migration is a no-op after the `migrate` one-shot (same lock).
+      SCHEMA_DIR: /schema
+      # Prometheus scrape token for GET /metrics (unset = 404 under enforce).
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    volumes:
+      - ./schema:/schema:ro
     tmpfs:
       - /tmp
     networks: [edge, internal]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate:  {condition: service_completed_successfully}
       redis:    {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 3).close()"]
@@ -245,6 +271,7 @@ services:
     networks: [internal, egress]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 3).close()"]
       interval: 15s
@@ -418,6 +445,7 @@ services:
     networks: [internal]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8099), 3).close()"]
       interval: 15s
@@ -438,6 +466,7 @@ services:
     networks: [internal, egress]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8100), 3).close()"]
       interval: 15s
@@ -455,6 +484,7 @@ services:
       # Paddock Sentry sensors post here. Fail closed until tokens are set.
       SENTRY_TOKENS: ${SENTRY_TOKENS:-}
       REQUIRE_SENTRY_TOKEN: "true"
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       BASELINE_PATH: /var/lib/otdiscovery/baselines.json
     ports: ["8101:8101"]
     volumes:
@@ -464,6 +494,7 @@ services:
     networks: [internal, edge]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8101), 3).close()"]
       interval: 15s
@@ -483,6 +514,7 @@ services:
     networks: [internal]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8102), 3).close()"]
       interval: 15s
