@@ -611,7 +611,9 @@ async def saml_metadata(slug: str, pool=Depends(get_pool)):
     if not saml.SAML_AVAILABLE:
         raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
     try:
-        xml = await run_in_threadpool(saml.sp_metadata, slug, store.provider_config(provider))
+        xml = await run_in_threadpool(
+            saml.sp_metadata, slug, store.provider_config(provider),
+            store.provider_secrets(provider).get("sp_private_key"))
     except saml.SAMLError as exc:
         raise HTTPException(status_code=500, detail=exc.code) from exc
     return Response(xml, media_type="application/samlmetadata+xml")
@@ -792,7 +794,7 @@ def _require_secret_key() -> None:
 
 async def _validated_config(
     kind: str, slug: str, oidc_cfg, saml_cfg, metadata_xml, metadata_url: str | None = None,
-    sp_private_key: str | None = None,
+    sp_private_key: str | None = None, existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if kind == "oidc":
         if oidc_cfg is None:
@@ -803,15 +805,17 @@ async def _validated_config(
         return oidc_cfg.model_dump()
     if not saml.SAML_AVAILABLE:
         raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
-    base: dict[str, Any] = {}
+    base: dict[str, Any] = dict(existing or {})   # PATCH: unspecified fields keep their value
     try:
         if metadata_url and not metadata_xml:
             # fetched through the DNS-pinned transport (https, public only)
             metadata_xml = await saml.fetch_idp_metadata(metadata_url)
         if metadata_xml:
-            base = await run_in_threadpool(saml.parse_idp_metadata, metadata_xml)
+            base.update(await run_in_threadpool(saml.parse_idp_metadata, metadata_xml))
         if saml_cfg is not None:
-            base.update({k: v for k, v in saml_cfg.model_dump().items() if v is not None})
+            fields = saml_cfg.model_fields_set if existing else None
+            base.update({k: v for k, v in saml_cfg.model_dump().items()
+                         if v is not None and (fields is None or k in fields)})
         cfg = SAMLConfig.model_validate(base).model_dump()
         await run_in_threadpool(saml.validate_config, slug, cfg, sp_private_key)
     except ValidationError as exc:
@@ -908,7 +912,7 @@ async def admin_update_provider(
         # metadata (if given) is the base; explicit `saml` fields override it
         sets["config"] = _json(
             await _validated_config("saml", cur["slug"], None, body.saml, body.saml_metadata_xml,
-                                    body.idp_metadata_url, key_after)
+                                    body.idp_metadata_url, key_after, store.provider_config(cur))
         )
         changed = sorted(set(changed) | {"saml"})
     elif cur["kind"] == "saml" and "sp_private_key" in body.model_fields_set:
