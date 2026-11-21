@@ -212,15 +212,23 @@ class Database:
         timeout, returning (columns, rows). The caller MUST have run the SQL
         through `guard.validate()` first — this method does no validation.
         """
-        async with self.acquire() as conn:
-            tr = conn.transaction(readonly=True)
-            await tr.start()
-            try:
+        if tenancy.current_tenant_id() is None:
+            # LLM-written SQL must never run without a tenant (strict mode, unbound).
+            raise PermissionError("no tenant bound: refusing to run NL-query SQL")
+        # A TOP-LEVEL read-only transaction (asyncpg ignores `readonly` on a
+        # nested one, so this must not go through acquire()) that also carries
+        # the tenant (SET LOCAL): the SQL below can only ever see this tenant's
+        # rows, with the service role's read-only grants on top.
+        async with self.pool.acquire() as conn:
+            async with tenancy.scoped(conn, readonly=True):
                 await conn.execute(f"SET LOCAL statement_timeout = {int(stmt_timeout_ms)}")
                 records = await conn.fetch(sql)
-            finally:
-                # Never commit — this path is strictly read-only.
-                await tr.rollback()
+                # Defence in depth behind guard.validate() (which denies
+                # set_config): if the statement managed to move the tenant GUC
+                # mid-flight, the rows it read may belong to another tenant --
+                # discard them instead of returning anything.
+                if await conn.fetchval("SELECT current_setting('app.tenant_id', true)") != tenancy.current_tenant_id():
+                    raise PermissionError("tenant context changed during NL-query; result discarded")
 
         if not records:
             return [], []
