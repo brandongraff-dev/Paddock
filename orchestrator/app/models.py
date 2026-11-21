@@ -432,6 +432,10 @@ class TimelineDay(BaseModel):
     day: date
     asset_count: int
     finding_count: int
+    # Breakdown the dashboard's severity charts need (was never populated,
+    # so the Overview trend rendered all-zero).
+    new_findings_by_severity: dict[str, int] = Field(default_factory=dict)
+    scans_run: int = 0
     sample_assets: list[dict[str, Any]]
     sample_findings: list[dict[str, Any]]
 
