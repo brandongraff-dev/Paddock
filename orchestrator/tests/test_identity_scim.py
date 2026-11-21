@@ -394,4 +394,3 @@ async def test_mapping_change_recomputes_existing_scim_users(client, db_pool, sc
             "SELECT details FROM audit_log WHERE resource_type = 'identity_settings' ORDER BY id DESC LIMIT 1"
         )
     assert '"scim_users_recomputed": 1' in str(d)
-
