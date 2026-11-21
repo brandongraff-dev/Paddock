@@ -49,6 +49,10 @@ Around that core it also gives you:
   port identifies every IoT/OT device and flags devices that scan, cross
   segments, phone home from OT, or start behaving unlike their model
   ([guide](docs/SENTRY.md)).
+- **Context connectors:** read-only AWS, Defender/Intune, CrowdStrike and
+  ServiceNow CMDB feed cloud paths, device posture and ownership into the
+  graph; UniFi/Meraki quarantine a Sentry-flagged device only after a human
+  approves it ([guide](docs/INTEGRATIONS-CONTEXT.md)).
 - **Adaptive risk:** an ML risk ranker and anomaly detector (cold-start — see
   [Status](#status-honest)), surface-change tracking, owner routing + ticketing.
 - **Governance built in:** auth (API keys + JWT), RBAC + ABAC classification

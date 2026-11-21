@@ -36,6 +36,8 @@ from .routers import ml as ml_router
 from .routers import monitoring as monitoring_router
 from .routers import devices as devices_router
 from .routers import fleet as fleet_router
+from .routers import integration_sync as integration_sync_router
+from .routers import network_actions as network_actions_router
 from .routers import ontology as ontology_router
 from .routers import remediation as remediation_router
 from .routers import posture as posture_router
@@ -227,6 +229,9 @@ def create_app() -> FastAPI:
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
     app.include_router(remediation_router.router)
+    # Context SOURCE sync status + network quarantine via the fleet gate (schema 025)
+    app.include_router(integration_sync_router.router)
+    app.include_router(network_actions_router.router)
 
     return app
 

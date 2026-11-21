@@ -264,6 +264,26 @@ async def run_due_schedules(pool, r, now: datetime | None = None) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Integrations: SOURCE connectors on their own interval (schema 025)
+# --------------------------------------------------------------------------- #
+
+def kick_integration_syncs(pool, r) -> bool:
+    """Start a background sweep of due SOURCE integrations (non-blocking).
+
+    Pulls are read-only against the customer's own systems and are written
+    through the orchestrator's bulk handlers; a slow cloud API never delays
+    the scan schedules above. See ``app/integrations/runtime.py``.
+    """
+    try:
+        from .integrations.runtime import kick_source_syncs
+
+        return kick_source_syncs(pool, r)
+    except Exception:  # noqa: BLE001 - never let integrations break scan scheduling
+        logger.exception("integration_sync_kick_failed")
+        return False
+
+
+# --------------------------------------------------------------------------- #
 # Background loop
 # --------------------------------------------------------------------------- #
 
@@ -283,6 +303,7 @@ async def scheduler_loop(app) -> None:
             if pool is None or r is None:
                 continue
             await run_due_schedules(pool, r)
+            kick_integration_syncs(pool, r)
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

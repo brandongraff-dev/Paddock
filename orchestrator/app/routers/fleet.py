@@ -21,6 +21,11 @@ edited here.
 
 Allowed action types ONLY: block_ip, block_domain, quarantine_file,
 firewall_rule, revert. Nothing else. No scanning, no offensive capability.
+
+Network quarantine (schema 025) reuses this exact gate: a
+``quarantine_device`` / ``release_device`` row has NO agent and an
+``integration_id``; it is proposed and executed by
+``app/routers/network_actions.py`` and approved / denied / reverted here.
 """
 from __future__ import annotations
 
@@ -258,7 +263,9 @@ class ActionProposeIn(BaseModel):
 
 class ActionOut(BaseModel):
     id: UUID
-    agent_id: UUID
+    # NULL for network actions (schema 025): those are executed by an ACTION
+    # integration through app/routers/network_actions.py, never by an agent.
+    agent_id: UUID | None = None
     action_type: str
     target: str
     reason: str | None
@@ -273,6 +280,7 @@ class ActionOut(BaseModel):
     decided_at: datetime | None
     applied_at: datetime | None
     revert_of: UUID | None
+    integration_id: UUID | None = None   # schema 025: set on network actions
 
 
 class ActionPage(BaseModel):

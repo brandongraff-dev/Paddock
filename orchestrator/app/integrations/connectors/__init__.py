@@ -10,7 +10,16 @@ import logging
 
 log = logging.getLogger(__name__)
 
-_MODULES: tuple[str, ...] = ()
+_MODULES: tuple[str, ...] = (
+    # context SOURCE connectors (read-only)
+    "aws",
+    "microsoft_defender",
+    "crowdstrike",
+    "servicenow_cmdb",
+    # network ACTION connectors (Sentry quarantine; approve gate only)
+    "unifi",
+    "meraki",
+)
 
 
 def load_all() -> None:
