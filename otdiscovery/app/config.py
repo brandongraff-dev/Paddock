@@ -104,6 +104,11 @@ class Config:
     managed_sensors: bool = field(default_factory=lambda: _env_bool("MANAGED_SENSORS", True))
     # Read the client address from X-Forwarded-For (only behind your own TLS proxy).
     trust_proxy: bool = field(default_factory=lambda: _env_bool("TRUST_PROXY", False))
+    # Managed sensors: analysis (fingerprint + behaviour + the bulk post to the
+    # orchestrator) runs at most once per interval per tenant, off the event loop,
+    # however many uploads arrive. 0 = analyse inside every upload (legacy).
+    managed_analyze_interval_s: float = field(default_factory=lambda: float(_env_int("MANAGED_ANALYZE_INTERVAL_S", 15)))
+    analyze_interval_s: float = 0.0
     max_tenant_engines: int = field(default_factory=lambda: _env_int("MAX_TENANT_ENGINES", 64))
 
 

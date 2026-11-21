@@ -146,7 +146,8 @@ class OtDiscoveryService:
             if len(self.tenant_engines) >= self.cfg.max_tenant_engines:
                 raise RuntimeError("too many tenant engines")
             bp = self.cfg.baseline_path
-            cfg = dataclasses.replace(self.cfg, baseline_path=f"{bp}.{tenant_id}" if bp else None)
+            cfg = dataclasses.replace(self.cfg, baseline_path=f"{bp}.{tenant_id}" if bp else None,
+                                      analyze_interval_s=self.cfg.managed_analyze_interval_s)
             orch = self.orch.for_tenant(tenant_id) if self.orch is not None else None
             eng = DiscoveryEngine(cfg, db=self.db, orch=orch)
             self.tenant_engines[tenant_id] = eng

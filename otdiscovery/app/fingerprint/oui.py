@@ -25,6 +25,7 @@ class OuiHit(TypedDict, total=False):
     prefix: str
 
 
+@lru_cache(maxsize=65536)
 def normalize_mac(mac: str) -> Optional[str]:
     """Return a canonical ``aa:bb:cc:dd:ee:ff`` MAC, or None if not a MAC."""
     if not mac:

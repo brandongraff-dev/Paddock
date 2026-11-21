@@ -2,6 +2,7 @@
 separation and the enrollment / heartbeat proxy (orchestrator faked)."""
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import gzip
 import json
@@ -95,7 +96,8 @@ def _flows(n=5, base="10.9.0"):
 @pytest.fixture
 async def env():
     fake = FakeOrch()
-    cfg = dataclasses.replace(Config(), enable_db=False, require_sentry_token=True, sentry_tokens=())
+    cfg = dataclasses.replace(Config(), enable_db=False, require_sentry_token=True, sentry_tokens=(),
+                              managed_analyze_interval_s=0.0)
     svc = OtDiscoveryService(cfg)
     svc.engine = DiscoveryEngine(cfg, db=None, orch=None)
     svc.orch = fake  # type: ignore[assignment]
@@ -259,3 +261,27 @@ async def test_x_forwarded_for_only_when_trusted(env):
     svc.cfg = dataclasses.replace(svc.cfg, trust_proxy=True)
     await client.post("/enroll", json={"token": "t"}, headers={"X-Forwarded-For": "198.51.100.7, 10.0.0.1"})
     assert fake.forwarded_ips[-1] == "198.51.100.7"
+
+
+async def test_deferred_analysis_coalesces_many_uploads_into_one_run(env):
+    svc, fake, client = env
+    svc.cfg = dataclasses.replace(svc.cfg, managed_analyze_interval_s=0.2)
+    for i in range(6):
+        r = await client.post("/ingest", json=_env(_flows(3)), headers=_h(f"batch-co-{i:04d}"))
+        assert r.status == 200 and (await r.json())["analysis"] == "scheduled"
+    eng = svc.tenant_engines[TENANT_A]
+    await eng.flush()
+    await asyncio.sleep(0.4)
+    await eng.flush()
+    assert 1 <= len(fake.tenants_seen) <= 3 and set(fake.tenants_seen) == {TENANT_A}   # not one per upload
+    assert eng.stats["ingests"] == 6 and fake.assets_posted > 0
+    assert len(fake.done_calls) == 6 and all(ok for _, ok, _ in fake.done_calls)
+
+
+async def test_repeated_flows_are_merged_not_stored_again(env):
+    svc, _, client = env
+    for i in range(5):
+        await client.post("/ingest", json=_env(_flows(4)), headers=_h(f"batch-mg-{i:04d}"))
+    eng = svc.tenant_engines[TENANT_A]
+    flows = [o for o in eng.observations if o["kind"] == "flow"]
+    assert len(flows) == 4 and all(f["packets"] == 15 for f in flows)   # 5 uploads x 3 packets
