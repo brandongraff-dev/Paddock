@@ -61,9 +61,12 @@ def default_http(config: Mapping[str, Any]):
     """
     import httpx
 
+    from .pinned import pinned_client
+
     verify = not (config.get("allow_private") and config.get("verify_tls") is False)
-    return httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=False,
-                             verify=verify, headers={"User-Agent": USER_AGENT})
+    return pinned_client(allow_private=bool(config.get("allow_private")), verify=verify,
+                         timeout=httpx.Timeout(30.0, connect=10.0),
+                         headers={"User-Agent": USER_AGENT})
 
 
 def connector_class(kind: str) -> type[Connector]:

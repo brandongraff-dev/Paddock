@@ -22,7 +22,7 @@ from . import mapping
 
 logger = logging.getLogger(__name__)
 
-RESERVED_SLUGS = frozenset({"admin", "providers", "exchange"})
+RESERVED_SLUGS = frozenset({"admin", "providers", "exchange", "logout"})
 
 
 def sha256_hex(value: str) -> str:
@@ -90,6 +90,18 @@ def provider_secrets(row) -> dict[str, str]:
     except Exception:  # noqa: BLE001 -- rotated-away key etc.; never log the blob
         logger.error("sso_provider_secret_undecryptable", extra={"slug": row["slug"]})
         return {}
+
+
+def pack_secrets(current: dict[str, str], updates: dict[str, str | None]) -> bytes | None:
+    """Merge secret updates into the provider's secret blob and re-encrypt.
+    ``None`` / ``""`` deletes a key; no keys left -> ``None`` (column NULL)."""
+    merged = {**current}
+    for k, v in updates.items():
+        if v:
+            merged[k] = v
+        else:
+            merged.pop(k, None)
+    return secret_box.encrypt_secrets(merged) if merged else None
 
 
 def provider_config(row) -> dict[str, Any]:
@@ -240,6 +252,13 @@ class ExternalIdentity:
     # Stable IdP-side ids that SCIM may have stored as externalId
     # (Okta: sub; Entra: oid).
     external_ids: list[str] = field(default_factory=list)
+    # Entra group overage: the token said "groups omitted" and resolving them
+    # via Graph failed. No role mapping is applied (see provision()).
+    groups_unresolved: bool = False
+    groups_source: str = "token"            # token | graph
+    groups_error: str | None = None         # GraphError.code when unresolved
+    # SAML: what a later LogoutRequest needs (name_id, format, nq, spnq, session_index).
+    idp_session: dict[str, Any] | None = None
 
 
 @dataclass
@@ -249,6 +268,7 @@ class ProvisionResult:
     linked: str  # identity | external_id | email | jit
     role_decision: mapping.RoleDecision
     role_changed: bool
+    groups_unresolved: bool = False
 
 
 async def provision(pool, provider, ident: ExternalIdentity) -> ProvisionResult:
@@ -265,7 +285,17 @@ async def provision(pool, provider, ident: ExternalIdentity) -> ProvisionResult:
         default_role=provider["default_role"],
         default_clearance=provider["default_clearance"],
     )
-    if provider["require_mapping"] and decision.matched is None:
+    if ident.groups_unresolved:
+        # Groups were omitted by the IdP (overage) and could not be fetched.
+        # Never grant: whatever the (empty) list matched is discarded, a
+        # mapping-required provider denies, everyone else gets the provider's
+        # baseline role and existing users keep the role they already have.
+        if provider["require_mapping"]:
+            raise ProvisionError(
+                "groups_unavailable", "the user's groups could not be determined (IdP group overage)")
+        decision = mapping.RoleDecision(
+            role=provider["default_role"], clearance=provider["default_clearance"], matched=None)
+    elif provider["require_mapping"] and decision.matched is None:
         raise ProvisionError("no_mapping", "no role mapping matched the user's groups")
 
     trust_email = bool(email) and (
@@ -338,6 +368,7 @@ async def provision(pool, provider, ident: ExternalIdentity) -> ProvisionResult:
             scim_managed = user.get("provisioned_by") == "scim" and bool(idp_settings["scim_role_mappings"])
             if (
                 not created
+                and not ident.groups_unresolved
                 and provider["sync_roles"]
                 and provider_mappings(provider)
                 and user["username"].lower() not in break_glass
@@ -353,12 +384,17 @@ async def provision(pool, provider, ident: ExternalIdentity) -> ProvisionResult:
 
             await con.execute(
                 """
-                INSERT INTO user_identities (user_id, provider_id, subject, email, groups, last_login)
-                VALUES ($1, $2, $3, $4, $5::text[], NOW())
+                INSERT INTO user_identities (user_id, provider_id, subject, email, groups, last_login, idp_session)
+                VALUES ($1, $2, $3, $4, $5::text[], NOW(), $7::jsonb)
                 ON CONFLICT (provider_id, subject) DO UPDATE
-                   SET email = EXCLUDED.email, groups = EXCLUDED.groups, last_login = NOW()
+                   SET email = EXCLUDED.email,
+                       groups = CASE WHEN $6 THEN user_identities.groups ELSE EXCLUDED.groups END,
+                       idp_session = EXCLUDED.idp_session,
+                       last_login = NOW()
                 """,
                 user["id"], provider["id"], ident.subject, email, ident.groups[:200],
+                ident.groups_unresolved,
+                json.dumps(ident.idp_session) if ident.idp_session else None,
             )
             await con.execute(
                 "UPDATE app_users SET last_login = NOW(), email = COALESCE(email, $2) WHERE id = $1",
@@ -366,4 +402,5 @@ async def provision(pool, provider, ident: ExternalIdentity) -> ProvisionResult:
             )
     return ProvisionResult(
         user=user, created=created, linked=linked, role_decision=decision, role_changed=role_changed,
+        groups_unresolved=ident.groups_unresolved,
     )

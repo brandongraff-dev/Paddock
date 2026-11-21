@@ -275,14 +275,18 @@ async def fetch_http(url: str) -> tuple[int, str]:
     import httpx
 
     from .integrations.netsafety import UnsafeURL, validate_outbound_url
+    from .integrations.pinned import PinnedTransport
 
     host = scope_svc.normalize(url)
     headers = {
         "User-Agent": settings.scope_proof_user_agent,
         "Accept": "text/plain, */*;q=0.1",
     }
+    # Pinned transport: each hop is resolved + validated once and connected by
+    # IP (no rebinding between the check and the connect), public only.
     async with httpx.AsyncClient(
         timeout=settings.scope_proof_timeout_sec, follow_redirects=False, headers=headers,
+        transport=PinnedTransport(allow_private=False),
     ) as client:
         current = url
         for _ in range(_MAX_REDIRECTS + 1):
@@ -294,17 +298,20 @@ async def fetch_http(url: str) -> tuple[int, str]:
                 await validate_outbound_url(current)
             except UnsafeURL as exc:
                 raise FetchRefused(str(exc)) from exc
-            async with client.stream("GET", current) as resp:
-                if resp.is_redirect:
-                    loc = resp.headers.get("location", "")
-                    current = urljoin(current, loc)
-                    continue
-                body = b""
-                async for chunk in resp.aiter_bytes():
-                    body += chunk
-                    if len(body) >= _BODY_MAX:
-                        break
-                return resp.status_code, body[:_BODY_MAX].decode("utf-8", "replace")
+            try:
+                async with client.stream("GET", current) as resp:
+                    if resp.is_redirect:
+                        loc = resp.headers.get("location", "")
+                        current = urljoin(current, loc)
+                        continue
+                    body = b""
+                    async for chunk in resp.aiter_bytes():
+                        body += chunk
+                        if len(body) >= _BODY_MAX:
+                            break
+                    return resp.status_code, body[:_BODY_MAX].decode("utf-8", "replace")
+            except UnsafeURL as exc:  # the pinned transport's own (rebinding-proof) check
+                raise FetchRefused(str(exc)) from exc
         raise FetchRefused("too many redirects")
 
 

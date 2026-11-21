@@ -491,6 +491,10 @@ _rule("GET", r"/v1/auth/sso/providers", None)
 _rule("POST", r"/v1/auth/sso/exchange", None)
 _rule("GET", rf"/v1/auth/sso/{_ANY}/(start|callback|metadata)", None)
 _rule("POST", rf"/v1/auth/sso/{_ANY}/acs", None)
+# SAML single logout: IdP messages are verified (signature) inside the handler;
+# the SP-initiated logout needs a signed-in session.
+_rule("GET", rf"/v1/auth/sso/{_ANY}/sls", None)
+_rule("POST", r"/v1/auth/sso/logout", "read")
 
 # --- SCIM 2.0: only a SCIM token carries the `scim` capability -------------- #
 _rule("GET POST PUT PATCH DELETE", r"/scim/v2(/.*)?", "scim")

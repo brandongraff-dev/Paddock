@@ -30,6 +30,7 @@ import httpx
 import jwt
 
 from ..integrations import netsafety
+from ..integrations.pinned import PinnedTransport
 
 ALLOWED_ALGS = frozenset({
     "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512",
@@ -68,16 +69,19 @@ async def check_url(url: str, *, allow_private: bool) -> None:
         raise OIDCError("provider_unavailable", f"unsafe IdP URL: {exc}") from exc
 
 
-def _client() -> httpx.AsyncClient:
+def _client(allow_private: bool = False) -> httpx.AsyncClient:
+    # Production: DNS-pinned transport (resolve once, validate, connect to that
+    # IP, SNI/cert for the real hostname). Tests inject a MockTransport.
     return httpx.AsyncClient(
-        transport=_transport, timeout=_HTTP_TIMEOUT, follow_redirects=False,
+        transport=_transport or PinnedTransport(allow_private=allow_private),
+        timeout=_HTTP_TIMEOUT, follow_redirects=False,
     )
 
 
 async def _get_json(url: str, *, allow_private: bool, headers: dict[str, str] | None = None) -> dict:
     await check_url(url, allow_private=allow_private)
     try:
-        async with _client() as c:
+        async with _client(allow_private) as c:
             r = await c.get(url, headers={"Accept": "application/json", **(headers or {})})
     except httpx.HTTPError as exc:
         raise OIDCError("provider_unavailable", f"GET {_safe(url)} failed: {type(exc).__name__}") from exc
@@ -262,7 +266,7 @@ async def exchange_code(
         if auth_method == "client_secret_post" and client_secret:
             form["client_secret"] = client_secret
     try:
-        async with _client() as c:
+        async with _client(allow_private) as c:
             r = await c.post(url, data=form, auth=auth, headers={"Accept": "application/json"})
     except httpx.HTTPError as exc:
         raise OIDCError("provider_unavailable", f"token endpoint unreachable: {type(exc).__name__}") from exc

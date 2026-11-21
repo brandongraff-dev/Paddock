@@ -338,7 +338,12 @@ async def test_scim_adopts_sso_jit_user(client, db_pool, scim):
         assert await con.fetchval("SELECT provisioned_by FROM app_users WHERE id = $1", uid) == "scim"
 
 
-@pytest.mark.parametrize("flt", ['userName sw "a"', 'password eq "x"', "userName eq", 'name.givenName eq "A"'])
+@pytest.mark.parametrize("flt", ['password eq "x"', "userName eq", 'userName eq "a" and', '(userName eq "a"',
+                                 'userName eq "a")', 'userName xx "a"', 'not userName eq "a"', 'active eq "maybe"',
+                                 'active co "t"', 'meta.lastModified gt "yesterday"', 'userName eq a',
+                                 'emails[type eq "work"].value eq "x"', 'groups[display eq "x"]',
+                                 "(" * 20 + 'userName eq "a"' + ")" * 20,
+                                 " and ".join(['userName eq "a"'] * 30), 'userName eq "' + "a" * 2000 + '"'])
 async def test_invalid_filters(client, scim, flt):
     r = await client.get("/scim/v2/Users", params={"filter": flt}, headers=scim)
     assert r.status_code == 400 and r.json()["scimType"] == "invalidFilter"

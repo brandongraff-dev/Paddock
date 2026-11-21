@@ -19,6 +19,7 @@ import httpx
 
 from . import netsafety
 from .base import DeliveryResult
+from .pinned import PinnedTransport
 from .settings import isettings
 
 USER_AGENT = "Paddock-Integrations/1.0 (+https://github.com/brandongraff-dev/cybersec)"
@@ -30,6 +31,9 @@ class GuardedAsyncClient(httpx.AsyncClient):
         kwargs.setdefault("timeout", isettings.integrations_http_timeout_sec)
         headers = dict(kwargs.pop("headers", None) or {})
         headers.setdefault("User-Agent", USER_AGENT)
+        # No injected transport (tests) => the DNS-pinned one: connect only to
+        # addresses it validated itself, never to a second lookup.
+        kwargs.setdefault("transport", PinnedTransport(allow_private=allow_private))
         super().__init__(headers=headers, **kwargs)
         self.allow_private = allow_private
 
@@ -38,16 +42,21 @@ class GuardedAsyncClient(httpx.AsyncClient):
         kwargs["follow_redirects"] = False
         return await super().send(request, **kwargs)
 
-    async def check_host(self, host: str, port: int) -> None:
-        """Apply the outbound-URL policy to a non-HTTP endpoint (e.g. SMTP)."""
+    async def check_host(self, host: str, port: int) -> list[str]:
+        """Apply the outbound-URL policy to a non-HTTP endpoint (e.g. SMTP).
+
+        Returns the validated addresses, so the caller can connect to THOSE
+        (pinned) instead of resolving the name a second time."""
         h = host.strip()
         if ":" in h and not h.startswith("["):
             h = f"[{h}]"                     # IPv6 literal
         await netsafety.validate_outbound_url(f"https://{h}:{int(port)}/", allow_private=self.allow_private)
+        return await netsafety.resolve_validated(host.strip(), int(port), allow_private=self.allow_private)
 
 
 def make_client(*, allow_private: bool = False, transport: Optional[httpx.AsyncBaseTransport] = None) -> GuardedAsyncClient:
-    return GuardedAsyncClient(allow_private=allow_private, transport=transport)
+    kw: dict[str, Any] = {} if transport is None else {"transport": transport}
+    return GuardedAsyncClient(allow_private=allow_private, **kw)
 
 
 def scrub(text: str, secrets: Iterable[str]) -> str:
