@@ -17,7 +17,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterable
 
-import aiohttp
+try:  # aiohttp is only needed for the async service path; the pure helpers
+    import aiohttp  # (build_queries / map_vuln / ...) are also used by paddock-cli
+except ImportError:  # pragma: no cover - exercised by the CLI's zero-dependency install
+    aiohttp = None  # type: ignore[assignment]
 
 log = logging.getLogger("sca.osv")
 

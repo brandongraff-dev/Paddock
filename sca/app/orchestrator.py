@@ -11,7 +11,10 @@ import os
 import logging
 from typing import Any
 
-import aiohttp
+try:  # only the async client below needs aiohttp; build_sca_finding is pure
+    import aiohttp
+except ImportError:  # pragma: no cover - exercised by the CLI's zero-dependency install
+    aiohttp = None  # type: ignore[assignment]
 
 log = logging.getLogger("sca.orchestrator")
 
