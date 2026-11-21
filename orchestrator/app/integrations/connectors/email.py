@@ -25,6 +25,29 @@ from ._render import SEV_HEX, facts, severity_label, truncate, when, why
 SMTP_TIMEOUT_SEC = 15
 
 
+class _PinnedMixin:
+    """Connect to an address ``netsafety`` already validated, while keeping the
+    configured hostname for STARTTLS / implicit-TLS SNI and certificate checks
+    (``smtplib`` uses ``self._host`` for ``server_hostname``)."""
+
+    _connect_ip: str = ""
+
+    def _get_socket(self, host, port, timeout):  # type: ignore[no-untyped-def]
+        return super()._get_socket(self._connect_ip or host, port, timeout)  # type: ignore[misc]
+
+
+class _PinnedSMTP(_PinnedMixin, smtplib.SMTP):
+    def __init__(self, host, port, *, connect_ip, **kw):  # type: ignore[no-untyped-def]
+        self._connect_ip = connect_ip
+        super().__init__(host, port, **kw)
+
+
+class _PinnedSMTPSSL(_PinnedMixin, smtplib.SMTP_SSL):
+    def __init__(self, host, port, *, connect_ip, **kw):  # type: ignore[no-untyped-def]
+        self._connect_ip = connect_ip
+        super().__init__(host, port, **kw)
+
+
 def _one_line(s: Any) -> str:
     return " ".join(str(s or "").split())
 
@@ -111,12 +134,32 @@ class EmailConnector(Connector):
         try:
             check = getattr(self.http, "check_host", None)
             if check is not None:
-                await check(host, port)
+                self._ips = list(await check(host, port) or [])
             else:  # pragma: no cover - the dispatcher always passes a guarded client
                 await netsafety.validate_outbound_url(f"https://{host}:{port}/")
         except netsafety.UnsafeURL as exc:
             return DeliveryResult(ok=False, retryable=False, detail=f"blocked by outbound URL policy: {exc}")
         return None
+
+    _ips: list[str] = []
+
+    def _connect(self, host: str, port: int, ctx: ssl.SSLContext) -> Any:
+        implicit = (self.config.get("security") or "starttls") == "tls"
+        real = self.smtp_ssl_class is smtplib.SMTP_SSL if implicit else self.smtp_class is smtplib.SMTP
+        if not real or not self._ips:  # injected fake (tests) / no validated addresses
+            if implicit:
+                return self.smtp_ssl_class(host, port, timeout=SMTP_TIMEOUT_SEC, context=ctx)
+            return self.smtp_class(host, port, timeout=SMTP_TIMEOUT_SEC)
+        last: Optional[OSError] = None
+        for ip in self._ips[:4]:  # the validated answers; never a second DNS lookup
+            try:
+                if implicit:
+                    return _PinnedSMTPSSL(host, port, connect_ip=ip, timeout=SMTP_TIMEOUT_SEC, context=ctx)
+                return _PinnedSMTP(host, port, connect_ip=ip, timeout=SMTP_TIMEOUT_SEC)
+            except (ConnectionError, socket.timeout, TimeoutError) as exc:
+                last = exc
+        assert last is not None
+        raise last
 
     def _session(self, msg: Optional[EmailMessage]) -> DeliveryResult:
         """Blocking SMTP conversation; run in a worker thread."""
@@ -124,10 +167,7 @@ class EmailConnector(Connector):
         ctx = ssl.create_default_context()
         user, pw = self.secrets.get("username"), self.secrets.get("password")
         try:
-            if (self.config.get("security") or "starttls") == "tls":
-                smtp = self.smtp_ssl_class(host, port, timeout=SMTP_TIMEOUT_SEC, context=ctx)
-            else:
-                smtp = self.smtp_class(host, port, timeout=SMTP_TIMEOUT_SEC)
+            smtp = self._connect(host, port, ctx)
             try:
                 if (self.config.get("security") or "starttls") != "tls":
                     smtp.ehlo()

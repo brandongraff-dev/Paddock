@@ -29,6 +29,7 @@ import httpx
 
 from .. import netsafety, ocsf
 from ..base import Capability, Connector, DeliveryResult, Event, HealthResult
+from ..pinned import pinned_client
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class SiemConnector(Connector):
         if self.http is not None:
             return self.http
         if self._own_http is None:
-            self._own_http = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, follow_redirects=False)
+            self._own_http = pinned_client(allow_private=self.allow_private, timeout=DEFAULT_TIMEOUT)
         return self._own_http
 
     async def aclose(self) -> None:

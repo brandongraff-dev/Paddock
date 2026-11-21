@@ -22,6 +22,7 @@ from typing import Any, ClassVar, Optional
 import httpx
 
 from ..base import DeliveryResult, Event, register
+from ..pinned import pinned_client
 from ._siem import DEFAULT_TIMEOUT, SiemConnector, classify_status, short_body
 
 # HEC response codes that mean "try again later".
@@ -54,7 +55,7 @@ class SplunkHecConnector(SiemConnector):
 
     # Patched by tests; production uses httpx.AsyncClient.
     _insecure_client_factory = staticmethod(
-        lambda: httpx.AsyncClient(verify=False, timeout=DEFAULT_TIMEOUT, follow_redirects=False))
+        lambda: pinned_client(allow_private=True, verify=False, timeout=DEFAULT_TIMEOUT))
 
     def __init__(self, config, secrets, http) -> None:  # type: ignore[no-untyped-def]
         super().__init__(config, secrets, http)

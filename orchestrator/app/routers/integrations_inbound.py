@@ -37,6 +37,7 @@ from ..db import get_pool
 from ..integrations import Capability, get_connector_class
 from ..integrations import connectors as _connectors
 from ..integrations import ticketing
+from ..integrations.pinned import pinned_client
 from ..integrations.secrets import decrypt_secrets
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ async def integration_inbound(
         return _err(503, "integration credentials unavailable")
 
     integration = {"id": str(iid), "kind": row["kind"], "name": row["name"], "config": config}
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as http:
+    async with pinned_client(allow_private=bool(row["allow_private"]), timeout=10.0) as http:
         conn = cls(config, secret_values, http)
         if hasattr(conn, "bind"):
             conn.bind(integration_id=iid, pool=pool, allow_private=bool(row["allow_private"]))
