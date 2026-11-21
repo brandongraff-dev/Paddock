@@ -29,6 +29,7 @@ import ReportsPage from "./pages/Reports";
 import Login from "./pages/Login";
 import SsoCallback from "./pages/SsoCallback";
 import IdentitySettingsPage from "./pages/IdentitySettings";
+import BillingPage from "./pages/Billing";
 import Landing from "./pages/Landing";
 import Setup, { FirstRunRedirect } from "./pages/Setup";
 import { useLiveEvents } from "./hooks/useLiveEvents";
@@ -99,6 +100,7 @@ function AuthedApp() {
         <Route path="/reports" element={<Shell><ReportsPage /></Shell>} />
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
         <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
+        <Route path="/settings/billing" element={<Shell><RequireAdmin><BillingPage /></RequireAdmin></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
