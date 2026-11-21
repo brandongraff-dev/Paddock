@@ -157,13 +157,20 @@ async def list_verifications(
 
 @router.post("/verifications/{verification_id}/result", response_model=VerificationOut)
 async def post_result(
-    verification_id: UUID, body: ResultIn,
+    verification_id: UUID, body: ResultIn, request: Request,
     pool=Depends(get_pool), r=Depends(get_redis),
     principal: Principal = Depends(current_principal),
 ):
-    """Worker callback (capability ``write``, i.e. the service key)."""
+    """Worker callback: only the service key, only for the dispatched job
+    (``X-Paddock-Scan`` must be the scan the verification was queued as). A user
+    or API key, even an admin's, can never post a verdict."""
+    if principal.kind != "service":
+        raise HTTPException(status_code=403, detail="verification results come from the worker job only")
     try:
-        return await service.apply_result(pool, r, verification_id, body, actor=principal.actor)
+        return await service.apply_result(pool, r, verification_id, body, actor=principal.actor,
+                                          job_scan_id=request.headers.get("x-paddock-scan"))
+    except service.ResultRejected as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except service.FindingNotFound:
         raise HTTPException(status_code=404, detail="verification not found")
     except service.AlreadyDecided as e:

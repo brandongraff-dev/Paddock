@@ -89,12 +89,33 @@ async def events(fake_redis) -> list[dict]:
     return [json.loads(f["event"]) for _s, f in await fake_redis.xrange("stream:events")]
 
 
-async def post_result(client, vid, verdict="confirmed", status="done", **kw):
+SVC_KEY = "svc-key-verification-test"
+
+
+@pytest.fixture(autouse=True)
+def _service_key(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "service_api_key", SVC_KEY)
+
+
+async def post_result(client, vid, verdict="confirmed", status="done", *, scan_id="auto",
+                      service=True, **kw):
+    """Post a result the way the active worker does: service key + the job's scan."""
     body = {"status": status, "check_id": "exposed_file", "reason": "test",
             "evidence": {"url": f"https://{HOST}/.env", "status": 200}, **kw}
     if status == "done":
         body["verdict"] = verdict
-    return await client.post(f"/v1/verifications/{vid}/result", json=body)
+    headers = {}
+    if service:
+        headers["X-API-Key"] = SVC_KEY
+        if scan_id == "auto":
+            async with client._transport.app.state.pool.acquire() as con:
+                scan_id = await con.fetchval(
+                    "SELECT scan_id FROM finding_verifications WHERE id = $1", uuid.UUID(str(vid)))
+        if scan_id:
+            headers["X-Paddock-Scan"] = str(scan_id)
+    return await client.post(f"/v1/verifications/{vid}/result", json=body, headers=headers)
 
 
 async def verify(client, fid):
@@ -696,3 +717,44 @@ async def test_schema_defaults(db_pool):
         await con.execute("INSERT INTO finding_verifications (finding_id, requested_by) VALUES ($1, 't')", fid)
         with pytest.raises(asyncpg.UniqueViolationError):                          # one in flight per purpose
             await con.execute("INSERT INTO finding_verifications (finding_id, requested_by) VALUES ($1, 't')", fid)
+
+
+# =========================================================================== #
+# only the dispatched job may answer (no forged "verified fix")
+# =========================================================================== #
+
+async def _fixed_with_pending_check(client, db_pool, status="queued"):
+    await add_scope(db_pool)
+    f = await mk_finding(client)
+    await mark_fixed(client, f["id"])
+    (row,) = await ledger(db_pool, f["id"])
+    if status != row["status"]:
+        async with db_pool.acquire() as con:
+            await con.execute("UPDATE finding_verifications SET status = $2 WHERE id = $1", row["id"], status)
+    return f, row
+
+
+async def test_a_user_cannot_forge_a_verified_fix(client, db_pool):
+    """An admin (dev principal here) posting not_reproducible must not stamp fix_verified_at."""
+    f, row = await _fixed_with_pending_check(client, db_pool)
+    r = await post_result(client, row["id"], "not_reproducible", service=False)
+    assert r.status_code == 403, r.text
+    assert (await get_finding(client, f["id"]))["fix_verified_at"] is None
+
+
+async def test_result_needs_the_matching_scan_header(client, db_pool):
+    f, row = await _fixed_with_pending_check(client, db_pool)
+    for sid in (None, str(uuid.uuid4())):
+        r = await post_result(client, row["id"], "not_reproducible", scan_id=sid)
+        assert r.status_code in (403, 409), r.text
+    assert (await get_finding(client, f["id"]))["fix_verified_at"] is None
+    assert (await post_result(client, row["id"], "not_reproducible")).status_code == 200
+    assert (await get_finding(client, f["id"]))["fix_verified_at"] is not None
+
+
+async def test_result_for_a_scheduled_row_is_refused(client, db_pool):
+    """A scheduled row has not been through the proof gate: no result may land on it."""
+    f, row = await _fixed_with_pending_check(client, db_pool, status="scheduled")
+    r = await post_result(client, row["id"], "not_reproducible", scan_id=str(row["scan_id"] or uuid.uuid4()))
+    assert r.status_code in (403, 409), r.text
+    assert (await get_finding(client, f["id"]))["fix_verified_at"] is None
