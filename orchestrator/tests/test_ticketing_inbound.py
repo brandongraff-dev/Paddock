@@ -359,3 +359,19 @@ async def test_links_helpers_move_external_id(db_pool):
     assert await links.set_external_status(db_pool, iid, "SEC-1", "Done")
     assert not await links.set_external_status(db_pool, iid, "SEC-404", "Done")
     assert await links.delete(db_pool, iid, f2)
+
+
+async def test_dismissal_from_tracker_records_reason_under_lifecycle_constraint(client, db_pool):
+    # Real schema (019 requires a reason for accepted / false_positive): a
+    # "Won't Do" in Jira must land as accepted WITH a traceable reason, not 500.
+    fid = await _finding(db_pool)
+    iid = await _integration(db_pool)
+    await links.upsert(db_pool, iid, fid, "SEC-7")
+    body = jira_webhook("SEC-7", status="Done", resolution="Won't Do")
+    r = await client.post(f"/v1/integrations/{iid}/inbound", content=body, headers=_signed(body))
+    assert r.status_code == 200, r.text
+    async with db_pool.acquire() as con:
+        row = await con.fetchrow("SELECT status, status_reason, status_by FROM findings WHERE id=$1",
+                                 uuid.UUID(fid))
+    assert row["status"] == "accepted"
+    assert "SEC-7" in row["status_reason"] and row["status_by"].startswith("integration:")

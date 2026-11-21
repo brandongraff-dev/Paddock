@@ -68,7 +68,14 @@ async def allowed_finding_statuses(con: Any) -> Optional[set[str]]:
     )
     found: Optional[set[str]] = None
     for r in rows:
-        vals = set(re.findall(r"'([a-z_]+)'", r["def"]))
+        d = r["def"]
+        # Only the allow-list constraint (`status IN (...)` / `= ANY (ARRAY[...])`).
+        # Other constraints that merely mention status -- e.g. the lifecycle rule
+        # "status NOT IN ('accepted','false_positive') OR reason present" -- name
+        # values that are *conditionally* allowed and must not be intersected.
+        if re.search(r"\bNOT\b|<>", d, re.I) or not re.search(r"status\)?(::text)?\s*(=\s*ANY|IN)\b", d, re.I):
+            continue
+        vals = set(re.findall(r"'([a-z_]+)'", d))
         if vals:
             found = vals if found is None else (found & vals)
     return found
@@ -195,9 +202,16 @@ async def apply_inbound(
                                      "actor": upd.actor, "text": text})
                 patch["integration_notes"] = existing[-MAX_NOTES:]
                 if changed:
+                    # Dismissals (accepted / false_positive) must carry a reason
+                    # (schema 019 constraint): record where the decision came from.
+                    reason = (f"{integration.get('kind')} {upd.external_id}: "
+                              f"{ext_status or upd.status}"
+                              + (f" by {upd.actor}" if upd.actor else "")
+                              + (f" - {str(upd.comment)[:200]}" if upd.comment else ""))
                     await con.execute(
-                        "UPDATE findings SET status = $2, metadata = metadata || $3::jsonb WHERE id = $1",
-                        fid, new, json.dumps(patch),
+                        "UPDATE findings SET status = $2, metadata = metadata || $3::jsonb, "
+                        "status_reason = $4, status_by = $5, status_changed_at = NOW() WHERE id = $1",
+                        fid, new, json.dumps(patch), reason, actor,
                     )
                 else:
                     await con.execute(
