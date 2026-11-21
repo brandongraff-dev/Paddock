@@ -42,3 +42,18 @@ export function useFit<T extends HTMLElement>(designW: number) {
   }, [designW]);
   return [ref, scale] as const;
 }
+
+/** True on phone-width screens (updates on rotate/resize). */
+export function usePhone(max = 720) {
+  const q = `(max-width: ${max}px)`;
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(q).matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const m = window.matchMedia(q);
+    const on = () => setPhone(m.matches);
+    on();
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, [q]);
+  return phone;
+}

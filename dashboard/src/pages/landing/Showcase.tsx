@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import HorseMark from "../../brand/HorseMark";
 import PixelField from "../../brand/PixelField";
 import Wordmark from "../../brand/Wordmark";
-import { useFit, useInView } from "./hooks";
+import { useFit, useInView, usePhone } from "./hooks";
+import { PhoneOverview, PhonePath } from "./PhoneShots";
 import "../../styles/showcase.css";
 
 /**
@@ -14,7 +15,7 @@ import "../../styles/showcase.css";
 const W = 1120;
 const H = 700;
 
-function CountUp({ to, run, dur = 1400, fmt }: { to: number; run: boolean; dur?: number; fmt?: (n: number) => string }) {
+export function CountUp({ to, run, dur = 1400, fmt }: { to: number; run: boolean; dur?: number; fmt?: (n: number) => string }) {
   const [v, setV] = useState(0);
   useEffect(() => {
     if (!run) return;
@@ -62,7 +63,7 @@ function AppWindow({ url, active, children, className, run, h = H, rail = true }
 /* ----------------------------- Overview ----------------------------- */
 const TREND = [74, 71, 73, 69, 70, 66, 67, 63, 64, 60, 61, 58, 55, 52];
 
-function Trend({ run }: { run: boolean }) {
+export function Trend({ run }: { run: boolean }) {
   const w = 560, h = 190;
   const pts = TREND.map((v, i) => [(i / (TREND.length - 1)) * w, h - ((v - 40) / 40) * h] as const);
   const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
@@ -89,7 +90,7 @@ function Trend({ run }: { run: boolean }) {
   );
 }
 
-const SEV: [string, number, string][] = [
+export const SEV: [string, number, string][] = [
   ["Critical", 3, "var(--sev-crit)"],
   ["High", 11, "var(--sev-high)"],
   ["Medium", 27, "var(--sev-med)"],
@@ -240,6 +241,7 @@ const ROWS = [
 
 export default function Showcase() {
   const [ref, seen] = useInView<HTMLElement>(0.1);
+  const phone = usePhone();
   const [r1, in1] = useInView<HTMLDivElement>(0.25);
   const [r2, in2] = useInView<HTMLDivElement>(0.25);
   const refs = [r1, r2];
@@ -258,7 +260,7 @@ export default function Showcase() {
             <p>{r.body}</p>
             <ul>{r.points.map((t) => <li key={t}>{t}</li>)}</ul>
           </div>
-          <div className="sc-shot">{r.key === "path" ? <PathWindow run={ins[i] && seen} /> : <OverviewWindow run={ins[i] && seen} />}</div>
+          <div className="sc-shot">{phone ? (r.key === "path" ? <PhonePath run={ins[i] && seen} /> : <PhoneOverview run={ins[i] && seen} />) : r.key === "path" ? <PathWindow run={ins[i] && seen} /> : <OverviewWindow run={ins[i] && seen} />}</div>
         </div>
       ))}
       <p className="sc-note mono">Mock data, real interface.</p>
