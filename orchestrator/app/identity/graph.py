@@ -34,6 +34,7 @@ Every request goes through the DNS-pinned transport (``app.integrations.pinned``
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -92,7 +93,7 @@ class GraphConfig:
 # Tests inject an httpx.MockTransport (a fake Graph); production is pinned.
 _transport: httpx.AsyncBaseTransport | None = None
 _group_cache: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
-_token_cache: dict[tuple[str, str, str], tuple[float, str]] = {}
+_token_cache: dict[tuple[str, ...], tuple[float, str]] = {}
 _CACHE_MAX = 2048
 
 
@@ -150,12 +151,16 @@ def _check_base(url: str) -> str:
     return f"{p.scheme}://{p.netloc}"
 
 
-async def _app_token(cfg: GraphConfig) -> str:
+async def _app_token(cfg: GraphConfig, cache_scope: str) -> str:
     if not (cfg.tenant_id and cfg.client_id and cfg.client_secret):
         raise GraphError("graph_not_configured", "app credentials (tenant, client id, secret) are missing")
     if not _TENANT.match(cfg.tenant_id):
         raise GraphError("graph_misconfigured", "tenant id is not valid")
-    key = (cfg.tenant_id, cfg.client_id, cfg.base_url)
+    # The key names the Paddock provider AND a hash of the secret: another
+    # provider/tenant that knows only the public ids (or presents a wrong
+    # secret) must make its own token request, never reuse this one.
+    key = (cache_scope, cfg.tenant_id, cfg.client_id, cfg.base_url,
+           hashlib.sha256(cfg.client_secret.encode("utf-8")).hexdigest())
     hit = _token_cache.get(key)
     if hit and hit[0] > time.monotonic():
         return hit[1]
@@ -298,7 +303,7 @@ async def resolve_groups(
     elif cfg.mode == "app":
         if not oid or not _GUID.match(oid):
             raise GraphError("graph_no_user", "the user's object id is missing or not a GUID")
-        token = await _app_token(cfg)
+        token = await _app_token(cfg, cache_scope)
         ids = await _list_group_ids(
             cfg, f"/v1.0/users/{quote(oid, safe='')}/transitiveMemberOf/microsoft.graph.group", token,
         )

@@ -874,3 +874,51 @@ async def test_concurrent_switches_do_not_cross_tenants(client, world, db_pool):
     outs = await asyncio.gather(*[sev(ta if i % 2 == 0 else tb) for i in range(12)])
     for i, o in enumerate(outs):
         assert o == (["critical", "critical"] if i % 2 == 0 else ["high"])
+
+
+async def test_service_roles_cannot_call_the_msp_definer_functions(world, db_pool):
+    """A compromised paddock_svc_* login must not be able to suspend an MSP's
+    customer or mint tenants by setting the tenant GUC itself (schema/037)."""
+    victim = world["a"]["id"]
+    for role in ("paddock_svc_brain", "paddock_svc_intel"):
+        async with db_pool.acquire() as con:
+            tr = con.transaction()
+            await tr.start()
+            try:
+                await con.execute(f"SET LOCAL ROLE {role}")
+                await con.execute("SELECT set_config('app.tenant_id', $1, true)", MSP_ID)
+                with pytest.raises(asyncpg.InsufficientPrivilegeError, match="permission denied"):
+                    await con.fetchval("SELECT msp_set_child_status($1, 'suspended')", victim)
+            finally:
+                await tr.rollback()
+        async with db_pool.acquire() as con:
+            tr = con.transaction()
+            await tr.start()
+            try:
+                await con.execute(f"SET LOCAL ROLE {role}")
+                await con.execute("SELECT set_config('app.tenant_id', $1, true)", MSP_ID)
+                with pytest.raises(asyncpg.InsufficientPrivilegeError, match="permission denied"):
+                    await con.fetchval("SELECT msp_create_child_tenant('evil', 'Evil', 'x')")
+            finally:
+                await tr.rollback()
+    assert await db_pool.fetchval("SELECT status FROM tenants WHERE id = $1", victim) == "active"
+    assert not await db_pool.fetchval("SELECT 1 FROM tenants WHERE slug = 'evil'")
+
+
+async def test_msp_definer_errors_are_not_a_membership_oracle(world, app_pool):
+    """'not an MSP' and 'not your customer' must be indistinguishable."""
+    other = world["x"]["id"]
+    msgs = set()
+    with tenancy.tenant_context(tenancy.DEFAULT_TENANT_ID):          # not an MSP
+        async with app_pool.acquire() as con:
+            with pytest.raises(asyncpg.InsufficientPrivilegeError) as e1:
+                await con.fetchval("SELECT msp_set_child_status($1, 'suspended')", other)
+            with pytest.raises(asyncpg.InsufficientPrivilegeError) as e2:
+                await con.fetchval("SELECT msp_create_child_tenant('nope', 'Nope', 'x')")
+            msgs |= {str(e1.value), str(e2.value)}
+    with tenancy.tenant_context(MSP_ID):                              # an MSP, not its customer
+        async with app_pool.acquire() as con:
+            with pytest.raises(asyncpg.InsufficientPrivilegeError) as e3:
+                await con.fetchval("SELECT msp_set_child_status($1, 'suspended')", other)
+            msgs.add(str(e3.value))
+    assert len(msgs) == 1, msgs
