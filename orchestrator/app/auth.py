@@ -394,6 +394,9 @@ _ANY = r"[^/]+"
 
 # --- public ---------------------------------------------------------------- #
 _rule("POST", r"/v1/auth/login", None)
+# Two-way ticket sync callbacks (Jira/ServiceNow/Linear). Authenticated by the
+# integration's inbound token / webhook signature inside the handler instead.
+_rule("POST", rf"/v1/integrations/{_ANY}/inbound", None)
 
 # --- read-only operational checks that use non-GET verbs ------------------- #
 _rule("POST", r"/v1/scope/check", "read")

@@ -10,7 +10,11 @@ import logging
 
 log = logging.getLogger(__name__)
 
-_MODULES: tuple[str, ...] = ()
+_MODULES: tuple[str, ...] = (
+    "jira",
+    "servicenow",
+    "linear",
+)
 
 
 def load_all() -> None:
