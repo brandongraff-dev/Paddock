@@ -348,6 +348,35 @@ export interface AuditVerifyOut {
   tenant_id?: string | null;
 }
 
+export interface BillingOut {
+  /**
+   * A Stripe customer exists, so the Customer Portal can be opened.
+   */
+  can_manage: boolean;
+  cancel_at_period_end: boolean;
+  current_period_end: string | null;
+  downgraded: boolean;
+  dunning: boolean;
+  edition: string;
+  enabled: boolean;
+  enforcement: boolean;
+  features: string[];
+  grace_ends_at: string | null;
+  limits: Record<string, number | null>;
+  plan: string | null;
+  plans: PlanOut[];
+  /**
+   * Downgraded to Community limits AND over one of them: growth is refused.
+   */
+  read_only: boolean;
+  source: string;
+  status: string;
+  trial_days_left: number | null;
+  trial_ends_at: string | null;
+  upgrade_url: string;
+  usage: Record<string, QuotaOut>;
+}
+
 export interface ChainIn {
   anchor_asset_id?: string | null;
   blast_radius_score?: number | null;
@@ -426,6 +455,10 @@ export interface CheckOut {
   detail: string;
   method: string;
   ok: boolean;
+}
+
+export interface CheckoutIn {
+  plan: string;
 }
 
 export interface ClusterOut {
@@ -1270,6 +1303,19 @@ export interface PendingAction {
   target: string;
 }
 
+export interface PlanOut {
+  assets: number | null;
+  edition: string;
+  key: string;
+  name: string;
+  /**
+   * True when a Stripe price id is configured for this plan.
+   */
+  purchasable: boolean;
+  seats: number | null;
+  sites: number | null;
+}
+
 export interface ProposeIn {
   created_by?: string | null;
   finding_id: string;
@@ -1379,6 +1425,12 @@ export interface PublicProvider {
 export interface PublicProvidersOut {
   providers: PublicProvider[];
   sso_required: boolean;
+}
+
+export interface QuotaOut {
+  limit: number | null;
+  over: boolean;
+  used: number | null;
 }
 
 /**
@@ -2198,6 +2250,10 @@ export interface TrendPoint {
   value: number;
 }
 
+export interface UrlOut {
+  url: string;
+}
+
 export interface UsageLimitState {
   limit: number | null;
   over: boolean;
@@ -2331,6 +2387,7 @@ export const OPERATIONS = {
   replaceUser: ["PUT", "/scim/v2/Users/{user_id}", false],
   patchUser: ["PATCH", "/scim/v2/Users/{user_id}", false],
   deleteUser: ["DELETE", "/scim/v2/Users/{user_id}", false],
+  publicStatus: ["GET", "/status", false],
   listAlertRules: ["GET", "/v1/alert-rules", true],
   createAlertRule: ["POST", "/v1/alert-rules", false],
   patchAlertRule: ["PATCH", "/v1/alert-rules/{rule_id}", false],
@@ -2374,6 +2431,10 @@ export const OPERATIONS = {
   oidcCallback: ["GET", "/v1/auth/sso/{slug}/callback", false],
   samlMetadata: ["GET", "/v1/auth/sso/{slug}/metadata", false],
   ssoStart: ["GET", "/v1/auth/sso/{slug}/start", false],
+  getBilling: ["GET", "/v1/billing", false],
+  createCheckout: ["POST", "/v1/billing/checkout", false],
+  createPortal: ["POST", "/v1/billing/portal", false],
+  stripeWebhook: ["POST", "/v1/billing/webhook", false],
   listChains: ["GET", "/v1/chains", true],
   createChain: ["POST", "/v1/chains", false],
   listChanges: ["GET", "/v1/changes", true],
@@ -2656,6 +2717,13 @@ export abstract class GeneratedOperations {
    */
   deleteUser(userId: string, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("DELETE", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, options });
+  }
+
+  /**
+   * GET /status — Public Status
+   */
+  publicStatus(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/status", { options });
   }
 
   /**
@@ -2996,6 +3064,38 @@ export abstract class GeneratedOperations {
    */
   ssoStart(slug: string, query?: { return_to?: string | null; spa_challenge?: string | null }, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("GET", "/v1/auth/sso/{slug}/start", { pathParams: { slug: slug }, query, options });
+  }
+
+  /**
+   * GET /v1/billing — Get Billing
+   */
+  getBilling(options?: RequestOptions): Promise<BillingOut> {
+    return this._request<BillingOut>("GET", "/v1/billing", { options });
+  }
+
+  /**
+   * POST /v1/billing/checkout — Create Checkout
+   */
+  createCheckout(body: CheckoutIn, options?: RequestOptions): Promise<UrlOut> {
+    return this._request<UrlOut>("POST", "/v1/billing/checkout", { body, options });
+  }
+
+  /**
+   * POST /v1/billing/portal — Create Portal
+   */
+  createPortal(options?: RequestOptions): Promise<UrlOut> {
+    return this._request<UrlOut>("POST", "/v1/billing/portal", { options });
+  }
+
+  /**
+   * POST /v1/billing/webhook — Stripe Webhook
+   *
+   * Stripe -> Paddock. Public route: the ``Stripe-Signature`` header is the
+   * authentication (HMAC-SHA256 over ``timestamp.body``, tolerance window,
+   * replay protection by event id). Always answers fast; 5xx makes Stripe retry.
+   */
+  stripeWebhook(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/billing/webhook", { options });
   }
 
   /**

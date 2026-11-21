@@ -472,6 +472,33 @@ AuditVerifyOut = TypedDict(
     total=False,
 )
 
+BillingOut = TypedDict(
+    'BillingOut',
+    {
+        'can_manage': Required['bool'],
+        'cancel_at_period_end': Required['bool'],
+        'current_period_end': Required['str | None'],
+        'downgraded': Required['bool'],
+        'dunning': Required['bool'],
+        'edition': Required['str'],
+        'enabled': Required['bool'],
+        'enforcement': Required['bool'],
+        'features': Required['list[str]'],
+        'grace_ends_at': Required['str | None'],
+        'limits': Required['dict[str, int | None]'],
+        'plan': Required['str | None'],
+        'plans': Required['list[PlanOut]'],
+        'read_only': Required['bool'],
+        'source': Required['str'],
+        'status': Required['str'],
+        'trial_days_left': Required['int | None'],
+        'trial_ends_at': Required['str | None'],
+        'upgrade_url': Required['str'],
+        'usage': Required['dict[str, QuotaOut]'],
+    },
+    total=False,
+)
+
 ChainIn = TypedDict(
     'ChainIn',
     {
@@ -584,6 +611,14 @@ CheckOut = TypedDict(
         'detail': Required['str'],
         'method': Required['str'],
         'ok': Required['bool'],
+    },
+    total=False,
+)
+
+CheckoutIn = TypedDict(
+    'CheckoutIn',
+    {
+        'plan': Required['str'],
     },
     total=False,
 )
@@ -1745,6 +1780,20 @@ PendingAction = TypedDict(
     total=False,
 )
 
+PlanOut = TypedDict(
+    'PlanOut',
+    {
+        'assets': Required['int | None'],
+        'edition': Required['str'],
+        'key': Required['str'],
+        'name': Required['str'],
+        'purchasable': Required['bool'],
+        'seats': Required['int | None'],
+        'sites': Required['int | None'],
+    },
+    total=False,
+)
+
 ProposeIn = TypedDict(
     'ProposeIn',
     {
@@ -1886,6 +1935,16 @@ PublicProvidersOut = TypedDict(
     {
         'providers': Required['list[PublicProvider]'],
         'sso_required': Required['bool'],
+    },
+    total=False,
+)
+
+QuotaOut = TypedDict(
+    'QuotaOut',
+    {
+        'limit': Required['int | None'],
+        'over': Required['bool'],
+        'used': Required['int | None'],
     },
     total=False,
 )
@@ -3029,6 +3088,14 @@ TrendPoint = TypedDict(
     total=False,
 )
 
+UrlOut = TypedDict(
+    'UrlOut',
+    {
+        'url': Required['str'],
+    },
+    total=False,
+)
+
 UsageLimitState = TypedDict(
     'UsageLimitState',
     {
@@ -3203,6 +3270,7 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'replace_user': ('PUT', '/scim/v2/Users/{user_id}', False),
     'patch_user': ('PATCH', '/scim/v2/Users/{user_id}', False),
     'delete_user': ('DELETE', '/scim/v2/Users/{user_id}', False),
+    'public_status': ('GET', '/status', False),
     'list_alert_rules': ('GET', '/v1/alert-rules', True),
     'create_alert_rule': ('POST', '/v1/alert-rules', False),
     'patch_alert_rule': ('PATCH', '/v1/alert-rules/{rule_id}', False),
@@ -3246,6 +3314,10 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'oidc_callback': ('GET', '/v1/auth/sso/{slug}/callback', False),
     'saml_metadata': ('GET', '/v1/auth/sso/{slug}/metadata', False),
     'sso_start': ('GET', '/v1/auth/sso/{slug}/start', False),
+    'get_billing': ('GET', '/v1/billing', False),
+    'create_checkout': ('POST', '/v1/billing/checkout', False),
+    'create_portal': ('POST', '/v1/billing/portal', False),
+    'stripe_webhook': ('POST', '/v1/billing/webhook', False),
     'list_chains': ('GET', '/v1/chains', True),
     'create_chain': ('POST', '/v1/chains', False),
     'list_changes': ('GET', '/v1/changes', True),
@@ -3489,6 +3561,11 @@ class GeneratedOperations:
         """DELETE /scim/v2/Users/{user_id} -- Delete User
         """
         return self._request('DELETE', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id})
+
+    def public_status(self) -> Any:
+        """GET /status -- Public Status
+        """
+        return self._request('GET', '/status')
 
     def list_alert_rules(self, *, enabled: bool | None = None, limit: int | None = None, offset: int | None = None) -> list[AlertRuleOut]:
         """GET /v1/alert-rules -- List Alert Rules
@@ -3746,6 +3823,30 @@ class GeneratedOperations:
         """GET /v1/auth/sso/{slug}/start -- Sso Start
         """
         return self._request('GET', '/v1/auth/sso/{slug}/start', path_params={'slug': slug}, query={'return_to': return_to, 'spa_challenge': spa_challenge})
+
+    def get_billing(self) -> BillingOut:
+        """GET /v1/billing -- Get Billing
+        """
+        return self._request('GET', '/v1/billing')
+
+    def create_checkout(self, body: CheckoutIn | dict[str, Any]) -> UrlOut:
+        """POST /v1/billing/checkout -- Create Checkout
+        """
+        return self._request('POST', '/v1/billing/checkout', body=body)
+
+    def create_portal(self) -> UrlOut:
+        """POST /v1/billing/portal -- Create Portal
+        """
+        return self._request('POST', '/v1/billing/portal')
+
+    def stripe_webhook(self) -> Any:
+        """POST /v1/billing/webhook -- Stripe Webhook
+
+        Stripe -> Paddock. Public route: the ``Stripe-Signature`` header is the
+        authentication (HMAC-SHA256 over ``timestamp.body``, tolerance window,
+        replay protection by event id). Always answers fast; 5xx makes Stripe retry.
+        """
+        return self._request('POST', '/v1/billing/webhook')
 
     def list_chains(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, anchor_asset_id: str | None = None, limit: int | None = None, offset: int | None = None) -> list[ChainOut]:
         """GET /v1/chains -- List Chains
