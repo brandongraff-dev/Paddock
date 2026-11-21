@@ -3,6 +3,9 @@ import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
 import Wordmark, { WORDMARK_ASPECT } from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
+import GallopTrail from "../brand/GallopTrail";
+import PlateStrip from "../brand/PlateStrip";
+import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
 import { useInView } from "./landing/hooks";
@@ -91,7 +94,7 @@ export default function Landing() {
     <div className="lp">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <PixelField className="lp-pixels" />
+          <PixelField className="lp-pixels" interactive />
         </div>
         <div className="lp-grain" aria-hidden="true" />
 
@@ -120,6 +123,7 @@ export default function Landing() {
         </h1>
 
         <div className="lp-horse">
+          <GallopTrail className="lp-trail" />
           <DigitHorse body={0.42} />
         </div>
 
@@ -137,6 +141,10 @@ export default function Landing() {
           </p>
         </footer>
       </section>
+
+      <div className="lp-film" aria-hidden="true">
+        <PlateStrip className="lp-film-track" />
+      </div>
 
       <section className="lp-agents" id="agents">
         <div className="lp-section-head">
@@ -173,6 +181,7 @@ export default function Landing() {
         </div>
       </section>
 
+      <DitherRule className="lp-rule-dither" />
       <Showcase />
 
       <div className="lp-ticker" aria-label="Integrations and standards">

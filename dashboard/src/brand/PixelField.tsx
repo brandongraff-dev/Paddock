@@ -36,7 +36,7 @@ const RAMP: { at: number; c: RGB }[] = [
   { at: 1.0, c: [18, 16, 14] },
 ];
 
-function ramp(t: number): RGB {
+export function ramp(t: number): RGB {
   if (t <= 0) return RAMP[0].c;
   for (let i = 1; i < RAMP.length; i++) {
     if (t <= RAMP[i].at) {
@@ -54,7 +54,7 @@ function ramp(t: number): RGB {
 }
 
 /** Cheap deterministic hash → [0,1). */
-function hash(x: number, y: number): number {
+export function hash(x: number, y: number): number {
   let h = (x * 374761393 + y * 668265263) | 0;
   h = (h ^ (h >>> 13)) * 1274126177;
   return (((h ^ (h >>> 16)) >>> 0) % 100000) / 100000;
@@ -82,10 +82,12 @@ interface Props {
   animate?: boolean;
   /** Slide the band horizontally (fraction of width; negative = rightwards). */
   originX?: number;
+  /** Lean toward the pointer and light up the dots around it. */
+  interactive?: boolean;
   className?: string;
 }
 
-export default function PixelField({ cell = 5, animate = true, originX = 0, className }: Props) {
+export default function PixelField({ cell = 5, animate = true, originX = 0, interactive = false, className }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -100,6 +102,8 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, clas
     let raf = 0;
     let last = 0;
     let t0 = 0;
+    // pointer in 0..1 canvas space (smoothed), plus presence 0..1
+    const ptr = { x: 0.5, y: 0.5, tx: 0.5, ty: 0.5, on: 0, ton: 0 };
 
     const paint = (time: number) => {
       const w = canvas.clientWidth;
@@ -117,29 +121,40 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, clas
       const cols = Math.ceil(w / cell);
       const rows = Math.ceil(h / cell);
       const drift = time * 0.00004;
+      const lean = interactive ? (ptr.x - 0.5) * 0.12 : 0;
+      const lift = interactive ? (ptr.y - 0.5) * 0.08 : 0;
+      const aspect = w / h;
       const dot = Math.max(1, cell - 1.4);
 
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
-          const nx = i / cols - originX;
+          const nx = i / cols - originX - lean;
           const ny = j / rows;
           // Band axis runs from upper-left to lower-right, ~28° off horizontal.
           const along = nx * 0.88 + ny * 1.1;
-          const across = nx * -0.5 + ny * 1.0 - 0.18;
+          const across = nx * -0.5 + ny * 1.0 - 0.18 - lift;
           const warp = (vnoise(i * 0.045 + drift * 90, j * 0.06) - 0.5) * 0.22;
           // Band centre line fades as it travels; width tapers toward the right.
           const profile = across + warp - 0.12 * Math.sin(along * 2.4 + drift * 60);
           const tt = 0.5 + profile * 1.9;
-          if (tt <= 0 || tt >= 1) continue;
+          const inBand = tt > 0 && tt < 1;
+          if (!inBand && !(interactive && ptr.on > 0.01)) continue;
           // Brightness envelope: strong on the left, dying out to the right.
           const fade = Math.max(0, 1 - along * 0.62);
-          const env = Math.sin(tt * Math.PI) * fade;
+          const env = inBand ? Math.sin(tt * Math.PI) * fade : 0;
           // Ordered dither + noise decides whether this dot lights at all.
           const thr =
             (BAYER8[j & 7][i & 7] / 64) * 0.55 + hash(i, j) * 0.45;
-          const lit = env * 1.25 - thr * 0.55;
+          let lit = env * 1.25 - thr * 0.55;
+          if (interactive && ptr.on > 0.01) {
+            // a soft lens: dots near the pointer brighten and ignite even off-band
+            const dx = (i / cols - ptr.x) * aspect;
+            const dy = j / rows - ptr.y;
+            const d = Math.sqrt(dx * dx + dy * dy) / 0.22;
+            if (d < 1) lit += (1 - d) * (1 - d) * 0.9 * ptr.on * (0.5 + 0.5 * env + 0.3);
+          }
           if (lit <= 0.02) continue;
-          const [r, g, b] = ramp(tt);
+          const [r, g, b] = ramp(inBand ? tt : 0.5 + ((i / cols - ptr.x) * 0.9));
           const k = Math.min(1, lit * 1.5);
           ctx.fillStyle = `rgb(${(r * k) | 0},${(g * k) | 0},${(b * k) | 0})`;
           ctx.fillRect(i * cell, j * cell, dot, dot);
@@ -149,7 +164,10 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, clas
 
     const loop = (now: number) => {
       if (!t0) t0 = now;
-      if (now - last > 66) {
+      ptr.x += (ptr.tx - ptr.x) * 0.12;
+      ptr.y += (ptr.ty - ptr.y) * 0.12;
+      ptr.on += (ptr.ton - ptr.on) * 0.1;
+      if (now - last > (interactive ? 40 : 66)) {
         paint(now - t0);
         last = now;
       }
@@ -159,13 +177,29 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, clas
     paint(0);
     const onResize = () => paint(last ? last - t0 : 0);
     window.addEventListener("resize", onResize);
-    if (animate && !reduce) raf = requestAnimationFrame(loop);
+    const onMove = (e: PointerEvent) => {
+      const r = canvas.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width;
+      const y = (e.clientY - r.top) / r.height;
+      const inside = x >= -0.05 && x <= 1.05 && y >= -0.05 && y <= 1.05;
+      ptr.tx = Math.min(1, Math.max(0, x));
+      ptr.ty = Math.min(1, Math.max(0, y));
+      ptr.ton = inside ? 1 : 0;
+    };
+    const onLeave = () => { ptr.ton = 0; };
+    if (interactive && !reduce) {
+      window.addEventListener("pointermove", onMove, { passive: true });
+      document.addEventListener("pointerleave", onLeave);
+    }
+    if ((animate || interactive) && !reduce) raf = requestAnimationFrame(loop);
 
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerleave", onLeave);
     };
-  }, [cell, animate, originX]);
+  }, [cell, animate, originX, interactive]);
 
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
