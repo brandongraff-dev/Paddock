@@ -44,7 +44,7 @@ describe("brand", () => {
 
   it("landing renders signed-out with a sign-in CTA and the four agents", () => {
     render(React.createElement(MemoryRouter, null, React.createElement(Landing)));
-    expect(screen.getByRole("link", { name: /sign in/i })).toHaveAttribute("href", "/login");
+    expect(screen.getAllByRole("link", { name: /sign in/i })[0]).toHaveAttribute("href", "/login");
     for (const a of ["Warden", "Outrider", "Herald", "Farrier"]) {
       expect(screen.getByRole("heading", { name: new RegExp(a) })).toBeInTheDocument();
     }
@@ -53,7 +53,7 @@ describe("brand", () => {
   it("landing CTA opens the console when signed in", () => {
     useAuth.setState({ token: "t", user: { username: "u", role: "admin", clearance: "restricted" } });
     render(React.createElement(MemoryRouter, null, React.createElement(Landing)));
-    expect(screen.getByRole("link", { name: /open console/i })).toHaveAttribute("href", "/");
+    expect(screen.getAllByRole("link", { name: /open console/i })[0]).toHaveAttribute("href", "/");
   });
 });
 
