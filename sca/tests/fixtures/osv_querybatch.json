@@ -1,0 +1,7 @@
+{
+  "results": [
+    {"vulns": [{"id": "GHSA-xxxx-yyyy-zzzz"}]},
+    {},
+    {"vulns": [{"id": "MAL-2023-0001"}]}
+  ]
+}

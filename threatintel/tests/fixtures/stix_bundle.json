@@ -1,0 +1,119 @@
+{
+  "type": "bundle",
+  "id": "bundle--f1c2b3a4-0001-0002-0003-000400050006",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--11111111-1111-1111-1111-111111111111",
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Malicious IP 203.0.113.10",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '203.0.113.10']",
+      "pattern_type": "stix",
+      "confidence": 90,
+      "valid_from": "2024-01-01T00:00:00Z"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--22222222-2222-2222-2222-222222222222",
+      "name": "C2 domain evil-c2.example",
+      "indicator_types": ["c2", "malicious-activity"],
+      "pattern": "[domain-name:value = 'evil-c2.example']",
+      "pattern_type": "stix",
+      "confidence": 75,
+      "valid_from": "2024-02-01T00:00:00Z",
+      "valid_until": "2030-02-01T00:00:00Z"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--33333333-3333-3333-3333-333333333333",
+      "name": "Payload URL",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[url:value = 'http://bad.example/payload.bin']",
+      "pattern_type": "stix"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--44444444-4444-4444-4444-444444444444",
+      "name": "Dropper hash",
+      "pattern": "[file:hashes.'SHA-256' = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']",
+      "pattern_type": "stix"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--55555555-5555-5555-5555-555555555555",
+      "name": "Compound IOC",
+      "pattern": "[ipv4-addr:value = '198.51.100.5' OR domain-name:value = 'multi.example']",
+      "pattern_type": "stix"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--66666666-6666-6666-6666-666666666666",
+      "name": "Bad netblock",
+      "pattern": "[ipv4-addr:value = '192.0.2.0/24']",
+      "pattern_type": "stix"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--77777777-7777-7777-7777-777777777777",
+      "name": "Phishing sender",
+      "indicator_types": ["phishing"],
+      "pattern": "[email-addr:value = 'attacker@phish.example']",
+      "pattern_type": "stix"
+    },
+    {
+      "type": "malware",
+      "spec_version": "2.1",
+      "id": "malware--aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "name": "Emotet",
+      "is_family": true
+    },
+    {
+      "type": "threat-actor",
+      "spec_version": "2.1",
+      "id": "threat-actor--bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "name": "APT-X"
+    },
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "relationship_type": "indicates",
+      "source_ref": "indicator--22222222-2222-2222-2222-222222222222",
+      "target_ref": "malware--aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    },
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--dddddddd-dddd-dddd-dddd-dddddddddddd",
+      "relationship_type": "indicates",
+      "source_ref": "indicator--11111111-1111-1111-1111-111111111111",
+      "target_ref": "threat-actor--bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--99999999-9999-9999-9999-999999999999",
+      "name": "Malformed, no pattern"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--aaaa0000-0000-0000-0000-000000000000",
+      "pattern": "[network-traffic:dst_ref.value = 'unsupported']",
+      "pattern_type": "stix"
+    },
+    {
+      "type": "not-a-real-object",
+      "junk": true
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palantir-asm-ontology"
+version = "0.1.0"
+description = "Ontology / semantic-layer projector: projects the raw ASM tables into a typed object + link model (Palantir-style Entities, not rows)."
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "asyncpg>=0.29",
+    "uvloop>=0.19; sys_platform != 'win32'",
+    "orjson>=3.9",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

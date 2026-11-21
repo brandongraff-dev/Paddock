@@ -1,0 +1,35 @@
+[project]
+name = "palantir-asm-worker-passive"
+version = "0.1.0"
+description = "Passive discovery worker for palantir-asm"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9,<3.12",
+    "redis>=5.0.0",
+    "dnspython>=2.4.0",
+    "loguru>=0.7.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "websockets>=12.0",
+    "tldextract>=5.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "aioresponses>=0.7.6",
+    "fakeredis>=2.20.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

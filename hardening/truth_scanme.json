@@ -1,0 +1,41 @@
+{
+  "target": "scanme.nmap.org",
+  "authorization": "https://nmap.org/book/legal-issues.html — scanme.nmap.org is explicitly provided by the Nmap Project for people to test scanning tooling against. Light, non-intrusive probing only.",
+  "as_of": "2026-11-20",
+  "scope": "Hand-labeled ground truth for the active worker's SAFE modules only (http_probe, header_check, tls_inspect/grade, exposed_file). This is a SMALL, approximate reference set used to compute a crude false-positive rate; scanme's live configuration can drift, so treat the number as indicative, not authoritative.",
+  "classes": {
+    "signal": "A legitimate, correctly-reported observation we expect the scanner to surface for this host (true positive).",
+    "noise": "Informational / tool-availability output that is accurate but is NOT an actionable vulnerability; if it is ever escalated to >= low severity that is a false positive.",
+    "false_positive_if_present": "This host does NOT expose the resource/condition. If the scanner emits this finding at all, it is a false positive."
+  },
+  "labels": {
+    "missing-content-security-policy": {"class": "signal", "note": "The default Apache page genuinely ships no CSP header."},
+    "missing-x-content-type-options": {"class": "signal", "note": "No X-Content-Type-Options: nosniff is sent."},
+    "missing-frame-protection": {"class": "signal", "note": "Neither X-Frame-Options nor CSP frame-ancestors is present."},
+    "missing-referrer-policy": {"class": "signal", "note": "Info-level; header genuinely absent."},
+    "missing-permissions-policy": {"class": "signal", "note": "Info-level; header genuinely absent."},
+    "missing-strict-transport-security": {"class": "signal", "note": "Only valid if probed over HTTPS; scanme is HTTP-only, so this should normally NOT appear. If it appears on an HTTP-only probe it is a false positive."},
+
+    "robots-txt-present": {"class": "noise", "note": "Benign hygiene/info only."},
+    "sitemap-present": {"class": "noise", "note": "Benign info only."},
+    "security-txt-present": {"class": "noise", "note": "Benign info only (good hygiene)."},
+    "tool-unavailable-tlsx": {"class": "noise", "note": "tlsx binary not installed in this run environment; accurate availability notice, not a vulnerability."},
+    "tool-unavailable-nuclei": {"class": "noise", "note": "nuclei binary not installed; availability notice, not a vulnerability."},
+
+    "exposed-git-head": {"class": "false_positive_if_present", "note": "scanme does not serve a .git directory."},
+    "exposed-env": {"class": "false_positive_if_present", "note": "scanme does not serve a .env file."},
+    "exposed-env-local": {"class": "false_positive_if_present", "note": "scanme does not serve a .env.local file."},
+    "exposed-aws-credentials": {"class": "false_positive_if_present", "note": "No AWS credentials file is exposed."},
+    "exposed-config-backup": {"class": "false_positive_if_present", "note": "No PHP config backup is exposed."},
+    "exposed-backup-archive": {"class": "false_positive_if_present", "note": "No backup archive is exposed."},
+    "exposed-database-dump": {"class": "false_positive_if_present", "note": "No database dump is exposed."},
+    "exposed-ds-store": {"class": "false_positive_if_present", "note": "No .DS_Store is exposed."},
+    "exposed-apache-server-status": {"class": "false_positive_if_present", "note": "mod_status should not be world-readable here."}
+  },
+  "expected_signal_rule_ids": [
+    "missing-content-security-policy",
+    "missing-x-content-type-options",
+    "missing-frame-protection"
+  ],
+  "notes": "Recall is measured only against expected_signal_rule_ids (the actionable, severity >= low findings we expect on a plain HTTP probe of scanme). Info-level signals (referrer/permissions policy) are reported but excluded from the actionable FP denominator."
+}

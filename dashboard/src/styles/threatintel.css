@@ -1,0 +1,424 @@
+/* Threat Intel page — dark/dense, self-contained. Leans on the global design
+   tokens (--bg, --panel, --border, --text-1/2, --accent) so it matches the
+   rest of the app, but ships every class it needs here. */
+
+.ti-page .subtitle {
+  max-width: 68ch;
+}
+
+/* ------------------------------- layout -------------------------------- */
+
+.ti-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .ti-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ti-page .panel-sub {
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.ti-loading,
+.ti-error,
+.ti-muted {
+  padding: 10px 2px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.ti-error {
+  color: var(--bad, #e06c75);
+}
+
+/* ------------------------------- chips --------------------------------- */
+
+.ti-type-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid;
+  border-radius: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  white-space: nowrap;
+}
+
+.ti-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  background: var(--chip-bg, #1b2330);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.ti-tag.malware {
+  color: #e06c75;
+  border-color: #5a2a30;
+  background: #2a1a1e;
+}
+.ti-tag.actor {
+  color: #c678dd;
+  border-color: #4a2a52;
+  background: #241a2a;
+}
+
+/* ------------------------------ matches -------------------------------- */
+
+.ti-matches {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ti-matches .panel-h {
+  padding: 12px 14px 8px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border);
+}
+.ti-match-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.ti-match-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.ti-match-row:hover {
+  background: color-mix(in srgb, var(--accent, #4ea3ff) 6%, transparent);
+}
+
+.ti-match-body {
+  min-width: 0;
+}
+.ti-match-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.ti-match-arrow {
+  color: var(--text-2);
+  font-size: 11px;
+}
+.ti-asset {
+  color: var(--accent, #4ea3ff);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.ti-asset:hover {
+  text-decoration: underline;
+}
+.ti-asset.static {
+  color: var(--text-1);
+  cursor: default;
+}
+.ti-ind-value {
+  color: var(--text-1);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.ti-match-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+.ti-label {
+  color: var(--text-1);
+  font-size: 11px;
+  font-weight: 500;
+}
+.ti-subject-kind {
+  color: var(--text-2);
+  font-size: 10px;
+  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ti-match-finding {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.ti-flink {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, #4ea3ff);
+  cursor: pointer;
+  font-size: 11px;
+}
+.ti-flink:hover {
+  text-decoration: underline;
+}
+.ti-match-time {
+  color: var(--text-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ----------------------------- indicators ------------------------------ */
+
+.ti-filterbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.ti-filterbar select,
+.ti-filterbar input {
+  background: var(--input-bg, #0e141d);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-1);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.ti-filterbar input {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+
+.ti-table-wrap {
+  overflow: auto;
+  max-height: 460px;
+}
+.ti-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.ti-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel, #11161f);
+  text-align: left;
+  color: var(--text-2);
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.ti-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.ti-table td.ti-ind-value {
+  max-width: 220px;
+}
+.ti-labels {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ti-feed-name {
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+/* ------------------------------- feeds --------------------------------- */
+
+.ti-feeds {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ti-feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ti-feed-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2, #0f141c);
+}
+.ti-feed-row.disabled {
+  opacity: 0.55;
+}
+.ti-feed-main {
+  flex: 1;
+  min-width: 0;
+}
+.ti-feed-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ti-feed-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.ti-feed-kind {
+  font-size: 10px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+}
+.ti-feed-count {
+  font-size: 10px;
+  color: var(--text-2);
+  margin-left: auto;
+}
+.ti-feed-url {
+  font-size: 11px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.ti-feed-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 4px;
+}
+.ti-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3a4252;
+  flex: none;
+}
+.ti-status-dot.ok {
+  background: #58d68d;
+}
+.ti-status-dot.err {
+  background: #e06c75;
+}
+.ti-feed-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.ti-feed-form,
+.ti-ingest {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ti-form-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+}
+.ti-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.ti-feeds .field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ti-feeds .field label {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.ti-feeds .field input,
+.ti-feeds .field select {
+  background: var(--input-bg, #0e141d);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-1);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.ti-feeds .field-note {
+  font-size: 10px;
+  color: var(--text-2);
+}
+.ti-form-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+.ti-ingest textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  background: var(--input-bg, #0e141d);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-1);
+  padding: 8px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* buttons: fall back gracefully if the global .primary/.ghost aren't scoped */
+.ti-page button.primary {
+  background: var(--accent, #4ea3ff);
+  color: #04121f;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ti-page button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ti-page button.ghost {
+  background: transparent;
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ti-page button.ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ti-page button.ghost.danger {
+  color: #e06c75;
+  border-color: #5a2a30;
+}

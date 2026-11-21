@@ -1,0 +1,26 @@
+id: exposed_git_plus_vuln_lib
+name: "Exposed .git with vulnerable library"
+severity: critical
+window_days: 30
+all_of:
+  - finding:
+      rule_source: exposed_file
+      rule_id_match: "^exposed-dotgit.*"
+    scope: same_host
+  - finding:
+      rule_source: cve_match
+      cvss_min: 7.0
+      severity_min: high
+    scope: same_host
+impact: |
+  The host {host} exposes a .git tree and runs a vulnerable component
+  (CVSS {cvss}). An attacker can reconstruct source code from the
+  exposed metadata and combine that visibility with the vulnerability
+  to escalate from file disclosure to code execution on the host,
+  which raises the overall severity beyond either finding alone.
+remediation:
+  - Block requests to /.git/ at the web server or CDN layer.
+  - Patch the affected library to a non-affected version.
+  - Verify there are no copies of the .git directory in other webroots.
+references:
+  - "https://owasp.org/www-project-top-ten/"

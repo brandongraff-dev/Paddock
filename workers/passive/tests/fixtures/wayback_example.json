@@ -1,0 +1,7 @@
+[
+  ["original", "timestamp", "mimetype"],
+  ["https://www.example.com/login", "20210101120000", "text/html"],
+  ["https://api.example.com/v1/users", "20220201120000", "application/json"],
+  ["https://cdn.example.com/style.css", "20230301120000", "text/css"],
+  ["https://evil.net/phish", "20230401120000", "text/html"]
+]

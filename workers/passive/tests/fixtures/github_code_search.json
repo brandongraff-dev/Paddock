@@ -1,0 +1,36 @@
+{
+  "total_count": 2,
+  "incomplete_results": false,
+  "items": [
+    {
+      "name": ".env",
+      "path": "deploy/.env",
+      "sha": "abc",
+      "html_url": "https://github.com/acme/app/blob/main/deploy/.env",
+      "repository": {
+        "id": 1,
+        "name": "app",
+        "full_name": "acme/app",
+        "private": false,
+        "owner": {"login": "acme"},
+        "html_url": "https://github.com/acme/app",
+        "description": "Our main app"
+      }
+    },
+    {
+      "name": "README.md",
+      "path": "README.md",
+      "sha": "def",
+      "html_url": "https://github.com/acme/app/blob/main/README.md",
+      "repository": {
+        "id": 1,
+        "name": "app",
+        "full_name": "acme/app",
+        "private": false,
+        "owner": {"login": "acme"},
+        "html_url": "https://github.com/acme/app",
+        "description": "Our main app"
+      }
+    }
+  ]
+}

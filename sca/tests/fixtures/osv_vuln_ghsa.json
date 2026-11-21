@@ -1,0 +1,17 @@
+{
+  "id": "GHSA-xxxx-yyyy-zzzz",
+  "summary": "Prototype pollution in demo-lib",
+  "aliases": ["CVE-2023-9999"],
+  "severity": [
+    {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}
+  ],
+  "affected": [
+    {
+      "package": {"ecosystem": "npm", "name": "demo-lib"},
+      "ranges": [
+        {"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.2.3"}]}
+      ]
+    }
+  ],
+  "references": [{"type": "WEB", "url": "https://example.com/advisory"}]
+}

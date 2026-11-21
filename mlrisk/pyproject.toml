@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palantir-asm-mlrisk"
+version = "0.1.0"
+description = "Adaptive ML layer: a risk ranker that learns from analyst triage + a statistical anomaly detector over the attack surface. Ranks + flags only; no exploitation."
+requires-python = ">=3.11"
+dependencies = [
+    # Core ML: numpy is mandatory; scikit-learn is listed but imported in a
+    # GUARDED way (see risk_model/anomaly) so the service still boots and the
+    # heuristic-prior / z-score paths keep working if it is unavailable.
+    "numpy>=1.26",
+    "scikit-learn>=1.3",
+    "asyncpg>=0.29",
+    "aiohttp>=3.9",
+    "aiohttp-middlewares>=2.2",
+    "uvloop>=0.19; sys_platform != 'win32'",
+    "orjson>=3.9",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "scikit-learn>=1.3",
+    "numpy>=1.26",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

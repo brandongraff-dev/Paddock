@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/palantir-asm/palantir-asm/security/advisories/new
+    about: >-
+      Found a vulnerability in palantir-asm itself? Report it privately via a
+      security advisory — do not open a public issue. See SECURITY.md.
+  - name: Questions & discussion
+    url: https://github.com/palantir-asm/palantir-asm/discussions
+    about: Usage questions, ideas, and show-and-tell go in Discussions.

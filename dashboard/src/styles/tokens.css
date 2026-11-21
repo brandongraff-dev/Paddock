@@ -1,0 +1,91 @@
+/* ------------------------------------------------------------------ *
+ * Design tokens — dark-first, Palantir-inspired.                      *
+ * ------------------------------------------------------------------ */
+
+:root,
+:root[data-theme="dark"] {
+  /* Surfaces */
+  --bg-0: #0a0d12;
+  --bg-1: #0f1319;
+  --bg-2: #141921;
+  --bg-3: #1a2029;
+  --panel: #10151d;
+
+  /* Lines */
+  --border: #1d2430;
+  --border-strong: #2a3344;
+
+  /* Text */
+  --text-0: #e6edf7;
+  --text-1: #aab4c4;
+  --text-2: #6f7a8c;
+
+  /* Accent */
+  --accent: #4ea3ff;
+  --accent-dim: #2b6cb0;
+  --accent-glow: rgba(78, 163, 255, 0.35);
+
+  /* Severity palette */
+  --sev-info: #6f7a8c;
+  --sev-low: #4ea3ff;
+  --sev-med: #f0b429;
+  --sev-high: #ff7a45;
+  --sev-crit: #ff4d6d;
+
+  /* Status */
+  --ok: #58d68d;
+  --warn: #f0b429;
+  --bad: #ff4d6d;
+
+  /* Asset-kind palette (graph nodes, chips) */
+  --kind-org: #c084fc;
+  --kind-domain: #4ea3ff;
+  --kind-subdomain: #6cc6ff;
+  --kind-ipv4: #58d68d;
+  --kind-ipv6: #3eb673;
+  --kind-port: #f0b429;
+  --kind-service: #ffb86b;
+  --kind-technology: #c7a7ff;
+  --kind-certificate: #f78da7;
+  --kind-endpoint: #ff7a45;
+  --kind-repository: #e6edf7;
+  --kind-secret_candidate: #ff4d6d;
+  --kind-cloud_account: #22d3ee;
+  --kind-cloud_resource: #0ea5e9;
+
+  /* Type */
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: Inter, -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+
+  /* Radius */
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 10px;
+
+  /* Shadow */
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
+              0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.55),
+              0 1px 0 rgba(255, 255, 255, 0.03) inset;
+
+  /* Layout */
+  --rail-w: 72px;
+  --topbar-h: 44px;
+  --drawer-w: 420px;
+}
+
+/* Reserve for future light theme — not primary. */
+:root[data-theme="light"] {
+  --bg-0: #f4f6fa;
+  --bg-1: #ffffff;
+  --bg-2: #f4f6fa;
+  --bg-3: #e8edf5;
+  --panel: #ffffff;
+  --border: #d5dbe5;
+  --border-strong: #b8c0cf;
+  --text-0: #0a0d12;
+  --text-1: #3a4253;
+  --text-2: #6f7a8c;
+  --accent: #2b6cb0;
+  --accent-dim: #4ea3ff;
+}

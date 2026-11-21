@@ -1,0 +1,22 @@
+id: kev_on_public_host
+name: "KEV-listed CVE on an internet-facing host"
+severity: critical
+window_days: 90
+all_of:
+  - finding:
+      rule_source: cve_match
+      known_exploited: true
+    scope: same_host
+  - asset:
+      kind: endpoint
+    scope: same_host
+impact: |
+  A CVE on the CISA Known Exploited Vulnerabilities list is detected
+  on {host}, and that host is reachable from the internet. KEV entries
+  are, by definition, under active exploitation in the wild — exposure
+  compresses the time available to patch, so this combination is
+  treated as critical regardless of individual CVSS.
+remediation:
+  - Apply the vendor patch or vendor-approved mitigation now.
+  - Until patched, restrict exposure of the affected service.
+  - Review logs for indicators of compromise consistent with the CVE.

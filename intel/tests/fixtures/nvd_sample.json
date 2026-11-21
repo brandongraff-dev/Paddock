@@ -1,0 +1,114 @@
+{
+  "resultsPerPage": 2,
+  "startIndex": 0,
+  "totalResults": 2,
+  "format": "NVD_CVE",
+  "version": "2.0",
+  "timestamp": "2025-01-15T12:00:00.000",
+  "vulnerabilities": [
+    {
+      "cve": {
+        "id": "CVE-2024-1234",
+        "sourceIdentifier": "cve@mitre.org",
+        "published": "2024-05-10T09:00:00.000",
+        "lastModified": "2024-06-01T11:00:00.000",
+        "vulnStatus": "Analyzed",
+        "descriptions": [
+          {"lang": "en", "value": "A buffer overflow in example-lib 1.x permits remote denial of service."},
+          {"lang": "es", "value": "Desbordamiento de buffer en example-lib."}
+        ],
+        "metrics": {
+          "cvssMetricV31": [
+            {
+              "source": "nvd@nist.gov",
+              "type": "Primary",
+              "cvssData": {
+                "version": "3.1",
+                "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+                "baseScore": 7.5,
+                "baseSeverity": "HIGH"
+              },
+              "exploitabilityScore": 3.9,
+              "impactScore": 3.6
+            }
+          ],
+          "cvssMetricV2": [
+            {
+              "source": "nvd@nist.gov",
+              "type": "Primary",
+              "cvssData": {
+                "version": "2.0",
+                "vectorString": "AV:N/AC:L/Au:N/C:N/I:N/A:P",
+                "baseScore": 5.0
+              }
+            }
+          ]
+        },
+        "weaknesses": [
+          {"source": "nvd@nist.gov", "type": "Primary", "description": [{"lang": "en", "value": "CWE-120"}]}
+        ],
+        "configurations": [
+          {
+            "nodes": [
+              {
+                "operator": "OR",
+                "negate": false,
+                "cpeMatch": [
+                  {
+                    "vulnerable": true,
+                    "criteria": "cpe:2.3:a:example:example-lib:*:*:*:*:*:*:*:*",
+                    "versionStartIncluding": "1.0.0",
+                    "versionEndExcluding": "1.4.2",
+                    "matchCriteriaId": "abc"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "references": [
+          {"url": "https://example.com/advisory/1234", "source": "cve@mitre.org", "tags": ["Vendor Advisory"]},
+          {"url": "https://nvd.nist.gov/vuln/detail/CVE-2024-1234", "source": "nvd@nist.gov", "tags": []}
+        ]
+      }
+    },
+    {
+      "cve": {
+        "id": "CVE-2024-5678",
+        "published": "2024-07-01T09:00:00.000",
+        "lastModified": "2024-07-15T11:00:00.000",
+        "descriptions": [
+          {"lang": "en", "value": "Nginx misconfiguration in older builds leaks source."}
+        ],
+        "metrics": {
+          "cvssMetricV31": [
+            {
+              "cvssData": {
+                "version": "3.1",
+                "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                "baseScore": 9.1
+              }
+            }
+          ]
+        },
+        "weaknesses": [],
+        "configurations": [
+          {
+            "nodes": [
+              {
+                "operator": "OR",
+                "cpeMatch": [
+                  {
+                    "vulnerable": true,
+                    "criteria": "cpe:2.3:a:nginx:nginx:1.18.0:*:*:*:*:*:*:*"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "references": []
+      }
+    }
+  ]
+}

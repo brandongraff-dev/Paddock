@@ -1,0 +1,19 @@
+{
+  "id": "GO-2022-0956",
+  "summary": "Denial of service in gopkg.in/yaml.v2",
+  "aliases": ["CVE-2022-28948"],
+  "affected": [
+    {
+      "package": {"ecosystem": "Go", "name": "gopkg.in/yaml.v2"},
+      "ranges": [
+        {"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "2.2.8"}]}
+      ],
+      "ecosystem_specific": {
+        "imports": [
+          {"path": "gopkg.in/yaml.v2", "symbols": ["Unmarshal", "UnmarshalStrict"]}
+        ]
+      }
+    }
+  ],
+  "references": [{"type": "WEB", "url": "https://example.com/go-2022-0956"}]
+}

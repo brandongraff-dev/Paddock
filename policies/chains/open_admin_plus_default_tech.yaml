@@ -1,0 +1,30 @@
+id: open_admin_plus_default_tech
+name: "Open admin panel on a product with known-default accounts"
+severity: critical
+window_days: 30
+all_of:
+  - finding:
+      rule_source: nuclei
+      rule_id_match: "^(exposed-admin|admin-panel|login-panel).*"
+      asset_kind: endpoint
+    scope: same_host
+  - asset:
+      kind: technology
+      metadata:
+        product_known_default_creds: true
+    scope: same_host
+impact: |
+  An administrative interface is exposed on {host} for a product that
+  ships with well-known default credentials. Operators frequently
+  forget to rotate those on first-run installs, which means the
+  exposure elevates from "fingerprint" to "likely unauthenticated
+  administrative access" until confirmed otherwise.
+  Detected product versions: {versions}.
+remediation:
+  - Confirm the product's default accounts have been rotated.
+  - Restrict access to the admin interface to a management VLAN or VPN.
+  - Enable MFA where the product supports it.
+# The detection relies on a small built-in list; the matcher is tagging
+# assets, not attempting to log in.
+# Technology names in scope: jenkins, tomcat-manager, grafana,
+# elasticsearch, mongodb, redis.

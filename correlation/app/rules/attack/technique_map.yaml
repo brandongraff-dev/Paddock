@@ -1,0 +1,224 @@
+# MITRE ATT&CK + CWE technique map for palantir-asm findings.
+#
+# Each finding produced by the platform is tagged with the technique(s) /
+# tactic(s) / weakness(es) it represents, so findings roll up into an
+# ATT&CK coverage view. This is DEFENSIVE classification only: it labels
+# what a finding *means* in ATT&CK terms; it never describes how to carry
+# an attack out.
+#
+# Rule shape:
+#   id:           stable identifier (used to derive the catalog row id)
+#   match:        {rule_source?, rule_id_regex?, title_regex?}  (AND-ed; >=1 required)
+#   technique_id: real MITRE ATT&CK technique id (Txxxx[.nnn])
+#   technique:    technique name
+#   tactic:       ATT&CK tactic name
+#   cwe:          optional CWE-xxx weakness
+#   priority:     lower = evaluated first (first rule per technique_id wins)
+#
+# A finding may carry MULTIPLE techniques when several rules match different
+# technique_ids; duplicate technique_ids are de-duplicated (lowest priority
+# wins). Rules are evaluated priority ASC, then by id, for determinism.
+rules:
+  # --- exposed_file ------------------------------------------------------
+  - id: exposed_file_dotgit
+    match: {rule_source: exposed_file, title_regex: '(?i)\.git'}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    cwe: CWE-527
+    priority: 10
+
+  - id: exposed_file_dotenv
+    match: {rule_source: exposed_file, title_regex: '(?i)\.env'}
+    technique_id: T1552.001
+    technique: 'Unsecured Credentials: Credentials In Files'
+    tactic: Credential Access
+    cwe: CWE-200
+    priority: 11
+
+  - id: exposed_file_generic
+    match: {rule_source: exposed_file}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    cwe: CWE-200
+    priority: 50
+
+  # --- cve_match ---------------------------------------------------------
+  - id: cve_path_traversal
+    match: {rule_source: cve_match, title_regex: '(?i)(path traversal|directory traversal|lfi|local file inclusion)'}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    cwe: CWE-22
+    priority: 18
+
+  - id: cve_rce
+    match: {rule_source: cve_match, title_regex: '(?i)(rce|remote code execution|remote code|arbitrary code|deserializ)'}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    cwe: CWE-94
+    priority: 20
+
+  - id: cve_sqli
+    match: {rule_source: cve_match, title_regex: '(?i)(sql injection|sqli)'}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    cwe: CWE-89
+    priority: 21
+
+  - id: cve_generic
+    match: {rule_source: cve_match}
+    technique_id: T1203
+    technique: Exploitation for Client Execution
+    tactic: Execution
+    priority: 60
+
+  # --- secret_scan / leaked keys ----------------------------------------
+  - id: secret_scan_generic
+    match: {rule_source: secret_scan}
+    technique_id: T1552.001
+    technique: 'Unsecured Credentials: Credentials In Files'
+    tactic: Credential Access
+    cwe: CWE-798
+    priority: 20
+
+  - id: leaked_key_title
+    match: {title_regex: '(?i)(api[_ -]?key|secret key|private key|aws_?(access|secret)|bearer token|leaked (credential|secret|key))'}
+    technique_id: T1552.001
+    technique: 'Unsecured Credentials: Credentials In Files'
+    tactic: Credential Access
+    cwe: CWE-798
+    priority: 25
+
+  # --- domain / subdomain takeover --------------------------------------
+  - id: nuclei_takeover
+    match: {rule_source: nuclei, title_regex: '(?i)(subdomain takeover|takeover)'}
+    technique_id: T1584.001
+    technique: 'Compromise Infrastructure: Domains'
+    tactic: Resource Development
+    priority: 16
+
+  - id: subdomain_takeover
+    match: {rule_source: takeover}
+    technique_id: T1584.001
+    technique: 'Compromise Infrastructure: Domains'
+    tactic: Resource Development
+    priority: 20
+
+  # --- header_check -----------------------------------------------------
+  - id: header_csp_missing
+    match: {rule_source: header_check, title_regex: '(?i)(csp|content.?security.?policy)'}
+    technique_id: T1557
+    technique: Adversary-in-the-Middle
+    tactic: Collection
+    cwe: CWE-693
+    priority: 20
+
+  - id: header_hsts_missing
+    match: {rule_source: header_check, title_regex: '(?i)(hsts|strict.?transport)'}
+    technique_id: T1557
+    technique: Adversary-in-the-Middle
+    tactic: Collection
+    cwe: CWE-319
+    priority: 21
+
+  - id: header_cors
+    match: {rule_source: header_check, title_regex: '(?i)cors'}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    cwe: CWE-942
+    priority: 22
+
+  - id: header_generic
+    match: {rule_source: header_check}
+    technique_id: T1557
+    technique: Adversary-in-the-Middle
+    tactic: Collection
+    cwe: CWE-693
+    priority: 50
+
+  # --- tls_check / tls_grade --------------------------------------------
+  - id: tls_weak_cipher
+    match: {title_regex: '(?i)(rc4|md5|sha1|export cipher|weak cipher|sslv3|tls 1\.0|tls 1\.1|beast|poodle)'}
+    technique_id: T1557
+    technique: Adversary-in-the-Middle
+    tactic: Collection
+    cwe: CWE-327
+    priority: 28
+
+  - id: tls_check_weak
+    match: {rule_source: tls_check}
+    technique_id: T1557
+    technique: Adversary-in-the-Middle
+    tactic: Collection
+    cwe: CWE-326
+    priority: 30
+
+  - id: tls_grade_weak
+    match: {rule_source: tls_grade}
+    technique_id: T1557
+    technique: Adversary-in-the-Middle
+    tactic: Collection
+    cwe: CWE-327
+    priority: 30
+
+  # --- nuclei exposures / misconfig / data stores -----------------------
+  - id: nuclei_open_datastore
+    match: {rule_source: nuclei, title_regex: '(?i)((elasticsearch|mongodb|mongo express|kibana|couchdb|redis|memcached).*(unauth|expos|open|public)|(open|exposed|unauth).*(elasticsearch|mongodb|kibana|redis))'}
+    technique_id: T1530
+    technique: Data from Cloud Storage
+    tactic: Collection
+    cwe: CWE-306
+    priority: 14
+
+  - id: nuclei_default_cred
+    match: {rule_source: nuclei, title_regex: '(?i)(default (login|credential|password|cred)|admin panel|exposed admin|default-login)'}
+    technique_id: T1078
+    technique: Valid Accounts
+    tactic: Initial Access
+    cwe: CWE-1392
+    priority: 15
+
+  - id: nuclei_ssrf
+    match: {rule_source: nuclei, title_regex: '(?i)(ssrf|server.?side request forgery)'}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    cwe: CWE-918
+    priority: 17
+
+  - id: nuclei_xss
+    match: {rule_source: nuclei, title_regex: '(?i)(xss|cross.?site scripting)'}
+    technique_id: T1189
+    technique: Drive-by Compromise
+    tactic: Initial Access
+    cwe: CWE-79
+    priority: 19
+
+  - id: nuclei_exposure
+    match: {rule_source: nuclei, title_regex: '(?i)(exposure|exposed|disclosure|misconfig|information leak|directory listing)'}
+    technique_id: T1595
+    technique: Active Scanning
+    tactic: Reconnaissance
+    cwe: CWE-200
+    priority: 40
+
+  - id: nuclei_generic
+    match: {rule_source: nuclei}
+    technique_id: T1190
+    technique: Exploit Public-Facing Application
+    tactic: Initial Access
+    priority: 70
+
+  # --- sca (vulnerable dependency) --------------------------------------
+  - id: sca_vulnerable_dependency
+    match: {rule_source: sca}
+    technique_id: T1195.001
+    technique: 'Supply Chain Compromise: Compromise Software Dependencies and Development Tools'
+    tactic: Initial Access
+    cwe: CWE-1104
+    priority: 20

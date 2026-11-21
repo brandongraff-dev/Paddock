@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palantir-asm-threatintel"
+version = "0.1.0"
+description = "Threat-intel fusion service: STIX 2.1 / TAXII 2.1 IOC ingest + defensive asset/finding matching."
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "asyncpg>=0.29",
+    "redis>=5.0",
+    "orjson>=3.9",
+]
+
+[project.optional-dependencies]
+# STIX/TAXII libs are OPTIONAL -- a hand parser covers us when absent.
+stix = [
+    "stix2>=3.0",
+    "taxii2-client>=2.3",
+]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-aiohttp>=1.0",
+    "aioresponses>=0.7",
+    "asyncpg>=0.29",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-aiohttp>=1.0",
+    "aioresponses>=0.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

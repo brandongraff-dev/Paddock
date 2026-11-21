@@ -1,0 +1,8 @@
+{
+  "cpes": ["cpe:/a:nginx:nginx:1.18.0", "cpe:/a:openssh:openssh:8.2"],
+  "hostnames": ["www.example.com"],
+  "ip": "203.0.113.5",
+  "ports": [22, 80, 443],
+  "tags": ["cdn", "cloud"],
+  "vulns": []
+}

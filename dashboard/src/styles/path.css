@@ -1,0 +1,102 @@
+/* ------------------------------------------------------------------ *
+ * path.css — inline react-flow strip for an attack-path card.         *
+ * Left→right: SOURCE (internet-facing) → hops (by severity) → TARGET  *
+ * (crown jewel). Same node language as chains.css (.cmini) — a        *
+ * compact echo of the hero GraphCanvas node. Imported by the path     *
+ * components only. No gradients, no glass.                            *
+ * ------------------------------------------------------------------ */
+
+.pmini {
+  position: relative;
+  width: 100%;
+  height: 150px;
+  margin-top: 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+.pmini .react-flow { background: transparent !important; }
+.pmini .react-flow__renderer { cursor: default; }
+.pmini .react-flow__handle { opacity: 0; pointer-events: none; }
+.pmini .react-flow__edge-path { stroke: var(--border-strong); stroke-width: 1px; }
+.pmini .react-flow__attribution { display: none; }
+
+/* shared node shell — a compact .gn, coloured via --node-color */
+.pmini-node {
+  --node-color: var(--accent);
+  position: relative;
+  width: 140px;
+  padding: 5px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--node-color);
+  border-radius: var(--radius-s);
+  color: var(--text-0);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-family: var(--sans);
+  cursor: pointer;
+}
+.pmini-node.is-static { cursor: default; }
+.pmini-node .pmini-kind {
+  color: var(--text-2);
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.pmini-node .pmini-sev {
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--node-color);
+}
+.pmini-node .pmini-title {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  margin-top: 2px;
+  color: var(--text-0);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* endpoint role tag — "internet-facing" / "crown jewel" */
+.pmini-node .pmini-role {
+  display: inline-block;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--node-color);
+  border: 1px solid var(--node-color);
+  border-radius: 999px;
+  padding: 0 5px;
+  opacity: 0.9;
+}
+
+/* source = internet-facing (blue); target = crown jewel (gold) */
+.pmini-source { --node-color: var(--accent); }
+.pmini-target {
+  --node-color: var(--warn);
+  box-shadow:
+    0 0 0 1px rgba(240, 180, 41, 0.18),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.pmini-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+}

@@ -1,0 +1,61 @@
+# palantir-asm — DEV override
+# =============================================================================
+# docker compose auto-merges this file on top of docker-compose.yml, so a plain
+# `docker compose up` (and `make up`) gives you the DEV experience:
+#
+#   * AUTH_MODE=dev + ALLOW_NO_AUTH=true  -> synthetic admin, existing tests and
+#     service-to-service calls keep working without credentials.
+#   * every service re-publishes its port to the host for debugging.
+#   * postgres/redis/neo4j reachable from the host again.
+#
+# It keeps the security_opt / cap_drop / read_only / healthcheck hardening from
+# the base file (those do not impede local dev). It ONLY re-opens ports and
+# relaxes auth.
+#
+# For the HARDENED (prod) profile, bypass this file explicitly:
+#       docker compose -f docker-compose.yml up -d --build
+# =============================================================================
+
+services:
+  postgres:
+    ports: ["5432:5432"]
+
+  redis:
+    ports: ["6379:6379"]
+
+  neo4j:
+    ports: ["7474:7474", "7687:7687"]
+
+  orchestrator:
+    environment:
+      AUTH_MODE: dev
+      ALLOW_NO_AUTH: "true"
+
+  mlrisk:
+    ports: ["8098:8098"]
+
+  changewatch:
+    ports: ["8092:8092"]
+
+  triage:
+    ports: ["8093:8093"]
+
+  brain:
+    ports: ["8095:8095"]
+
+  sca:
+    ports: ["8094:8094"]
+
+  codeanalysis:
+    ports: ["8097:8097"]
+
+  graphsync:
+    ports: ["8096:8096"]
+
+  # intel (8090) and correlation (8091) expose health/stats servers; publish
+  # them in dev so `make status` can reach them.
+  intel:
+    ports: ["8090:8090"]
+
+  correlation:
+    ports: ["8091:8091"]

@@ -1,0 +1,23 @@
+id: outdated_tls_plus_sensitive_endpoint
+name: "Outdated TLS on sensitive endpoint"
+severity: high
+window_days: 30
+all_of:
+  - finding:
+      rule_source: tls_check
+      rule_id_match: "^tls-version-(ssl|tls10|tls11).*"
+    scope: same_host
+  - finding:
+      rule_source: header_check
+      rule_id_match: "^(sensitive-endpoint|login-endpoint|admin-endpoint|api-endpoint).*"
+    scope: same_host
+impact: |
+  The host {host} negotiates an obsolete TLS version and also serves a
+  sensitive endpoint. A network attacker between the user and the
+  service can downgrade or passively observe traffic that includes
+  authentication tokens or administrative traffic, which turns a
+  configuration finding into material confidentiality risk.
+remediation:
+  - Disable TLS versions below 1.2 and prefer 1.3 on this listener.
+  - If the endpoint handles authentication, require HSTS preload.
+  - Audit the certificate chain for weak signatures while you're there.

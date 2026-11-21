@@ -1,0 +1,26 @@
+id: cert_expiry_30d
+name: "Certificates must have more than 30 days until expiry"
+severity: medium
+description: |
+  Any certificate asset whose metadata.not_after is within 30 days of
+  today triggers a finding. Uses the certificate's not_after timestamp
+  stored by the TLS inspector.
+scope:
+  asset_kind: certificate
+query: |
+  SELECT a.id
+  FROM assets a
+  WHERE a.kind = 'certificate'
+    AND (a.metadata->>'not_after') IS NOT NULL
+    AND (a.metadata->>'not_after')::timestamptz < NOW() + INTERVAL '30 days'
+    AND (a.metadata->>'not_after')::timestamptz > NOW() - INTERVAL '365 days'
+on_hit:
+  create_finding:
+    severity: medium
+    title: "Certificate expires in less than 30 days"
+    description: >
+      A TLS certificate will expire within the next 30 days. Schedule
+      renewal to avoid outage or trust warnings.
+remediation:
+  - Renew the certificate via ACME/your issuer.
+  - Confirm auto-renewal is wired up and monitored.

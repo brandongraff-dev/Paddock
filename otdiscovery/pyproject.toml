@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palantir-asm-otdiscovery"
+version = "0.1.0"
+description = "Passive IoT/OT device discovery: fingerprint devices and flag exposure from provided observations, never probing the devices themselves."
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "asyncpg>=0.29",
+    "uvloop>=0.19; sys_platform != 'win32'",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.fingerprint.data" = ["*.json"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

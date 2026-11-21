@@ -1,0 +1,28 @@
+id: prod_requires_hsts
+name: "Production endpoints must set HSTS"
+severity: medium
+description: |
+  Every endpoint whose metadata.env is 'prod' must carry the
+  Strict-Transport-Security response header. This policy fires for any
+  prod endpoint that has an open 'header-hsts-missing' finding.
+scope:
+  asset_tag: prod
+  asset_kind: endpoint
+query: |
+  SELECT a.id
+  FROM assets a
+  JOIN findings f ON f.asset_id = a.id
+  WHERE a.kind = 'endpoint'
+    AND (a.metadata->>'env') = 'prod'
+    AND f.rule_id = 'header-hsts-missing'
+    AND f.status = 'open'
+on_hit:
+  create_finding:
+    severity: medium
+    title: "Prod endpoint missing HSTS"
+    description: >
+      A production endpoint does not set the Strict-Transport-Security
+      header, violating the prod_requires_hsts policy.
+remediation:
+  - "Add the HSTS response header with a long max-age, includeSubDomains, and preload."
+  - "Confirm the parent domain is on the HSTS preload list."

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palantir-asm-brain"
+version = "0.1.0"
+description = "LLM brain: finding-cluster triage + natural-language -> validated read-only SQL over the ask_* views."
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "asyncpg>=0.29",
+    "sqlglot>=23.0",
+]
+
+[project.optional-dependencies]
+# The Anthropic SDK is OPTIONAL. The service boots, self-tests, and serves
+# both capabilities (template triage + fallback NL-query) without it.
+llm = [
+    "anthropic>=0.40",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra -q"
+pythonpath = ["."]

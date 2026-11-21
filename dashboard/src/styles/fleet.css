@@ -1,0 +1,296 @@
+/* Fleet & Enforcement page — dark/dense, self-contained. Leans on the global
+   design tokens (--bg, --panel, --border, --text-1/2, --accent) so it matches
+   the rest of the app, but ships every class it needs here. */
+
+.fl-page .subtitle {
+  max-width: 82ch;
+}
+.fl-page .panel-sub {
+  color: var(--text-2);
+  font-size: 11px;
+}
+.fl-muted {
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.fl-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 1.1fr);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1080px) {
+  .fl-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ------------------------------- agents -------------------------------- */
+
+.fl-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fl-agent {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-2, #0f141c);
+  cursor: pointer;
+  color: var(--text-1);
+}
+.fl-agent:hover {
+  border-color: color-mix(in srgb, var(--accent, #4ea3ff) 50%, var(--border));
+}
+.fl-agent.selected {
+  border-color: var(--accent, #4ea3ff);
+  background: color-mix(in srgb, var(--accent, #4ea3ff) 8%, transparent);
+}
+.fl-agent-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fl-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.fl-agent-host {
+  font-size: 13px;
+  font-weight: 600;
+}
+.fl-agent-platform {
+  font-size: 10px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.fl-agent-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.fl-agent-status {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.fl-agent-status.s-online { color: #58d68d; }
+.fl-agent-status.s-stale { color: #f0b429; }
+.fl-agent-status.s-revoked { color: #e06c75; }
+.fl-agent-status.s-enrolled { color: #4ea3ff; }
+.fl-caps {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.fl-cap {
+  font-size: 10px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+}
+
+/* ------------------------------- propose ------------------------------- */
+
+.fl-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.fl-form-grid {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 8px;
+}
+@media (max-width: 560px) {
+  .fl-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.fl-page .field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.fl-page .field label {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.fl-page .field input,
+.fl-page .field select,
+.fl-filterbar select {
+  background: var(--input-bg, #0e141d);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-1);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.fl-form-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.fl-note {
+  font-size: 10.5px;
+  color: var(--text-2);
+  max-width: 44ch;
+}
+
+/* ------------------------------- actions ------------------------------- */
+
+.fl-filterbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.fl-action-list {
+  display: flex;
+  flex-direction: column;
+}
+.fl-action-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.fl-action-main {
+  min-width: 0;
+}
+.fl-action-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.fl-status-chip {
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.fl-action-type {
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+.fl-action-target {
+  color: var(--accent, #4ea3ff);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+.fl-action-host {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.fl-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  border-radius: 3px;
+  padding: 1px 5px;
+  border: 1px solid;
+}
+.fl-badge.dry {
+  color: #f0b429;
+  border-color: #5a4a1e;
+  background: #2a2412;
+}
+.fl-badge.real {
+  color: #e06c75;
+  border-color: #5a2a30;
+  background: #2a1a1e;
+}
+.fl-action-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+  font-size: 11px;
+}
+.fl-reason {
+  color: var(--text-1);
+  font-size: 11px;
+}
+.fl-action-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
+}
+/* Gate renders a <fieldset display:contents> so controls stay inline. */
+.fl-action-controls .mutate-gate {
+  display: contents;
+}
+
+/* ------------------------------- buttons ------------------------------- */
+
+.fl-page button.primary {
+  background: var(--accent, #4ea3ff);
+  color: #04121f;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fl-page button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.fl-page button.ghost {
+  background: transparent;
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.fl-page button.ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.fl-page button.ghost.ok {
+  color: #58d68d;
+  border-color: #2a5a3a;
+}
+.fl-page button.ghost.danger {
+  color: #e06c75;
+  border-color: #5a2a30;
+}
+
+/* A disabled gate (non-admin) dims the whole cluster so the gating reads. */
+.fl-action-controls .mutate-gate[disabled] button {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

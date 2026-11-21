@@ -1,0 +1,285 @@
+"""The passive discovery pipeline.
+
+ingest/analyze flow, end to end:
+
+    raw input (pcap bytes | observations JSON)
+        -> normalized observations
+        -> device fingerprinting (OUI + mDNS/SSDP + DHCP + OT protocols)
+        -> segmentation + exposure analysis
+        -> CVE matching against the shared feed
+        -> project devices/segments as assets, emit edges + findings
+           (all posted through the orchestrator)
+
+Every analysis runs inside ``active_probe_guard(device_ips)`` so that any
+accidental socket connection to a discovered device is turned into a hard,
+test-visible failure. The service's legitimate egress (orchestrator, Postgres)
+is to other hosts and passes through untouched.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from . import active_probe_guard, pcap
+from .config import Config
+from .cvematch import match_devices
+from .db import Database
+from .exposure import ExposureResult, analyze as analyze_exposure
+from .fingerprint import Device, fingerprint_devices
+from .orchestrator import OrchestratorClient
+
+log = logging.getLogger("otdiscovery.pipeline")
+
+
+# --------------------------------------------------------------------------- #
+# Input normalization
+# --------------------------------------------------------------------------- #
+
+def _infer_kind(obs: dict[str, Any]) -> str:
+    if obs.get("kind"):
+        return str(obs["kind"])
+    keys = set(obs)
+    if keys & {"vendor_class", "param_req_list", "option55", "option60", "vci", "prl"}:
+        return "dhcp"
+    if keys & {"st", "nt", "usn", "server", "location"}:
+        return "ssdp"
+    if keys & {"service"} and not keys & {"src_port", "dst_port"}:
+        return "mdns"
+    if keys & {"src_port", "dst_port", "proto", "transport"}:
+        return "packet"
+    if keys & {"mac", "ip"} and not keys & {"src_port", "dst_port"}:
+        return "arp"
+    return "packet"
+
+
+def _coerce_port(v: Any) -> Any:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.isdigit():
+        return int(v)
+    return v
+
+
+def normalize_observations(raw: list[Any]) -> list[dict[str, Any]]:
+    """Coerce a list of arbitrary observation dicts into the internal shape."""
+    out: list[dict[str, Any]] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        obs = dict(item)
+        obs["kind"] = _infer_kind(obs)
+        for pk in ("src_port", "dst_port"):
+            if pk in obs:
+                obs[pk] = _coerce_port(obs[pk])
+        out.append(obs)
+    return out
+
+
+def parse_input(
+    *, pcap_bytes: Optional[bytes] = None, observations: Optional[list[Any]] = None
+) -> list[dict[str, Any]]:
+    """Turn either input source into normalized observations (passive parse)."""
+    obs: list[dict[str, Any]] = []
+    if pcap_bytes:
+        obs.extend(pcap.parse(pcap_bytes))
+    if observations:
+        obs.extend(normalize_observations(observations))
+    return obs
+
+
+# --------------------------------------------------------------------------- #
+# Projection
+# --------------------------------------------------------------------------- #
+
+def project_assets(
+    devices: list[Device], exposure: ExposureResult
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build (asset_items, edge_items) for the orchestrator bulk endpoints."""
+    assets: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+    for seg in exposure.segments:
+        assets.append({
+            "kind": "network_segment",
+            "value": seg.cidr,
+            "source": "otdiscovery",
+            "confidence": 80,
+            "metadata": seg.to_metadata(),
+        })
+
+    for dev in devices:
+        if not dev.is_device:
+            continue
+        kind = "ot_device" if dev.role == "ot" else "iot_device"
+        value = dev.asset_value()
+        md = dev.to_metadata()
+        seg_cidr = exposure.device_segment.get(dev.key)
+        if seg_cidr:
+            md["segment"] = seg_cidr
+        assets.append({
+            "kind": kind,
+            "value": value,
+            "source": "otdiscovery",
+            "confidence": max(1, min(100, dev.confidence)),
+            "metadata": md,
+        })
+        if seg_cidr:
+            edges.append({
+                "src_kind": kind,
+                "src_canonical": value,
+                "dst_kind": "network_segment",
+                "dst_canonical": seg_cidr,
+                "kind": "member_of",
+                "metadata": {"source": "otdiscovery"},
+            })
+
+    return assets, edges
+
+
+# --------------------------------------------------------------------------- #
+# Engine
+# --------------------------------------------------------------------------- #
+
+class DiscoveryEngine:
+    """Holds the passive observation store and runs ingest/analyze."""
+
+    def __init__(
+        self,
+        cfg: Config,
+        *,
+        db: Optional[Database] = None,
+        orch: Optional[OrchestratorClient] = None,
+    ) -> None:
+        self.cfg = cfg
+        self.db = db
+        self.orch = orch
+        self.observations: list[dict[str, Any]] = []
+        self.last_inventory: list[Device] = []
+        self.last_guard_attempts: list[str] = []
+        self.last_guard_violations: list[str] = []
+        self.stats: dict[str, Any] = {
+            "ingests": 0, "analyses": 0, "observations_stored": 0,
+            "devices": 0, "ot_devices": 0, "iot_devices": 0, "segments": 0,
+            "findings_posted": 0, "last_run": None,
+            "guard_violations_total": 0,
+        }
+
+    # -- CVE fetcher backed by the (optional) DB ------------------------- #
+    async def _cve_fetch(self, tokens: set[str]) -> list[dict[str, Any]]:
+        if not self.cfg.enable_cve_match or self.db is None:
+            return []
+        try:
+            return await self.db.cve_candidates(tokens)
+        except Exception:
+            log.exception("cve_candidates query failed; skipping cve match")
+            return []
+
+    async def ingest(
+        self,
+        *,
+        pcap_bytes: Optional[bytes] = None,
+        observations: Optional[list[Any]] = None,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        parsed = parse_input(pcap_bytes=pcap_bytes, observations=observations)
+        if replace:
+            self.observations = parsed
+        else:
+            self.observations.extend(parsed)
+        self.stats["ingests"] += 1
+        self.stats["observations_stored"] = len(self.observations)
+        result = await self._run(self.observations)
+        result["observations_ingested"] = len(parsed)
+        return result
+
+    async def analyze(self) -> dict[str, Any]:
+        self.stats["analyses"] += 1
+        return await self._run(self.observations)
+
+    async def _run(self, observations: list[dict[str, Any]]) -> dict[str, Any]:
+        devices = fingerprint_devices(observations)
+        exposure = analyze_exposure(
+            devices,
+            v4_prefix=self.cfg.ipv4_segment_prefix,
+            v6_prefix=self.cfg.ipv6_segment_prefix,
+        )
+
+        # Every IP we discovered is forbidden as an active-connection target.
+        device_ips: set[str] = set()
+        for dev in devices:
+            device_ips |= set(dev.ips)
+
+        posted_findings = 0
+        asset_resp: dict[str, Any] = {}
+        edge_resp: dict[str, Any] = {}
+        finding_resp: dict[str, Any] = {}
+
+        with active_probe_guard(device_ips) as guard:
+            cve_findings = await match_devices(devices, self._cve_fetch)
+            findings = exposure.findings + cve_findings
+
+            assets, edges = project_assets(devices, exposure)
+            if self.orch is not None:
+                asset_resp = await self.orch.bulk_assets(assets)
+                if edges:
+                    edge_resp = await self.orch.bulk_edges(edges)
+                if findings:
+                    finding_resp = await self.orch.bulk_findings(findings)
+                    posted_findings = int(finding_resp.get("inserted", 0) or 0) + int(
+                        finding_resp.get("updated", 0) or 0
+                    )
+
+        self.last_inventory = devices
+        self.last_guard_attempts = list(guard.attempts)
+        self.last_guard_violations = list(guard.violations)
+
+        ot_devices = [d for d in devices if d.role == "ot"]
+        iot_devices = [d for d in devices if d.role == "iot"]
+
+        self.stats.update({
+            "devices": len([d for d in devices if d.is_device]),
+            "ot_devices": len(ot_devices),
+            "iot_devices": len(iot_devices),
+            "segments": len(exposure.segments),
+            "findings_posted": posted_findings,
+            "last_run": datetime.now(timezone.utc).isoformat(),
+        })
+        self.stats["guard_violations_total"] += len(self.last_guard_violations)
+
+        return {
+            "devices": len([d for d in devices if d.is_device]),
+            "ot_devices": len(ot_devices),
+            "iot_devices": len(iot_devices),
+            "segments": len(exposure.segments),
+            "exposure_findings": len(exposure.findings),
+            "ot_it_violations": exposure.ot_it_violations,
+            "ot_public_exposures": exposure.ot_public,
+            "cve_matches": len(cve_findings),
+            "findings_total": len(findings),
+            "findings_posted": posted_findings,
+            "assets_projected": len([d for d in devices if d.is_device])
+            + len(exposure.segments),
+            "orchestrator": {
+                "assets": asset_resp, "edges": edge_resp, "findings": finding_resp,
+            },
+            # surfaced for the safety test: active-probe guard accounting
+            "active_probe_attempts_to_devices": len(self.last_guard_violations),
+            "inventory": [_device_summary(d, exposure) for d in devices if d.is_device],
+        }
+
+
+def _device_summary(dev: Device, exposure: ExposureResult) -> dict[str, Any]:
+    return {
+        "device_id": dev.key,
+        "value": dev.asset_value(),
+        "role": dev.role,
+        "type": dev.type,
+        "vendor": dev.vendor,
+        "model": dev.model,
+        "protocols": sorted(dev.protocols),
+        "confidence": dev.confidence,
+        "segment": exposure.device_segment.get(dev.key),
+    }

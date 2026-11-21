@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palantir-asm-codeanalysis"
+version = "0.1.0"
+description = "Static code analysis: dependency-vuln reachability (call graph) and first-party SAST (Semgrep or bundled taint scanner). Detection only."
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "asyncpg>=0.29",
+    "uvloop>=0.19; sys_platform != 'win32'",
+]
+
+[project.optional-dependencies]
+# Semgrep is OPTIONAL. When absent the bundled source->sink taint scanner runs.
+semgrep = [
+    "semgrep>=1.50",
+]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.data" = ["*.json"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

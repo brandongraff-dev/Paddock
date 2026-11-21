@@ -1,0 +1,63 @@
+name: Integration
+
+# End-to-end harness: build the full compose stack, seed a demo graph, and run
+# the cross-service contract checks in hardening/integration_test.py.
+#
+# This is heavy (it builds ~15 service images and boots Postgres/Redis/Neo4j),
+# so the "run harness" step is best-effort: it is marked continue-on-error and
+# will not block merges. It is wired here so it runs on main and on demand, and
+# so the logs are captured when something drifts.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "docker-compose*.yml"
+      - "hardening/**"
+      - "schema/**"
+      - ".github/workflows/integration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: compose + make integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare .env (dev defaults)
+        run: cp .env.example .env
+
+      - name: Build + bring up the stack (dev profile)
+        run: docker compose up -d --build
+
+      - name: Wait for the orchestrator
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then
+              echo "orchestrator is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "orchestrator never became healthy"; exit 1
+
+      - name: Seed the demo graph
+        run: make seed-demo
+
+      - name: Run the integration harness (best-effort)
+        id: harness
+        continue-on-error: true
+        run: make integration
+
+      - name: Dump compose logs on failure
+        if: ${{ failure() || steps.harness.outcome == 'failure' }}
+        run: docker compose logs --tail=300
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

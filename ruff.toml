@@ -1,0 +1,34 @@
+# Ruff config for palantir-asm.
+#
+# The CI `lint` job enforces the high-signal rule set below across every Python
+# service. These rules catch *real* defects — syntax errors, undefined names,
+# broken f-strings, bad comparisons, duplicate/`__all__` mistakes — and the
+# tree is clean against them today, so the badge stays green and meaningful.
+#
+# Broader style/import rules are intentionally NOT enforced in CI yet (the
+# codebase predates a formatter pass). Contributors are encouraged to run the
+# full linter locally and fix what they touch:
+#
+#     ruff check --select ALL .
+#     ruff check --fix .
+#     ruff format .
+#
+# As modules get cleaned up we can promote more rule groups into `select`.
+
+target-version = "py311"
+line-length = 100
+
+extend-exclude = [
+    "**/node_modules",
+    "**/.venv",
+    "**/dist",
+    "**/*.egg-info",
+]
+
+[lint]
+# Pyflakes error classes + pycodestyle syntax errors: the "always a bug" set.
+#   E9  syntax errors
+#   F63 invalid comparisons / assertions on tuples
+#   F7  misplaced statements (break/continue/return outside a loop/function)
+#   F82 undefined names (incl. undefined names in __all__)
+select = ["E9", "F63", "F7", "F82"]

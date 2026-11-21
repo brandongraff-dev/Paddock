@@ -1,0 +1,470 @@
+# palantir-asm — HARDENED (prod) compose profile
+# =============================================================================
+# This is the hardened baseline. For local development (open ports + dev auth)
+# docker compose auto-merges docker-compose.override.yml on top of this file,
+# so `docker compose up` gives you the dev experience and
+# `docker compose -f docker-compose.yml up` gives you the hardened profile.
+#
+# Secrets are NOT baked in here. They are read from a `.env` file (see
+# .env.example). Required: POSTGRES_PASSWORD, NEO4J_PASSWORD,
+# ADMIN_BOOTSTRAP_PASSWORD, ANTHROPIC_API_KEY.  `.env` is gitignored.
+#
+# Hardening applied (see SECURITY.md / README "Operational hardening"):
+#   * orchestrator defaults to AUTH_MODE=enforce (governance Stream A var);
+#     the legacy ALLOW_NO_AUTH stub is set deny-closed (false) in this profile.
+#   * all secrets via ${VAR} substitution from .env (no plaintext here).
+#   * per-service: no-new-privileges, cap_drop ALL (where the image allows it),
+#     read_only root fs + tmpfs scratch (where the service tolerates it),
+#     non-root (built images already define a non-root USER), healthchecks,
+#     restart: unless-stopped.
+#   * network segmentation: data tier + workers + compute on an `internal`
+#     network with no egress and no host-published ports. Only orchestrator
+#     and dashboard publish ports (on `edge`). The four services that need
+#     outbound internet (worker-active, worker-passive, intel, brain) also
+#     attach to the `egress` bridge; everything else has no egress.
+# =============================================================================
+
+# ---- reusable fragments -----------------------------------------------------
+
+# Full hardening for our own non-root Python images (they define USER in their
+# Dockerfile and never need Linux capabilities or a writable root fs).
+x-hardened-py: &hardened-py
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  restart: unless-stopped
+
+services:
+  # ======================= data tier (internal only) =======================
+  postgres:
+    image: postgres:16-alpine
+    # NOTE: no host port in the hardened profile (dev override re-publishes it).
+    # cap_drop/read_only intentionally omitted: the official entrypoint needs
+    # CHOWN/SETUID/SETGID to drop to the postgres user and a writable data dir
+    # (handled by the pg_data volume). no-new-privileges is still applied.
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: asm
+      POSTGRES_USER: asm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./schema:/docker-entrypoint-initdb.d:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asm -d asm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    # read_only root + tmpfs /data (redis here is an ephemeral queue/cache, no
+    # volume). caps kept intact: the entrypoint uses gosu to drop to the redis
+    # user. no-new-privileges applied.
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    restart: unless-stopped
+    tmpfs:
+      - /data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  neo4j:
+    image: neo4j:5-community
+    # No host port in hardened profile (dev override re-publishes 7474/7687).
+    # read_only omitted: the JVM + APOC plugin write to /data, /logs, /run.
+    # Data now persists on a named volume (was ephemeral before).
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # ======================= frontend tier (published) =======================
+  orchestrator:
+    build: ./orchestrator
+    <<: *hardened-py
+    ports: ["8080:8080"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      # Governance Stream A auth switch. Hardened default = enforce.
+      AUTH_MODE: ${AUTH_MODE:-enforce}
+      # Legacy MVP stub, kept coherent with AUTH_MODE: deny-closed in prod.
+      ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
+      # First-boot admin password (set once; see .env.example). Never shipped.
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+    tmpfs:
+      - /tmp
+    networks: [edge, internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  dashboard:
+    build: ./dashboard
+    # nginx master runs as root to spawn workers; caps kept, read_only + tmpfs
+    # for its scratch dirs. Only published alongside the orchestrator.
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    environment:
+      VITE_API_URL: http://localhost:8080
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks: [edge, internal]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ======================= workers (egress, no inbound) =====================
+  worker-passive:
+    build: ./workers/passive
+    # read_only omitted: subfinder writes a config/cache under $HOME. caps
+    # dropped, no-new-privileges applied, /tmp is tmpfs.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      WORKER_ID: passive-1
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker-active:
+    build: ./workers/active
+    # The hardest service to lock down: naabu needs NET_RAW/NET_ADMIN for SYN
+    # scans and Playwright/Chromium + the ProjectDiscovery binaries write to
+    # several unpredictable paths, so read_only is left off. We drop ALL caps
+    # and add back only the two naabu needs. Screenshots persist on a volume.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_RAW", "NET_ADMIN"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      WORKER_ID: active-1
+      MAX_CONCURRENCY_PER_TARGET: "2"
+      POLITENESS_DELAY_MS: "250"
+    volumes:
+      - active_data:/data
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ======================= intel + brain (egress) ==========================
+  intel:
+    build: ./intel
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      SYNC_INTERVAL_MIN: "60"
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  brain:
+    build: ./brain
+    <<: *hardened-py
+    # No host port in hardened profile; orchestrator proxies it over `internal`.
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8095), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ======================= compute tier (internal, no egress) ==============
+  mlrisk:
+    build: ./mlrisk
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      MLRISK_INTERVAL_MIN: "30"
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8098), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  changewatch:
+    build: ./changewatch
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      CHANGEWATCH_INTERVAL_MIN: "10"
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8092), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  triage:
+    build: ./triage
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      TRIAGE_INTERVAL_MIN: "10"
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8093), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  correlation:
+    build: ./correlation
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      POLICIES_DIR: /policies
+    volumes:
+      - ./policies:/policies:ro
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8091), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  sca:
+    build: ./sca
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8094), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  codeanalysis:
+    build: ./codeanalysis
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on: [orchestrator]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8097), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  graphsync:
+    build: ./graphsync
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      SYNC_INTERVAL_MIN: "5"
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on: [orchestrator, neo4j]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8096), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ontology:
+    build: ./ontology
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      ONTOLOGY_INTERVAL_MIN: "15"
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8099), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  threatintel:
+    build: ./threatintel
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      TI_POLL_INTERVAL_MIN: "60"
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8100), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  otdiscovery:
+    build: ./otdiscovery
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      OTDISCOVERY_HTTP_PORT: "8101"
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8101), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  remediation:
+    build: ./remediation
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      REMEDIATION_OPEN_PR: "false"   # opt-in: set true + GITHUB_TOKEN/GITHUB_REPO + add egress to open PRs
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8102), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  pg_data:
+  neo4j_data:
+  neo4j_logs:
+  active_data:
+
+networks:
+  # Published-to-host frontend tier (has a gateway).
+  edge:
+    driver: bridge
+  # Cluster-internal: no egress, no host-published ports. Data tier, workers
+  # and compute services live here; this is the "workers have no inbound" net.
+  internal:
+    internal: true
+  # Outbound-only bridge for the services that must reach the public internet
+  # (scanning targets, CT logs, NVD/EPSS/KEV feeds, the Anthropic API).
+  egress:
+    driver: bridge

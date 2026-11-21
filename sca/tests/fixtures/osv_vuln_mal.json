@@ -1,0 +1,6 @@
+{
+  "id": "MAL-2023-0001",
+  "summary": "malicious package",
+  "database_specific": {"severity": "CRITICAL"},
+  "affected": [{"package": {"ecosystem": "npm", "name": "evil-lib"}, "ranges": []}]
+}

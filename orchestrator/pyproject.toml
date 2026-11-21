@@ -1,0 +1,35 @@
+[project]
+name = "palantir-asm-orchestrator"
+version = "0.1.0"
+description = "Orchestrator service for the palantir-asm defensive ASM platform."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "asyncpg>=0.30",
+    "redis>=5",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "python-json-logger>=2.0",
+    "PyJWT>=2.8",
+    "bcrypt>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "fakeredis>=2.20",
+    "pytest-postgresql>=6",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

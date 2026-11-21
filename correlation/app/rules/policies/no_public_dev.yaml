@@ -1,0 +1,29 @@
+id: no_public_dev
+name: "Development endpoints must not be publicly reachable"
+severity: high
+description: |
+  Any endpoint whose metadata.env is 'dev' or 'staging' and which has a
+  public-exposure edge (edge.metadata.public = true) violates the
+  'no public dev' policy. These should sit behind VPN, basic auth,
+  or an IP allowlist.
+scope:
+  asset_tag: dev
+  asset_kind: endpoint
+query: |
+  SELECT DISTINCT a.id
+  FROM assets a
+  JOIN asset_edges e ON e.dst_id = a.id
+  WHERE a.kind = 'endpoint'
+    AND (a.metadata->>'env') IN ('dev', 'staging')
+    AND (e.metadata->>'public')::bool IS TRUE
+on_hit:
+  create_finding:
+    severity: high
+    title: "Non-production endpoint reachable from the public internet"
+    description: >
+      A dev or staging endpoint has a public ingress edge. Non-prod
+      services generally don't carry the same hardening as prod; this
+      exposure is almost always unintentional.
+remediation:
+  - Restrict ingress to a VPN or IP allowlist.
+  - Verify the service actually needs to be externally reachable.

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palantir-asm-remediation"
+version = "0.1.0"
+description = "Auto-remediation engine: constrained, prompt-injection-hardened PR proposals (never auto-merged)."
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "asyncpg>=0.29",
+]
+
+[project.optional-dependencies]
+# The Anthropic SDK is OPTIONAL — the deterministic generators + gate + rule
+# verifier work fully without it.
+llm = ["anthropic>=0.39"]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
