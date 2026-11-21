@@ -332,6 +332,15 @@ async def _h_tls_grade(w: Worker, scan_id: str, target: str, config: dict) -> di
     )
 
 
+async def _h_verify_finding(w: Worker, scan_id: str, target: str, config: dict) -> dict:
+    from app.modules import verify_finding
+
+    return await verify_finding.verify(
+        target, scope=w.scope, politeness=w.politeness,
+        orchestrator=w.orch, scan_id=scan_id, config=config,
+    )
+
+
 async def _h_full_recon(w: Worker, scan_id: str, target: str, config: dict) -> dict:
     """Orchestrate the full pipeline:
         http_probe -> (if live) header_check + exposed_file + crawler
@@ -511,6 +520,7 @@ _DISPATCH: dict[str, HandlerFn] = {
     "takeover_scan": _h_takeover_scan,
     "tls_grade": _h_tls_grade,
     "full_recon": _h_full_recon,
+    "verify_finding": _h_verify_finding,
 }
 
 
