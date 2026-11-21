@@ -151,8 +151,13 @@ are an allow-list. `GET /v1/msp/summary` gives fleet totals.
   stored; 72 h by default). The MSP hands it to the customer admin, who redeems
   it at the **public** `POST /v1/msp/invites/redeem {token, username, password}`
   and becomes that customer's first `admin` (single use; refused when expired or
-  the customer is suspended). `POST /v1/msp/customers/{id}/invites` issues
-  another.
+  the customer is suspended). `POST /v1/msp/customers/{id}/invites` re-issues
+  one, but **only while the customer has no active admin yet** (first-admin
+  onboarding, e.g. a lost or expired token). Once the customer has an admin the
+  call returns `409`: a redeemed invite is a permanent customer account that
+  survives revocation of the MSP's grant, so it must not be a way to keep access
+  after the relationship ends. Use a (revocable) MSP grant to act inside an
+  onboarded customer.
 * **Suspend / reactivate:** `POST /v1/msp/customers/{id}/suspend|reactivate`
   (MSP admin **and** an admin grant on that customer), via
   `msp_set_child_status()`. A suspended tenant fails authentication for its own

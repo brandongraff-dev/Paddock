@@ -922,3 +922,25 @@ async def test_msp_definer_errors_are_not_a_membership_oracle(world, app_pool):
                 await con.fetchval("SELECT msp_set_child_status($1, 'suspended')", other)
             msgs.add(str(e3.value))
     assert len(msgs) == 1, msgs
+
+
+async def test_invites_are_first_admin_onboarding_only(client, world, db_pool):
+    """An invite redeems into a permanent admin that outlives the MSP's grant, so
+    once the customer has its own admin the MSP can no longer mint more."""
+    a = world["a"]
+    # before any admin exists, a re-issued invite is fine
+    r = await client.post(f"/v1/msp/customers/{a['id']}/invites", headers=_h(world["root"]), json={})
+    assert r.status_code == 201, r.text
+    r = await client.post("/v1/msp/invites/redeem", json={
+        "token": a["invite"]["token"], "username": "alice-first", "password": "correct horse battery"})
+    assert r.status_code == 201, r.text
+    # now the customer has an admin: no further invites, however privileged the MSP caller
+    r = await client.post(f"/v1/msp/customers/{a['id']}/invites", headers=_h(world["root"]), json={})
+    assert r.status_code == 409, r.text
+    assert "first admin" in r.json()["detail"]
+    async with db_pool.acquire() as con:
+        n = await con.fetchval("SELECT COUNT(*) FROM msp_invites WHERE tenant_id = $1 AND used_at IS NULL", a["id"])
+    assert n == 1                      # only the earlier, still-unredeemed re-issue exists
+    # a customer that still has no admin can still be onboarded
+    r = await client.post(f"/v1/msp/customers/{world['b']['id']}/invites", headers=_h(world["root"]), json={})
+    assert r.status_code == 201, r.text
