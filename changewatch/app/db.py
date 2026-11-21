@@ -124,11 +124,12 @@ class Database:
             log.warning("db ping failed: %s", exc)
             return False
 
-    # ---- intel_cursors ------------------------------------------------------
+    # ---- service_cursors (tenant-scoped; NOT the global intel_cursors) -------
 
     async def get_cursor(self, source: str) -> Optional[dict[str, Any]]:
         row = await self.fetchrow(
-            "SELECT source, last_synced, last_cursor, stats FROM intel_cursors WHERE source=$1",
+            "SELECT key AS source, last_synced, last_cursor, stats FROM service_cursors "
+            "WHERE service = 'changewatch' AND key = $1",
             source,
         )
         return _clean(row)
@@ -148,11 +149,12 @@ class Database:
     ) -> None:
         await self.execute(
             """
-            INSERT INTO intel_cursors (source, last_synced, stats)
-            VALUES ($1, $2, COALESCE($3, '{}'::jsonb))
-            ON CONFLICT (source) DO UPDATE SET
+            INSERT INTO service_cursors (service, key, last_synced, stats)
+            VALUES ('changewatch', $1, $2, COALESCE($3, '{}'::jsonb))
+            ON CONFLICT (tenant_id, service, key) DO UPDATE SET
                 last_synced = EXCLUDED.last_synced,
-                stats       = intel_cursors.stats || COALESCE(EXCLUDED.stats, '{}'::jsonb)
+                stats       = service_cursors.stats || COALESCE(EXCLUDED.stats, '{}'::jsonb),
+                updated_at  = NOW()
             """,
             source, last_synced, stats or {},
         )
