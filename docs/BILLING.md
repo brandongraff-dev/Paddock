@@ -117,8 +117,9 @@ Quota enforcement (`gate.require_quota`) refuses *growth* with
 `402 {"error":"quota_exceeded","feature":"assets","used":…,"limit":…}` once usage is
 strictly over the limit:
 
-* **Assets:** `POST /v1/scans` is refused and the scheduler skips that tenant's due
-  schedules. In-flight scans, ingestion, findings, alerts and every read keep working.
+* **Assets:** `POST /v1/scans` is refused (including the follow-up scans workers
+  spawn) and the scheduler skips that tenant's due schedules. Scans already running,
+  ingestion of their results, findings, alerts and every read keep working.
 * **Seats:** the `require_quota("seats", 1)` dependency exists and is tested; it is not
   attached to a route yet because the OSS tree has no user-creation API (users come from
   the CLI, SSO JIT and SCIM; SCIM is Enterprise = unlimited seats).
