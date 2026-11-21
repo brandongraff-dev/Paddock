@@ -83,6 +83,8 @@ class Shipper:
             req.data = gzip.compress(body, compresslevel=6)
             req.add_header("Content-Encoding", "gzip")
         req.add_header("User-Agent", f"paddock-sentry/{__version__} (+passive sensor)")
+        if payload.get("batch_id"):
+            req.add_header("Idempotency-Key", str(payload["batch_id"]))
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - fixed server URL

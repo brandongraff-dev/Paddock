@@ -98,6 +98,14 @@ class Config:
     scan_hosts: int = field(default_factory=lambda: _env_int("SCAN_HOSTS", 16))
     scan_ports: int = field(default_factory=lambda: _env_int("SCAN_PORTS", 24))
 
+    # --- managed sensors (enrollment tokens + per-sensor credentials) ------ #
+    # Per-sensor credentials (pst_...) are verified by the orchestrator on every
+    # upload (revocation is immediate). Disable to accept only SENTRY_TOKENS.
+    managed_sensors: bool = field(default_factory=lambda: _env_bool("MANAGED_SENSORS", True))
+    # Read the client address from X-Forwarded-For (only behind your own TLS proxy).
+    trust_proxy: bool = field(default_factory=lambda: _env_bool("TRUST_PROXY", False))
+    max_tenant_engines: int = field(default_factory=lambda: _env_int("MAX_TENANT_ENGINES", 64))
+
 
 def load() -> Config:
     return Config()

@@ -90,6 +90,7 @@ class FakePaddock:
                         outer.fail_ingest -= 1
                         return self._json(503, {"detail": "down"})
                     bid = body["batch_id"]
+                    assert self.headers.get("Idempotency-Key") == bid
                     if bid not in outer.applied:        # the server applies a batch id once
                         outer.applied[bid] = body
                     if outer.lose_reply_once:
