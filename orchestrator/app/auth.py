@@ -468,6 +468,8 @@ _rule("GET", r"/v1/provenance", "read")
 
 # --- admin config: scope / owners / alert-rules / schedules / sla ---------- #
 _rule("POST DELETE PATCH PUT", rf"/v1/scope(/{_ANY})?", "admin")
+_rule("POST", rf"/v1/scope/{_ANY}/(challenge|verify)", "admin")  # proof-of-control (021)
+_rule("PUT PATCH POST", r"/v1/onboarding", "admin")  # first-run wizard (021)
 _rule("POST DELETE PATCH PUT", rf"/v1/owners(/{_ANY})?", "admin")
 _rule("POST DELETE PATCH PUT", rf"/v1/alert-rules(/{_ANY})?", "admin")
 _rule("POST DELETE PATCH PUT", rf"/v1/schedules(/{_ANY}(/run-now)?)?", "admin")

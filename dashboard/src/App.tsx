@@ -29,6 +29,7 @@ import Login from "./pages/Login";
 import SsoCallback from "./pages/SsoCallback";
 import IdentitySettingsPage from "./pages/IdentitySettings";
 import Landing from "./pages/Landing";
+import Setup, { FirstRunRedirect } from "./pages/Setup";
 import { useLiveEvents } from "./hooks/useLiveEvents";
 import { useAuth, canViewAudit } from "./state/auth";
 import type { ReactNode } from "react";
@@ -67,8 +68,10 @@ function AuthedApp() {
   return (
     <BrowserRouter>
       <LiveEvents />
+      <FirstRunRedirect />
       <Routes>
         <Route path="/welcome" element={<Landing />} />
+        <Route path="/setup" element={<Setup />} />
         <Route path="/" element={<Shell><Overview /></Shell>} />
         <Route path="/graph" element={<Shell noScroll><GraphPage /></Shell>} />
         <Route path="/findings" element={<Shell><FindingsPage /></Shell>} />

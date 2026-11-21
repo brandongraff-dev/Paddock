@@ -40,6 +40,7 @@ from .routers import licensing as licensing_router
 from .routers import lifecycle as lifecycle_router
 from .routers import ml as ml_router
 from .routers import monitoring as monitoring_router
+from .routers import onboarding as onboarding_router
 from .routers import devices as devices_router
 from .routers import exports as exports_router
 from .routers import fleet as fleet_router
@@ -265,6 +266,9 @@ def create_app() -> FastAPI:
     # Finding lifecycle (schema 019): accept / false-positive / reopen + suppressions
     app.include_router(lifecycle_router.router)
     app.include_router(lifecycle_router.suppressions_router)
+    # First-run wizard state + optional-service status (schema 021).
+    app.include_router(onboarding_router.router)
+    app.include_router(onboarding_router.system_router)
 
     return app
 

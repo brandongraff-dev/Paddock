@@ -195,7 +195,8 @@ class IntelService:
             log.warning("redis library not available; skipping event loop")
             return
         try:
-            client = redis.from_url(self.cfg.redis_url, decode_responses=True)
+            # socket_timeout > XREADGROUP block (redis-py >= 6 defaults it to 5s).
+            client = redis.from_url(self.cfg.redis_url, decode_responses=True, socket_timeout=30)
         except Exception as exc:  # pragma: no cover
             log.warning("redis connect failed: %s", exc)
             return

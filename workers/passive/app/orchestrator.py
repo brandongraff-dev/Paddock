@@ -16,6 +16,7 @@ logged with their value to avoid leaking out-of-scope strings.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
@@ -54,10 +55,13 @@ class OrchestratorClient:
     async def start(self) -> None:
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=self.settings.http_timeout_s)
-            self._session = aiohttp.ClientSession(
-                timeout=timeout,
-                headers={"User-Agent": self.settings.http_user_agent},
-            )
+            headers = {"User-Agent": self.settings.http_user_agent}
+            # Orchestrator in AUTH_MODE=enforce (hardened / lite) only accepts
+            # the fleet's shared service key.
+            svc_key = os.environ.get("SERVICE_API_KEY")
+            if svc_key:
+                headers["X-API-Key"] = svc_key
+            self._session = aiohttp.ClientSession(timeout=timeout, headers=headers)
 
     async def close(self) -> None:
         if self._session is not None:
@@ -118,7 +122,9 @@ class OrchestratorClient:
         if not assets:
             return {"accepted": 0, "ids": []}
         url = f"{self.settings.orchestrator_url}/v1/assets/bulk"
-        async with self.session.post(url, json={"assets": assets}) as resp:
+        # The orchestrator's bulk contract is {"items": [...]} (AssetBulkIn);
+        # the previous {"assets": ...} body was rejected with a 422.
+        async with self.session.post(url, json={"items": assets}) as resp:
             resp.raise_for_status()
             return await resp.json()
 
@@ -126,7 +132,7 @@ class OrchestratorClient:
         if not findings:
             return {"accepted": 0, "ids": []}
         url = f"{self.settings.orchestrator_url}/v1/findings/bulk"
-        async with self.session.post(url, json={"findings": findings}) as resp:
+        async with self.session.post(url, json={"items": findings}) as resp:
             resp.raise_for_status()
             return await resp.json()
 

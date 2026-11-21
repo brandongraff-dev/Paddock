@@ -61,6 +61,46 @@ status: ## hit /healthz on every service
 	@echo "correlation:"  && curl -fsS http://localhost:8091/healthz || echo "  down"
 	@echo "dashboard:"    && curl -fsS -I http://localhost:3000 | head -1 || echo "  down"
 
+# ---------- lite (single node) ----------
+# postgres + redis + orchestrator + dashboard + worker-passive, hardened
+# (AUTH_MODE=enforce, REQUIRE_SCOPE_PROOF=true). No neo4j/graphsync/ML/LLM.
+
+LITE ?= $(COMPOSE) -f docker-compose.lite.yml
+
+.PHONY: lite-env
+lite-env:
+	@test -f .env || (cp .env.example .env && echo "==> created .env from .env.example")
+	@grep -Eq '^SERVICE_API_KEY=.+' .env || ( \
+	  echo "SERVICE_API_KEY=$$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" >> .env && \
+	  echo "==> generated SERVICE_API_KEY in .env (worker -> orchestrator credential)")
+
+.PHONY: lite
+lite: lite-env ## single-node LITE stack (~1 GB RAM): sign in as admin, the /setup wizard takes it from there
+	$(LITE) up -d --build
+	@echo ""
+	@echo "  Paddock lite is starting:  http://localhost:3000"
+	@echo "  Sign in as 'admin' with ADMIN_BOOTSTRAP_PASSWORD from .env;"
+	@echo "  the first-run wizard (/setup) walks you through domain -> proof -> first scan."
+	@echo "  make lite-demo seeds demo data · make lite-status · make lite-down"
+
+.PHONY: lite-active
+lite-active: lite-env ## lite + the active worker (polite HTTP/TLS/port probing)
+	$(LITE) --profile active up -d --build
+
+.PHONY: lite-demo
+lite-demo: ## seed the demo graph into the lite stack (uses SERVICE_API_KEY from .env)
+	@SERVICE_API_KEY="$$(grep -E '^SERVICE_API_KEY=' .env | tail -1 | cut -d= -f2-)" python3 scripts/seed_demo.py
+
+.PHONY: lite-status
+lite-status: ## health of the lite stack
+	@$(LITE) ps
+	@curl -fsS $(ORCH_URL)/healthz && echo "  <- orchestrator" || echo "orchestrator: down"
+	@curl -fsS -o /dev/null -w "%{http_code}  <- dashboard\n" http://localhost:3000/ || echo "dashboard: down"
+
+.PHONY: lite-down
+lite-down: ## stop the lite stack (keeps data)
+	$(LITE) --profile active down
+
 # ---------- scope ----------
 
 .PHONY: seed-scope

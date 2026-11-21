@@ -348,6 +348,14 @@ async def scheduler_loop(app) -> None:
                 await sweep_expired(pool)
             except Exception:  # noqa: BLE001
                 logger.exception("lifecycle_sweep_failed")
+            # Proof-of-control re-verification + expiry (schema 021). Never
+            # allowed to take the schedules loop down with it.
+                from . import scope_proof
+
+                await scope_proof.maybe_reverify(pool, r)
+            except asyncio.CancelledError:
+                raise
+                logger.exception("scope_proof_sweep_failed")
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

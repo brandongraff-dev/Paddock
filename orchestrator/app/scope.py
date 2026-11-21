@@ -330,6 +330,28 @@ class ScopeDecision:
 # Caches: active scope entries + DNS resolution
 # --------------------------------------------------------------------------- #
 
+_ENTRIES_SQL = """
+    SELECT id, kind, value, expires_at
+      FROM scope_entries
+     WHERE active = TRUE
+       AND (expires_at IS NULL OR expires_at > NOW())
+"""
+
+# REQUIRE_SCOPE_PROOF: carry each entry's proof-of-control status (schema 021)
+# so check() can drop unproven entries. A missing proof row reads as pending.
+_PROOF_ENTRIES_SQL = """
+    SELECT e.id, e.kind, e.value, e.expires_at,
+           COALESCE(p.status, 'pending') AS proof_status
+      FROM scope_entries e
+      LEFT JOIN scope_proofs p ON p.scope_entry_id = e.id
+     WHERE e.active = TRUE
+       AND (e.expires_at IS NULL OR e.expires_at > NOW())
+"""
+
+# Proof statuses that authorise a match when REQUIRE_SCOPE_PROOF is on.
+PROVEN_STATUSES = frozenset({"verified", "attested"})
+
+
 class ScopeCache:
     """Process-local cache of active scope_entries.
 
@@ -354,12 +376,7 @@ class ScopeCache:
                 return self._rows
             async with pool.acquire() as con:
                 rows = await con.fetch(
-                    """
-                    SELECT id, kind, value, expires_at
-                      FROM scope_entries
-                     WHERE active = TRUE
-                       AND (expires_at IS NULL OR expires_at > NOW())
-                    """
+                    _PROOF_ENTRIES_SQL if settings.require_scope_proof else _ENTRIES_SQL
                 )
             self._rows = [dict(r) for r in rows]
             self._loaded_at = time.monotonic()
@@ -457,6 +474,19 @@ def _match_ip_rules(
     return False, None
 
 
+def _unproven_reason(normalized: str, unproven: list[dict[str, Any]]) -> str | None:
+    """Explain a deny caused only by a pending/expired proof (never allows)."""
+    ip = _is_ip(normalized)
+    if ip is None:
+        hit, eid = _match_host_rules(normalized, unproven)
+    else:
+        hit, eid = _match_ip_rules(ip, unproven)
+    if not hit:
+        return None
+    status = next((e.get("proof_status") for e in unproven if e["id"] == eid), None) or "pending"
+    return f"scope entry {eid} matches but its proof-of-control is {status}"
+
+
 # --------------------------------------------------------------------------- #
 # Decision + audit
 # --------------------------------------------------------------------------- #
@@ -518,6 +548,20 @@ async def check(
         return decision
 
     entries = await scope_cache.entries(pool)
+    unproven: list[dict[str, Any]] = []
+    if settings.require_scope_proof:
+        # Proof-of-control: an entry whose ownership isn't verified/attested
+        # authorises nothing. (Rows loaded before the flag flipped carry no
+        # proof_status and are treated as unproven -- fail closed.)
+        unproven = [e for e in entries if e.get("proof_status") not in PROVEN_STATUSES]
+        entries = [e for e in entries if e.get("proof_status") in PROVEN_STATUSES]
+    if not entries and unproven:
+        why = _unproven_reason(normalized, unproven) or "no_verified_scope_entries"
+        await _write_decision(
+            pool, target=target, normalized=normalized, allow=False,
+            matched_entry_id=None, worker=worker, reason=why,
+        )
+        return ScopeDecision(allow=False, normalized=normalized, reason=why)
     if not entries:
         await _write_decision(
             pool,
@@ -588,6 +632,8 @@ async def check(
     if guard_reason:
         logger.warning("scope_guardrail_deny", extra={"target": target, "why": guard_reason})
         reason = guard_reason
+    elif not allow and unproven:
+        reason = _unproven_reason(normalized, unproven) or reason
 
     if allow:
         decision_reason = reason or (

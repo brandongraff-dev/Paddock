@@ -34,6 +34,8 @@ services:
     environment:
       AUTH_MODE: dev
       ALLOW_NO_AUTH: "true"
+      # Dev keeps unverified scope usable; the hardened profile requires proof.
+      REQUIRE_SCOPE_PROOF: "false"
 
   mlrisk:
     ports: ["127.0.0.1:8098:8098"]

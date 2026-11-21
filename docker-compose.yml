@@ -144,6 +144,11 @@ services:
       # that encrypts IdP client secrets at rest.
       SSO_BASE_URL: ${SSO_BASE_URL:-http://localhost:8080}
       SSO_DASHBOARD_URL: ${SSO_DASHBOARD_URL:-http://localhost:3000}
+      # Proof-of-control: scope entries authorise nothing until ownership is
+      # verified (DNS TXT / HTTPS file) or attested (IP ranges). Schema 021.
+      REQUIRE_SCOPE_PROOF: ${REQUIRE_SCOPE_PROOF:-true}
+      # Shared credential for the worker fleet under AUTH_MODE=enforce.
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
     volumes:
       - ./schema:/schema:ro
     tmpfs:
@@ -171,7 +176,7 @@ services:
     environment:
       VITE_API_URL: http://localhost:8080
     tmpfs:
-      - /var/cache/nginx
+      - /var/cache/nginx:uid=101,gid=101  # nginx runs as uid 101; a root-owned tmpfs crash-loops it
       - /var/run
       - /tmp
     networks: [edge, internal]
@@ -222,6 +227,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       WORKER_ID: passive-1
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
     tmpfs:
       - /tmp
     networks: [internal, egress]
@@ -248,6 +254,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       WORKER_ID: active-1
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
       MAX_CONCURRENCY_PER_TARGET: "2"
       POLITENESS_DELAY_MS: "250"
     volumes:
