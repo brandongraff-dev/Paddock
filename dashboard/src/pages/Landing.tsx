@@ -5,6 +5,7 @@ import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
+import Faq from "./landing/Faq";
 import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
@@ -74,8 +75,8 @@ const AGENTS: Agent[] = [
 
 const REPO = "https://github.com/brandongraff-dev/cybersec";
 const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
-  { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["Principles", "#principles"], ["Console", "/login"]] },
-  { title: "Project", links: [["Source", REPO], ["Documentation", `${REPO}/tree/main/docs`], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
+  { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["Principles", "#principles"], ["FAQ", "#faq"], ["Console", "/login"]] },
+  { title: "Project", links: [["Source", REPO], ["Documentation", "https://paddock-docs.vercel.app"], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
   { title: "Security", links: [["Security policy", `${REPO}/blob/main/SECURITY.md`], ["Report a vulnerability", `${REPO}/security/advisories/new`], ["Code of conduct", `${REPO}/blob/main/CODE_OF_CONDUCT.md`]] },
 ];
 
@@ -110,7 +111,7 @@ export default function Landing() {
             <a href="#agents">Agents</a>
             <a href="#product">Product</a>
             <a href="#principles">Principles</a>
-            <a href="https://github.com/brandongraff-dev/cybersec/tree/main/docs" target="_blank" rel="noreferrer">
+            <a href="https://paddock-docs.vercel.app" target="_blank" rel="noreferrer">
               Docs
             </a>
             <GitHubStars />
@@ -205,6 +206,7 @@ export default function Landing() {
       </section>
 
 
+      <Faq />
       </div>
 
       <footer className="lp-footer">

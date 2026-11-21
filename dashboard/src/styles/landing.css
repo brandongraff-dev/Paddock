@@ -556,3 +556,23 @@
   .lp-pixels { opacity: 0.62; }
   .lp-headline { text-shadow: 0 2px 22px rgba(0, 0, 0, 0.9); }
 }
+
+/* ---- FAQ ---- */
+.lp-faq { padding: clamp(56px, 10vh, 110px) 0; background: #0e0c0a; }
+.lp-faq-list { max-width: 880px; margin: 0 clamp(16px, 4vw, 44px); border-top: 1px solid rgba(236, 226, 208, 0.12); }
+.lp-faq details { border-bottom: 1px solid rgba(236, 226, 208, 0.12); }
+.lp-faq summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 0; font: 400 clamp(20px, 2.1vw, 26px)/1.2 var(--serif); letter-spacing: -0.015em; color: var(--lp-ink); }
+.lp-faq summary::-webkit-details-marker { display: none; }
+.lp-faq summary:focus-visible { outline: 2px solid #9fc2d8; outline-offset: 4px; border-radius: 6px; }
+.lp-faq summary i { position: relative; flex: none; width: 14px; height: 14px; }
+.lp-faq summary i::before, .lp-faq summary i::after { content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 1.5px; background: var(--lp-ink-2); transition: transform 250ms var(--ease); }
+.lp-faq summary i::after { transform: rotate(90deg); }
+.lp-faq details[open] summary i::after { transform: rotate(0); }
+.lp-faq details p { margin: 0 0 24px; max-width: 68ch; font-size: 15.5px; line-height: 1.65; color: rgba(236, 230, 218, 0.74); }
+@media (max-width: 720px) { .lp-faq { padding: 48px 0; } .lp-faq-list { margin: 0 18px; } .lp-faq summary { padding: 18px 0; } }
+
+.lp-404 { min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; padding: 24px clamp(18px, 4vw, 44px) 12vh; background: #0e0c0a; color: var(--lp-ink); }
+.lp-404 h1 { margin: 6px 0 14px; font: 380 clamp(44px, 9vw, 110px)/0.98 var(--serif); letter-spacing: -0.03em; }
+.lp-404 .mono { margin: 0; font-size: 12px; letter-spacing: 0.18em; color: var(--lp-ink-2); }
+.lp-404-sub { margin: 0 0 28px; font-size: 16px; color: rgba(236, 230, 218, 0.7); }
+.lp-404-btn { display: inline-flex; width: fit-content; padding: 0 26px; height: 52px; }

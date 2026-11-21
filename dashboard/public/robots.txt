@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /setup
+Disallow: /sso/
+
+Sitemap: https://paddock-zeta-rose.vercel.app/sitemap.xml
