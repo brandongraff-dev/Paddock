@@ -1,4 +1,9 @@
-# Paddock
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/paddock-wordmark.svg">
+    <img src="docs/assets/paddock-wordmark-light.svg" alt="Paddock" height="64">
+  </picture>
+</h1>
 
 **Map the real attack paths from your internet-facing surface to your crown jewels — plus SCA, threat-intel, and an adaptive risk model, in one self-hosted platform.**
 

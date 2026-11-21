@@ -14,6 +14,7 @@ import DetailDrawer from "./DetailDrawer";
 import CommandPalette from "./CommandPalette";
 import { ClassificationBanner } from "./Classification";
 import HorseMark from "../brand/HorseMark";
+import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 
 interface NavEntry {
@@ -396,7 +397,7 @@ export default function Shell({ children, noScroll }: Props) {
       <nav className="rail" aria-label="primary">
         <NavLink to="/welcome" className="brand" title="Paddock — about">
           <HorseMark size={26} />
-          <span className="brand-name">Paddock</span>
+          <Wordmark height={19} className="brand-name" />
         </NavLink>
         <CmdkButton />
         <div className="rail-scroll">

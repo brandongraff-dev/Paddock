@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
+import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 import { useAuth } from "../state/auth";
 import "../styles/landing.css";
@@ -87,7 +88,7 @@ export default function Landing() {
         <nav className="lp-nav">
           <Link to="/welcome" className="lp-brand">
             <HorseMark size={30} />
-            <span>Paddock</span>
+            <Wordmark height={22} />
           </Link>
           <div className="lp-links">
             <a href="#agents">Agents</a>
