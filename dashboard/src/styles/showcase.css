@@ -197,3 +197,10 @@
 .ph-hops em.pii { background: var(--sev-crit); }
 .ph-why .sc-why-row { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) { .ph-win, .ph-hops li { opacity: 1; transform: none; transition: none; } }
+
+/* calmer colour: the product section is about the interface, not the aurora */
+.lp-showcase-px { opacity: 0.22; }
+.sc-pixels { opacity: 0.3; }
+.ph-px { opacity: 0.28; }
+.sc-graph { background: rgba(12, 10, 8, 0.92); }
+.sc-copy { position: relative; z-index: 1; }
