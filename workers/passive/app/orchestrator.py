@@ -23,6 +23,7 @@ from typing import Any, Iterable, Optional
 import aiohttp
 from loguru import logger
 
+from . import tenancy
 from .config import Settings
 from .util.cache import TTLCache
 
@@ -61,7 +62,12 @@ class OrchestratorClient:
             svc_key = os.environ.get("SERVICE_API_KEY")
             if svc_key:
                 headers["X-API-Key"] = svc_key
-            self._session = aiohttp.ClientSession(timeout=timeout, headers=headers)
+            # Echo the job's tenant + scan on EVERY callback (app/tenancy.py): the
+            # orchestrator verifies they match the job it issued.
+            self._session = aiohttp.ClientSession(
+                timeout=timeout, headers=headers,
+                trace_configs=[tenancy.aiohttp_trace_config()],
+            )
 
     async def close(self) -> None:
         if self._session is not None:
@@ -78,7 +84,8 @@ class OrchestratorClient:
     # Scope
     # ------------------------------------------------------------------
     async def scope_check(self, value: str) -> ScopeDecision:
-        cached = await self._scope_cache.get(value)
+        ckey = f"{tenancy.current_tenant_id()}|{value}"  # per-tenant cache key
+        cached = await self._scope_cache.get(ckey)
         if cached is not None:
             return cached
         url = f"{self.settings.orchestrator_url}/v1/scope/check"
@@ -98,7 +105,7 @@ class OrchestratorClient:
             reason=str(data.get("reason", "")),
             matched_entry=data.get("matched_entry"),
         )
-        await self._scope_cache.set(value, decision)
+        await self._scope_cache.set(ckey, decision)
         return decision
 
     async def filter_in_scope(self, values: Iterable[str]) -> list[str]:

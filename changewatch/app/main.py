@@ -24,6 +24,7 @@ from typing import Any, Optional
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from .alerts import AlertDispatcher
 from .db import Database
 from .detect import ChangeDetector
@@ -89,7 +90,14 @@ class ChangewatchService:
     # detection pass
     # ------------------------------------------------------------------
     async def run_pass(self) -> dict[str, Any]:
-        """One detection + alert pass. Advances the cursor only on success."""
+        """Detect for the tenant a trigger named, else every active tenant. Each
+        tenant has its own cursor, so one tenant's failure never moves another's."""
+        return tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self.run_tenant_pass))
+
+    async def run_tenant_pass(self) -> dict[str, Any]:
+        """One detection + alert pass for the CURRENT tenant. Advances that
+        tenant's cursor only on success."""
         async with self._run_lock:
             run_start = datetime.now(timezone.utc)
             since = await self.db.get_since(self.cfg.cursor_source, fallback_days=1)
@@ -118,7 +126,8 @@ class ChangewatchService:
             self.stats["runs"] += 1
             self.stats["last_run"] = run_start.isoformat()
             self.stats["last_counts"] = counts
-            log.info(json.dumps({"event": "detection_pass", **counts}, default=str))
+            log.info(json.dumps(
+                {"event": "detection_pass", "tenant": tenancy.current_tenant_id(), **counts}, default=str))
             return counts
 
     # ------------------------------------------------------------------
@@ -142,7 +151,10 @@ class ChangewatchService:
     async def _on_event(self, payload: dict[str, Any]) -> None:
         if payload.get("event") in _TRIGGER_EVENTS:
             try:
-                await self.run_pass()
+                with tenancy.bind_event(payload):  # only the event's tenant is re-scanned
+                    await self.run_tenant_pass()
+            except tenancy.TenantError as exc:
+                log.warning("dropping %s event without a usable tenant: %s", payload.get("event"), exc)
             except Exception:
                 log.exception("event-driven detection pass failed")
 
@@ -184,7 +196,7 @@ class ChangewatchService:
         return web.json_response(counts)
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),

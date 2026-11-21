@@ -26,6 +26,7 @@ from typing import Any, Optional
 from . import active_probe_guard, pcap
 from .config import Config
 from . import behavior
+from . import tenancy
 from .cvematch import match_devices
 from .db import Database
 from .exposure import ExposureResult, analyze as analyze_exposure
@@ -160,10 +161,14 @@ class DiscoveryEngine:
         *,
         db: Optional[Database] = None,
         orch: Optional[OrchestratorClient] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         self.cfg = cfg
         self.db = db
         self.orch = orch
+        # One engine per tenant: observations, sensors, flows and behaviour
+        # baselines are in-memory state that must never mix across tenants.
+        self.tenant_id = tenancy.norm(tenant_id)
         self.observations: list[dict[str, Any]] = []
         # One record per distinct flow (a sensor reports the same peer pair every
         # 30 s window; storing each repeat made analysis O(flow events) per upload).
@@ -171,7 +176,10 @@ class DiscoveryEngine:
         self._lock = asyncio.Lock()
         self._last_run_mono = 0.0
         self._deferred: Optional[asyncio.Task] = None
-        self.baselines = behavior.BaselineStore(cfg.baseline_path)
+        path = cfg.baseline_path
+        if path and self.tenant_id and self.tenant_id != tenancy.DEFAULT_TENANT_ID:
+            path = f"{path}.{self.tenant_id}"  # per-tenant baseline file
+        self.baselines = behavior.BaselineStore(path)
         self.sensors: dict[str, dict[str, Any]] = {}
         self.last_segment_matrix: list[dict[str, Any]] = []
         self.last_inventory: list[Device] = []

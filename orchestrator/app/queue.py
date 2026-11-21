@@ -89,8 +89,12 @@ async def enqueue_scan(r: aioredis.Redis, job: dict[str, Any]) -> str:
     stream = queue_name_for(job["kind"])
     # Workers echo this back (X-Paddock-Tenant) so their callbacks land in the
     # tenant that queued the job.
-    tid = tenancy.current_tenant_id()
-    if tid is not None and "tenant_id" not in job:
+    # Every queued unit of work names its tenant (workers bind it for the whole
+    # job and echo it back on each callback; job_binding.py verifies it).
+    if "tenant_id" not in job:
+        tid = tenancy.current_tenant_id()
+        if tid is None:
+            raise RuntimeError("refusing to enqueue a scan job without a tenant (TENANCY_STRICT)")
         job = {**job, "tenant_id": tid}
     # Streams want flat string fields; encode the whole job as JSON under 'job'.
     sid = await r.xadd(stream, {"job": json.dumps(job, default=str)})
@@ -101,6 +105,12 @@ async def enqueue_scan(r: aioredis.Redis, job: dict[str, Any]) -> str:
 
 
 async def publish_event(r: aioredis.Redis, event: dict[str, Any]) -> str:
+    # Consumers (correlation, triage, changewatch, intel, integrations ...) bind
+    # the event's tenant before touching data, so every event says whose it is.
+    if "tenant_id" not in event:
+        tid = tenancy.current_tenant_id()
+        if tid is not None:
+            event = {**event, "tenant_id": tid}
     sid = await r.xadd(settings.events_stream, {"event": json.dumps(event, default=str)})
     return sid
 

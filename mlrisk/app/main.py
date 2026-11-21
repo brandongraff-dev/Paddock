@@ -24,6 +24,7 @@ from aiohttp import web
 
 from . import config as config_module
 from . import anomaly as anomaly_mod
+from . import tenancy
 from .db import Database
 from .risk_model import RiskRanker, sklearn_available
 
@@ -161,6 +162,24 @@ class MlRiskService:
         anom = await self.detect_anomalies()
         return {"risk": risk, "anomaly": anom}
 
+    async def run_once_scoped(self) -> dict[str, Any]:
+        """The scheduled pass: every active tenant (models and scores are trained
+        on, and written to, one tenant's rows at a time), or just the tenant a
+        manual trigger named."""
+        results = await tenancy.run_for_request_or_all(self.db.pool, self.run_once)
+        if results and all(isinstance(r, Exception) for r in results.values()):
+            raise next(iter(results.values()))
+        return {tid: ("error" if isinstance(r, Exception) else r) for tid, r in results.items()}
+
+    async def _per_tenant(self, fn) -> dict[str, Any]:
+        results = await tenancy.run_for_request_or_all(self.db.pool, fn)
+        if results and all(isinstance(r, Exception) for r in results.values()):
+            raise next(iter(results.values()))
+        ok = [r for r in results.values() if not isinstance(r, Exception)]
+        # one tenant -> its own result (the pre-tenancy response shape)
+        return ok[0] if len(results) == 1 and ok else {
+            tid: ("error" if isinstance(r, Exception) else r) for tid, r in results.items()}
+
     # ------------------------------------------------------------------
     # scheduler
     # ------------------------------------------------------------------
@@ -169,7 +188,7 @@ class MlRiskService:
         interval_s = self.cfg.interval_min * 60
         while not self._stop.is_set():
             try:
-                await self.run_once()
+                await self.run_once_scoped()
             except asyncio.CancelledError:  # pragma: no cover
                 raise
             except Exception as exc:
@@ -218,7 +237,7 @@ class MlRiskService:
 
     async def _handle_retrain(self, _req: web.Request) -> web.Response:
         try:
-            res = await self.retrain_and_score()
+            res = await self._per_tenant(self.retrain_and_score)
         except Exception as exc:
             log.exception("retrain failed")
             return web.json_response({"error": str(exc)}, status=500)
@@ -226,7 +245,7 @@ class MlRiskService:
 
     async def _handle_score(self, _req: web.Request) -> web.Response:
         try:
-            res = await self.retrain_and_score()
+            res = await self._per_tenant(self.retrain_and_score)
         except Exception as exc:
             log.exception("score failed")
             return web.json_response({"error": str(exc)}, status=500)
@@ -234,14 +253,14 @@ class MlRiskService:
 
     async def _handle_detect(self, _req: web.Request) -> web.Response:
         try:
-            res = await self.detect_anomalies()
+            res = await self._per_tenant(self.detect_anomalies)
         except Exception as exc:
             log.exception("detect-anomalies failed")
             return web.json_response({"error": str(exc)}, status=500)
         return web.json_response({"ok": True, "anomaly": res})
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),

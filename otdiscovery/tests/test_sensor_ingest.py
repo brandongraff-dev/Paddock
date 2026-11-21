@@ -11,6 +11,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from app.config import Config
+from app import tenancy
 from app.main import OtDiscoveryService
 from app.pipeline import DiscoveryEngine
 from app.sensorapi import SensorGateway
@@ -126,20 +127,23 @@ async def test_managed_credential_ingests_without_any_shared_token(env):
     assert fake.done_calls == [("batch-0000001", True, 5)]
     # data went to the sensor's tenant engine, not the legacy default engine
     assert svc.engine.observations == []
-    assert len(svc.tenant_engines[TENANT_A].observations) == 5
+    assert len(svc.engines[TENANT_A].observations) == 5
     assert set(fake.tenants_seen) == {TENANT_A}
+    # /stats is per tenant: the default view doesn't show A's sensor; A's view does
     stats = await (await client.get("/stats")).json()
+    assert "pi-1@5e5e5e5e" not in stats["sensors"]
+    stats = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_A})).json()
     assert stats["sensors"]["pi-1@5e5e5e5e"]["site"] == "store-42"
 
 
 async def test_replayed_batch_is_acknowledged_but_not_ingested_again(env):
     svc, fake, client = env
     assert (await client.post("/ingest", json=_env(), headers=_h())).status == 200
-    before = len(svc.tenant_engines[TENANT_A].observations)
+    before = len(svc.engines[TENANT_A].observations)
     for _ in range(3):
         r = await client.post("/ingest", json=_env(), headers=_h())
         assert r.status == 200 and (await r.json())["duplicate"] is True
-    assert len(svc.tenant_engines[TENANT_A].observations) == before
+    assert len(svc.engines[TENANT_A].observations) == before
     assert len(fake.done_calls) == 1
 
 
@@ -158,7 +162,7 @@ async def test_revoked_or_wrong_credential_is_refused_immediately(env):
     assert r.status == 403
     r = await client.post("/ingest", json=_env(), headers=_h("batch-0000003", cred="pst_deadbeef_" + "z" * 32))
     assert r.status in (401, 403)
-    assert len(svc.tenant_engines[TENANT_A].observations) == 5
+    assert len(svc.engines[TENANT_A].observations) == 5
 
 
 async def test_missing_idempotency_key_is_rejected(env):
@@ -209,12 +213,14 @@ async def test_tenants_never_mix(env):
     fake.sensor = {**fake.sensor, "tenant_id": TENANT_B, "name": "pi-2",
                    "sensor_id": "5e5e5e5e-0000-0000-0000-000000000002"}
     await client.post("/ingest", json=_env(_flows(2, "10.7.0")), headers=_h("batch-b-00001"))
-    assert len(svc.tenant_engines[TENANT_A].observations) == 5
-    assert len(svc.tenant_engines[TENANT_B].observations) == 2
+    assert len(svc.engines[TENANT_A].observations) == 5
+    assert len(svc.engines[TENANT_B].observations) == 2
     assert svc.engine.observations == []
     assert set(fake.tenants_seen) == {TENANT_A, TENANT_B}
-    text = await (await client.get("/stats")).text()
-    assert "pi-1@" in text and "pi-2@" in text
+    a = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_A})).text()
+    b = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_B})).text()
+    assert "pi-1@" in a and "pi-2@" not in a
+    assert "pi-2@" in b and "pi-1@" not in b
 
 
 async def test_legacy_shared_tokens_still_work_alongside_managed(env):
@@ -269,7 +275,7 @@ async def test_deferred_analysis_coalesces_many_uploads_into_one_run(env):
     for i in range(6):
         r = await client.post("/ingest", json=_env(_flows(3)), headers=_h(f"batch-co-{i:04d}"))
         assert r.status == 200 and (await r.json())["analysis"] == "scheduled"
-    eng = svc.tenant_engines[TENANT_A]
+    eng = svc.engines[TENANT_A]
     await eng.flush()
     await asyncio.sleep(0.4)
     await eng.flush()
@@ -282,6 +288,6 @@ async def test_repeated_flows_are_merged_not_stored_again(env):
     svc, _, client = env
     for i in range(5):
         await client.post("/ingest", json=_env(_flows(4)), headers=_h(f"batch-mg-{i:04d}"))
-    eng = svc.tenant_engines[TENANT_A]
+    eng = svc.engines[TENANT_A]
     flows = [o for o in eng.observations if o["kind"] == "flow"]
     assert len(flows) == 4 and all(f["packets"] == 15 for f in flows)   # 5 uploads x 3 packets

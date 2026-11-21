@@ -47,7 +47,7 @@ The app role cannot write `tenants`; tenant creation is an operator action.
 
 ## Limits (read before selling this as multi-tenant SaaS)
 
-1. **Only the orchestrator runs as `paddock_app`.** The compute services that
+1. (SUPERSEDED, see "Compute services and workers" below.) **Only the orchestrator runs as `paddock_app`.** The compute services that
    hold `DATABASE_URL` (intel, brain, mlrisk, changewatch, triage, correlation,
    sca, codeanalysis, graphsync, ontology, threatintel, otdiscovery,
    remediation, worker-*) still connect as the owner/superuser in
@@ -56,7 +56,7 @@ The app role cannot write `tenants`; tenant creation is an operator action.
    the `ask_*` views and `graphsync` mirrors everything into a single Neo4j
    graph — both would leak across tenants. Multi-tenant mode requires making
    each of them tenant-aware (or disabling them) first.
-2. **Workers do not yet echo `tenant_id`** from the job payload as
+2. (SUPERSEDED, see below.) **Workers do not yet echo `tenant_id`** from the job payload as
    `X-Paddock-Tenant`, so worker callbacks for a non-default tenant's scans land
    in the default tenant (and 404). The API-level isolation is complete; the
    scanning pipeline for tenant ≠ default is not.
@@ -78,3 +78,156 @@ The app role cannot write `tenants`; tenant creation is an operator action.
    implemented.
 7. Tables created after the last run of `099_tenancy.sql` have **no** RLS
    until it is re-applied.
+
+---
+
+# Compute services and workers (schema 029)
+
+The orchestrator was the only component that enforced tenancy. This section
+records how **every other component** now gets its data, with which database
+role, and where its tenant comes from. Everything below is covered by tests
+(`<service>/tests/test_tenancy.py`, `orchestrator/tests/test_service_tenancy.py`,
+`scripts/tests/test_tenancy_helper.py`).
+
+## The rules
+
+1. **Every unit of work names its tenant.** Stream events carry `tenant_id`
+   (`queue.publish_event` stamps the request's tenant); queued scan jobs carry it
+   (`queue.enqueue_scan`, which refuses to enqueue a job with no tenant under
+   `TENANCY_STRICT`); HTTP calls from the orchestrator to a service carry
+   `X-Paddock-Tenant` + the service key (`service_client.service_headers`).
+   Periodic sweeps iterate the active tenants (`tenants` catalogue), each in its
+   own context, one tenant's failure never stopping the others.
+2. **The tenant is bound per unit of work** in a `ContextVar`
+   (`shared/paddock_tenancy.py`, copied verbatim to `<svc>/app/tenancy.py` by
+   `python scripts/sync_tenancy_helper.py`; a test fails if a copy drifts).
+3. **The database enforces it.** Each service connects as its own
+   `paddock_svc_<name>` role (`NOSUPERUSER NOBYPASSRLS`, explicit table
+   allow-list, no role-level default tenant: an unscoped session sees nothing).
+   `Database.acquire()` opens a transaction and runs
+   `set_config('app.tenant_id', <tenant>, true)` -- `SET LOCAL` semantics, so the
+   value dies with the transaction and a pooled connection can never carry it to
+   the next user. `REQUIRE_RLS_ROLE=true` (set in compose) makes a service refuse
+   to start if it is connected as a superuser / BYPASSRLS role.
+4. **With no tenant bound** a service runs in the default tenant (single-tenant
+   installs unchanged) -- or in *no* tenant with `TENANCY_STRICT=true`: reads
+   return nothing, writes fail the RLS check, and an event/job that names no
+   tenant is dropped.
+5. **Global catalogues stay global and platform-written.** `cves`,
+   `intel_cursors`, `attack_technique_map`, `ontology_*_types`, `ti_feeds`,
+   `ti_indicators`, `sla_policies` have no tenant column and are writable only
+   from the platform (default) tenant; services write them inside
+   `platform_context()` (`Database.acquire_platform()`), whichever tenant's job
+   triggered the write, and never put tenant data in them. Tenant-specific
+   state that used to live in `intel_cursors` (changewatch, graphsync cursors)
+   moved to the tenant-scoped **`service_cursors`**. Per-tenant models and
+   scores (`ml_models`, `ml_risk_scores`, `anomalies`) are tenant rows: a tenant's
+   model is never trained on, or served to, another tenant.
+6. **Per-tenant natural keys** (schema 029): `sca_projects(name)`,
+   `attack_paths(fingerprint)`, `ml_models(kind,version)`,
+   `anomalies(subject_type,subject_label,detected_at)` and the attack-path
+   ledger's open-episode index are now `(tenant_id, ...)`. Services' `ON CONFLICT`
+   targets were updated; **any new upsert on those tables must name `tenant_id`**.
+7. **A rejected statement aborts the service's transaction.** Because each
+   `acquire()` is one transaction, code that catches a database error and keeps
+   using the connection must wrap the risky statement in `conn.transaction()` (a
+   savepoint) -- threatintel's indicator upsert does.
+
+## Service inventory
+
+| Component | Reaches data via | DB role | Tenant comes from |
+|---|---|---|---|
+| orchestrator | asyncpg pool | `paddock_app` | principal (user/key/JWT); service key + `X-Paddock-Tenant` |
+| integrations worker (orchestrator image) | Redis `stream:events` + DB | `paddock_app` (was owner) | event `tenant_id`; delivery loop sweeps each tenant |
+| intel | DB (`cves`, `cve_matches`) + orchestrator API | `paddock_svc_intel` | `asset_added` event / tenant sweep / `X-Paddock-Tenant`; NVD/EPSS/KEV sync = platform |
+| correlation | DB + orchestrator API + `stream:events` | `paddock_svc_correlation` | event `tenant_id`; sweeps per tenant; per-tenant debounce state |
+| mlrisk | DB | `paddock_svc_mlrisk` | per-tenant scheduled pass / `X-Paddock-Tenant` |
+| triage | DB + `stream:events` | `paddock_svc_triage` | event `tenant_id` / per-tenant sweep |
+| changewatch | DB + `stream:events` | `paddock_svc_changewatch` | event `tenant_id` / per-tenant sweep + cursor |
+| ontology | DB | `paddock_svc_ontology` | per-tenant projection; type catalogue = platform |
+| threatintel | DB + orchestrator API | `paddock_svc_threatintel` | matching per tenant; feeds/indicators are global and **platform-only** |
+| otdiscovery | HTTP ingest + DB (`cves`) + orchestrator API | `paddock_svc_otdiscovery` | sensor token bound to a tenant (`SENTRY_TOKENS=<tenant-uuid>=<token>`); one in-memory engine per tenant |
+| brain | DB (LLM-written SQL!) | `paddock_svc_brain` | `X-Paddock-Tenant`; NL-SQL runs in one top-level READ ONLY transaction carrying the tenant, with a post-check that the tenant GUC did not move |
+| remediation | DB | `paddock_svc_remediation` | `X-Paddock-Tenant` |
+| sca | DB + orchestrator API | `paddock_svc_sca` | `X-Paddock-Tenant`; `/scan-dir` (host filesystem) is platform-tenant only |
+| codeanalysis | DB + orchestrator API | `paddock_svc_codeanalysis` | `X-Paddock-Tenant` |
+| graphsync | DB -> one Neo4j graph | `paddock_svc_graphsync` | **single-tenant by design**, see below |
+| worker-passive / worker-active | Redis queues + orchestrator API only (no DB; the DB credential was removed from compose) | none | job `tenant_id`, echoed on every callback |
+| agent (fleet) | orchestrator `/v1/fleet` | none | see "Not converted" |
+| sentry | HTTP `/ingest` on otdiscovery | none | bearer token bound to a tenant |
+
+## Workers: tenant echo and verification
+
+A worker binds the job's `tenant_id` + `scan_id` for the whole job
+(`tenancy.bind_job`). Every orchestrator call it makes -- scope checks, asset /
+finding / edge bulk writes, scan status -- carries `X-Paddock-Tenant` and
+`X-Paddock-Scan`. A job with no tenant is dropped in strict mode. The workers'
+scope-decision caches are keyed by tenant (a cached "allow" for tenant A never
+authorises tenant B's scan of the same name).
+
+The orchestrator (`job_binding.py`, called from the governance middleware for
+service principals) verifies that the job the callback names was **issued to the
+tenant it claims** -- `scans` is RLS'd, so the lookup runs inside the claimed
+tenant and only finds a job that tenant owns. A mismatch (job from another
+tenant, unknown job, or an echoed scan id that differs from the URL's) is
+rejected with `409 job_tenant_mismatch` and audited. Under `TENANCY_STRICT`,
+scan-lifecycle callbacks must echo their job.
+
+## The service key
+
+`SERVICE_API_KEY` is a fleet credential, not a tenant. Under `TENANCY_STRICT`
+a service-key request without `X-Paddock-Tenant` is refused (401). The header is
+honoured **only** for service principals, the tenant must exist and be active
+(unknown / suspended -> 401), and every service-key request is audited in the
+acting tenant's chain with `via=service_key`, `acting_tenant` and the job id.
+The compute services apply the same rule to their own HTTP surface: naming a
+tenant requires the service key (403 otherwise, and always in strict mode).
+*Remaining limit:* the key itself is still shared, so a compromised holder can
+name any tenant; per-job bound tokens are the next step.
+
+## Deploying
+
+* Fresh volume: `029_service_tenancy.sql` creates the roles NOLOGIN; the
+  `migrate` one-shot then runs `python -m app.tenancy provision-roles`, which
+  gives `paddock_app` and every `paddock_svc_*` role LOGIN + a password
+  (`PADDOCK_SVC_<NAME>_DB_PASSWORD` -> `PADDOCK_SERVICES_DB_PASSWORD` ->
+  `PADDOCK_APP_DB_PASSWORD` -> `POSTGRES_PASSWORD`; **set a distinct
+  `PADDOCK_SERVICES_DB_PASSWORD`** so a compromised service never learns the owner
+  password). `docker-compose.lite.yml` (initdb mount) does the same through
+  `schema/101_service_roles.sh`. (The base compose file mounts no initdb
+  directory, so `100_app_role.sh` never ran there; `provision-roles` also covers
+  `paddock_app`.)
+* Existing volume: the migration runner applies 029 on the next `migrate`; then
+  restart the services. A new table is invisible to every service role until it
+  is added to the allow-list in `paddock_apply_service_grants()` and
+  `SELECT paddock_apply_service_grants();` is re-run.
+* Helm: set `secrets.serviceRoles=true` and provide `DATABASE_URL_INTEL` /
+  `_CORRELATION` / `_OTDISCOVERY` (`secrets.serviceDatabaseUrls`). The chart
+  template change could not be rendered in this environment (no `helm`); the
+  chart's worker pods still receive the shared `DATABASE_URL` env (unused).
+* Multi-tenant installs should set `TENANCY_STRICT=true` on **every** component.
+
+## Not converted / known limits (read before selling this as multi-tenant)
+
+1. **graphsync is platform-tenant only.** Neo4j Community has no per-tenant
+   isolation and the Cypher (`queries.py`) is not tenant-filtered (crown-jewel
+   and stats queries are global aggregates). Converting it safely needs tenant
+   properties on every node/edge and a Cypher rewrite tested against a real
+   Neo4j, which is not available here. So: it mirrors only the default
+   tenant's Postgres rows (every DB access is pinned to it by construction) and
+   answers every other tenant with the documented `{"available": false}` degrade.
+2. **Threat-intel feeds / indicators are global.** A non-platform tenant cannot
+   register feeds or ingest indicators (403); there is no tenant-scoped IOC
+   store. Matching against the global IOCs is per tenant.
+3. **Agent (fleet).** Agents authenticate with their own `X-Agent-Token`, which
+   is looked up inside the default tenant context; the enforce-mode agent routes
+   are not in the governance allow-list upstream of tenancy, so an agent
+   enrolled into a non-default tenant is not supported yet. Unchanged in this pass.
+4. **remediation** opens PRs with one platform GitHub credential; per-tenant
+   credentials are not modelled.
+5. **dev auth mode** gives every caller the default tenant; multi-tenant needs
+   `AUTH_MODE=enforce`.
+6. Foreign keys still bypass RLS (limit 3 above); `sca` `/scan-dir` and the
+   NVD/KEV/EPSS sync are platform-operator facilities by design.
+7. In-process, per-service stats (`last_run`, ...) describe the last tenant
+   processed, not an aggregate.

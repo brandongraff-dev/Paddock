@@ -16,6 +16,8 @@ from typing import Any, AsyncIterator
 
 import asyncpg
 
+from . import tenancy
+
 log = logging.getLogger("mlrisk.db")
 
 
@@ -122,6 +124,7 @@ class Database:
             init=_init_connection,
             command_timeout=60,
         )
+        await tenancy.check_role(self._pool)
         log.info("db: pool connected (%s/%s)", self._min, self._max)
 
     async def close(self) -> None:
@@ -137,8 +140,20 @@ class Database:
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[asyncpg.Connection]:
+        """A pooled connection inside a transaction that carries the current
+        tenant (``set_config('app.tenant_id', ..., true)``): row-level security
+        pins every statement to it and nothing outlives the transaction."""
         async with self.pool.acquire() as conn:
-            yield conn
+            async with tenancy.scoped(conn):
+                yield conn
+
+    @asynccontextmanager
+    async def acquire_platform(self) -> AsyncIterator[asyncpg.Connection]:
+        """Like :meth:`acquire` but as the platform tenant: the only tenant
+        allowed to write global catalogues (``@paddock:global`` tables)."""
+        with tenancy.platform_context():
+            async with self.acquire() as conn:
+                yield conn
 
     async def ping(self) -> bool:
         try:
@@ -357,7 +372,7 @@ class Database:
           (subject_type, subject_id, subject_label, score, severity,
            reason, features, model_version)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-        ON CONFLICT (subject_type, subject_label, detected_at) DO NOTHING
+        ON CONFLICT (tenant_id, subject_type, subject_label, detected_at) DO NOTHING
         """
         n = 0
         async with self.acquire() as conn:

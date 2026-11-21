@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from ..config import settings
 from ..db import get_pool
+from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/ti", tags=["threat-intel"])
@@ -258,7 +259,7 @@ async def poll_feed(feed_id: UUID, pool=Depends(get_pool)) -> dict[str, Any]:
         import httpx
 
         async with httpx.AsyncClient(timeout=_PROXY_TIMEOUT) as http:
-            resp = await http.post(url)
+            resp = await http.post(url, headers=service_headers())
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):
@@ -383,7 +384,7 @@ async def ingest(body: dict[str, Any]) -> dict[str, Any]:
         import httpx
 
         async with httpx.AsyncClient(timeout=_PROXY_TIMEOUT) as http:
-            resp = await http.post(url, json=body or {})
+            resp = await http.post(url, json=body or {}, headers=service_headers())
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):

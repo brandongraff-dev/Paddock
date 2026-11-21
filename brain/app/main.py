@@ -18,6 +18,7 @@ from aiohttp import web
 
 from . import ask as ask_module
 from . import config as config_module
+from . import tenancy
 from .config import Config
 from .db import Database
 from .llm import LLM
@@ -60,8 +61,13 @@ class BrainService:
         await self.db.close()
 
     async def triage(self) -> dict[str, Any]:
-        async with self._triage_lock:
-            res = await run_triage(self.db, self.llm)
+        """Cluster the tenant a trigger named, else every active tenant (each
+        tenant's findings are clustered, and the clusters stored, separately)."""
+        async def _one() -> dict[str, Any]:
+            async with self._triage_lock:
+                return await run_triage(self.db, self.llm)
+
+        res = tenancy.merge_counts(await tenancy.run_for_request_or_all(self.db.pool, _one))
         self.stats["triage"] = {"last_run": _now(), **res}
         return res
 
@@ -147,7 +153,7 @@ class BrainService:
         return web.json_response(res, status=status)
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._healthz),
             web.get("/readyz", self._readyz),

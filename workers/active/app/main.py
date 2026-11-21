@@ -24,6 +24,7 @@ import orjson
 import structlog
 from redis.asyncio import Redis
 
+from app import tenancy
 from app.config import settings
 from app.orchestrator import OrchestratorClient
 from app.scope_guard import ScopeDenied, ScopeGuard
@@ -137,13 +138,24 @@ class Worker:
 
     async def _handle_job(self, msg_id: str, job_raw: str) -> None:
         assert self.redis is not None
-        assert self.orch is not None
         try:
             job = json.loads(job_raw) if isinstance(job_raw, str) else job_raw
         except json.JSONDecodeError:
             log.error("worker.bad_job_json", msg_id=msg_id)
             await self.redis.xack(settings.queue_stream, settings.consumer_group, msg_id)
             return
+        # The job names its tenant (the orchestrator put it there). Bind it for
+        # the WHOLE job: scope checks, results and status callbacks all echo it.
+        try:
+            with tenancy.bind_job(job if isinstance(job, dict) else {}):
+                await self._handle_bound_job(msg_id, job)
+        except tenancy.TenantError as e:
+            log.error("worker.job_without_tenant_dropped", msg_id=msg_id, error=str(e))
+            await self.redis.xack(settings.queue_stream, settings.consumer_group, msg_id)
+
+    async def _handle_bound_job(self, msg_id: str, job: dict[str, Any]) -> None:
+        assert self.redis is not None
+        assert self.orch is not None
 
         scan_id = job.get("scan_id") or str(uuid.uuid4())
         kind = job.get("kind")
@@ -197,6 +209,7 @@ class Worker:
                 log.warning("job.ack_failed", error=str(e))
             try:
                 await self.redis.xadd(settings.event_stream, {
+                    "tenant_id": tenancy.current_tenant_id() or "",
                     "event": "scan_completed",
                     "ts": str(time.time()),
                     "scan_id": scan_id,

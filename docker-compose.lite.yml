@@ -31,7 +31,8 @@ x-hardened-py: &hardened-py
   restart: unless-stopped
 
 x-worker-env: &worker-env
-  DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/asm
+  # (workers never connect to Postgres: no database credential here)
+  TENANCY_STRICT: ${TENANCY_STRICT:-false}
   REDIS_URL: redis://redis:6379/0
   ORCHESTRATOR_URL: http://orchestrator:8080
   # Shared fleet credential: the orchestrator runs AUTH_MODE=enforce, so the
