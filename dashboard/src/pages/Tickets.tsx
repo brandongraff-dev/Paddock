@@ -77,8 +77,8 @@ function HeaderTiles() {
     <div className="stat-row">
       <StatTile label="Open" value={s.open ?? 0} accent={SEV_COLOR.high} />
       <StatTile label="Breached" value={s.breached ?? 0} accent={SEV_COLOR.critical} />
-      <StatTile label="Resolved (7d)" value={s.resolved_7d ?? 0} accent="#58d68d" />
-      <StatTile label="Teams" value={teams} accent="#4ea3ff" />
+      <StatTile label="Resolved (7d)" value={s.resolved_7d ?? 0} accent="#8fbf8a" />
+      <StatTile label="Teams" value={teams} accent="#9fc2d8" />
     </div>
   );
 }

@@ -9,6 +9,7 @@
  * Dark, dense, serious — not a marketing page. One column, mono accents.
  */
 
+import HorseMark from "../brand/HorseMark";
 import { useState, type FormEvent } from "react";
 import { login as loginReq, me } from "../api/auth";
 import { ApiError } from "../api/client";
@@ -81,7 +82,7 @@ export default function Login() {
     <div className="login-screen">
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
-          <span className="login-mark mono">pa</span>
+          <span className="login-mark"><HorseMark size={40} title="" /></span>
           <div>
             <div className="login-title">palantir-asm</div>
             <div className="login-sub mono">attack surface management</div>

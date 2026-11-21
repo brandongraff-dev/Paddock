@@ -54,14 +54,14 @@ function HeaderTiles() {
 
   return (
     <div className="stat-row">
-      <StatTile label="Model version" value={ranker?.version ?? "—"} accent="#c084fc" />
-      <StatTile label="Samples trained" value={ranker?.n_samples ?? 0} accent="#4ea3ff" />
+      <StatTile label="Model version" value={ranker?.version ?? "—"} accent="#b9a3d6" />
+      <StatTile label="Samples trained" value={ranker?.n_samples ?? 0} accent="#9fc2d8" />
       <StatTile
         label="Cold start"
         value={ranker ? (cold ? "yes" : "no") : "—"}
-        accent={cold ? "#f0b429" : "#58d68d"}
+        accent={cold ? "#e3b265" : "#8fbf8a"}
       />
-      <StatTile label="Anomalies open" value={openAnoms} accent="#ff7a45" />
+      <StatTile label="Anomalies open" value={openAnoms} accent="#e67350" />
     </div>
   );
 }
@@ -383,7 +383,7 @@ function AnomaliesFeed() {
       <div className="filterbar" style={{ borderRadius: 0, border: 0, borderBottom: "1px solid var(--border)" }}>
         <label
           className={`checkchip ${unackedOnly ? "on" : ""}`}
-          style={unackedOnly ? { borderColor: "#ff7a45", color: "#ff7a45" } : undefined}
+          style={unackedOnly ? { borderColor: "#e67350", color: "#e67350" } : undefined}
         >
           <input
             type="checkbox"

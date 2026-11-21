@@ -12,7 +12,7 @@
   border: 1px solid var(--border-strong);
   border-left: 3px solid var(--accent);
   border-radius: 8px;
-  background: linear-gradient(90deg, rgba(78, 163, 255, 0.08), transparent);
+  background: linear-gradient(90deg, rgba(159, 194, 216, 0.08), transparent);
   color: var(--text-1);
   font-size: 12.5px;
   line-height: 1.5;
@@ -53,7 +53,7 @@
   padding: 7px 10px;
   border: 1px solid var(--sev-high);
   border-radius: 6px;
-  background: rgba(255, 122, 69, 0.08);
+  background: rgba(230, 115, 80, 0.08);
   color: var(--sev-high);
   font-size: 11.5px;
 }
@@ -68,7 +68,7 @@
   background: var(--bg-1);
   overflow: hidden;
 }
-.rem-card-rejected { border-color: rgba(255, 77, 109, 0.4); }
+.rem-card-rejected { border-color: rgba(213, 73, 60, 0.4); }
 .rem-card-pr_open { border-color: rgba(199, 167, 255, 0.4); }
 
 .rem-card-head {
@@ -135,12 +135,12 @@
   border-radius: 4px;
   white-space: nowrap;
 }
-.rem-status-verified { color: var(--ok); background: rgba(88, 214, 141, 0.12); }
+.rem-status-verified { color: var(--ok); background: rgba(143, 191, 138, 0.12); }
 .rem-status-pr_open { color: var(--kind-technology); background: rgba(199, 167, 255, 0.14); }
-.rem-status-rejected { color: var(--bad); background: rgba(255, 77, 109, 0.12); }
+.rem-status-rejected { color: var(--bad); background: rgba(213, 73, 60, 0.12); }
 .rem-status-proposed,
-.rem-status-verifying { color: var(--accent); background: rgba(78, 163, 255, 0.12); }
-.rem-status-failed { color: var(--sev-high); background: rgba(255, 122, 69, 0.12); }
+.rem-status-verifying { color: var(--accent); background: rgba(159, 194, 216, 0.12); }
+.rem-status-failed { color: var(--sev-high); background: rgba(230, 115, 80, 0.12); }
 .rem-status-merged { color: var(--text-1); background: var(--bg-3); }
 
 /* ------------------------------- body -------------------------------- */
@@ -178,8 +178,8 @@
   border-radius: 7px;
   background: var(--bg-1);
 }
-.rem-check-ok { border-color: rgba(88, 214, 141, 0.35); }
-.rem-check-bad { border-color: rgba(255, 77, 109, 0.4); background: rgba(255, 77, 109, 0.05); }
+.rem-check-ok { border-color: rgba(143, 191, 138, 0.35); }
+.rem-check-bad { border-color: rgba(213, 73, 60, 0.4); background: rgba(213, 73, 60, 0.05); }
 .rem-check-dot {
   flex: none;
   width: 9px;
@@ -187,8 +187,8 @@
   border-radius: 999px;
   margin-top: 4px;
 }
-.rem-check-dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(88, 214, 141, 0.6); }
-.rem-check-dot.bad { background: var(--bad); box-shadow: 0 0 8px rgba(255, 77, 109, 0.6); }
+.rem-check-dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(143, 191, 138, 0.6); }
+.rem-check-dot.bad { background: var(--bad); box-shadow: 0 0 8px rgba(213, 73, 60, 0.6); }
 .rem-check-title { font-size: 12px; font-weight: 600; color: var(--text-0); }
 .rem-check-sub { font-size: 11px; color: var(--text-1); margin-top: 2px; line-height: 1.45; }
 .rem-check-meta { font-size: 10.5px; color: var(--text-2); margin-top: 5px; }
@@ -234,15 +234,15 @@
 }
 .rem-diff-line.ctx { color: var(--text-1); }
 .rem-diff-line.meta { color: var(--text-2); background: var(--bg-2); }
-.rem-diff-line.hunk { color: var(--accent); background: rgba(78, 163, 255, 0.07); }
+.rem-diff-line.hunk { color: var(--accent); background: rgba(159, 194, 216, 0.07); }
 .rem-diff-line.add {
   color: #8ff0b0;
-  background: rgba(88, 214, 141, 0.1);
+  background: rgba(143, 191, 138, 0.1);
   border-left-color: var(--ok);
 }
 .rem-diff-line.del {
   color: #ff9fb0;
-  background: rgba(255, 77, 109, 0.09);
+  background: rgba(213, 73, 60, 0.09);
   border-left-color: var(--bad);
 }
 

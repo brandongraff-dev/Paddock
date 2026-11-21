@@ -130,10 +130,10 @@ function HeaderTiles({ ecosystemsFallback }: { ecosystemsFallback: number }) {
     s.ecosystems ?? (s.by_ecosystem ? Object.keys(s.by_ecosystem).length : ecosystemsFallback);
   return (
     <div className="stat-row">
-      <StatTile label="Components" value={s.components ?? 0} accent="#4ea3ff" />
+      <StatTile label="Components" value={s.components ?? 0} accent="#9fc2d8" />
       <StatTile label="Vulnerable" value={s.vulnerable_components ?? 0} accent={SEV_COLOR.high} />
       <StatTile label="Supply-chain risks" value={risks} accent={SEV_COLOR.critical} />
-      <StatTile label="Ecosystems" value={ecosystems} accent="#c7a7ff" />
+      <StatTile label="Ecosystems" value={ecosystems} accent="#c9b5e0" />
     </div>
   );
 }

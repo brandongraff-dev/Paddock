@@ -24,6 +24,7 @@ import DevicesPage from "./pages/Devices";
 import FleetPage from "./pages/Fleet";
 import RemediationPage from "./pages/Remediation";
 import Login from "./pages/Login";
+import Landing from "./pages/Landing";
 import { useLiveEvents } from "./hooks/useLiveEvents";
 import { useAuth, canViewAudit } from "./state/auth";
 import type { ReactNode } from "react";
@@ -56,6 +57,7 @@ function AuthedApp() {
     <BrowserRouter>
       <LiveEvents />
       <Routes>
+        <Route path="/welcome" element={<Landing />} />
         <Route path="/" element={<Shell><Overview /></Shell>} />
         <Route path="/graph" element={<Shell noScroll><GraphPage /></Shell>} />
         <Route path="/findings" element={<Shell><FindingsPage /></Shell>} />
@@ -84,10 +86,23 @@ function AuthedApp() {
   );
 }
 
-/** Top-level gate: no token → Login; otherwise the authenticated app. */
+/** Signed-out surface: the public landing page and the sign-in screen. */
+function PublicApp() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/welcome" element={<Landing />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+/** Top-level gate: no token → landing / Login; otherwise the authenticated app. */
 function Gate() {
   const token = useAuth((s) => s.token);
-  if (!token) return <Login />;
+  if (!token) return <PublicApp />;
   return <AuthedApp />;
 }
 

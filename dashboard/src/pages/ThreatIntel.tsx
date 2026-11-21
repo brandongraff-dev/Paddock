@@ -34,14 +34,14 @@ const IOC_TYPES: TiIndicatorType[] = [
 ];
 
 const TYPE_COLOR: Record<string, string> = {
-  ipv4: "#4ea3ff",
-  ipv6: "#4ea3ff",
+  ipv4: "#9fc2d8",
+  ipv6: "#9fc2d8",
   cidr: "#7aa2ff",
-  domain: "#58d68d",
-  url: "#f0b429",
-  file_sha256: "#c678dd",
-  file_md5: "#c678dd",
-  email: "#e06c75",
+  domain: "#8fbf8a",
+  url: "#e3b265",
+  file_sha256: "#b9a3d6",
+  file_md5: "#b9a3d6",
+  email: "#e67350",
 };
 
 const PAGE = 100;
@@ -504,9 +504,9 @@ export default function ThreatIntelPage() {
       </div>
 
       <div className="stat-row">
-        <StatTile label="Indicators" value={s?.indicators ?? 0} accent="#4ea3ff" />
+        <StatTile label="Indicators" value={s?.indicators ?? 0} accent="#9fc2d8" />
         <StatTile label="Matches" value={s?.matches ?? 0} accent={SEV_COLOR.critical} />
-        <StatTile label="Feeds" value={s?.feeds ?? 0} accent="#58d68d" />
+        <StatTile label="Feeds" value={s?.feeds ?? 0} accent="#8fbf8a" />
       </div>
 
       <MatchesPanel />

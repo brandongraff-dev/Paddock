@@ -40,31 +40,31 @@ export default function Timeline({ days, onDaySelect }: Props) {
             <AreaChart data={chartData} margin={{ top: 16, right: 16, bottom: 4, left: 16 }}>
               <defs>
                 <linearGradient id="a1" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#4ea3ff" stopOpacity={0.4} />
-                  <stop offset="100%" stopColor="#4ea3ff" stopOpacity={0.02} />
+                  <stop offset="0%" stopColor="#9fc2d8" stopOpacity={0.4} />
+                  <stop offset="100%" stopColor="#9fc2d8" stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="a2" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#ff7a45" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="#ff7a45" stopOpacity={0.02} />
+                  <stop offset="0%" stopColor="#e67350" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#e67350" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="#1d2430" strokeDasharray="2 4" />
-              <XAxis dataKey="date" stroke="#6f7a8c" tick={{ fontSize: 10 }} />
-              <YAxis stroke="#6f7a8c" tick={{ fontSize: 10 }} width={32} />
+              <CartesianGrid stroke="rgba(236,226,208,0.07)" strokeDasharray="2 4" />
+              <XAxis dataKey="date" stroke="#8a8175" tick={{ fontSize: 10 }} />
+              <YAxis stroke="#8a8175" tick={{ fontSize: 10 }} width={32} />
               <Tooltip
                 contentStyle={{
-                  background: "#10151d",
-                  border: "1px solid #2a3344",
+                  background: "#191613",
+                  border: "1px solid rgba(236,226,208,0.13)",
                   borderRadius: 6,
-                  color: "#e6edf7",
+                  color: "#ece6da",
                   fontSize: 11,
                 }}
-                labelStyle={{ color: "#aab4c4" }}
+                labelStyle={{ color: "#b4ab9c" }}
               />
               <Area
                 type="monotone"
                 dataKey="assets"
-                stroke="#4ea3ff"
+                stroke="#9fc2d8"
                 strokeWidth={1.2}
                 fill="url(#a1)"
                 isAnimationActive={false}
@@ -72,7 +72,7 @@ export default function Timeline({ days, onDaySelect }: Props) {
               <Area
                 type="monotone"
                 dataKey="findings"
-                stroke="#ff7a45"
+                stroke="#e67350"
                 strokeWidth={1.2}
                 fill="url(#a2)"
                 isAnimationActive={false}
@@ -113,7 +113,7 @@ export default function Timeline({ days, onDaySelect }: Props) {
                   <span
                     key={`a-${i}`}
                     className="timeline-dot"
-                    style={{ background: "#4ea3ff" }}
+                    style={{ background: "#9fc2d8" }}
                     title="new asset"
                   />
                 ))}

@@ -28,20 +28,20 @@ const PROPOSABLE: Exclude<ActionType, "revert">[] = [
 ];
 
 const STATUS_COLOR: Record<ActionStatus, string> = {
-  proposed: "#f0b429",
-  approved: "#4ea3ff",
-  applied: "#58d68d",
-  failed: "#e06c75",
-  reverted: "#c678dd",
-  denied: "#8893a7",
+  proposed: "#e3b265",
+  approved: "#9fc2d8",
+  applied: "#8fbf8a",
+  failed: "#e67350",
+  reverted: "#b9a3d6",
+  denied: "#7d7468",
 };
 
 const AGENT_DOT: Record<string, string> = {
-  online: "#58d68d",
-  enrolled: "#4ea3ff",
-  stale: "#f0b429",
-  offline: "#8893a7",
-  revoked: "#e06c75",
+  online: "#8fbf8a",
+  enrolled: "#9fc2d8",
+  stale: "#e3b265",
+  offline: "#7d7468",
+  revoked: "#e67350",
 };
 
 function relTime(iso: string | null): string {
@@ -64,7 +64,7 @@ function AgentCard({ agent, onSelect, selected }: {
   onSelect: (id: string) => void;
   selected: boolean;
 }) {
-  const dot = AGENT_DOT[agent.status] ?? "#8893a7";
+  const dot = AGENT_DOT[agent.status] ?? "#7d7468";
   return (
     <button
       type="button"
@@ -365,9 +365,9 @@ export default function FleetPage() {
       </div>
 
       <div className="stat-row">
-        <StatTile label="Agents" value={counts.total} accent="#4ea3ff" />
-        <StatTile label="Online" value={counts.online} accent="#58d68d" />
-        <StatTile label="Stale" value={counts.stale} accent="#f0b429" />
+        <StatTile label="Agents" value={counts.total} accent="#9fc2d8" />
+        <StatTile label="Online" value={counts.online} accent="#8fbf8a" />
+        <StatTile label="Stale" value={counts.stale} accent="#e3b265" />
       </div>
 
       <div className="fl-grid">

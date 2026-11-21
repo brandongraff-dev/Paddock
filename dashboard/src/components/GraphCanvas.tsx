@@ -298,7 +298,7 @@ function InnerGraph({ assets, edges, findings }: Props) {
           style={{
             borderColor: kevOnly ? "var(--sev-crit)" : undefined,
             color: kevOnly ? "var(--sev-crit)" : undefined,
-            background: kevOnly ? "rgba(255,77,109,0.1)" : undefined,
+            background: kevOnly ? "rgba(213, 73, 60,0.1)" : undefined,
           }}
           title="Show only known-exploited (KEV) assets and their direct neighbours"
         >
@@ -343,13 +343,13 @@ function InnerGraph({ assets, edges, findings }: Props) {
           variant={BackgroundVariant.Dots}
           gap={24}
           size={1}
-          color="#1d2430"
+          color="rgba(236,226,208,0.07)"
         />
         <Controls showInteractive={false} />
         <MiniMap
-          nodeColor={(n) => (n.data?.color as string) ?? "#4ea3ff"}
+          nodeColor={(n) => (n.data?.color as string) ?? "#9fc2d8"}
           maskColor="rgba(10,13,18,0.75)"
-          nodeStrokeColor="#2a3344"
+          nodeStrokeColor="rgba(236,226,208,0.13)"
           nodeStrokeWidth={1}
           pannable
           zoomable

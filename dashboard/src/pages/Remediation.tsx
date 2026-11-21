@@ -260,10 +260,10 @@ export default function RemediationPage() {
       </div>
 
       <div className="stat-row">
-        <StatTile label="Proposed fixes" value={q.data?.total ?? 0} accent="#4ea3ff" />
-        <StatTile label="Verified" value={counts.verified} accent="#58d68d" />
-        <StatTile label="PRs open" value={counts.pr_open} accent="#c7a7ff" />
-        <StatTile label="Rejected" value={counts.rejected} accent="#ff7a45" />
+        <StatTile label="Proposed fixes" value={q.data?.total ?? 0} accent="#9fc2d8" />
+        <StatTile label="Verified" value={counts.verified} accent="#8fbf8a" />
+        <StatTile label="PRs open" value={counts.pr_open} accent="#c9b5e0" />
+        <StatTile label="Rejected" value={counts.rejected} accent="#e67350" />
       </div>
 
       <div className="panel rem-panel">
