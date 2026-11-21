@@ -366,6 +366,7 @@ async def scheduler_loop(app) -> None:
                 continue
             from . import scope_proof
             from .lifecycle import sweep_expired
+            from .verification import service as verification_service
 
             proof_due = _scope_proof_due()
             for tid in await tenancy.list_tenant_ids(pool):
@@ -373,6 +374,7 @@ async def scheduler_loop(app) -> None:
                     await _guarded("schedules_tick_failed", run_due_schedules(pool, r))
                     kick_integration_syncs(pool, r)
                     await _guarded("lifecycle_sweep_failed", sweep_expired(pool))
+                    await _guarded("verification_sweep_failed", verification_service.sweep(pool, r))
                     if proof_due:
                         await _guarded("scope_proof_sweep_failed", scope_proof.reverify_due(pool, r))
             await maybe_run_retention(pool)

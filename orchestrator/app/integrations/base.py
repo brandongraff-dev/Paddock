@@ -52,6 +52,9 @@ EVENT_TYPES: dict[str, str] = {
     "scan.failed": "A scan failed",
     "report.digest": "The scheduled digest is ready",
     "integration.test": "A test event sent from the Integrations page",
+    "finding.verified": "A safe check confirmed (or could not reproduce) a finding",
+    "finding.fix_verified": "A fix was verified: the finding could no longer be reproduced",
+    "finding.fix_failed": "A fix did not hold: the finding was reproduced and reopened",
 }
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")

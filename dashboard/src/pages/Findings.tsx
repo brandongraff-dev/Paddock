@@ -4,7 +4,7 @@ import FindingRow from "../components/FindingRow";
 import FilterBar from "../components/FilterBar";
 import EmptyState from "../components/EmptyState";
 import "../styles/lifecycle.css";
-import { useFindingCounts, useFindingsInfinite, usePatchFinding } from "../hooks/useFindings";
+import { useFindingCounts, useFindingsInfinite, usePatchFinding, type FindingFilter } from "../hooks/useFindings";
 import type { Finding, FindingStatus, Severity } from "../api/types";
 import { useStore } from "../state/store";
 
@@ -18,6 +18,8 @@ export default function FindingsPage() {
   // list to show only them (server: ?suppressed=only).
   const [view, setView] = useState<"active" | "suppressed">("active");
   const [breachedOnly, setBreachedOnly] = useState<boolean>(false);
+  // Safe-check verdict filter (schema 026): "" = any.
+  const [exploit, setExploit] = useState<string>("");
 
   // Only pick one severity at a time on the URL-query side; multi-select is a
   // UI convenience filter we apply client-side. Server currently takes a
@@ -30,8 +32,9 @@ export default function FindingsPage() {
       kev: kevOnly || undefined,
       q: text || undefined,
       sla_breached: breachedOnly || undefined,
+      exploitability: (exploit || undefined) as FindingFilter["exploitability"],
     }),
-    [sev, status, ruleSource, kevOnly, text, breachedOnly],
+    [sev, status, ruleSource, kevOnly, text, breachedOnly, exploit],
   );
   const listFilter = useMemo(
     () => ({ ...filter, suppressed: view === "suppressed" ? ("only" as const) : undefined }),
@@ -121,6 +124,20 @@ export default function FindingsPage() {
         <label className="checkchip" style={{ cursor: "pointer" }}>
           <input type="checkbox" checked={breachedOnly} onChange={(e) => setBreachedOnly(e.target.checked)} />
           SLA breached
+        </label>
+        <label className="checkchip" style={{ cursor: "pointer" }}>
+          Exploitability
+          <select
+            aria-label="exploitability filter"
+            value={exploit}
+            onChange={(e) => { setExploit(e.target.value); setCursor(0); }}
+          >
+            <option value="">Any</option>
+            <option value="confirmed">Verified exploitable</option>
+            <option value="not_reproducible">Not reproducible</option>
+            <option value="inconclusive">Inconclusive</option>
+            <option value="unverified">Unverified</option>
+          </select>
         </label>
         {(counts.data?.duplicates ?? 0) > 0 && (
           <span className="hint">

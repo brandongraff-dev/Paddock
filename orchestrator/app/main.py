@@ -61,6 +61,7 @@ from .routers import scim as scim_router
 from .routers import sso as sso_router
 from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
+from .verification import router as verification_router
 from .reports import router as reports_router
 from .scheduler import scheduler_loop
 
@@ -294,6 +295,7 @@ def create_app() -> FastAPI:
     app.include_router(onboarding_router.system_router)
     # Reporting: executive report, weekly digest, compliance evidence packs
     app.include_router(reports_router.router)
+    app.include_router(verification_router.router)
 
     return app
 

@@ -90,6 +90,10 @@ class FindingLifecycleOut(FindingOut):
     kev: bool | None = None
     priority_score: int | None = None
     why: list[WhyFactor] = Field(default_factory=list)
+    # schema 026: safe-check verification state ("is it real", "did the fix hold")
+    exploitability: str = "unverified"
+    last_verified_at: datetime | None = None
+    fix_verified_at: datetime | None = None
 
 
 class FindingLifecyclePage(BaseModel):
@@ -378,6 +382,13 @@ def is_breached(status: str, due_at: datetime | None, now: datetime | None = Non
 
 SEVERITY_WEIGHT = {"critical": 35, "high": 25, "medium": 14, "low": 6, "info": 1}
 
+# Safe-check verdicts (schema 026): (why key, label, weight).
+VERIFICATION_WEIGHT = {
+    "confirmed": ("verified_exploitable", "Verified exploitable", 15),
+    "not_reproducible": ("not_reproducible", "Not reproducible", -12),
+    "inconclusive": ("verification_inconclusive", "Verification inconclusive", 0),
+}
+
 
 def explain_priority(
     *,
@@ -394,12 +405,17 @@ def explain_priority(
     engines: Iterable[str] = (),
     sla_breached: bool = False,
     owner: str | None = None,
+    exploitability: str | None = None,
+    verified_at: datetime | None = None,
 ) -> tuple[int, list[WhyFactor]]:
     """Return ``(priority_score 0-100, why factors sorted by weight desc)``.
 
     Additive and deliberately simple so every point is attributable: the sum
-    of factor weights IS the score (capped at 100). Context-only factors
-    (owner) carry weight 0.
+    of factor weights IS the score (clamped to 0..100). Context-only factors
+    (owner) carry weight 0. A safe-check verdict (schema 026) is a factor like
+    any other: ``confirmed`` raises, ``not_reproducible`` lowers (negative
+    weight), ``inconclusive`` is shown but moves nothing. It never closes a
+    finding.
     """
     f: list[WhyFactor] = [WhyFactor(key="severity", label=f"severity: {severity}",
                                     weight=SEVERITY_WEIGHT.get(severity, 1))]
@@ -431,7 +447,11 @@ def explain_priority(
         f.append(WhyFactor(key="sla", label="SLA breached", weight=5))
     if owner:
         f.append(WhyFactor(key="owner", label=f"owner: {owner}", weight=0))
-    score = min(100, sum(x.weight for x in f))
+    if exploitability in VERIFICATION_WEIGHT:
+        when = f" on {verified_at.date().isoformat()}" if verified_at else ""
+        key, text, weight = VERIFICATION_WEIGHT[exploitability]
+        f.append(WhyFactor(key=key, label=f"{text}{when}", weight=weight))
+    score = max(0, min(100, sum(x.weight for x in f)))
     f.sort(key=lambda x: -x.weight)
     return score, f
 
@@ -828,6 +848,7 @@ async def enrich(con, rows: list[dict[str, Any]], now: datetime | None = None) -
             blast_score=d.get("blast_score"), chain_title=chain_by_finding.get(d["id"]),
             engines=[s.rule_source for s in group] or [d["rule_source"]],
             sla_breached=breached, owner=owner,
+            exploitability=d.get("exploitability"), verified_at=d.get("last_verified_at"),
         )
         d.update(
             suppressed=d.get("suppressed_by") is not None,

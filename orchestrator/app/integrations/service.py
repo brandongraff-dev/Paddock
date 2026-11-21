@@ -333,6 +333,14 @@ async def _asset_label(pool: Any, asset_id: Any) -> tuple[Optional[str], Optiona
     return row["value"], row["kind"], _tags(row["metadata"])
 
 
+# Safe-check verification results (orchestrator/app/verification): stream name -> (type, verb).
+_VERIFICATION_EVENTS = {
+    "finding_verified": ("finding.verified", "Verified"),
+    "finding_fix_verified": ("finding.fix_verified", "Fix verified"),
+    "finding_fix_failed": ("finding.fix_failed", "Fix did not hold"),
+}
+
+
 async def event_from_stream(pool: Any, fields: Mapping[str, Any], stream_id: Optional[str] = None) -> Optional[Event]:
     """Map one ``stream:events`` entry to an ``Event`` (or ``None`` to ignore)."""
     p = decode_stream_fields(fields)
@@ -389,6 +397,27 @@ async def event_from_stream(pool: Any, fields: Mapping[str, Any], stream_id: Opt
             severity=_sev(ctx["severity"]), data=data,
             url=dashboard_url(f"/findings?focus={p.get('finding_id')}"),
             id=stable_event_id(f"{etype}:{p.get('finding_id')}:{sid}"), **extra,
+        )
+
+    if name in _VERIFICATION_EVENTS:
+        etype, verb = _VERIFICATION_EVENTS[name]
+        ctx = await _finding_context(pool, p.get("finding_id"))
+        if ctx is None:
+            ctx = {"title": f"Finding {p.get('finding_id')}", "severity": None, "summary": "",
+                   "data": {"finding_id": p.get("finding_id")}}
+        verdict = p.get("verdict")
+        if name == "finding_verified":
+            verb = {"confirmed": "Verified exploitable", "not_reproducible": "Not reproducible",
+                    "inconclusive": "Verification inconclusive"}.get(verdict, verb)
+        # Only identifiers leave Paddock: never the evidence excerpts.
+        data = {**ctx["data"], "verification_id": p.get("verification_id"), "verdict": verdict,
+                "check_id": p.get("check_id"), "checked_at": p.get("checked_at"),
+                "purpose": p.get("purpose")}
+        return Event(
+            type=etype, title=f"{verb}: {ctx['title']}", summary=ctx["summary"],
+            severity=_sev(ctx["severity"]), data=data,
+            url=dashboard_url(f"/findings?focus={p.get('finding_id')}"),
+            id=stable_event_id(f"{etype}:{p.get('verification_id') or p.get('finding_id')}"), **extra,
         )
 
     if name == "chain_detected":

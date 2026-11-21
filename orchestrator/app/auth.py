@@ -561,6 +561,12 @@ _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
 _rule("GET", r"/v1/export/(findings\.ocsf|sarif|sbom|vex)", "read")
 _rule("POST", r"/v1/import/(sbom|lockfiles)", "scan")
 
+# --- verified findings (schema 026): safe checks are scans; the worker reports with `write` --- #
+_rule("POST", rf"/v1/findings/{_ANY}/verify", "scan")
+_rule("POST", r"/v1/findings/verify/bulk", "scan")
+_rule("POST", rf"/v1/verifications/{_ANY}/result", "write")
+_rule("POST", rf"/v1/remediation/{_ANY}/merged", "triage")
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.
