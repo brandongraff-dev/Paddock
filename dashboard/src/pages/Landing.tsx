@@ -4,6 +4,8 @@ import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 import { useAuth } from "../state/auth";
+import Showcase from "./landing/Showcase";
+import { useInView } from "./landing/hooks";
 import "../styles/landing.css";
 
 /**
@@ -66,6 +68,12 @@ const AGENTS: Agent[] = [
   },
 ];
 
+const WORKS_WITH = [
+  "Jira", "ServiceNow", "Linear", "Slack", "Microsoft Teams", "PagerDuty", "Splunk", "Microsoft Sentinel",
+  "Elastic", "CrowdStrike", "Microsoft Defender", "AWS", "UniFi", "Meraki", "SARIF", "OCSF 1.3",
+  "STIX 2.1 / TAXII", "CycloneDX", "SPDX", "OIDC · SAML · SCIM", "Terraform",
+];
+
 const RULES = [
   ["No exploitation", "Findings describe impact. They never carry a working payload."],
   ["No credential attacks", "Default-credential risk is fingerprinted, never tried."],
@@ -76,6 +84,7 @@ const RULES = [
 export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
+  const [railRef, railIn] = useInView<HTMLDivElement>(0.15);
 
   return (
     <div className="lp">
@@ -92,6 +101,7 @@ export default function Landing() {
           </Link>
           <div className="lp-links">
             <a href="#agents">Agents</a>
+            <a href="#product">Product</a>
             <a href="#principles">Principles</a>
             <a href="https://github.com/brandongraff-dev/cybersec" target="_blank" rel="noreferrer">
               Source
@@ -132,7 +142,7 @@ export default function Landing() {
           <span className="lp-eyebrow mono">Defensive agents</span>
           <h2>Four agents. One invariant: only what you own.</h2>
         </div>
-        <div className="lp-rail" role="list">
+        <div className={`lp-rail${railIn ? " in" : ""}`} role="list" ref={railRef}>
           {AGENTS.map((a) => (
             <article className={`lp-card tone-${a.tone}`} key={a.id} role="listitem">
               <div className="lp-card-img">
@@ -161,6 +171,16 @@ export default function Landing() {
           ))}
         </div>
       </section>
+
+      <Showcase />
+
+      <div className="lp-ticker" aria-label="Integrations and standards">
+        <div className="lp-ticker-track">
+          {[...WORKS_WITH, ...WORKS_WITH].map((w, i) => (
+            <span key={i}><b aria-hidden="true" />{w}</span>
+          ))}
+        </div>
+      </div>
 
       <section className="lp-principles" id="principles">
         <div className="lp-section-head">
