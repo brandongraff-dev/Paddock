@@ -36,7 +36,7 @@ export default function Wordmark({
       {WORDMARK_LETTERS.map(([x, d], i) => (
         <path key={i} transform={`translate(${x} 0) scale(1 -1)`} d={d} />
       ))}
-      <g shapeRendering="crispEdges">
+      <g shapeRendering="crispEdges" className={shimmer ? "wm-o" : undefined}>
         {WORDMARK_PIXELS.map(([x, y, s, c], i) => (
           <rect key={i} x={x} y={y} width={s} height={s} fill={mono ? "currentColor" : c} className={shimmer ? "wm-px" : undefined} style={shimmer ? { animationDelay: `${(i * 173) % 2400}ms` } : undefined} />
         ))}

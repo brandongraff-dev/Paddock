@@ -425,3 +425,17 @@
 
 .lp-brand svg, .lp-links a { filter: drop-shadow(0 1px 10px rgba(0, 0, 0, 0.7)); }
 .lp-links .lp-cta { filter: none; }
+
+/* The "o" drops in from above the fold, spinning, lands with two small bounces,
+   then settles into its twinkle. Starts when the wordmark reaches the screen. */
+.wm-o { transform-box: fill-box; transform-origin: 50% 50%; opacity: 0; }
+.lp-mega-mark.in .wm-o { animation: wm-drop 2.1s 0.45s both; }
+@keyframes wm-drop {
+  0%   { opacity: 1; transform: translateY(-2800px) rotate(-720deg); animation-timing-function: cubic-bezier(0.55, 0, 0.9, 0.45); }
+  52%  { opacity: 1; transform: translateY(0) rotate(-90deg); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  66%  { opacity: 1; transform: translateY(-330px) rotate(-30deg); animation-timing-function: cubic-bezier(0.55, 0, 0.9, 0.45); }
+  78%  { opacity: 1; transform: translateY(0) rotate(0deg); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  88%  { opacity: 1; transform: translateY(-80px) rotate(0deg); animation-timing-function: cubic-bezier(0.55, 0, 0.9, 0.45); }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .wm-o { opacity: 1; } .lp-mega-mark.in .wm-o { animation: none; } }

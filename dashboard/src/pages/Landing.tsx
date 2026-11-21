@@ -88,7 +88,7 @@ export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
   const [railRef, railIn] = useInView<HTMLDivElement>(0.15);
-  const [megaRef, megaIn] = useInView<HTMLElement>(0.2);
+  const [megaRef, megaIn] = useInView<HTMLDivElement>(0.55);
 
   return (
     <div className="lp">
@@ -208,7 +208,7 @@ export default function Landing() {
       </section>
 
 
-      <section className="lp-mega" ref={megaRef}>
+      <section className="lp-mega">
         <div className="lp-mega-cta">
           <h2>Close the paths before they&apos;re walked.</h2>
           <div>
@@ -220,7 +220,7 @@ export default function Landing() {
             </a>
           </div>
         </div>
-        <div className={`lp-mega-mark${megaIn ? " in" : ""}`} style={{ aspectRatio: `${WORDMARK_ASPECT / 0.73}` }} aria-hidden="true">
+        <div ref={megaRef} className={`lp-mega-mark${megaIn ? " in" : ""}`} style={{ aspectRatio: `${WORDMARK_ASPECT / 0.73}` }} aria-hidden="true">
           <Wordmark fluid shimmer />
         </div>
       </section>
