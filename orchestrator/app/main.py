@@ -63,6 +63,9 @@ from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
 from .reports import router as reports_router
 from .scheduler import scheduler_loop
+from .billing import gate as billing_gate
+from .billing import router as billing_router
+from .billing import status as billing_status
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +297,11 @@ def create_app() -> FastAPI:
     app.include_router(onboarding_router.system_router)
     # Reporting: executive report, weekly digest, compliance evidence packs
     app.include_router(reports_router.router)
+    # Hosted-edition billing (schema 028): Stripe checkout/portal/webhook, the
+    # 402 upgrade body, and the public /status endpoint.
+    app.include_router(billing_router.router)
+    app.include_router(billing_status.router)
+    app.add_exception_handler(billing_gate.PaymentRequired, billing_gate.payment_required_handler)
 
     return app
 

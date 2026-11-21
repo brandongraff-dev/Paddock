@@ -188,6 +188,11 @@ const Icon = {
       <path d="M15 7.5 L21 7.5 M15 11 L19.5 11" />
     </svg>
   ),
+  Billing: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 10h18M7 15h3" />
+    </svg>
+  ),
   Remediation: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 6 a3 3 0 1 0 4 4 L21 13 L13 21 L3 11 L11 3 Z" /><path d="M9 11 L13 15" />
@@ -262,6 +267,9 @@ const auditEntry: NavEntry = { to: "/audit", label: "Audit", icon: Icon.Audit };
 
 /** Settings → Identity (SSO + SCIM) — appended to Govern only for admins. */
 const identityEntry: NavEntry = { to: "/settings/identity", label: "Identity", icon: Icon.Identity };
+
+/** Settings → Billing (hosted plan, usage, Stripe) — admins only, next to Identity. */
+const billingEntry: NavEntry = { to: "/settings/billing", label: "Billing", icon: Icon.Billing };
 
 function ToastStack() {
   const toasts = useStore((s) => s.toasts);
@@ -373,7 +381,7 @@ export default function Shell({ children, noScroll }: Props) {
   // Audit is appended to the rail only for roles that may open it.
   const govExtra = [
     ...(canViewAudit(role) ? [auditEntry] : []),
-    ...(role === "admin" ? [identityEntry] : []),
+    ...(role === "admin" ? [identityEntry, billingEntry] : []),
   ];
   const entries = [...navEntries, ...govExtra];
 

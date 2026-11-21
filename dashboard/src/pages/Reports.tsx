@@ -17,6 +17,7 @@ import {
   type ExecutiveReport,
   type FrameworkSummary,
 } from "../api/reports";
+import UpgradePrompt from "../components/UpgradePrompt";
 import { useStore } from "../state/store";
 import type { Severity } from "../api/types";
 import "../styles/reports.css";
@@ -272,7 +273,9 @@ function FrameworkDetail({ id }: { id: string }) {
   }, [pack.data, filter]);
 
   if (pack.isLoading) return <div className="empty">Mapping evidence…</div>;
-  if (pack.isError || !pack.data) return <div className="empty">Could not load this framework.</div>;
+  if (pack.isError || !pack.data) {
+    return <UpgradePrompt error={pack.error} fallback={<div className="empty">Could not load this framework.</div>} />;
+  }
   const f = pack.data.framework;
   return (
     <section className="panel rp-detail" aria-label={`${f.name} controls`}>
@@ -376,7 +379,9 @@ export default function Reports() {
           <span className="panel-meta">Paddock evidence mapped to controls. Manual controls need your attestation.</span>
         </div>
         {frameworks.isLoading && <div className="empty">Mapping evidence…</div>}
-        {frameworks.isError && <div className="empty">Compliance packs are unavailable.</div>}
+        {frameworks.isError && (
+          <UpgradePrompt error={frameworks.error} fallback={<div className="empty">Compliance packs are unavailable.</div>} />
+        )}
         <div className="rp-fws">
           {(frameworks.data ?? []).map((f) => (
             <FrameworkCard key={f.id} f={f} active={fw === f.id} onOpen={() => setFw(fw === f.id ? null : f.id)} />

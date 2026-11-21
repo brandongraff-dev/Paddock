@@ -56,9 +56,15 @@ Priced on two things that are easy to predict and grow with the customer:
 | Per 1,000 monitored assets / month | free (self-hosted) | **$TBD** *(placeholder)* | **$TBD** *(placeholder)* | quote |
 | Seats | unlimited | included (soft limit in key) | included | included |
 
-Limits in a key are **soft**: `/v1/usage` reports `over: true` and the
+Limits in a license key are **soft**: `/v1/usage` reports `over: true` and the
 dashboard can nudge, but scans, ingestion and alerts are never blocked. A
 true-up uses the daily usage snapshots.
+
+On the **hosted edition** (billing on, see [Billing](BILLING.md)) the plan's
+allowances are enforced instead, gently: once a tenant is *over* an allowance,
+new scans and scheduled scans pause and paid features answer `402`, but data is
+never deleted and everything that already exists stays readable. Usage is also
+reported to Stripe from the same metered dimensions (sites, per-1,000 assets).
 
 ## How licensing works
 
@@ -80,6 +86,12 @@ true-up uses the daily usage snapshots.
 - **Trust anchors:** official builds embed the vendor public key
   (`licensing.VENDOR_PUBLIC_KEYS`); `PADDOCK_LICENSE_PUBLIC_KEYS` adds more
   (e.g. for a reseller or a test lab).
+- **Hosted billing:** the hosted edition derives entitlements from a Stripe
+  subscription (14-day Team trial on signup, grace period on failed payments,
+  then Community limits) instead of a key; both can coexist and the higher
+  edition wins. See [Billing](BILLING.md). The signing-key ceremony (generating
+  the vendor key offline and embedding only its public half in a release) is
+  documented there too.
 - **Honesty:** Paddock is AGPL-3.0. Anyone may modify their copy, including
   these checks. The license is how paying customers get the commercial
   features, support and a clean audit trail for procurement — not DRM.
@@ -101,9 +113,17 @@ For code that should degrade rather than refuse, use
 locally, create a throwaway keypair with `scripts/issue_license.py keygen`,
 trust it via `PADDOCK_LICENSE_PUBLIC_KEYS`, and issue yourself a key.
 
+For features that already ship in the tree and are listed as paid above (SAML
+SSO, SCIM, compliance packs, anchoring), use the billing gate instead:
+`Depends(billing_gate.require_paid("scim"))` (`orchestrator/app/billing/gate.py`).
+It returns the same 402 plus an `upgrade_url`, but **only enforces when billing
+is on or `PADDOCK_ENFORCE_EDITIONS=on`**, so a default self-hosted install keeps
+every feature that exists in the open-source tree, as promised above.
+
 New gateable features must be added to `FEATURES` (unknown names raise at
 import time) and to the table above, and must not gate anything that already
-exists in Community.
+exists in Community (existing paid-listed features are only gated when
+enforcement is on, see above).
 
 ## Usage metering
 

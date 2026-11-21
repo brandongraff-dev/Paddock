@@ -45,6 +45,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import audit
 from .. import auth as auth_svc
 from ..auth import current_principal, require
+from ..billing import gate as billing_gate
 from ..config import settings
 from ..db import get_pool
 from ..identity import mapping, oidc, saml, scim_logic
@@ -636,6 +637,8 @@ async def admin_get_provider(provider_id: UUID, pool=Depends(get_pool)):
 async def admin_create_provider(body: ProviderIn, request: Request, pool=Depends(get_pool)):
     if body.slug in store.RESERVED_SLUGS:
         raise HTTPException(status_code=422, detail=f"slug {body.slug!r} is reserved")
+    if body.kind == "saml":
+        await billing_gate.ensure_feature(request, "sso_saml")  # 402 on a plan without SAML
     cfg = await _validated_config(body.kind, body.slug, body.oidc, body.saml, body.saml_metadata_xml)
     blob = None
     if body.client_secret:
@@ -682,6 +685,7 @@ async def admin_update_provider(
     if cur["kind"] == "oidc" and body.oidc is not None:
         sets["config"] = _json(await _validated_config("oidc", cur["slug"], body.oidc, None, None))
     if cur["kind"] == "saml" and (body.saml is not None or body.saml_metadata_xml):
+        await billing_gate.ensure_feature(request, "sso_saml")  # reconfiguring SAML is a paid action
         # metadata (if pasted) is the base; explicit `saml` fields override it
         sets["config"] = _json(
             await _validated_config("saml", cur["slug"], None, body.saml, body.saml_metadata_xml)
@@ -864,6 +868,7 @@ async def admin_list_scim_tokens(pool=Depends(get_pool)):
     dependencies=_admin,
 )
 async def admin_create_scim_token(body: ScimTokenIn, request: Request, pool=Depends(get_pool)):
+    await billing_gate.ensure_feature(request, "scim")
     actor, role = _actor(request)
     full, prefix, token_hash = auth_svc.generate_scim_token()
     async with pool.acquire() as con:

@@ -1,0 +1,96 @@
+/* ------------------------------------------------------------------ *
+ * Settings → Billing and the reusable "upgrade" empty state.          *
+ * New classes only; panels and stat tiles are the existing glass ones  *
+ * (theme.css), so there is no surface, shadow or hover glow here.      *
+ * Tokens only (tokens.css).                                            *
+ * ------------------------------------------------------------------ */
+
+.billing-page { display: flex; flex-direction: column; gap: 16px; }
+.billing-page .page-header { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.bill-copy { color: var(--text-1); font-size: 13px; max-width: 760px; margin: 4px 0 10px; }
+.bill-copy b { color: var(--text-0); font-weight: 500; }
+
+/* Stat tiles */
+.bill-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+
+/* Notices: trial countdown, dunning, downgrade */
+.bill-notices { display: flex; flex-direction: column; gap: 10px; }
+.bill-notice {
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius-m);
+  background: rgba(8, 7, 6, 0.35);
+}
+.bill-notice.tone-info { border-left-color: var(--accent-dim); }
+.bill-notice.tone-warn { border-left-color: var(--warn); }
+.bill-notice.tone-bad { border-left-color: var(--bad); }
+.bill-notice-title { color: var(--text-0); font-size: 13px; font-weight: 500; }
+.bill-notice-body { color: var(--text-1); font-size: 12.5px; margin-top: 2px; max-width: 820px; }
+
+/* Usage meters */
+.bill-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px 28px; padding: 6px 0 4px; }
+.bill-meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.bill-meter-label { color: var(--text-0); font-size: 13px; }
+.bill-meter-figure { color: var(--text-0); font-size: 12.5px; }
+.bill-meter-of { color: var(--text-2); }
+.bill-meter-track {
+  height: 8px;
+  margin: 7px 0 5px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.bill-meter-track > span { display: block; height: 100%; border-radius: 4px; background: var(--accent-dim); }
+.bill-meter[data-tone="near"] .bill-meter-track > span { background: var(--warn); }
+.bill-meter[data-tone="over"] .bill-meter-track > span { background: var(--bad); }
+.bill-meter-hint { color: var(--text-2); font-size: 11.5px; }
+.bill-meter[data-tone="over"] .bill-meter-hint { color: var(--bad); }
+
+/* Plans */
+.bill-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.bill-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: rgba(8, 7, 6, 0.35);
+}
+.bill-plan.is-highlighted { border-color: var(--border-focus); }
+.bill-plan.is-current { border-color: var(--accent-dim); }
+.bill-plan-h { display: flex; justify-content: space-between; align-items: baseline; }
+.bill-plan-h h3 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 19px; letter-spacing: -0.01em; }
+.bill-chip { color: var(--accent); border: 1px solid var(--accent-dim); background: var(--accent-bg); }
+.bill-plan-list { margin: 0; padding: 0 0 0 16px; color: var(--text-1); font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
+.bill-plan .mutate-gate { margin-top: auto; }
+
+/* Reusable upgrade empty state (HTTP 402) */
+.upgrade-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--text-2);
+}
+.upgrade-prompt.compact { padding: 14px 12px; gap: 4px; }
+.upgrade-mark { font-family: var(--serif); font-size: 22px; color: var(--accent); }
+.upgrade-title { color: var(--text-0); font-weight: 500; font-size: 14px; }
+.upgrade-hint { font-size: 12.5px; max-width: 460px; }
+.upgrade-cta {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-3);
+  color: var(--text-0);
+  font-size: 13px;
+  text-decoration: none;
+}
+.upgrade-cta:hover { border-color: var(--border-focus); }
