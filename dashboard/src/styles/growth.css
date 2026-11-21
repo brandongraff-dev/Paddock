@@ -1,0 +1,64 @@
+/* Suppliers + trust-link management (authenticated console pages).
+   Builds on the existing .panel / .table / .field classes; only adds
+   page-specific bits under the gr- prefix. */
+
+.gr-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.gr-form .wide { grid-column: span 4; }
+.gr-form input, .gr-form select { width: 100%; }
+.gr-sections { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.gr-sections legend { font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 0 6px; }
+.gr-check { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.gr-check input { width: auto; margin-top: 3px; }
+.gr-check b { font-weight: 500; display: block; }
+.gr-check em { font-style: normal; color: var(--text-2); font-size: 12px; }
+
+.gr-note, .gr-muted { color: var(--text-2); font-size: 12px; }
+.gr-err { color: var(--bad); font-size: 12px; margin-top: 8px; }
+.gr-err-inline { color: var(--bad); font-size: 11px; }
+.gr-dim { opacity: 0.55; }
+.gr-h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-2); font-weight: 500; margin: 18px 0 8px; }
+
+.gr-url { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.gr-url code { flex: 1 1 320px; font-family: var(--mono); font-size: 12px; padding: 8px 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; user-select: all; }
+
+.gr-chip { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-1); margin-left: 6px; text-transform: lowercase; }
+td > .gr-chip:first-child { margin-left: 0; }
+.gr-active { color: var(--ok); border-color: rgba(143, 191, 138, 0.4); }
+.gr-expired { color: var(--warn); border-color: rgba(227, 178, 101, 0.4); }
+.gr-revoked { color: var(--text-2); }
+.gr-secs { display: flex; flex-wrap: wrap; gap: 4px; }
+.gr-secs code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+
+.gr-grade { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; font-family: var(--serif); font-size: 17px; border: 1px solid currentColor; }
+.gr-g-A, .gr-g-B { color: var(--ok); }
+.gr-g-C { color: var(--warn); }
+.gr-g-D { color: var(--sev-high); }
+.gr-g-F { color: var(--sev-crit); }
+.gr-none { color: var(--text-3); }
+.gr-crit { font-size: 12px; text-transform: capitalize; }
+.gr-crit-critical { color: var(--sev-crit); }
+.gr-crit-high { color: var(--sev-high); }
+.gr-crit-medium { color: var(--text-1); }
+.gr-crit-low { color: var(--text-2); }
+.gr-link { background: none; border: 0; padding: 0; color: var(--text-0); font-size: 13px; text-align: left; cursor: pointer; }
+.gr-link:hover { color: var(--accent); background: none; border: 0; }
+
+.gr-detail-top { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.gr-detail-top b { font-family: var(--serif); font-size: 28px; font-weight: 500; }
+.gr-hist, .gr-find { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.gr-hist li { display: grid; grid-template-columns: 170px 34px 1fr; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.gr-find li { display: grid; grid-template-columns: 70px 1fr; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.gr-find code { font-family: var(--mono); font-size: 11.5px; color: var(--text-1); }
+.gr-sev { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.gr-sev-critical { color: var(--sev-crit); }
+.gr-sev-high { color: var(--sev-high); }
+.gr-sev-medium { color: var(--sev-med); }
+.gr-sev-low { color: var(--sev-low); }
+.gr-sev-info { color: var(--text-2); }
+.gr-possible { font-style: normal; font-size: 11px; color: var(--warn); border: 1px solid rgba(227, 178, 101, 0.4); border-radius: 999px; padding: 0 7px; margin-left: 8px; }
+
+@media (max-width: 760px) {
+  .gr-form { grid-template-columns: 1fr; }
+  .gr-form .wide { grid-column: auto; }
+  .gr-hist li { grid-template-columns: 1fr; }
+}

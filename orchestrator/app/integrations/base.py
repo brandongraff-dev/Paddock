@@ -55,6 +55,9 @@ EVENT_TYPES: dict[str, str] = {
     "finding.verified": "A safe check confirmed (or could not reproduce) a finding",
     "finding.fix_verified": "A fix was verified: the finding could no longer be reproduced",
     "finding.fix_failed": "A fix did not hold: the finding was reproduced and reopened",
+    "supplier.grade_changed": "A monitored supplier's passive security grade changed",
+    "supplier.dangling_dns": "A monitored supplier has a new dangling DNS record (possible takeover)",
+    "supplier.cert_expiring": "A monitored supplier has an expired or expiring certificate",
 }
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")

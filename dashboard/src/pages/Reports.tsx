@@ -21,6 +21,7 @@ import UpgradePrompt from "../components/UpgradePrompt";
 import { useStore } from "../state/store";
 import type { Severity } from "../api/types";
 import "../styles/reports.css";
+import TrustShareLink from "../components/TrustShareLink";
 
 const PERIODS = [
   { key: 7, label: "7D" },
@@ -339,6 +340,7 @@ export default function Reports() {
           <div className="subtitle">Executive summary, weekly digest and compliance evidence — ready to forward.</div>
         </div>
         <div className="rp-head-actions">
+          <TrustShareLink />
           <div className="seg" role="radiogroup" aria-label="Report period">
             {PERIODS.map((p) => (
               <button key={p.key} role="radio" aria-checked={days === p.key} className={days === p.key ? "on" : ""} onClick={() => setDays(p.key)}>

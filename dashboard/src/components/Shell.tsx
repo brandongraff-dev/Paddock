@@ -218,6 +218,12 @@ const Icon = {
       <path d="M12 8 L12 12 M6 16 L6 12 L18 12 L18 16" /><path d="M13.5 19 L16.5 19" strokeDasharray="1.5 2" />
     </svg>
   ),
+  Suppliers: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="6" rx="1.2" /><rect x="3" y="15" width="6" height="6" rx="1.2" /><rect x="15" y="15" width="6" height="6" rx="1.2" />
+      <path d="M12 9 L12 12 M6 15 L6 12 L18 12 L18 15" />
+    </svg>
+  ),
 };
 
 interface NavGroup {
@@ -255,6 +261,7 @@ const navGroups: NavGroup[] = [
       { to: "/attack", label: "ATT&CK", icon: Icon.Attack },
       { to: "/threat-intel", label: "Threat Intel", icon: Icon.ThreatIntel },
       { to: "/posture", label: "Posture", icon: Icon.Posture },
+      { to: "/suppliers", label: "Suppliers", icon: Icon.Suppliers },
     ],
   },
   {

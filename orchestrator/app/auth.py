@@ -592,6 +592,13 @@ _rule("POST", rf"/v1/remediation/{_ANY}/merged", "triage")
 # credential); every other mutating /v1/msp route falls through to admin. ---- #
 _rule("POST", rf"/v1/msp/customers/{_ANY}/switch", "read")
 _rule("POST", r"/v1/msp/invites/redeem", None)
+# --- growth (schema 032): public passive endpoints + admin management ------- #
+# Unauthenticated BY DESIGN: passive-only (DNS + CT), rate limited, aggregate
+# output. The handlers enforce their own abuse controls (app/growth/abuse.py).
+_rule("POST", r"/v1/public/exposure-report", None)
+_rule("GET", rf"/v1/public/exposure-report/{_ANY}", None)
+_rule("GET POST", rf"/v1/public/trust/{_ANY}", None)
+_rule("GET POST DELETE PATCH PUT", r"/v1/trust-links(/.*)?", "admin")
 
 
 def required_capability(method: str, path: str) -> str | None:
