@@ -93,6 +93,7 @@ nav:
       - Editions & licensing: EDITIONS.md
       - Billing (hosted edition): BILLING.md
       - MSP console: MSP.md
+      - Isolation and load hardening: ISOLATION_HARDENING.md
       - Connect anything in 60 seconds: CONNECT.md
   - Developers:
       - API: API.md

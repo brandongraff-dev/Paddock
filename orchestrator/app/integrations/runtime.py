@@ -253,8 +253,19 @@ def kick_source_syncs(pool, redis, runner: Callable[..., Awaitable[int]] | None 
         return False
 
     async def _go() -> None:
+        # This task is created inside whichever tenant's scheduler iteration
+        # got here first and would inherit THAT tenant's context; with the
+        # single-flight guard above, every other tenant's integrations would
+        # then never be pulled. Sweep every active tenant explicitly instead.
+        from .. import tenancy
+
         try:
-            await (runner or run_due_source_syncs)(pool, redis)
+            for tid in await tenancy.list_tenant_ids(pool):
+                try:
+                    with tenancy.tenant_context(tid):
+                        await (runner or run_due_source_syncs)(pool, redis)
+                except Exception:  # noqa: BLE001 -- one tenant never stops the rest
+                    log.exception("source_sync_sweep_failed", extra={"tenant_id": tid})
         except Exception:  # noqa: BLE001
             log.exception("source_sync_sweep_failed")
 

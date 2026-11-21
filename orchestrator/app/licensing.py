@@ -429,20 +429,32 @@ _CACHE_ATTR = "_paddock_license_cache"
 
 def invalidate_cache(app) -> None:
     try:
-        setattr(app.state, _CACHE_ATTR, None)
+        setattr(app.state, _CACHE_ATTR, {})
     except Exception:  # noqa: BLE001
         pass
 
 
 async def current_license(request: Request) -> License:
-    """The effective license for this request's app (cached briefly)."""
+    """The effective license of the CURRENT TENANT for this request's app
+    (cached briefly). The license row is per tenant (RLS), so the cache is
+    keyed per tenant: a single app-wide slot served one tenant's licensee,
+    edition and features to every other tenant for the TTL."""
+    from . import tenancy
+
     app = request.app
-    cached = getattr(app.state, _CACHE_ATTR, None)
+    cache = getattr(app.state, _CACHE_ATTR, None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(app.state, _CACHE_ATTR, cache)
+    key = tenancy.current_tenant_key()
+    cached = cache.get(key)
     now = time.monotonic()
     if cached is not None and now - cached[0] < license_settings.license_cache_ttl_sec:
         return cached[1]
     lic = await load_active_license(getattr(app.state, "pool", None))
-    setattr(app.state, _CACHE_ATTR, (now, lic))
+    if len(cache) > 1024:
+        cache.clear()
+    cache[key] = (now, lic)
     return lic
 
 

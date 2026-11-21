@@ -268,7 +268,7 @@ async def write_snapshot(pool, usage: UsageOut, *, overwrite: bool) -> UsageSnap
             INSERT INTO usage_snapshots (day, monitored_assets, total_assets, sites, sensors,
                 fleet_agents, users, scans_month, integrations, edition, license_id, detail)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
-            ON CONFLICT (day) {conflict}
+            ON CONFLICT (tenant_id, day) {conflict}
             RETURNING {_SNAPSHOT_COLS}
             """,
             day, usage.monitored_assets, usage.total_assets, usage.sites, usage.sensors,
