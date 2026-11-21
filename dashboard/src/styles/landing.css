@@ -576,3 +576,23 @@
 .lp-404 .mono { margin: 0; font-size: 12px; letter-spacing: 0.18em; color: var(--lp-ink-2); }
 .lp-404-sub { margin: 0 0 28px; font-size: 16px; color: rgba(236, 230, 218, 0.7); }
 .lp-404-btn { display: inline-flex; width: fit-content; padding: 0 26px; height: 52px; }
+
+/* ---- agent cards: role, name, one line, one link ---- */
+.lp-card-body { gap: 8px; padding: 18px 20px 16px; }
+.lp-card-body .lp-tag { align-self: flex-start; margin-bottom: 4px; }
+.lp-card-body h3 { margin: 0; font: 420 clamp(30px, 2.6vw, 38px)/1.05 var(--serif); letter-spacing: -0.03em; color: var(--lp-ink); white-space: normal; }
+.lp-card-body p { margin: 0; min-height: 0; font-size: 15px; line-height: 1.45; color: rgba(236, 230, 218, 0.78); }
+.lp-open { margin-top: auto; padding-top: 16px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(236, 226, 208, 0.14); color: var(--lp-ink); text-decoration: none; font-size: 13.5px; font-weight: 500; transition: color var(--fast) var(--ease); }
+.lp-card-body p { margin-bottom: 14px; }
+.lp-open span { font-size: 17px; transition: transform 300ms var(--ease); }
+.lp-open:hover { color: #fff; }
+.lp-open:hover span { transform: translateX(4px); }
+@media (min-width: 960px) {
+  .lp-card-body { margin: -92px 8px 8px; padding: 16px 16px 14px; }
+  .lp-card-body h3 { font-size: clamp(26px, 2.3vw, 34px); }
+  .lp-card-body p { font-size: 13.5px; }
+  .lp-card-img { aspect-ratio: 1 / 0.9; }
+}
+@media (max-width: 720px) { .lp-card-body p { font-size: 14.5px; } }
+.lp-card-body h3 { text-transform: none; }
+.lp-card-body p { text-wrap: balance; }

@@ -36,8 +36,8 @@ const AGENTS: Agent[] = [
     name: "Warden",
     version: "1.0",
     id: "AGENT-001 · v1.0.0",
-    role: "Scope agent",
-    blurb: "Enforces the allowlist on every packet; differential-fuzzed against real URL parsers",
+    role: "Scope",
+    blurb: "Keeps every scan inside the scope you own.",
     to: "/scope",
     plate: 6,
     tone: "sepia",
@@ -46,8 +46,8 @@ const AGENTS: Agent[] = [
     name: "Outrider",
     version: "2.1",
     id: "AGENT-002 · v2.1.4",
-    role: "Discovery agent",
-    blurb: "Maps your surface from CT logs, DNS, ASN ranges and polite authorised probes",
+    role: "Discovery",
+    blurb: "Finds everything you have exposed to the internet.",
     to: "/graph",
     plate: 3,
     tone: "ash",
@@ -56,8 +56,8 @@ const AGENTS: Agent[] = [
     name: "Herald",
     version: "1.4",
     id: "AGENT-003 · v1.4.2",
-    role: "Threat-intel agent",
-    blurb: "Correlates NVD, EPSS, CISA KEV and your TAXII feeds against what you actually run",
+    role: "Threat intel",
+    blurb: "Flags the weaknesses attackers are using right now.",
     to: "/threat-intel",
     plate: 8,
     tone: "patina",
@@ -66,8 +66,8 @@ const AGENTS: Agent[] = [
     name: "Farrier",
     version: "3.0",
     id: "AGENT-004 · v3.0.1",
-    role: "Remediation agent",
-    blurb: "Routes each attack path to its owner with the fix, the ticket and the deadline",
+    role: "Remediation",
+    blurb: "Sends each fix to the team that owns it.",
     to: "/remediation",
     plate: 0,
     tone: "ember",
@@ -164,22 +164,14 @@ export default function Landing() {
                 <DigitHorse still={a.plate} strays={false} body={0.5} />
               </div>
               <div className="lp-card-body">
-                <div className="lp-card-top">
-                  <h3>
-                    {a.name} {a.version}
-                  </h3>
-                  <span className="lp-tag">
-                    <i aria-hidden="true" />
-                    {a.role}
-                  </span>
-                </div>
-                <div className="lp-card-info">
-                  <span>Agent info</span>
-                  <span className="mono">{a.id}</span>
-                </div>
+                <span className="lp-tag">
+                  <i aria-hidden="true" />
+                  {a.role}
+                </span>
+                <h3>{a.name}</h3>
                 <p>{a.blurb}</p>
-                <Link to={token ? a.to : "/login"} className="lp-run">
-                  <span aria-hidden="true">⟶</span> Run agent
+                <Link to={token ? a.to : "/login"} className="lp-open">
+                  Open <span aria-hidden="true">→</span>
                 </Link>
               </div>
             </article>
