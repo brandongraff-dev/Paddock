@@ -23,6 +23,7 @@ from .. import auth as auth_svc
 from ..auth import current_principal, require
 from ..config import settings
 from ..db import get_pool
+from ..identity import store as identity_store
 from ..models import (
     ApiKeyCreateIn,
     ApiKeyCreateOut,
@@ -62,6 +63,12 @@ async def login(body: LoginIn, request: Request, pool=Depends(get_pool)):
             status_code=429,
             detail="too many failed logins; try again later",
             headers={"Retry-After": str(settings.login_window_sec)},
+        )
+    # SSO-required (schema 020): password sign-in only for break-glass users.
+    # Decided from policy alone, so it reveals nothing about which users exist.
+    if not await identity_store.password_login_allowed(pool, body.username):
+        raise HTTPException(
+            status_code=403, detail="password sign-in is disabled; use single sign-on",
         )
     async with pool.acquire() as con:
         row = await con.fetchrow(

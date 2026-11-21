@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     # logged ONCE). Never ship a known credential.
     admin_bootstrap_password: str | None = None
 
+    # --- Enterprise identity: SSO (OIDC/SAML) + SCIM (schema 020) ---------
+    # Public base URL of THIS orchestrator as the browser / IdP reaches it.
+    # Redirect URIs, the SAML ACS + entity id are derived from it -- never
+    # from the request's Host header (host-header injection).
+    sso_base_url: str = "http://localhost:8080"
+    # Where the SPA lives; the callback redirects to <this>/sso/callback.
+    sso_dashboard_url: str = "http://localhost:3000"
+    sso_state_ttl_sec: int = 600       # start -> callback window
+    sso_code_ttl_sec: int = 60         # one-time SPA exchange code lifetime
+    sso_clock_skew_sec: int = 60       # leeway for exp/nbf/iat checks
+
     # Stream and queue names (kept in config so other services can share)
     events_stream: str = "stream:events"
     queue_passive: str = "queue:passive"

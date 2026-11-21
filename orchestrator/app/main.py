@@ -53,6 +53,8 @@ from .routers import provenance as provenance_router
 from .routers import sbom as sbom_router
 from .routers import scans as scans_router
 from .routers import scope as scope_router
+from .routers import scim as scim_router
+from .routers import sso as sso_router
 from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
 from .scheduler import scheduler_loop
@@ -210,6 +212,9 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(audit_router.router)
     app.include_router(provenance_router.router)
+    # Enterprise identity (schema 020): OIDC/SAML SSO + SCIM 2.0 provisioning.
+    app.include_router(sso_router.router)
+    app.include_router(scim_router.router)
 
     app.include_router(scope_router.router)
     app.include_router(scans_router.router)

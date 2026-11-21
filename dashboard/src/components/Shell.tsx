@@ -173,6 +173,12 @@ const Icon = {
     </svg>
   ),
   Integrations: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5" /></svg>),
+  Identity: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="9" cy="9" r="3.2" /><path d="M3.5 19 Q4 14.5 9 14.5 Q14 14.5 14.5 19" />
+      <path d="M15 7.5 L21 7.5 M15 11 L19.5 11" />
+    </svg>
+  ),
   Remediation: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 6 a3 3 0 1 0 4 4 L21 13 L13 21 L3 11 L11 3 Z" /><path d="M9 11 L13 15" />
@@ -237,6 +243,9 @@ const navEntries: NavEntry[] = navGroups.flatMap((g) => g.items);
 
 /** Audit log — appended to the rail only for auditor/admin. */
 const auditEntry: NavEntry = { to: "/audit", label: "Audit", icon: Icon.Audit };
+
+/** Settings → Identity (SSO + SCIM) — appended to Govern only for admins. */
+const identityEntry: NavEntry = { to: "/settings/identity", label: "Identity", icon: Icon.Identity };
 
 function ToastStack() {
   const toasts = useStore((s) => s.toasts);
@@ -346,7 +355,11 @@ export default function Shell({ children, noScroll }: Props) {
   const resetClassification = useStore((s) => s.resetClassification);
 
   // Audit is appended to the rail only for roles that may open it.
-  const entries = canViewAudit(role) ? [...navEntries, auditEntry] : navEntries;
+  const govExtra = [
+    ...(canViewAudit(role) ? [auditEntry] : []),
+    ...(role === "admin" ? [identityEntry] : []),
+  ];
+  const entries = [...navEntries, ...govExtra];
 
   const title =
     entries.find((n) => (n.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.to)))
@@ -358,8 +371,8 @@ export default function Shell({ children, noScroll }: Props) {
     resetClassification();
   }, [loc.pathname, resetClassification]);
 
-  const groups = canViewAudit(role)
-    ? navGroups.map((g) => (g.label === "Govern" ? { ...g, items: [...g.items, auditEntry] } : g))
+  const groups = govExtra.length
+    ? navGroups.map((g) => (g.label === "Govern" ? { ...g, items: [...g.items, ...govExtra] } : g))
     : navGroups;
   const group = groups.find((g) => g.items.some((n) => n.label === title))?.label ?? "Workspace";
 

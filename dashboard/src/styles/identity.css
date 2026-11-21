@@ -1,0 +1,184 @@
+/* ------------------------------------------------------------------ *
+ * Enterprise identity: SSO buttons on the login card, the SSO callback *
+ * screen, and Settings → Identity. Tokens only (tokens.css/theme.css). *
+ * ------------------------------------------------------------------ */
+
+/* ---------------- Login: SSO ---------------- */
+.sso-list { display: flex; flex-direction: column; gap: 6px; }
+.sso-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-0);
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-m);
+  box-shadow: var(--hl);
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.sso-btn:hover:not(:disabled) { background: var(--bg-3); border-color: var(--border-focus); }
+.sso-btn-label { flex: 1; text-align: left; font-weight: 500; }
+.sso-btn-kind { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; }
+.sso-glyph {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-s);
+  font-size: 11px;
+  font-weight: 650;
+  background: var(--bg-4);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.login-divider::before,
+.login-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.login-breakglass { align-self: center; font-size: 12px; color: var(--text-2); }
+
+/* ---------------- SSO callback ---------------- */
+.sso-pending { display: flex; align-items: center; gap: 10px; color: var(--text-1); font-size: 13px; }
+.sso-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--text-0);
+  animation: sso-spin 0.8s linear infinite;
+}
+@keyframes sso-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sso-spinner { animation: none; } }
+.sso-back { color: var(--accent); font-size: 12.5px; text-decoration: none; }
+.sso-back:hover { text-decoration: underline; }
+
+/* ---------------- Settings → Identity ---------------- */
+.identity-page { max-width: 1080px; }
+.idp-section {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+  gap: 28px;
+  padding: 20px 22px;
+}
+@media (max-width: 860px) { .idp-section { grid-template-columns: 1fr; gap: 14px; } }
+.idp-section-intro { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.idp-section-intro h2 { font-size: 14px; font-weight: 550; color: var(--text-0); letter-spacing: -0.005em; text-transform: none; }
+.idp-section-intro p { margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.idp-section-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.idp-section-body .mutate-gate { display: contents; }
+
+.idp-stack { display: flex; flex-direction: column; gap: 12px; }
+.idp-stack .mutate-gate { display: contents; }
+.idp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.idp-sub { font-size: 11.5px; font-weight: 550; color: var(--text-1); margin: 6px 0 0; letter-spacing: 0.01em; }
+.idp-hint { color: var(--text-2); font-size: 11.5px; }
+.idp-note { padding: 7px 10px; border-radius: var(--radius-s); background: var(--accent-bg); color: var(--text-1); }
+.idp-actions { display: flex; align-items: center; gap: 10px; }
+.idp-saved { color: var(--ok); font-size: 12px; }
+.idp-inline { display: flex; gap: 8px; align-items: flex-end; }
+
+.idp-toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 16px; }
+.idp-toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 12.5px; color: var(--text-0); }
+.idp-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.idp-switch {
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--bg-4);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  position: relative;
+  transition: background var(--fast) var(--ease);
+}
+.idp-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-1);
+  transition: transform var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.idp-toggle input:checked + .idp-switch { background: var(--accent-dim); }
+.idp-toggle input:checked + .idp-switch::after { transform: translateX(12px); background: var(--text-0); }
+.idp-toggle input:focus-visible + .idp-switch { outline: 1.5px solid var(--border-focus); outline-offset: 2px; }
+.idp-toggle input:disabled + .idp-switch { opacity: 0.4; }
+.idp-toggle-text { display: flex; flex-direction: column; gap: 2px; }
+
+.idp-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-m); }
+.idp-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+.idp-row + .idp-row { border-top: 1px solid var(--border); }
+.idp-row:hover { background: var(--bg-2); }
+.idp-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.idp-row-name { font-size: 13px; font-weight: 500; color: var(--text-0); }
+.idp-row-meta { font-size: 11px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.idp-row-actions { display: flex; gap: 6px; }
+.idp-test { font-size: 11.5px; }
+.idp-test.ok { color: var(--ok); }
+.idp-test.bad { color: var(--bad); }
+.chip.idp-on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.chip.idp-off { color: var(--text-2); border-color: var(--border-strong); }
+
+.idp-mappings { display: flex; flex-direction: column; gap: 6px; }
+.idp-mappings-head,
+.idp-mapping-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 130px 32px; gap: 6px; align-items: center; }
+.idp-mappings-head span { font-size: 10.5px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.idp-mappings-empty { padding: 4px 0; }
+.idp-mappings-foot { display: flex; align-items: center; gap: 10px; }
+
+.idp-copies { display: flex; flex-direction: column; gap: 6px; }
+.idp-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--bg-1);
+  min-width: 0;
+  max-width: 100%;
+}
+.idp-copy-label { font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.idp-copy code { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.idp-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  font-size: 12.5px;
+  color: var(--text-1);
+}
+.idp-secret-head { display: flex; align-items: center; gap: 6px; }
+.idp-secret-head strong { color: var(--warn); font-weight: 550; }
+.idp-secret-head button { margin-left: auto; }
+.idp-table td, .idp-table th { font-size: 12px; }
+
+.idp-modal { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.idp-modal .body { overflow-y: auto; }
+.idp-seg {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+}
+.idp-details summary { cursor: pointer; color: var(--text-2); font-size: 12px; margin-bottom: 8px; }
+.idp-details[open] { display: flex; flex-direction: column; gap: 8px; }

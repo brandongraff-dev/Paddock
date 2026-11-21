@@ -140,6 +140,10 @@ services:
       SCHEMA_DIR: /schema
       # Prometheus scrape token for GET /metrics (unset = 404 under enforce).
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      # Enterprise identity (SSO + SCIM, docs/SSO.md). Public URLs + the key
+      # that encrypts IdP client secrets at rest.
+      SSO_BASE_URL: ${SSO_BASE_URL:-http://localhost:8080}
+      SSO_DASHBOARD_URL: ${SSO_DASHBOARD_URL:-http://localhost:3000}
     volumes:
       - ./schema:/schema:ro
     tmpfs:

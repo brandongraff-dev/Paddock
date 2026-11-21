@@ -25,6 +25,8 @@ import FleetPage from "./pages/Fleet";
 import RemediationPage from "./pages/Remediation";
 import IntegrationsPage from "./pages/Integrations";
 import Login from "./pages/Login";
+import SsoCallback from "./pages/SsoCallback";
+import IdentitySettingsPage from "./pages/IdentitySettings";
 import Landing from "./pages/Landing";
 import { useLiveEvents } from "./hooks/useLiveEvents";
 import { useAuth, canViewAudit } from "./state/auth";
@@ -49,6 +51,13 @@ function LiveEvents() {
 function RequireAudit({ children }: { children: ReactNode }) {
   const role = useAuth((s) => s.user?.role);
   if (!canViewAudit(role)) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+/** Route guard: identity settings are admin-only. Others bounce to Overview. */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const role = useAuth((s) => s.user?.role);
+  if (role !== "admin") return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -82,6 +91,7 @@ function AuthedApp() {
         <Route path="/remediation" element={<Shell><RemediationPage /></Shell>} />
         <Route path="/integrations" element={<Shell><IntegrationsPage /></Shell>} />
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
+        <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
@@ -95,6 +105,7 @@ function PublicApp() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/welcome" element={<Landing />} />
+        <Route path="/sso/callback" element={<SsoCallback />} />
         <Route path="*" element={<Login />} />
       </Routes>
     </BrowserRouter>
