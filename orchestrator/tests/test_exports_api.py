@@ -32,10 +32,13 @@ async def _seed(pool) -> dict:
                           metadata=None, last_seen=NOW, asset=None, cvss=None):
             return await con.fetchval(
                 """INSERT INTO findings (asset_id, rule_id, rule_source, severity, title, description,
-                       remediation, evidence, metadata, status, classification, last_seen, cvss)
-                   VALUES ($1,$2,$3,$4,$5,$6,'fix it',$7::jsonb,$8::jsonb,$9,$10,$11,$12) RETURNING id""",
+                       remediation, evidence, metadata, status, classification, last_seen, cvss,
+                       status_reason)
+                   VALUES ($1,$2,$3,$4,$5,$6,'fix it',$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13) RETURNING id""",
                 asset or ids["asset"], rule_id, source, sev, title, f"{title} description",
-                json.dumps(evidence or {}), json.dumps(metadata or {}), status, cls, last_seen, cvss)
+                json.dumps(evidence or {}), json.dumps(metadata or {}), status, cls, last_seen, cvss,
+                # dismissals require a reason (schema 019)
+                "reviewed: test fixture" if status in ("accepted", "false_positive") else None)
 
         ids["f_cve"] = await finding("CVE-2021-44228", "cve_match", "critical", "Log4Shell", cvss=10.0)
         ids["f_hdr"] = await finding("missing-hsts", "header_check", "low", "HSTS missing",
