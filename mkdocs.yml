@@ -87,6 +87,7 @@ nav:
       - Integrations: INTEGRATIONS.md
       - Single sign-on (SSO): SSO.md
       - Reports: REPORTS.md
+      - Growth (exposure check, trust pages, suppliers): GROWTH.md
       - Editions & licensing: EDITIONS.md
   - Developers:
       - API: API.md

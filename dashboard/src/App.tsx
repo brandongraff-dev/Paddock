@@ -31,6 +31,10 @@ import SsoCallback from "./pages/SsoCallback";
 import IdentitySettingsPage from "./pages/IdentitySettings";
 import Landing from "./pages/Landing";
 import Setup, { FirstRunRedirect } from "./pages/Setup";
+import CheckPage from "./pages/Check";
+import TrustPage from "./pages/Trust";
+import TrustLinksPage from "./pages/TrustLinks";
+import SuppliersPage from "./pages/Suppliers";
 import { useLiveEvents } from "./hooks/useLiveEvents";
 import { useAuth, canViewAudit } from "./state/auth";
 import type { ReactNode } from "react";
@@ -72,6 +76,8 @@ function AuthedApp() {
       <FirstRunRedirect />
       <Routes>
         <Route path="/welcome" element={<Landing />} />
+        <Route path="/check" element={<CheckPage />} />
+        <Route path="/trust/:token" element={<TrustPage />} />
         <Route path="/setup" element={<Setup />} />
         <Route path="/" element={<Shell><Overview /></Shell>} />
         <Route path="/graph" element={<Shell noScroll><GraphPage /></Shell>} />
@@ -97,6 +103,8 @@ function AuthedApp() {
         <Route path="/integrations" element={<Shell><IntegrationsPage /></Shell>} />
         <Route path="/suppressions" element={<Shell><SuppressionsPage /></Shell>} />
         <Route path="/reports" element={<Shell><ReportsPage /></Shell>} />
+        <Route path="/reports/trust" element={<Shell><RequireAdmin><TrustLinksPage /></RequireAdmin></Shell>} />
+        <Route path="/suppliers" element={<Shell><SuppliersPage /></Shell>} />
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
         <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -113,6 +121,8 @@ function PublicApp() {
         <Route path="/" element={<Landing />} />
         <Route path="/welcome" element={<Landing />} />
         <Route path="/sso/callback" element={<SsoCallback />} />
+        <Route path="/check" element={<CheckPage />} />
+        <Route path="/trust/:token" element={<TrustPage />} />
         <Route path="*" element={<Login />} />
       </Routes>
     </BrowserRouter>
