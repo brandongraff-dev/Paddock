@@ -40,6 +40,7 @@ from aiohttp import web
 from . import PASSIVE_ONLY, SAFETY_INVARIANT, __version__
 from . import config as config_module
 from . import pcap
+from . import tenancy
 from .db import Database
 from .orchestrator import OrchestratorClient
 from .pipeline import DiscoveryEngine
@@ -91,7 +92,9 @@ class OtDiscoveryService:
         self.cfg = cfg
         self.db: Optional[Database] = Database(cfg.database_url) if cfg.enable_db else None
         self.orch: Optional[OrchestratorClient] = None
-        self.engine: Optional[DiscoveryEngine] = None
+        # tenant id -> that tenant's engine (in-memory observations, sensors,
+        # baselines). ``engine`` is the default tenant's (compat alias).
+        self.engines: dict[str, DiscoveryEngine] = {}
         self._stop = asyncio.Event()
         self._ready = False
         self._last_ingest_ts: float | None = None
@@ -113,7 +116,8 @@ class OtDiscoveryService:
             user_agent=self.cfg.user_agent,
         )
         await self.orch.ensure()
-        self.engine = DiscoveryEngine(self.cfg, db=self.db, orch=self.orch)
+        self.engine = DiscoveryEngine(
+            self.cfg, db=self.db, orch=self.orch, tenant_id=tenancy.DEFAULT_TENANT_ID)
         self._ready = True
         log.info("otdiscovery started (passive_only=%s) on :%d",
                  PASSIVE_ONLY, self.cfg.http_port)
@@ -124,6 +128,48 @@ class OtDiscoveryService:
             await self.orch.close()
         if self.db is not None:
             await self.db.close()
+
+    @property
+    def engine(self) -> Optional[DiscoveryEngine]:
+        return self.engines.get(tenancy.DEFAULT_TENANT_ID)
+
+    @engine.setter
+    def engine(self, value: Optional[DiscoveryEngine]) -> None:
+        if value is None:
+            self.engines.pop(tenancy.DEFAULT_TENANT_ID, None)
+        else:
+            self.engines[tenancy.DEFAULT_TENANT_ID] = value
+
+    def engine_for(self, tenant_id: str) -> DiscoveryEngine:
+        """The tenant's own engine, created on first use."""
+        eng = self.engines.get(tenant_id)
+        if eng is None:
+            eng = self.engines[tenant_id] = DiscoveryEngine(
+                self.cfg, db=self.db, orch=self.orch, tenant_id=tenant_id)
+        return eng
+
+    def _request_engine(self) -> DiscoveryEngine:
+        """Engine of the tenant this request runs as (service-key header, else
+        the default tenant; none at all in strict mode)."""
+        tid = tenancy.current_tenant_id()
+        if tid is None:
+            raise tenancy.TenantError("no tenant for this request (TENANCY_STRICT)")
+        return self.engine_for(tid)
+
+    def _token_tenants(self) -> list[tuple[str | None, str]]:
+        """SENTRY_TOKENS entries: ``<token>`` (default tenant) or
+        ``<tenant-uuid>=<token>`` (the sensor feeds THAT tenant only)."""
+        out: list[tuple[str | None, str]] = []
+        for entry in self.cfg.sentry_tokens:
+            head, sep, tail = entry.partition("=")
+            if sep:
+                try:
+                    out.append((tenancy.norm(head), tail))
+                    continue
+                except tenancy.TenantError:
+                    pass
+            out.append((None, entry))
+        return out
 
     # ------------------------------------------------------------------ #
     # handlers
@@ -148,14 +194,17 @@ class OtDiscoveryService:
         )
 
     async def _handle_stats(self, _req: web.Request) -> web.Response:
-        assert self.engine is not None
+        try:
+            eng = self._request_engine()
+        except tenancy.TenantError as exc:
+            return web.json_response({"error": "tenant_required", "detail": str(exc)}, status=403)
         return web.json_response({
-            "service": self.engine.stats,
+            "service": eng.stats,
             "passive_only": PASSIVE_ONLY,
-            "observations_stored": len(self.engine.observations),
-            "sensors": self.engine.sensors,
-            "segment_matrix": self.engine.last_segment_matrix,
-            "last_active_probe_attempts_to_devices": len(self.engine.last_guard_violations),
+            "observations_stored": len(eng.observations),
+            "sensors": eng.sensors,
+            "segment_matrix": eng.last_segment_matrix,
+            "last_active_probe_attempts_to_devices": len(eng.last_guard_violations),
         })
 
     async def _handle_metrics(self, req: web.Request) -> web.Response:
@@ -167,7 +216,10 @@ class OtDiscoveryService:
                 return web.json_response({"error": "metrics token required"}, status=401)
         elif self.cfg.require_sentry_token:
             return web.json_response({"error": "not found"}, status=404)
-        sensors = self.engine.sensors if self.engine is not None else {}
+        sensors: dict[str, dict[str, Any]] = {}
+        for tid, eng in self.engines.items():
+            for sid, rec in eng.sensors.items():
+                sensors[sid if tid == tenancy.DEFAULT_TENANT_ID else f"{tid[:8]}:{sid}"] = rec
         return web.Response(
             text=_render_metrics(sensors, self._last_ingest_ts),
             content_type="text/plain", charset="utf-8",
@@ -222,30 +274,49 @@ class OtDiscoveryService:
         return None, None, web.json_response({"error": "empty body"}, status=400), None
 
     def _authorized(self, req: web.Request) -> bool:
-        tokens = self.cfg.sentry_tokens
-        if not tokens:
-            return True
+        return self._sensor_tenant(req)[0]
+
+    def _sensor_tenant(self, req: web.Request) -> tuple[bool, Optional[str]]:
+        """(authorized, tenant) for an ingest. A token bound to a tenant
+        (``<tenant>=<token>``) can only ever feed that tenant; an unbound token
+        feeds the default tenant (never in strict mode). With no tokens
+        configured (dev), the tenant is whatever the service-key caller named."""
+        if not self.cfg.sentry_tokens:
+            return True, tenancy.current_tenant_id()
         auth = req.headers.get("Authorization", "")
         presented = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-        return any(hmac.compare_digest(presented.encode(), t.encode()) for t in tokens)
+        for tenant, token in self._token_tenants():
+            if hmac.compare_digest(presented.encode(), token.encode()):
+                if tenant is None:
+                    return True, (None if tenancy.strict() else tenancy.DEFAULT_TENANT_ID)
+                return True, tenant
+        return False, None
 
     async def _handle_ingest(self, req: web.Request) -> web.Response:
-        assert self.engine is not None
         if self.cfg.require_sentry_token and not self.cfg.sentry_tokens:
             return web.json_response(
                 {"error": "sensor ingest is disabled: set SENTRY_TOKENS (comma-separated) "
                           "and give each Sentry one of them"}, status=503)
-        if not self._authorized(req):
+        ok, tenant = self._sensor_tenant(req)
+        if not ok:
             return web.json_response({"error": "invalid or missing sensor token"}, status=401)
+        if tenant is None:
+            return web.json_response(
+                {"error": "tenant_required",
+                 "detail": "this sensor token is not bound to a tenant (use <tenant-uuid>=<token>)"},
+                status=403)
         pcap_bytes, observations, err, sensor = await self._read_input(req)
         if err is not None:
             return err
-        self.engine.note_sensor(sensor)
+        eng = self.engine_for(tenant)
+        eng.note_sensor(sensor)
         replace = req.query.get("replace", "").lower() in ("1", "true", "yes")
         try:
-            result = await self.engine.ingest(
-                pcap_bytes=pcap_bytes, observations=observations, replace=replace
-            )
+            # everything the engine does (CVE lookups, orchestrator calls) runs as the sensor's tenant
+            with tenancy.tenant_context(tenant):
+                result = await eng.ingest(
+                    pcap_bytes=pcap_bytes, observations=observations, replace=replace
+                )
         except Exception as exc:
             log.exception("/ingest failed")
             return web.json_response({"error": str(exc)}, status=500)
@@ -253,16 +324,22 @@ class OtDiscoveryService:
         return web.json_response(result)
 
     async def _handle_analyze(self, _req: web.Request) -> web.Response:
-        assert self.engine is not None
         try:
-            result = await self.engine.analyze()
+            eng = self._request_engine()
+        except tenancy.TenantError as exc:
+            return web.json_response({"error": "tenant_required", "detail": str(exc)}, status=403)
+        try:
+            result = await eng.analyze()
         except Exception as exc:
             log.exception("/analyze failed")
             return web.json_response({"error": str(exc)}, status=500)
         return web.json_response(result)
 
     def make_app(self) -> web.Application:
-        app = web.Application(client_max_size=self.cfg.max_capture_bytes)
+        app = web.Application(
+            client_max_size=self.cfg.max_capture_bytes,
+            middlewares=[tenancy.aiohttp_middleware()],
+        )
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),
