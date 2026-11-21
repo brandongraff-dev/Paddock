@@ -21,6 +21,7 @@ from typing import Any
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from . import queries
 from .db import Database
 from .neo import NeoClient, Neo4jUnavailable
@@ -84,7 +85,8 @@ class GraphSyncService:
     # ------------------------------------------------------------------
     async def run_sync(self, *, full: bool = False) -> dict[str, Any]:
         async with self._sync_lock:
-            summary = await self.sync.run(full=full)
+            with tenancy.platform_context():  # the one tenant this service mirrors
+                summary = await self.sync.run(full=full)
         self.stats.update({
             "last_sync": datetime.now(timezone.utc).isoformat(),
             "last_sync_mode": summary["mode"],
@@ -123,8 +125,26 @@ class GraphSyncService:
     # ------------------------------------------------------------------
     # query helpers (degrade-aware)
     # ------------------------------------------------------------------
+    @staticmethod
+    def _foreign_tenant() -> web.Response | None:
+        """graphsync mirrors the PLATFORM tenant's data into one Neo4j graph
+        (Neo4j Community has no per-tenant isolation and the Cypher is not
+        tenant-filtered), so every other tenant gets the documented
+        "unavailable" degrade -- never the platform tenant's graph."""
+        t = tenancy.requested_tenant()
+        if (t is not None and t != tenancy.DEFAULT_TENANT_ID) or (t is None and tenancy.strict()):
+            return web.json_response({
+                "available": False,
+                "reason": "graph analytics are single-tenant (platform tenant only); "
+                          "not available for this tenant",
+            })
+        return None
+
     async def _degraded(self) -> web.Response | None:
-        """Return a 200 degrade response when Neo4j is unreachable, else None."""
+        """Return a 200 degrade response when Neo4j is unreachable (or the caller
+        is not the platform tenant), else None."""
+        if (foreign := self._foreign_tenant()) is not None:
+            return foreign
         if await self.neo.ping():
             return None
         return web.json_response(
@@ -242,6 +262,8 @@ class GraphSyncService:
         })
 
     async def _handle_resync(self, _req: web.Request) -> web.Response:
+        if (foreign := self._foreign_tenant()) is not None:
+            return foreign
         try:
             summary = await self.run_sync(full=True)
         except Neo4jUnavailable as exc:
@@ -254,6 +276,8 @@ class GraphSyncService:
         return web.json_response({"available": True, "result": summary})
 
     async def _handle_stats(self, _req: web.Request) -> web.Response:
+        if (foreign := self._foreign_tenant()) is not None:
+            return foreign
         neo_counts: dict[str, Any] | None = None
         neo_reason: str | None = None
         try:
@@ -280,7 +304,7 @@ class GraphSyncService:
         })
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),
