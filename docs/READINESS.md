@@ -1,139 +1,192 @@
 # From open-source project to something businesses pay for
 
-An honest assessment as of this branch, and the order to close the gaps.
+Status of the seven readiness areas as of this branch: what's built, what's
+tested, and the gaps that remain. The previous version of this page was the
+plan. This one records what was done against it.
 
 ## The scorecard
 
-| Area | Today | What a paying customer expects |
-|---|---|---|
-| **Breadth of detection** | ★★★★☆ ASM, SCA/SBOM, SAST, threat intel, IoT/OT + Sentry behaviour, attack paths, risk ML, fleet agent, remediation | ✅ already a differentiator |
-| **Signal quality** | ★★☆☆☆ engines work, but two (SAST, typosquat) shipped as silent no-ops and nobody noticed | measured precision/recall, gated in CI; triage workflow; low noise |
-| **Time to first value** | ★★☆☆☆ `make quickstart`, never verified on a clean machine; ~17 containers | value in < 15 min, guided first run, a small "single-node" mode |
-| **Integrations** | ★☆☆☆☆ Slack/webhook for change alerts, opt-in GitHub PRs | SSO, SIEM, ticketing, chat, cloud, EDR/MDM, API + SDKs, Terraform |
-| **Operability** | ★☆☆☆☆ docker compose only, raw SQL schema files, no backups/upgrades | Helm/HA, migrations, backup/restore, metrics, upgrades without data loss |
-| **Enterprise trust** | ★★☆☆☆ RBAC/ABAC + hash-chained audit (hardened this branch) | multi-tenancy, SSO/SCIM, SOC 2, pen test, signed releases, data residency |
-| **Reporting** | ★☆☆☆☆ dashboard only | weekly digest, exec PDF, compliance evidence (PCI, IEC 62443, NIST CSF) |
-| **Commercial plumbing** | ☆☆☆☆☆ | editions, pricing metric, licensing (CLA!), billing, support SLA, docs site |
-
-**The short version:** the features are genuinely good. What's missing is
-everything *around* the features that lets a business trust it, plug it into
-what they already run, and operate it without you.
+| Area | Before | Now | What's still missing |
+|---|---|---|---|
+| **Signal quality** | ★★☆☆☆ | ★★★★☆ | precision/recall measured on real customer data, not only seeded ranges |
+| **Integrations** | ★☆☆☆☆ | ★★★★☆ | live tests against real SaaS tenants; UI for context sync and network actions |
+| **Time to first value** | ★★☆☆☆ | ★★★★☆ | a successful run of the clean-machine job on GitHub |
+| **Operations** | ★☆☆☆☆ | ★★★★☆ | Helm deployed on a real cluster; HA Postgres runbook exercised |
+| **Enterprise trust** | ★★☆☆☆ | ★★★☆☆ | RLS for compute services, SOC 2 audit, third-party pen test |
+| **Reporting** | ★☆☆☆☆ | ★★★★☆ | customer branding; report scheduling beyond the weekly digest |
+| **Commercial plumbing** | ☆☆☆☆☆ | ★★★☆☆ | real prices, legal review of the CLA, billing provider, vendor signing key |
 
 ---
 
-## 1. Signal quality: the thing that decides renewals
+## 1. Signal quality ✅
 
-Security buyers churn on noise, not on missing features.
+- **Detection-quality gate** (`hardening/evals/`, [EVALS.md](EVALS.md)):
+  207 seeded cases across 6 engines (true issues plus safe lookalikes).
+  Precision/recall thresholds fail CI (`ci.yml`).
+- **Finding lifecycle** (`app/lifecycle.py`, schema 019):
+  - cross-engine dedupe fingerprint;
+  - accept-risk and false-positive both require a reason, enforced by a DB
+    constraint, with expiry;
+  - suppressions with scope and expiry (dashboard **Suppressions** page);
+  - per-severity SLA clocks;
+  - automatic reopen on recurrence.
+- **Explain every priority**: `priority_score` plus `why[]` on every finding
+  (KEV, internet-facing, attack-path hops, owner), shown in the findings
+  drawer.
+- **Evidence** (non-destructive proof) is attached where the engines have it;
+  exports and integrations carry a whitelisted subset.
+- **SAST/SCA false-positive fixes** from earlier in the branch, now covered by
+  the eval gate.
 
-1. **Detection-quality CI gate.** A suite of seeded "ranges" (synthetic
-   networks, repos and sites with known-true issues and known-safe lookalikes)
-   that every engine runs against in CI, with precision/recall thresholds that
-   fail the build. The scope fuzzer (77,554 → 0 disagreements per million) and
-   the SAST self-scan (7 → 0 false positives) show the method works. Make it
-   the rule for every detector.
-2. **Finding lifecycle.**
-   - Deduplicate across engines; one issue should not show up three times.
-   - **Accept-risk / false-positive with expiry and a reason**, and feed that
-     back into suppression.
-   - SLA clocks per severity and owner (tickets exist; wire SLAs to them).
-3. **Explain every priority.** "Critical because: KEV-listed · internet-facing ·
-   2 hops from the payments DB · owner: payments-team". The attack-path engine
-   has the data; surface it on every finding.
-4. **Evidence on every finding** (the *Assessor* agent in `VISION.md`):
-   non-destructive proof that the issue is real, or the finding auto-closes.
+**Gap:** the ranges are synthetic. Calibrate the thresholds on data from the
+first pilots.
 
-## 2. Integrations: meet customers where they already work
+## 2. Integrations ✅
 
-Ranked by how often they block a purchase:
+One contract for every connector (`app/integrations/`,
+[INTEGRATIONS.md](INTEGRATIONS.md)):
 
-| Priority | Integration | Why |
-|---|---|---|
-| P0 | **SSO (OIDC + SAML) and SCIM** | no enterprise buys without it; SCIM removes manual user admin |
-| P0 | **Signed outbound webhooks** (HMAC, retries, event catalogue) | lets any customer wire Paddock into anything on day one |
-| P0 | **Jira / ServiceNow / Linear** with two-way status sync | findings must become tickets in *their* system, and closing the ticket should close the finding |
-| P0 | **Slack / Microsoft Teams** for findings, not just changes | where humans actually see alerts |
-| P1 | **SIEM export**: Splunk HEC, Microsoft Sentinel, Elastic, syslog/CEF, in **OCSF** format | the SOC's system of record |
-| P1 | **Public API contract + SDKs**: versioned `/v1` with OpenAPI, generated Python/TypeScript clients, a `paddock` CLI | partners and MSPs build on you |
-| P1 | **Terraform provider**: scope, alert rules, owners as code | platform teams manage config in Git |
-| P1 | **Cloud connectors** (AWS → GCP → Azure, read-only) | inside-out attack paths |
-| P2 | **EDR/MDM context** (CrowdStrike, Defender, Intune, Jamf) | who owns a device, is it managed |
-| P2 | **CMDB import** (ServiceNow) and owner sync from the IdP | routing findings to owners automatically |
-| P2 | **Network gear** (UniFi, Meraki, Aruba, Fortinet, Palo Alto) | one-click Sentry quarantine through the approve gate |
-| P2 | **GitHub/GitLab App** for PR checks (SCA + SAST + attack-path impact) and **SARIF** output | shift-left without another dashboard |
-| P2 | **Standards**: CycloneDX/SPDX in+out, VEX, SARIF, STIX/TAXII (exists) | interoperability that procurement asks about |
+- `connect → test → sync → health`;
+- secrets encrypted with AES-GCM and rotatable;
+- an SSRF-safe outbound guard;
+- a leased delivery worker with backoff and a dead-letter queue;
+- a single **Integrations** page showing status, last delivery and errors.
 
-**Design rule:** every integration is a plugin behind one interface
-(`connect → test → sync → health`), shown in a single **Integrations** page
-with status, last sync and errors. That page is what makes the product feel
-"easy to integrate".
+| Priority | Delivered |
+|---|---|
+| P0 | **SSO**: OIDC with PKCE and SAML 2.0, plus **SCIM 2.0** users and groups, SSO-required mode with break-glass accounts ([SSO.md](SSO.md)) |
+| P0 | **Signed webhooks**: HMAC with timestamps, retries, an event catalogue, replay protection |
+| P0 | **Jira / ServiceNow / Linear** with two-way sync: closing the ticket closes the finding, recorded with a reason and the actor ([INTEGRATIONS-TICKETING.md](INTEGRATIONS-TICKETING.md)) |
+| P0 | **Slack / Microsoft Teams / email / PagerDuty** for findings, digests and lifecycle events |
+| P1 | **SIEM**: Splunk HEC, Microsoft Sentinel, Elastic and syslog/CEF, sending **OCSF 1.3** ([INTEGRATIONS-SIEM.md](INTEGRATIONS-SIEM.md)) |
+| P1 | **API contract**: a versioned `/v1` OpenAPI spec checked for breaking changes in CI; Python and TypeScript SDKs; the `paddockctl` CLI ([API.md](API.md), [SDK.md](SDK.md)) |
+| P1 | **Terraform provider** for scope entries, integrations, alert rules and owner rules, plus a findings data source (`terraform-provider-paddock/`) |
+| P1 | **Cloud**: AWS read-only inventory connector |
+| P2 | **EDR/MDM/CMDB context**: CrowdStrike, Microsoft Defender, ServiceNow CMDB ([INTEGRATIONS-CONTEXT.md](INTEGRATIONS-CONTEXT.md)) |
+| P2 | **Network gear**: UniFi and Meraki quarantine, behind the approval gate |
+| P2 | **CI**: a GitHub Action that emits **SARIF** (`.github/actions/paddock-scan`) |
+| P2 | **Standards**: CycloneDX/SPDX in and out, VEX, SARIF, OCSF ([STANDARDS.md](STANDARDS.md)) |
 
-## 3. Time to first value and operability
+**Gaps:**
+- Every connector is tested against protocol-accurate fakes. None has run
+  against a real tenant yet; ServiceNow, UniFi and Meraki were written from
+  their API documentation only.
+- The OCSF class placements haven't been validated against the official
+  schema, and the schema isn't vendored.
+- Chronicle, GCP and Azure aren't built yet.
+- The dashboard doesn't have screens for context-connector sync or network
+  actions yet. Both are API-only.
 
-1. **A clean-machine CI job** that runs `make quickstart` from scratch and
-   asserts the dashboard shows findings. The README admits this has never
-   been verified, and a broken first install loses the evaluator for good.
-2. **Single-node mode**: one container (or three) for SMBs and evaluations,
-   with the same code, fewer processes. Keep the 17-service layout for scale.
-3. **First-run wizard**: add your domain → prove ownership (DNS TXT) → first
-   passive results in minutes → "invite a teammate" → "connect Slack/Jira".
-4. **Production operations**:
-   - Helm chart with HA Postgres guidance.
-   - Versioned migrations (Alembic or sqitch) instead of raw SQL files.
-   - Backup/restore commands and zero-downtime upgrades.
-   - Prometheus metrics, health dashboards and data-retention settings.
-5. **Scale tests in CI**: 10k assets, 1M flows/day, 100 sensors. Know the
-   limits before a customer finds them.
+## 3. Time to first value ✅
 
-## 4. Enterprise trust
+- **Setup wizard** (dashboard `/setup`): add a domain → prove ownership →
+  first results → invite a teammate → connect Slack or Jira.
+- **Proof of control** for scope entries, by DNS TXT, an HTTPS file or a
+  signed attestation. It's re-verified on a schedule; `REQUIRE_SCOPE_PROOF=true`
+  makes unproven entries non-effective. The status is shown on the **Scope**
+  page.
+- **Single-node mode**: `docker-compose.lite.yml` runs 6 services instead of 17.
+- **Clean-machine job** (`.github/workflows/install.yml`): runs
+  `make quickstart` from scratch and asserts that findings appear.
+  [getting-started.md](getting-started.md) walks through the same steps.
 
-- **Multi-tenancy** with row-level security and **proof-of-control** for every
-  scope entry (see `CLOUD_ROADMAP.md` §0).
-- **Keyed and anchored audit chain** (HMAC + external anchoring); audit export
-  to the customer's SIEM.
-- **Supply-chain hygiene for Paddock itself**: signed releases (Sigstore),
-  published SBOM, SLSA provenance, reproducible images. A security vendor will
-  be audited on exactly what it audits.
-- **SOC 2 Type II** (start the Type I now; tooling like Vanta/Drata shortens
-  it), an annual third-party pen test, a security whitepaper, DPA/GDPR terms,
-  and data residency (EU/US) for the hosted edition.
+**Gap:** `install.yml` hasn't run on GitHub yet. Watch its first run.
 
-## 5. Reporting that a buyer can forward
+## 4. Operations ✅
 
-- **Weekly digest email**: what changed, what's new and critical, what got
-  fixed, exposure trend.
-- **Executive PDF**: risk trend, top attack paths closed, MTTR by team.
-- **Compliance evidence packs**: PCI DSS segmentation (Sentry), IEC 62443
-  zones/conduits, NIST CSF 2.0, CIS Controls, and for device makers the
-  **EU CRA** technical file (SBOM + vulnerability handling).
+([OPERATIONS.md](OPERATIONS.md))
 
-## 6. Commercial plumbing
+- **Versioned migrations** (`python -m app.migrate`): checksummed, run under
+  an advisory lock, and safe with many replicas.
+- **Helm chart** (`deploy/helm/`) with HA Postgres guidance.
+- **Backup and restore** commands and a zero-downtime upgrade procedure.
+- Prometheus `/metrics` with Grafana dashboards (`deploy/grafana`), plus alert
+  rules.
+- **Retention settings** with a scheduled purge.
+- **Scale test** (`.github/workflows/scale.yml`, `hardening/scale_test.py`):
+  100k findings checked against a latency budget.
+- **Docs site** (mkdocs, `docs.yml`).
 
-- **Licensing: add a CLA (or switch to DCO + copyright assignment) now.**
-  The AGPL open-core plan only works if you can also sell a commercial license,
-  and you can't relicense contributions you don't own. Today CONTRIBUTING has
-  neither.
-- **Editions:**
+**Gaps:**
+- Helm is linted in CI but hasn't been deployed to a real cluster.
+- Scale is only measured for the orchestrator. 1M flows a day from Sentry is
+  still untested.
 
-  | Edition | For | Includes |
-  |---|---|---|
-  | Community | self-hosted, open source | everything that exists today |
-  | Team | hosted | SSO, integrations, digests, 1–3 Sentry sites |
-  | Enterprise | | SCIM, multi-tenant/MSP, audit export, SLA, compliance packs |
-  | Edge | | air-gapped, federation, OT depth |
+## 5. Enterprise trust ◐
 
-- **Pricing metric:** per *site* (Sentry) + per 1,000 monitored assets. Easy to
-  predict, and it grows with the customer.
-- **Docs site, status page, support SLA, trial**, plus usage metering hooks in
-  the orchestrator.
+- **Multi-tenancy** with Postgres row-level security. The orchestrator connects
+  as a non-superuser `paddock_app` role, and the full test suite also runs
+  under it ([trust/TENANCY.md](trust/TENANCY.md)).
+- **Audit chain**:
+  - HMAC-keyed and anchored externally;
+  - fail-closed: if the audit write fails, the action is refused with a 503;
+  - exportable to the customer's SIEM.
+- **Session revocation** and tenant suspension take effect on the next request.
+- **Supply chain** (`release.yml`): keyless cosign signatures, SPDX and
+  CycloneDX SBOMs as signed attestations, SLSA provenance
+  ([trust/VERIFY.md](trust/VERIFY.md)).
+- **Trust pack** (`docs/trust/`): security whitepaper, SOC 2 control mapping,
+  DPA template, subprocessors, incident response, vulnerability management and
+  data retention.
+
+**Gaps:**
+- **Tenancy covers the orchestrator's database only.** Compute services
+  (correlation, graphsync, ML…) connect with their own credentials and bypass
+  RLS, and workers don't propagate `tenant_id`. Don't sell a shared multi-tenant
+  hosted edition until this is closed; one deployment per customer is safe
+  today.
+- Webhook and proof-of-control fetches validate the resolved IP but don't pin
+  the connection to it (a DNS-rebinding TOCTOU).
+- Entra ID group overage (more than 200 groups) isn't handled. SAML doesn't
+  support encrypted assertions, signed AuthnRequests, IdP-initiated sign-on
+  or single logout yet.
+- `release.yml` hasn't run yet.
+- SOC 2 Type I, a third-party pen test and data residency are business work,
+  not code.
+
+## 6. Reporting ✅
+
+([REPORTS.md](REPORTS.md))
+
+- **Weekly digest**, delivered through any NOTIFY integration. It's exactly-once
+  across replicas and capped at `internal` clearance.
+- **Executive report** in HTML or PDF (WeasyPrint, fonts embedded): exposure
+  trend, MTTR by severity and team, SLA compliance, attack paths closed.
+- **Compliance evidence packs**: PCI DSS 4.0, NIST CSF 2.0, CIS v8, ISO 27001,
+  IEC 62443-3-3 and EU CRA. Claims are conservative: manual controls are always
+  marked "requires attestation", and an empty install claims nothing.
+
+## 7. Commercial plumbing ◐
+
+([EDITIONS.md](EDITIONS.md))
+
+- **CLA** in CONTRIBUTING plus a CLA-check workflow (`cla.yml`).
+- **Editions and licensing**: Community, Team, Enterprise and Edge, enforced by
+  Ed25519-signed offline license files (air-gap friendly). The API exposes the
+  feature set and limits of the current edition.
+- **Usage metering**: sites and monitored assets, matching the pricing metric
+  (per site plus per 1,000 assets).
+
+**Gaps:**
+- Prices in EDITIONS.md are placeholders.
+- The CLA text needs review by a lawyer.
+- `licensing.VENDOR_PUBLIC_KEYS` is empty. Generate the vendor keypair
+  (`scripts/issue_license.py keygen`) and embed the public key before the
+  first paid release.
+- Billing (e.g. Stripe), a status page and a support SLA aren't set up yet.
 
 ---
 
 ## Recommended next 30 days
 
-1. **Integrations framework + the P0 four**: signed webhooks, Slack/Teams,
-   Jira/ServiceNow, OIDC SSO.
-2. **Detection-quality gate** in CI for every engine (ranges + thresholds).
-3. **Clean-machine install job** + single-node mode.
-4. **CLA** in CONTRIBUTING + a CLA bot.
-5. **Sentry pilot**: put two sensors in real environments (an office and a
-   small shop) and tune thresholds on real traffic before broad launch.
+1. **Run the unrun workflows**: `install.yml`, `release.yml` and `scale.yml` on
+   GitHub. Fix whatever breaks.
+2. **Live connector smoke tests** against sandbox tenants for Jira,
+   ServiceNow, Slack, Teams, Splunk and Sentinel, then UniFi and Meraki
+   hardware.
+3. **Close the tenancy gap** in the compute services, or commit to
+   single-tenant hosting for the first customers.
+4. **Pin outbound connections** to the validated IP (the DNS-rebinding fix).
+5. **Sentry pilot**: two sensors in real environments (an office and a small
+   shop). Tune detector thresholds and the eval gate on real traffic.
+6. **Legal and pricing**: CLA review, real prices, the vendor license key.

@@ -192,7 +192,7 @@ def test_models_resolve():
         if isinstance(obj, type) and typing.is_typeddict(obj):
             typing.get_type_hints(obj)
     hints = typing.get_type_hints(PaddockClient.list_findings_paged)
-    assert hints["return"] is gen.FindingPage
+    assert hints["return"] is gen.FindingLifecyclePage
 
 
 def test_generated_code_is_current():
@@ -203,4 +203,5 @@ def test_generated_code_is_current():
 def test_public_api():
     importlib.reload(paddock_sdk)
     assert paddock_sdk.__version__
-    from paddock_sdk.models import FindingOut, ScopeEntryIn  # noqa: F401
+    from paddock_sdk.models import FindingLifecycleOut, FindingOut, ScopeEntryIn  # noqa: F401
+    assert FindingOut is FindingLifecycleOut  # deprecated alias kept for old callers
