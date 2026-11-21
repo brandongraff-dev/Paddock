@@ -41,9 +41,13 @@ async def db():
     database = Database(_normalize_dsn(dsn))
     await database.connect()
     async with database.acquire() as con:
-        # Apply the full schema in order (later files depend on earlier ones).
-        for path in sorted(SCHEMA_DIR.glob("*.sql")):
-            await con.execute(_apply_references_fix(path.read_text()))
+        # Apply the full schema in order (later files depend on earlier ones),
+        # but only to an empty database: the files are migrations, not
+        # re-runnable scripts (036 rekeys tables that 020/021 seed with
+        # ON CONFLICT (id)), and an already-migrated DB has everything.
+        if await con.fetchval("SELECT to_regclass('public.ontology_objects') IS NULL"):
+            for path in sorted(SCHEMA_DIR.glob("*.sql")):
+                await con.execute(_apply_references_fix(path.read_text()))
         await con.execute("TRUNCATE " + ", ".join(_DATA_TABLES) + " CASCADE")
     try:
         yield database

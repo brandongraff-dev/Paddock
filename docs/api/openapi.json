@@ -31053,7 +31053,7 @@
     },
     "/v1/verifications/{verification_id}/result": {
       "post": {
-        "description": "Worker callback (capability ``write``, i.e. the service key).",
+        "description": "Worker callback: only the service key, only for the dispatched job\n(``X-Paddock-Scan`` must be the scan the verification was queued as). A user\nor API key, even an admin's, can never post a verdict.",
         "operationId": "post_result_v1_verifications__verification_id__result_post",
         "parameters": [
           {

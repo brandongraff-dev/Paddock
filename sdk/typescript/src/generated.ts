@@ -5337,7 +5337,9 @@ export abstract class GeneratedOperations {
   /**
    * POST /v1/verifications/{verification_id}/result — Post Result
    *
-   * Worker callback (capability ``write``, i.e. the service key).
+   * Worker callback: only the service key, only for the dispatched job
+   * (``X-Paddock-Scan`` must be the scan the verification was queued as). A user
+   * or API key, even an admin's, can never post a verdict.
    */
   postResultVerification(verificationId: string, body: app__verification__models__ResultIn, options?: RequestOptions): Promise<VerificationOut> {
     return this._request<VerificationOut>("POST", "/v1/verifications/{verification_id}/result", { pathParams: { verification_id: verificationId }, body, options });
