@@ -2,8 +2,8 @@
 
 **Map the real attack paths from your internet-facing surface to your crown jewels — plus SCA, threat-intel, and an adaptive risk model, in one self-hosted platform.**
 
-[![CI](https://github.com/palantir-asm/palantir-asm/actions/workflows/ci.yml/badge.svg)](https://github.com/palantir-asm/palantir-asm/actions/workflows/ci.yml)
-[![Integration](https://github.com/palantir-asm/palantir-asm/actions/workflows/integration.yml/badge.svg)](https://github.com/palantir-asm/palantir-asm/actions/workflows/integration.yml)
+[![CI](https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml/badge.svg)](https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml)
+[![Integration](https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml/badge.svg)](https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](#community)
 
@@ -63,8 +63,8 @@ to run it — but if you do, see [Architecture](#architecture).
 **Requirements:** Docker + Docker Compose. That's it.
 
 ```bash
-git clone https://github.com/palantir-asm/palantir-asm
-cd palantir-asm
+git clone https://github.com/brandongraff-dev/cybersec
+cd cybersec
 
 cp .env.example .env                 # dev defaults are fine as-is
 docker compose up -d --build         # build + start the whole stack (dev profile)
