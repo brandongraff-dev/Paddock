@@ -4,6 +4,7 @@ import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 import GitHubStars from "./landing/GitHubStars";
+import CtaBox from "./landing/CtaBox";
 import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
@@ -124,6 +125,10 @@ export default function Landing() {
           <span className="l3">Defend.</span>
         </h1>
 
+        <div className="lp-hero-cta">
+          <CtaBox />
+        </div>
+
         <div className="lp-horse">
           <GallopTrail className="lp-trail" />
           <DigitHorse body={0.42} />
@@ -206,11 +211,7 @@ export default function Landing() {
         <div className="lp-footer-in">
           <div className="lp-footer-cta">
             <h2>Close the paths before they&apos;re walked.</h2>
-            <div>
-              <Link to={enter} className="lp-run lp-footer-btn">
-                {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
-              </Link>
-            </div>
+            <CtaBox className="cta-footer" />
           </div>
           <div className="lp-footer-grid">
             <div className="lp-footer-brand" ref={megaRef}>
