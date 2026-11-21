@@ -46,3 +46,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# local agent worktrees (tooling, never committed)
+/.claude/worktrees/
