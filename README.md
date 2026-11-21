@@ -94,7 +94,45 @@ the dev profile publishes its ports on `127.0.0.1` only, and the orchestrator's
 own default is `AUTH_MODE=enforce` (anything that forgets to set it fails
 closed). (The hardened profile seeds an `admin` user whose password comes from
 `ADMIN_BOOTSTRAP_PASSWORD` in `.env`; no known credential is ever shipped. See
-[SECURITY.md §4](SECURITY.md).)
+[SECURITY.md §4](SECURITY.md).) Note that "no login" applies to the **API**: the
+dashboard still shows a sign-in screen — use `admin` and the
+`ADMIN_BOOTSTRAP_PASSWORD` from your `.env`.
+
+### Lite mode (single node)
+
+For an evaluation or a small team, run only what's needed for discovery:
+
+```bash
+make lite          # postgres + redis + orchestrator + dashboard + passive worker
+make lite-demo     # optional: the same demo surface as `make demo`
+make lite-active   # optional: add the active (polite probing) worker
+make lite-down
+```
+
+Lite uses the **same hardening as the full profile** (`AUTH_MODE=enforce`,
+proof-of-control for scope, internal-only data tier) and generates the worker
+service key into `.env` for you. Neo4j, graph sync, the ML risk model, the LLM
+"Ask" service and the compute services are not started; their pages say
+"not enabled" instead of erroring (`GET /v1/system/services`).
+
+| | lite | full |
+|---|---|---|
+| Services | 5 (6 with active worker) | 17 + Postgres/Redis/Neo4j |
+| RAM (measured idle) | ~150 MB; 1 GB recommended | ~2 GB (Neo4j ≈ 0.7 GB); 4–8 GB recommended |
+| CPU | 1–2 vCPU | 4 vCPU |
+| Disk (images) | ~1.3 GB (+3.5 GB with the active worker's browser) | ~9 GB |
+
+### First-run wizard
+
+Sign in as an admin on a workspace with no verified scope and Paddock opens
+**`/setup`**: name the workspace → add your domain → **prove you own it** (a DNS
+`TXT` record at `_paddock-challenge.<domain>` or an HTTPS file at
+`/.well-known/paddock-verification/<token>`, with copy buttons and a live
+"check now") → run a first passive discovery → watch the first results land →
+invite a teammate / connect Slack. Progress is saved server-side; "Skip setup"
+always works. With `REQUIRE_SCOPE_PROOF=true` (hardened + lite) an unverified
+scope entry never authorises a scan; IP ranges are recorded as an *attestation*
+(authorization reference + approver) via `POST /v1/scope/{id}/verify`.
 
 When you're done:
 

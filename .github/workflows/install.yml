@@ -1,0 +1,121 @@
+name: Install (clean machine)
+
+# Stands Paddock up from scratch on a fresh runner exactly as the README tells
+# a first-time user to, then asserts the API returns the seeded demo data and
+# the dashboard serves. Two independent runners: the full dev-profile stack
+# (`make quickstart`) and the single-node hardened lite stack (`make lite`).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "docker-compose*.yml"
+      - "Makefile"
+      - "schema/**"
+      - "**/Dockerfile"
+      - "**/pyproject.toml"
+      - "dashboard/package*.json"
+      - "dashboard/nginx.conf"
+      - "scripts/seed_demo.py"
+      - "scripts/install_smoke.py"
+      - ".env.example"
+      - ".github/workflows/install.yml"
+  schedule:
+    - cron: "17 4 * * 1"   # weekly: catches upstream image / dependency drift
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quickstart-full:
+    name: make quickstart (full stack, dev profile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          docker version --format 'docker {{.Server.Version}}'
+          docker compose version
+          python3 --version
+          free -h && nproc && df -h /
+
+      - name: make quickstart
+        run: make quickstart
+
+      - name: Smoke test (health + seeded data + dashboard)
+        run: python3 scripts/install_smoke.py --mode full --timeout 600
+
+      - name: Resource usage
+        if: always()
+        run: docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' || true
+
+      - name: Collect logs
+        if: failure()
+        run: |
+          mkdir -p install-logs
+          docker compose ps -a > install-logs/ps.txt 2>&1 || true
+          docker compose logs --no-color --timestamps > install-logs/compose.log 2>&1 || true
+          for s in $(docker compose config --services); do
+            docker compose logs --no-color "$s" > "install-logs/$s.log" 2>&1 || true
+          done
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-logs-full
+          path: install-logs/
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans || true
+
+  lite:
+    name: make lite (single node, hardened)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bring up the lite stack
+        run: make lite
+
+      - name: Seed demo data (service key from .env)
+        run: make lite-demo
+
+      - name: Smoke test (auth enforced, wizard, proof-of-control, seeded data)
+        run: |
+          export ADMIN_BOOTSTRAP_PASSWORD="$(grep -E '^ADMIN_BOOTSTRAP_PASSWORD=' .env | tail -1 | cut -d= -f2-)"
+          python3 scripts/install_smoke.py --mode lite --timeout 300
+
+      - name: Resource usage
+        if: always()
+        run: docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' || true
+
+      - name: Collect logs
+        if: failure()
+        run: |
+          mkdir -p install-logs
+          docker compose -f docker-compose.lite.yml ps -a > install-logs/ps.txt 2>&1 || true
+          docker compose -f docker-compose.lite.yml logs --no-color --timestamps > install-logs/compose.log 2>&1 || true
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-logs-lite
+          path: install-logs/
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.lite.yml down -v --remove-orphans || true

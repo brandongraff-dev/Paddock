@@ -66,8 +66,11 @@ def queue_name_for(kind: str) -> str:
 
 
 async def create_redis(url: str | None = None) -> aioredis.Redis:
+    # socket_timeout must exceed the longest XREAD block (SSE tails the event
+    # stream with block=15s); redis-py >= 6 defaults it to 5s, which made every
+    # idle /v1/events read fail with "Timeout reading from redis".
     r: aioredis.Redis = aioredis.from_url(
-        url or settings.redis_url, decode_responses=True
+        url or settings.redis_url, decode_responses=True, socket_timeout=60
     )
     await r.ping()
     return r

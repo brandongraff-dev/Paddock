@@ -18,7 +18,10 @@ RUN pip install --no-cache-dir \
       "pydantic-settings>=2" \
       "python-json-logger>=2.0" \
       "PyJWT>=2.8" \
-      "bcrypt>=4.0"
+      "bcrypt>=4.0" \
+      "httpx>=0.27" \
+      "cryptography>=42" \
+      "dnspython>=2.6"
 
 COPY app ./app
 

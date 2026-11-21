@@ -107,5 +107,28 @@ class Settings(BaseSettings):
     otdiscovery_url: str = "http://otdiscovery:8101"
     remediation_url: str = "http://remediation:8102"
 
+    # --- Proof-of-control for scope (schema 021) ----------------------------
+    # When true, a scope entry authorises nothing until its ownership is
+    # proven (DNS TXT / HTTPS file for domains, a recorded attestation for IP
+    # ranges). Default false so dev + existing tests keep working; the hardened
+    # docker-compose.yml and the lite stack set it to true.
+    require_scope_proof: bool = False
+    # Re-check verified proofs this often; a proof that keeps failing for
+    # longer than the grace period is expired (and stops authorising scans).
+    scope_proof_reverify_hours: float = 24
+    scope_proof_grace_hours: float = 72
+    # Floor between two checks of the same entry (the check is an outbound
+    # request to the target, so it must not be spammable).
+    scope_proof_min_interval_sec: float = 5
+    scope_proof_timeout_sec: float = 5
+    scope_proof_user_agent: str = (
+        "Paddock-Verifier/1.0 (+https://github.com/brandongraff-dev/cybersec; scope ownership check)"
+    )
+
+    # Deployment shape: "full" (every service) or "lite" (single node: no
+    # neo4j/graphsync/ML/LLM/compute services). Optional services that are not
+    # part of the deployment are reported as "not enabled" rather than "down".
+    deployment_mode: Literal["full", "lite"] = "full"
+
 
 settings = Settings()

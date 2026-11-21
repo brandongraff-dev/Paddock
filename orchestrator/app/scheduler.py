@@ -283,6 +283,16 @@ async def scheduler_loop(app) -> None:
             if pool is None or r is None:
                 continue
             await run_due_schedules(pool, r)
+            # Proof-of-control re-verification + expiry (schema 021). Never
+            # allowed to take the schedules loop down with it.
+            try:
+                from . import scope_proof
+
+                await scope_proof.maybe_reverify(pool, r)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("scope_proof_sweep_failed")
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

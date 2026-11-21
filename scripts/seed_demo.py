@@ -16,6 +16,8 @@ won't duplicate the graph.
 
 Usage:   python3 scripts/seed_demo.py
 Env:     ORCHESTRATOR_URL=http://localhost:8080   (default)
+         SERVICE_API_KEY=...   optional; sent as X-API-Key so the seed also
+                               works against AUTH_MODE=enforce (lite/hardened)
 
 Run it against the DEV profile (``make up``), where AUTH_MODE=dev means the
 ingest endpoints accept the synthetic-admin principal. Pair it with
@@ -28,6 +30,7 @@ import json
 import os
 import sys
 import time
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -134,10 +137,11 @@ FINDINGS = [
 
 def _req(method: str, path: str, body: dict | None = None, timeout: int = 20):
     data = json.dumps(body).encode() if body is not None else None
-    req = Request(
-        f"{ORCH}{path}", data=data, method=method,
-        headers={"content-type": "application/json"},
-    )
+    headers = {"content-type": "application/json"}
+    key = os.environ.get("SERVICE_API_KEY") or os.environ.get("PADDOCK_API_KEY")
+    if key:
+        headers["X-API-Key"] = key
+    req = Request(f"{ORCH}{path}", data=data, method=method, headers=headers)
     with urlopen(req, timeout=timeout) as r:
         txt = r.read().decode()
         return r.status, (json.loads(txt) if txt.strip() else {})
@@ -149,7 +153,9 @@ def wait_for_orchestrator(max_attempts: int = 60) -> bool:
             with urlopen(f"{ORCH}/healthz", timeout=2) as r:
                 if r.status == 200:
                     return True
-        except (URLError, HTTPError):
+        except (URLError, HTTPError, HTTPException, OSError):
+            # OSError/HTTPException: on a fresh `up` docker-proxy accepts the
+            # connection before uvicorn listens and resets it (RemoteDisconnected).
             pass
         time.sleep(1)
     return False
@@ -303,7 +309,7 @@ def main() -> int:
             "metadata": {"source": SRC},
         }
         try:
-            _req("POST", "/v1/findings/chains", chain)
+            _req("POST", "/v1/chains", chain)  # (was /v1/findings/chains: a 404)
             print("   chain:    1 created (forgotten-box-compromise)")
         except Exception as e:  # noqa: BLE001
             print(f"   chain:    skipped ({e})")
