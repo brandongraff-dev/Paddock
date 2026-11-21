@@ -1,6 +1,55 @@
 {
   "components": {
     "schemas": {
+      "AcceptIn": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_doc_ref": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Doc Ref"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "title": "AcceptIn",
+        "type": "object"
+      },
+      "AcceptOut": {
+        "properties": {
+          "scope_entry": {
+            "additionalProperties": true,
+            "title": "Scope Entry",
+            "type": "object"
+          },
+          "suggestion": {
+            "$ref": "#/components/schemas/SuggestionOut"
+          }
+        },
+        "required": [
+          "suggestion",
+          "scope_entry"
+        ],
+        "title": "AcceptOut",
+        "type": "object"
+      },
       "ActionOut": {
         "properties": {
           "action_type": {
@@ -705,6 +754,53 @@
         "title": "AlertRulePatch",
         "type": "object"
       },
+      "AlertRuleT": {
+        "properties": {
+          "channel": {
+            "enum": [
+              "log",
+              "webhook",
+              "slack"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "match": {
+            "additionalProperties": true,
+            "title": "Match",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "name",
+          "channel"
+        ],
+        "title": "AlertRuleT",
+        "type": "object"
+      },
       "AnomalyOut": {
         "properties": {
           "acknowledged": {
@@ -1037,6 +1133,25 @@
         "title": "ApiKeyOut",
         "type": "object"
       },
+      "ApplyIn": {
+        "properties": {
+          "customer_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Customer Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "customer_ids"
+        ],
+        "title": "ApplyIn",
+        "type": "object"
+      },
       "ApproveIn": {
         "additionalProperties": false,
         "properties": {
@@ -1086,6 +1201,42 @@
           "question"
         ],
         "title": "AskIn",
+        "type": "object"
+      },
+      "AssessmentOut": {
+        "properties": {
+          "changes": {
+            "additionalProperties": true,
+            "title": "Changes",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "grade",
+          "score",
+          "changes"
+        ],
+        "title": "AssessmentOut",
         "type": "object"
       },
       "AssetBulkIn": {
@@ -2289,6 +2440,105 @@
         "title": "BillingOut",
         "type": "object"
       },
+      "BulkVerifyIn": {
+        "properties": {
+          "finding_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Finding Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "finding_ids"
+        ],
+        "title": "BulkVerifyIn",
+        "type": "object"
+      },
+      "BulkVerifyItem": {
+        "properties": {
+          "finding_id": {
+            "format": "uuid",
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "queued",
+              "already_in_flight",
+              "refused",
+              "not_found",
+              "error"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "verification_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Id"
+          }
+        },
+        "required": [
+          "finding_id",
+          "outcome"
+        ],
+        "title": "BulkVerifyItem",
+        "type": "object"
+      },
+      "BulkVerifyOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BulkVerifyItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "queued": {
+            "title": "Queued",
+            "type": "integer"
+          },
+          "refused": {
+            "title": "Refused",
+            "type": "integer"
+          },
+          "requested": {
+            "title": "Requested",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requested",
+          "queued",
+          "refused",
+          "items"
+        ],
+        "title": "BulkVerifyOut",
+        "type": "object"
+      },
       "ChainIn": {
         "properties": {
           "anchor_asset_id": {
@@ -2748,6 +2998,32 @@
         "title": "CheckoutIn",
         "type": "object"
       },
+      "ClaimIn": {
+        "additionalProperties": false,
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "client_ip": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Ip"
+          }
+        },
+        "required": [
+          "batch_id"
+        ],
+        "title": "ClaimIn",
+        "type": "object"
+      },
       "ClusterOut": {
         "properties": {
           "created_at": {
@@ -3072,7 +3348,7 @@
           },
           "evidence": {
             "items": {
-              "$ref": "#/components/schemas/EvidenceOut"
+              "$ref": "#/components/schemas/app__reports__models__EvidenceOut"
             },
             "title": "Evidence",
             "type": "array"
@@ -3257,6 +3533,57 @@
           "stale"
         ],
         "title": "CoverageKind",
+        "type": "object"
+      },
+      "Cta": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "url"
+        ],
+        "title": "Cta",
+        "type": "object"
+      },
+      "CustomerIn": {
+        "properties": {
+          "invite_label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invite Label"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "title": "CustomerIn",
         "type": "object"
       },
       "DenyIn": {
@@ -3697,36 +4024,29 @@
         "title": "DigestRunOut",
         "type": "object"
       },
-      "DismissIn": {
+      "DoneIn": {
+        "additionalProperties": false,
         "properties": {
-          "accepted_until": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Accepted Until"
-          },
-          "reason": {
-            "maxLength": 2000,
-            "minLength": 3,
-            "title": "Reason",
+          "batch_id": {
+            "title": "Batch Id",
             "type": "string"
           },
-          "suppress": {
-            "default": false,
-            "title": "Suppress",
+          "flows": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Flows",
+            "type": "integer"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
             "type": "boolean"
           }
         },
         "required": [
-          "reason"
+          "batch_id"
         ],
-        "title": "DismissIn",
+        "title": "DoneIn",
         "type": "object"
       },
       "EdgeBulkIn": {
@@ -3859,162 +4179,6 @@
         "title": "EdgeIn",
         "type": "object"
       },
-      "EnrollIn": {
-        "additionalProperties": false,
-        "properties": {
-          "agent_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Version"
-          },
-          "capabilities": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Capabilities",
-            "type": "array"
-          },
-          "hostname": {
-            "maxLength": 253,
-            "minLength": 1,
-            "title": "Hostname",
-            "type": "string"
-          },
-          "labels": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Labels",
-            "type": "array"
-          },
-          "platform": {
-            "description": "linux | windows | macos",
-            "title": "Platform",
-            "type": "string"
-          },
-          "token": {
-            "description": "enrollment bootstrap token",
-            "minLength": 1,
-            "title": "Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "hostname",
-          "platform",
-          "token"
-        ],
-        "title": "EnrollIn",
-        "type": "object"
-      },
-      "EnrollOut": {
-        "properties": {
-          "agent_token": {
-            "description": "shown ONCE; store it securely on the host",
-            "title": "Agent Token",
-            "type": "string"
-          },
-          "capabilities": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Capabilities",
-            "type": "array"
-          },
-          "hostname": {
-            "title": "Hostname",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "platform": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Platform"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "token_prefix": {
-            "title": "Token Prefix",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "hostname",
-          "platform",
-          "status",
-          "agent_token",
-          "token_prefix",
-          "capabilities"
-        ],
-        "title": "EnrollOut",
-        "type": "object"
-      },
-      "EvidenceOut": {
-        "properties": {
-          "detail": {
-            "title": "Detail",
-            "type": "string"
-          },
-          "key": {
-            "title": "Key",
-            "type": "string"
-          },
-          "metrics": {
-            "additionalProperties": true,
-            "title": "Metrics",
-            "type": "object"
-          },
-          "rows": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Rows",
-            "type": "array"
-          },
-          "status": {
-            "enum": [
-              "pass",
-              "partial",
-              "fail",
-              "none"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "key",
-          "title",
-          "status",
-          "detail"
-        ],
-        "title": "EvidenceOut",
-        "type": "object"
-      },
       "ExchangeIn": {
         "properties": {
           "code": {
@@ -4132,6 +4296,187 @@
           "detail"
         ],
         "title": "ExecuteOut",
+        "type": "object"
+      },
+      "ExposureReportIn": {
+        "properties": {
+          "captcha_token": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captcha Token"
+          },
+          "consent": {
+            "default": false,
+            "title": "Consent",
+            "type": "boolean"
+          },
+          "domain": {
+            "maxLength": 300,
+            "title": "Domain",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "title": "ExposureReportIn",
+        "type": "object"
+      },
+      "ExposureReportOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "cta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "passive_notice": {
+            "default": "Built only from public DNS and certificate-transparency data. No traffic was sent to this domain.",
+            "title": "Passive Notice",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "teaser": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teaser"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "status",
+          "created_at"
+        ],
+        "title": "ExposureReportOut",
+        "type": "object"
+      },
+      "ExposureSubmitOut": {
+        "properties": {
+          "cached": {
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "email_stored": {
+            "title": "Email Stored",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "status",
+          "cached",
+          "email_stored"
+        ],
+        "title": "ExposureSubmitOut",
         "type": "object"
       },
       "ExposureTrend": {
@@ -4600,6 +4945,11 @@
             "title": "Evidence",
             "type": "object"
           },
+          "exploitability": {
+            "default": "unverified",
+            "title": "Exploitability",
+            "type": "string"
+          },
           "fingerprint": {
             "anyOf": [
               {
@@ -4615,6 +4965,18 @@
             "format": "date-time",
             "title": "First Seen",
             "type": "string"
+          },
+          "fix_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fix Verified At"
           },
           "id": {
             "format": "uuid",
@@ -4647,6 +5009,18 @@
             "format": "date-time",
             "title": "Last Seen",
             "type": "string"
+          },
+          "last_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verified At"
           },
           "metadata": {
             "additionalProperties": true,
@@ -5156,6 +5530,54 @@
         "title": "FromFindingIn",
         "type": "object"
       },
+      "GrantIn": {
+        "properties": {
+          "clearance": {
+            "default": "internal",
+            "enum": [
+              "public",
+              "internal",
+              "confidential",
+              "restricted"
+            ],
+            "title": "Clearance",
+            "type": "string"
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = every current and future customer",
+            "title": "Customer Id"
+          },
+          "role": {
+            "enum": [
+              "viewer",
+              "analyst",
+              "admin"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "title": "GrantIn",
+        "type": "object"
+      },
       "GraphEdgeOut": {
         "properties": {
           "dst_id": {
@@ -5255,34 +5677,156 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "HeartbeatIn": {
-        "additionalProperties": false,
+      "HealthIn": {
+        "description": "The ONLY telemetry a sensor sends: counters about itself, never traffic.",
         "properties": {
-          "agent_version": {
+          "batches_dropped": {
             "anyOf": [
               {
-                "type": "string"
+                "minimum": 0.0,
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Agent Version"
+            "description": "evicted by the buffer cap",
+            "title": "Batches Dropped"
           },
-          "status": {
+          "buffer_batches": {
             "anyOf": [
               {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buffer Batches"
+          },
+          "buffer_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buffer Bytes"
+          },
+          "buffer_fill_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buffer Fill Pct"
+          },
+          "flows_dropped": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows Dropped"
+          },
+          "iface": {
+            "anyOf": [
+              {
+                "maxLength": 32,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "agent-reported health note",
-            "title": "Status"
+            "title": "Iface"
+          },
+          "last_upload_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Upload Ok"
+          },
+          "last_upload_ts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Upload Ts"
+          },
+          "packets_dropped": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "kernel drops at capture",
+            "title": "Packets Dropped"
+          },
+          "packets_seen": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packets Seen"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "sensor wall clock (epoch s), for skew",
+            "title": "Sent At"
+          },
+          "uptime_s": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uptime S"
           }
         },
-        "title": "HeartbeatIn",
+        "title": "HealthIn",
         "type": "object"
       },
       "HeartbeatOut": {
@@ -5695,6 +6239,124 @@
         "title": "IntegrationPatch",
         "type": "object"
       },
+      "IntegrationT": {
+        "properties": {
+          "allow_private": {
+            "default": false,
+            "title": "Allow Private",
+            "type": "boolean"
+          },
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "filters": {
+            "additionalProperties": true,
+            "title": "Filters",
+            "type": "object"
+          },
+          "kind": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "min_severity": {
+            "default": "low",
+            "title": "Min Severity",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "secrets": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Secrets",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "title": "IntegrationT",
+        "type": "object"
+      },
+      "InterfaceIn": {
+        "properties": {
+          "mac": {
+            "anyOf": [
+              {
+                "maxLength": 17,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mac"
+          },
+          "name": {
+            "maxLength": 32,
+            "title": "Name",
+            "type": "string"
+          },
+          "speed_mbps": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speed Mbps"
+          },
+          "up": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Up"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "InterfaceIn",
+        "type": "object"
+      },
       "InventoryIn": {
         "additionalProperties": false,
         "properties": {
@@ -5801,6 +6463,24 @@
           "posture"
         ],
         "title": "InventorySnapshot",
+        "type": "object"
+      },
+      "InviteIn": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "title": "InviteIn",
         "type": "object"
       },
       "LicenseLimits": {
@@ -6467,6 +7147,48 @@
             },
             "title": "Extra Auth Params",
             "type": "object"
+          },
+          "graph_base_url": {
+            "default": "https://graph.microsoft.com",
+            "pattern": "^https://[^/\\s]+$",
+            "title": "Graph Base Url",
+            "type": "string"
+          },
+          "graph_login_url": {
+            "default": "https://login.microsoftonline.com",
+            "pattern": "^https://[^/\\s]+$",
+            "title": "Graph Login Url",
+            "type": "string"
+          },
+          "graph_mode": {
+            "default": "delegated",
+            "enum": [
+              "delegated",
+              "app"
+            ],
+            "title": "Graph Mode",
+            "type": "string"
+          },
+          "graph_overage": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "off"
+            ],
+            "title": "Graph Overage",
+            "type": "string"
+          },
+          "graph_tenant_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Tenant Id"
           },
           "issuer": {
             "maxLength": 2048,
@@ -7829,12 +8551,36 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "graph_client_secret": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Client Secret"
+          },
           "groups_claim": {
             "default": "groups",
             "maxLength": 512,
             "minLength": 1,
             "title": "Groups Claim",
             "type": "string"
+          },
+          "idp_metadata_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Metadata Url"
           },
           "jit_provisioning": {
             "default": true,
@@ -7911,6 +8657,18 @@
             "title": "Slug",
             "type": "string"
           },
+          "sp_private_key": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sp Private Key"
+          },
           "sync_roles": {
             "default": true,
             "title": "Sync Roles",
@@ -7977,6 +8735,16 @@
           },
           "has_client_secret": {
             "title": "Has Client Secret",
+            "type": "boolean"
+          },
+          "has_graph_client_secret": {
+            "default": false,
+            "title": "Has Graph Client Secret",
+            "type": "boolean"
+          },
+          "has_sp_private_key": {
+            "default": false,
+            "title": "Has Sp Private Key",
             "type": "boolean"
           },
           "id": {
@@ -8051,6 +8819,17 @@
               }
             ],
             "title": "Saml Metadata Url"
+          },
+          "saml_sls_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saml Sls Url"
           },
           "slug": {
             "title": "Slug",
@@ -8176,6 +8955,18 @@
             ],
             "title": "Enabled"
           },
+          "graph_client_secret": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Client Secret"
+          },
           "groups_claim": {
             "anyOf": [
               {
@@ -8188,6 +8979,18 @@
               }
             ],
             "title": "Groups Claim"
+          },
+          "idp_metadata_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Metadata Url"
           },
           "jit_provisioning": {
             "anyOf": [
@@ -8275,6 +9078,18 @@
               }
             ],
             "title": "Saml Metadata Xml"
+          },
+          "sp_private_key": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sp Private Key"
           },
           "sync_roles": {
             "anyOf": [
@@ -8416,6 +9231,60 @@
           "queued"
         ],
         "title": "RecomputeOut",
+        "type": "object"
+      },
+      "RedeemIn": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "password": {
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 200,
+            "minLength": 20,
+            "title": "Token",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 64,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$",
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "username",
+          "password"
+        ],
+        "title": "RedeemIn",
         "type": "object"
       },
       "RemediationDetail": {
@@ -8568,6 +9437,24 @@
           "created_at"
         ],
         "title": "RemediationDetail",
+        "type": "object"
+      },
+      "RemediationMergedIn": {
+        "properties": {
+          "pr_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          }
+        },
+        "title": "RemediationMergedIn",
         "type": "object"
       },
       "RemediationPage": {
@@ -8881,41 +9768,6 @@
         "title": "Resolutions",
         "type": "object"
       },
-      "ResultIn": {
-        "additionalProperties": false,
-        "properties": {
-          "output": {
-            "additionalProperties": true,
-            "title": "Output",
-            "type": "object"
-          },
-          "revert": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revert"
-          },
-          "status": {
-            "enum": [
-              "applied",
-              "failed"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "title": "ResultIn",
-        "type": "object"
-      },
       "RevertIn": {
         "additionalProperties": false,
         "properties": {
@@ -9036,6 +9888,51 @@
             ],
             "title": "Email Attribute"
           },
+          "graph_base_url": {
+            "default": "https://graph.microsoft.com",
+            "pattern": "^https://[^/\\s]+$",
+            "title": "Graph Base Url",
+            "type": "string"
+          },
+          "graph_client_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Client Id"
+          },
+          "graph_login_url": {
+            "default": "https://login.microsoftonline.com",
+            "pattern": "^https://[^/\\s]+$",
+            "title": "Graph Login Url",
+            "type": "string"
+          },
+          "graph_overage": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "off"
+            ],
+            "title": "Graph Overage",
+            "type": "string"
+          },
+          "graph_tenant_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Tenant Id"
+          },
           "groups_attribute": {
             "anyOf": [
               {
@@ -9052,6 +9949,18 @@
             "minLength": 1,
             "title": "Idp Entity Id",
             "type": "string"
+          },
+          "idp_slo_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Slo Url"
           },
           "idp_sso_url": {
             "maxLength": 2048,
@@ -9080,6 +9989,28 @@
             "default": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
             "title": "Name Id Format",
             "type": "string"
+          },
+          "require_encrypted_assertions": {
+            "default": false,
+            "title": "Require Encrypted Assertions",
+            "type": "boolean"
+          },
+          "sign_authn_requests": {
+            "default": false,
+            "title": "Sign Authn Requests",
+            "type": "boolean"
+          },
+          "sp_x509_cert": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sp X509 Cert"
           },
           "want_messages_signed": {
             "default": false,
@@ -10834,6 +11765,45 @@
         "title": "ScopeProofOut",
         "type": "object"
       },
+      "ScopeSuggestionT": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "domain",
+              "subdomain_wildcard",
+              "ipv4_cidr",
+              "ipv6_cidr",
+              "asn"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "value": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "ScopeSuggestionT",
+        "type": "object"
+      },
       "SegmentOut": {
         "properties": {
           "canonical": {
@@ -10888,6 +11858,212 @@
           "canonical"
         ],
         "title": "SegmentOut",
+        "type": "object"
+      },
+      "SensorOut": {
+        "properties": {
+          "batches_total": {
+            "title": "Batches Total",
+            "type": "integer"
+          },
+          "duplicates_total": {
+            "title": "Duplicates Total",
+            "type": "integer"
+          },
+          "enrolled_at": {
+            "format": "date-time",
+            "title": "Enrolled At",
+            "type": "string"
+          },
+          "flows_total": {
+            "title": "Flows Total",
+            "type": "integer"
+          },
+          "health": {
+            "additionalProperties": true,
+            "title": "Health",
+            "type": "object"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "interfaces": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          },
+          "last_heartbeat_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Heartbeat At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "last_upload_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Upload At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offline_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offline Since"
+          },
+          "silent_after_s": {
+            "title": "Silent After S",
+            "type": "integer"
+          },
+          "site": {
+            "title": "Site",
+            "type": "string"
+          },
+          "state": {
+            "description": "online | degraded | offline | revoked",
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "site",
+          "state",
+          "status",
+          "version",
+          "hostname",
+          "interfaces",
+          "enrolled_at",
+          "last_seen_at",
+          "last_heartbeat_at",
+          "last_upload_at",
+          "offline_since",
+          "silent_after_s",
+          "health",
+          "warnings",
+          "batches_total",
+          "flows_total",
+          "duplicates_total"
+        ],
+        "title": "SensorOut",
+        "type": "object"
+      },
+      "SensorPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "silent_after_s": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 30.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Silent After S"
+          },
+          "site": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site"
+          }
+        },
+        "title": "SensorPatch",
         "type": "object"
       },
       "ServiceStatus": {
@@ -11149,6 +12325,129 @@
         "title": "SlaRow",
         "type": "object"
       },
+      "SourceIn": {
+        "properties": {
+          "allowed_formats": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Allowed Formats",
+            "type": "array"
+          },
+          "default_project": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Project"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "rate_limit_per_min": {
+            "default": 60,
+            "maximum": 6000.0,
+            "minimum": 1.0,
+            "title": "Rate Limit Per Min",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SourceIn",
+        "type": "object"
+      },
+      "SourcePatch": {
+        "properties": {
+          "allowed_formats": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Formats"
+          },
+          "default_project": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Project"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "rate_limit_per_min": {
+            "anyOf": [
+              {
+                "maximum": 6000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Limit Per Min"
+          }
+        },
+        "title": "SourcePatch",
+        "type": "object"
+      },
       "StatusHistoryOut": {
         "properties": {
           "accepted_until": {
@@ -11214,6 +12513,478 @@
           "at"
         ],
         "title": "StatusHistoryOut",
+        "type": "object"
+      },
+      "SuggestionOut": {
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "first_seen": {
+            "format": "date-time",
+            "title": "First Seen",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "integration_id": {
+            "format": "uuid",
+            "title": "Integration Id",
+            "type": "string"
+          },
+          "integration_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Name"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_seen": {
+            "format": "date-time",
+            "title": "Last Seen",
+            "type": "string"
+          },
+          "scope_entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Entry Id"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "integration_id",
+          "source",
+          "kind",
+          "value",
+          "status",
+          "first_seen",
+          "last_seen"
+        ],
+        "title": "SuggestionOut",
+        "type": "object"
+      },
+      "SupplierDetail": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "criticality": {
+            "title": "Criticality",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "findings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/AssessmentOut"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "interval_hours": {
+            "title": "Interval Hours",
+            "type": "integer"
+          },
+          "last_assessed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Assessed At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Grade"
+          },
+          "last_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Score"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "next_run_at": {
+            "format": "date-time",
+            "title": "Next Run At",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "name",
+          "criticality",
+          "enabled",
+          "interval_hours",
+          "next_run_at",
+          "created_at",
+          "history",
+          "findings"
+        ],
+        "title": "SupplierDetail",
+        "type": "object"
+      },
+      "SupplierIn": {
+        "properties": {
+          "criticality": {
+            "default": "medium",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ],
+            "title": "Criticality",
+            "type": "string"
+          },
+          "domain": {
+            "maxLength": 300,
+            "title": "Domain",
+            "type": "string"
+          },
+          "interval_hours": {
+            "default": 168,
+            "maximum": 8760.0,
+            "minimum": 1.0,
+            "title": "Interval Hours",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "title": "SupplierIn",
+        "type": "object"
+      },
+      "SupplierOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "criticality": {
+            "title": "Criticality",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "interval_hours": {
+            "title": "Interval Hours",
+            "type": "integer"
+          },
+          "last_assessed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Assessed At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Grade"
+          },
+          "last_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Score"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "next_run_at": {
+            "format": "date-time",
+            "title": "Next Run At",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "name",
+          "criticality",
+          "enabled",
+          "interval_hours",
+          "next_run_at",
+          "created_at"
+        ],
+        "title": "SupplierOut",
+        "type": "object"
+      },
+      "SupplierPatch": {
+        "properties": {
+          "criticality": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Criticality"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "interval_hours": {
+            "anyOf": [
+              {
+                "maximum": 8760.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Hours"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "title": "SupplierPatch",
         "type": "object"
       },
       "SupplyChainRiskOut": {
@@ -11944,6 +13715,17 @@
             "title": "Integration Id",
             "type": "string"
           },
+          "interval_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Minutes"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"
@@ -11961,6 +13743,23 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "pending_suggestions": {
+            "default": 0,
+            "title": "Pending Suggestions",
+            "type": "integer"
           }
         },
         "required": [
@@ -11970,6 +13769,57 @@
           "enabled"
         ],
         "title": "SyncStatusOut",
+        "type": "object"
+      },
+      "TemplateIn": {
+        "properties": {
+          "alert_rules": {
+            "items": {
+              "$ref": "#/components/schemas/AlertRuleT"
+            },
+            "maxItems": 50,
+            "title": "Alert Rules",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "integrations": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationT"
+            },
+            "maxItems": 20,
+            "title": "Integrations",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "scope_suggestions": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeSuggestionT"
+            },
+            "maxItems": 100,
+            "title": "Scope Suggestions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TemplateIn",
         "type": "object"
       },
       "TestIn": {
@@ -13225,6 +15075,204 @@
         "title": "TlsGradeSummary",
         "type": "object"
       },
+      "TokenCreateIn": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "site": {
+            "description": "site / location name",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Site",
+            "type": "string"
+          },
+          "ttl_minutes": {
+            "default": 60,
+            "maximum": 10080.0,
+            "minimum": 5.0,
+            "title": "Ttl Minutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "site"
+        ],
+        "title": "TokenCreateIn",
+        "type": "object"
+      },
+      "TokenCreated": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "site": {
+            "title": "Site",
+            "type": "string"
+          },
+          "state": {
+            "description": "pending | used | expired | revoked",
+            "title": "State",
+            "type": "string"
+          },
+          "token": {
+            "description": "the enrollment token; shown ONCE",
+            "title": "Token",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "used_by_sensor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used By Sensor"
+          }
+        },
+        "required": [
+          "id",
+          "token_prefix",
+          "site",
+          "label",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "state",
+          "token"
+        ],
+        "title": "TokenCreated",
+        "type": "object"
+      },
+      "TokenOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "site": {
+            "title": "Site",
+            "type": "string"
+          },
+          "state": {
+            "description": "pending | used | expired | revoked",
+            "title": "State",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "used_by_sensor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used By Sensor"
+          }
+        },
+        "required": [
+          "id",
+          "token_prefix",
+          "site",
+          "label",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "state"
+        ],
+        "title": "TokenOut",
+        "type": "object"
+      },
       "TransitionOut": {
         "properties": {
           "finding": {
@@ -13281,6 +15329,299 @@
           "value"
         ],
         "title": "TrendPoint",
+        "type": "object"
+      },
+      "TrustLinkCreated": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_viewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Viewed At"
+          },
+          "password_protected": {
+            "title": "Password Protected",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "period_days": {
+            "title": "Period Days",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "sections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "expired",
+              "revoked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_hint": {
+            "title": "Token Hint",
+            "type": "string"
+          },
+          "view_count": {
+            "title": "View Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "sections",
+          "period_days",
+          "created_at",
+          "expires_at",
+          "password_protected",
+          "view_count",
+          "token_hint",
+          "status",
+          "token",
+          "path"
+        ],
+        "title": "TrustLinkCreated",
+        "type": "object"
+      },
+      "TrustLinkIn": {
+        "properties": {
+          "expires_in_days": {
+            "default": 30,
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Expires In Days",
+            "type": "integer"
+          },
+          "label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "period_days": {
+            "default": 30,
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Period Days",
+            "type": "integer"
+          },
+          "sections": {
+            "items": {
+              "enum": [
+                "grade",
+                "verified_fixes",
+                "sla",
+                "compliance",
+                "coverage"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "TrustLinkIn",
+        "type": "object"
+      },
+      "TrustLinkOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_viewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Viewed At"
+          },
+          "password_protected": {
+            "title": "Password Protected",
+            "type": "boolean"
+          },
+          "period_days": {
+            "title": "Period Days",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "sections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "expired",
+              "revoked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "token_hint": {
+            "title": "Token Hint",
+            "type": "string"
+          },
+          "view_count": {
+            "title": "View Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "sections",
+          "period_days",
+          "created_at",
+          "expires_at",
+          "password_protected",
+          "view_count",
+          "token_hint",
+          "status"
+        ],
+        "title": "TrustLinkOut",
+        "type": "object"
+      },
+      "TrustUnlockIn": {
+        "properties": {
+          "password": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "title": "TrustUnlockIn",
         "type": "object"
       },
       "UrlOut": {
@@ -13571,6 +15912,263 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VerificationHistoryOut": {
+        "properties": {
+          "exploitability": {
+            "enum": [
+              "unverified",
+              "confirmed",
+              "not_reproducible",
+              "inconclusive"
+            ],
+            "title": "Exploitability",
+            "type": "string"
+          },
+          "finding_id": {
+            "format": "uuid",
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "fix_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fix Verified At"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "last_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verified At"
+          }
+        },
+        "required": [
+          "finding_id",
+          "exploitability",
+          "items"
+        ],
+        "title": "VerificationHistoryOut",
+        "type": "object"
+      },
+      "VerificationOut": {
+        "properties": {
+          "already_in_flight": {
+            "default": false,
+            "title": "Already In Flight",
+            "type": "boolean"
+          },
+          "check_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Id"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "dispatched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatched At"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "finding_id": {
+            "format": "uuid",
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "purpose": {
+            "enum": [
+              "exploitability",
+              "fix"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by": {
+            "title": "Requested By",
+            "type": "string"
+          },
+          "run_after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run After"
+          },
+          "scan_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Id"
+          },
+          "scope_entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Entry Id"
+          },
+          "scope_proof": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Proof"
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "queued",
+              "done",
+              "refused",
+              "unsupported",
+              "error",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirmed",
+                  "not_reproducible",
+                  "inconclusive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "id",
+          "finding_id",
+          "purpose",
+          "trigger",
+          "requested_by",
+          "status",
+          "requested_at"
+        ],
+        "title": "VerificationOut",
+        "type": "object"
+      },
       "VerifierSummary": {
         "properties": {
           "gate_ok": {
@@ -13641,64 +16239,6 @@
           }
         },
         "title": "VerifierSummary",
-        "type": "object"
-      },
-      "VerifyIn": {
-        "properties": {
-          "approver": {
-            "anyOf": [
-              {
-                "maxLength": 256,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approver"
-          },
-          "loa_ref": {
-            "anyOf": [
-              {
-                "maxLength": 512,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Loa Ref"
-          },
-          "method": {
-            "anyOf": [
-              {
-                "enum": [
-                  "dns_txt",
-                  "http_file",
-                  "attestation"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Method"
-          },
-          "valid_until": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Valid Until"
-          }
-        },
-        "title": "VerifyIn",
         "type": "object"
       },
       "VerifyOut": {
@@ -13779,6 +16319,53 @@
           "label"
         ],
         "title": "Window",
+        "type": "object"
+      },
+      "app__reports__models__EvidenceOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "title": "Metrics",
+            "type": "object"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "partial",
+              "fail",
+              "none"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "status",
+          "detail"
+        ],
+        "title": "EvidenceOut",
         "type": "object"
       },
       "app__reports__models__FindingBrief": {
@@ -13936,6 +16523,553 @@
         ],
         "title": "FindingBrief",
         "type": "object"
+      },
+      "app__routers__fleet__EnrollIn": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Version"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "hostname": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Hostname",
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
+          "platform": {
+            "description": "linux | windows | macos",
+            "title": "Platform",
+            "type": "string"
+          },
+          "token": {
+            "description": "enrollment bootstrap token",
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hostname",
+          "platform",
+          "token"
+        ],
+        "title": "EnrollIn",
+        "type": "object"
+      },
+      "app__routers__fleet__EnrollOut": {
+        "properties": {
+          "agent_token": {
+            "description": "shown ONCE; store it securely on the host",
+            "title": "Agent Token",
+            "type": "string"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "hostname": {
+            "title": "Hostname",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "hostname",
+          "platform",
+          "status",
+          "agent_token",
+          "token_prefix",
+          "capabilities"
+        ],
+        "title": "EnrollOut",
+        "type": "object"
+      },
+      "app__routers__fleet__HeartbeatIn": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Version"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "agent-reported health note",
+            "title": "Status"
+          }
+        },
+        "title": "HeartbeatIn",
+        "type": "object"
+      },
+      "app__routers__fleet__ResultIn": {
+        "additionalProperties": false,
+        "properties": {
+          "output": {
+            "additionalProperties": true,
+            "title": "Output",
+            "type": "object"
+          },
+          "revert": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revert"
+          },
+          "status": {
+            "enum": [
+              "applied",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ResultIn",
+        "type": "object"
+      },
+      "app__routers__integration_sync__DismissIn": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "DismissIn",
+        "type": "object"
+      },
+      "app__routers__lifecycle__DismissIn": {
+        "properties": {
+          "accepted_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted Until"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "suppress": {
+            "default": false,
+            "title": "Suppress",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "DismissIn",
+        "type": "object"
+      },
+      "app__routers__network_actions__EvidenceOut": {
+        "properties": {
+          "action_id": {
+            "format": "uuid",
+            "title": "Action Id",
+            "type": "string"
+          },
+          "device": {
+            "additionalProperties": true,
+            "title": "Device",
+            "type": "object"
+          },
+          "finding": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finding"
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "title": "EvidenceOut",
+        "type": "object"
+      },
+      "app__routers__sensors__EnrollIn": {
+        "additionalProperties": false,
+        "properties": {
+          "hostname": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "interfaces": {
+            "items": {
+              "$ref": "#/components/schemas/InterfaceIn"
+            },
+            "maxItems": 32,
+            "title": "Interfaces",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "token": {
+            "maxLength": 256,
+            "minLength": 10,
+            "title": "Token",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "EnrollIn",
+        "type": "object"
+      },
+      "app__routers__sensors__EnrollOut": {
+        "properties": {
+          "credential": {
+            "description": "per-sensor credential; shown ONCE, store 0600",
+            "title": "Credential",
+            "type": "string"
+          },
+          "credential_prefix": {
+            "title": "Credential Prefix",
+            "type": "string"
+          },
+          "heartbeat_interval_s": {
+            "title": "Heartbeat Interval S",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensor_id": {
+            "format": "uuid",
+            "title": "Sensor Id",
+            "type": "string"
+          },
+          "site": {
+            "title": "Site",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sensor_id",
+          "name",
+          "site",
+          "credential",
+          "credential_prefix",
+          "heartbeat_interval_s"
+        ],
+        "title": "EnrollOut",
+        "type": "object"
+      },
+      "app__routers__sensors__HeartbeatIn": {
+        "properties": {
+          "health": {
+            "$ref": "#/components/schemas/HealthIn"
+          },
+          "interfaces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/InterfaceIn"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interfaces"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "HeartbeatIn",
+        "type": "object"
+      },
+      "app__scope_proof__VerifyIn": {
+        "properties": {
+          "approver": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver"
+          },
+          "loa_ref": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loa Ref"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dns_txt",
+                  "http_file",
+                  "attestation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "title": "VerifyIn",
+        "type": "object"
+      },
+      "app__verification__models__ResultIn": {
+        "description": "What the worker reports back for one verification job.",
+        "properties": {
+          "check_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Id"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "done",
+              "refused",
+              "unsupported",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirmed",
+                  "not_reproducible",
+                  "inconclusive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ResultIn",
+        "type": "object"
+      },
+      "app__verification__models__VerifyIn": {
+        "description": "Optional body for POST /v1/findings/{id}/verify.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "why (recorded on the ledger)",
+            "title": "Reason"
+          }
+        },
+        "title": "VerifyIn",
+        "type": "object"
       }
     }
   },
@@ -13999,7 +17133,6 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 1024,
                   "type": "string"
                 },
                 {
@@ -14036,6 +17169,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 512,
                   "type": "string"
                 },
                 {
@@ -14052,6 +17186,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 512,
                   "type": "string"
                 },
                 {
@@ -14100,6 +17235,25 @@
           }
         },
         "summary": "Create Group",
+        "tags": [
+          "scim"
+        ]
+      }
+    },
+    "/scim/v2/Groups/.search": {
+      "post": {
+        "operationId": "search_groups_scim_v2_Groups__search_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Search Groups",
         "tags": [
           "scim"
         ]
@@ -14163,6 +17317,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 512,
                   "type": "string"
                 },
                 {
@@ -14179,6 +17334,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 512,
                   "type": "string"
                 },
                 {
@@ -14439,7 +17595,6 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 1024,
                   "type": "string"
                 },
                 {
@@ -14467,6 +17622,40 @@
               "default": 100,
               "title": "Count",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "attributes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Attributes"
+            }
+          },
+          {
+            "in": "query",
+            "name": "excludedAttributes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Excludedattributes"
             }
           }
         ],
@@ -14508,6 +17697,25 @@
           }
         },
         "summary": "Create User",
+        "tags": [
+          "scim"
+        ]
+      }
+    },
+    "/scim/v2/Users/.search": {
+      "post": {
+        "operationId": "search_users_scim_v2_Users__search_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Search Users",
         "tags": [
           "scim"
         ]
@@ -14562,6 +17770,40 @@
             "schema": {
               "title": "User Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "attributes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Attributes"
+            }
+          },
+          {
+            "in": "query",
+            "name": "excludedAttributes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Excludedattributes"
             }
           }
         ],
@@ -16207,6 +19449,48 @@
         ]
       }
     },
+    "/v1/auth/sso/admin/providers/{provider_id}/saml-sp-keypair": {
+      "post": {
+        "description": "Generate (or rotate) the SAML SP signing/encryption key pair. The\nprivate key is stored encrypted and never returned; the certificate is\nsaved in the provider config and returned for the IdP (it is also in the\nSP metadata).",
+        "operationId": "admin_generate_sp_keypair_v1_auth_sso_admin_providers__provider_id__saml_sp_keypair_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Generate Sp Keypair",
+        "tags": [
+          "sso"
+        ]
+      }
+    },
     "/v1/auth/sso/admin/providers/{provider_id}/test": {
       "post": {
         "description": "Connectivity / configuration check. OIDC: run discovery + fetch JWKS.",
@@ -16457,6 +19741,26 @@
         ]
       }
     },
+    "/v1/auth/sso/logout": {
+      "post": {
+        "description": "End the caller's session(s) everywhere Paddock controls: every JWT\nissued so far stops working (session watermark) and pending SSO exchange\ncodes are deleted. If the user signed in through SAML and the IdP has a\nsingle-logout URL, ``idp_logout_url`` is the (signed) LogoutRequest\nredirect the SPA should navigate to so the IdP session ends too; for OIDC\nit is the IdP's ``end_session_endpoint`` when it has one.",
+        "operationId": "sso_logout_v1_auth_sso_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sso Logout",
+        "tags": [
+          "sso"
+        ]
+      }
+    },
     "/v1/auth/sso/providers": {
       "get": {
         "operationId": "public_providers_v1_auth_sso_providers_get",
@@ -16644,6 +19948,47 @@
           }
         },
         "summary": "Saml Metadata",
+        "tags": [
+          "sso"
+        ]
+      }
+    },
+    "/v1/auth/sso/{slug}/sls": {
+      "get": {
+        "description": "SAML SingleLogoutService (HTTP-Redirect). Handles (a) the IdP's\nLogoutResponse to a logout WE started and (b) an IdP-initiated\nLogoutRequest. Both must be signed by the pinned IdP certificate.",
+        "operationId": "saml_sls_v1_auth_sso__slug__sls_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Saml Sls",
         "tags": [
           "sso"
         ]
@@ -18333,6 +21678,43 @@
               "title": "Offset",
               "type": "integer"
             }
+          },
+          {
+            "description": "safe-check verdict (schema 026)",
+            "in": "query",
+            "name": "exploitability",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(unverified|confirmed|not_reproducible|inconclusive)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "safe-check verdict (schema 026)",
+              "title": "Exploitability"
+            }
+          },
+          {
+            "description": "only findings proven fixed (or not)",
+            "in": "query",
+            "name": "fix_verified",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "only findings proven fixed (or not)",
+              "title": "Fix Verified"
+            }
           }
         ],
         "responses": {
@@ -18640,6 +22022,47 @@
         ]
       }
     },
+    "/v1/findings/verify/bulk": {
+      "post": {
+        "operationId": "verify_bulk_v1_findings_verify_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkVerifyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkVerifyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Bulk",
+        "tags": [
+          "verification"
+        ]
+      }
+    },
     "/v1/findings/{finding_id}": {
       "get": {
         "description": "Finding + its asset + any chain it participates in (+ lifecycle).",
@@ -18755,7 +22178,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DismissIn"
+                "$ref": "#/components/schemas/app__routers__lifecycle__DismissIn"
               }
             }
           },
@@ -18809,7 +22232,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DismissIn"
+                "$ref": "#/components/schemas/app__routers__lifecycle__DismissIn"
               }
             }
           },
@@ -18950,6 +22373,120 @@
         "summary": "Finding Techniques",
         "tags": [
           "attack"
+        ]
+      }
+    },
+    "/v1/findings/{finding_id}/verifications": {
+      "get": {
+        "operationId": "list_verifications_v1_findings__finding_id__verifications_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "finding_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Finding Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationHistoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Verifications",
+        "tags": [
+          "verification"
+        ]
+      }
+    },
+    "/v1/findings/{finding_id}/verify": {
+      "post": {
+        "description": "Queue a safe check for this finding. 202 with the ledger row; 403 with the\nrefusal reason (and a ledger row) when scope or proof-of-control says no.",
+        "operationId": "verify_finding_v1_findings__finding_id__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "finding_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Finding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/app__verification__models__VerifyIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Finding",
+        "tags": [
+          "verification"
         ]
       }
     },
@@ -19226,7 +22763,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ResultIn"
+                "$ref": "#/components/schemas/app__routers__fleet__ResultIn"
               }
             }
           },
@@ -19390,7 +22927,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EnrollIn"
+                "$ref": "#/components/schemas/app__routers__fleet__EnrollIn"
               }
             }
           },
@@ -19401,7 +22938,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnrollOut"
+                  "$ref": "#/components/schemas/app__routers__fleet__EnrollOut"
                 }
               }
             },
@@ -19578,6 +23115,50 @@
         ]
       }
     },
+    "/v1/fleet/network-actions/{action_id}/evidence": {
+      "get": {
+        "description": "What the approver needs to decide: the Sentry finding behind a proposal\n(rule, severity, evidence JSON) and the device it points at. Read-only.",
+        "operationId": "action_evidence_v1_fleet_network_actions__action_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Action Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__routers__network_actions__EvidenceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Action Evidence",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
     "/v1/fleet/network-actions/{action_id}/execute": {
       "post": {
         "description": "Run an APPROVED network action through its ACTION integration.\n\ndry_run rows (approved without ``apply_for_real``) only produce a preview\nand stay ``approved``; real rows become ``applied`` (with a revert plan)\nor ``failed``. A ``revert`` row releases the device its original action\nquarantined and marks that original ``reverted``.",
@@ -19667,7 +23248,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HeartbeatIn"
+                "$ref": "#/components/schemas/app__routers__fleet__HeartbeatIn"
               }
             }
           },
@@ -20002,6 +23583,483 @@
         ]
       }
     },
+    "/v1/ingest": {
+      "post": {
+        "operationId": "ingest_v1_ingest_post",
+        "parameters": [
+          {
+            "description": "Force a format instead of auto-detecting: sarif, cyclonedx, spdx, ocsf, trivy, grype, semgrep, nuclei, zap, csv",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Force a format instead of auto-detecting: sarif, cyclonedx, spdx, ocsf, trivy, grype, semgrep, nuclei, zap, csv",
+              "title": "Format"
+            }
+          },
+          {
+            "description": "Repository / project the results belong to",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repository / project the results belong to",
+              "title": "Project"
+            }
+          },
+          {
+            "description": "Attach every finding to this asset",
+            "in": "query",
+            "name": "asset",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Attach every finding to this asset",
+              "title": "Asset"
+            }
+          },
+          {
+            "in": "query",
+            "name": "asset_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 40,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Asset Kind"
+            }
+          },
+          {
+            "description": "Label for API-key callers (token callers use their source)",
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Label for API-key callers (token callers use their source)",
+              "title": "Source"
+            }
+          },
+          {
+            "description": "Parse and validate only; store nothing",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Parse and validate only; store nothing",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Reject the whole upload if any record is invalid",
+            "in": "query",
+            "name": "strict",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Reject the whole upload if any record is invalid",
+              "title": "Strict",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Ingest token (prefer the header)",
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ingest token (prefer the header)",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/v1/ingest/formats": {
+      "get": {
+        "operationId": "formats_v1_ingest_formats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Formats",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/v1/ingest/log": {
+      "get": {
+        "operationId": "ingest_log_v1_ingest_log_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(ok|partial|rejected|dry_run)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Log",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/v1/ingest/sources": {
+      "get": {
+        "operationId": "list_sources_v1_ingest_sources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_revoked",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Revoked",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Sources",
+        "tags": [
+          "ingest"
+        ]
+      },
+      "post": {
+        "operationId": "create_source_v1_ingest_sources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Source",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/v1/ingest/sources/{source_id}": {
+      "delete": {
+        "operationId": "revoke_source_v1_ingest_sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Source",
+        "tags": [
+          "ingest"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_source_v1_ingest_sources__source_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourcePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Source",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/v1/ingest/sources/{source_id}/rotate": {
+      "post": {
+        "operationId": "rotate_source_v1_ingest_sources__source_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Source",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
     "/v1/integration-sync": {
       "get": {
         "operationId": "sync_status_v1_integration_sync_get",
@@ -20022,6 +24080,188 @@
           }
         },
         "summary": "Sync Status",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/v1/integration-sync/suggestions": {
+      "get": {
+        "operationId": "list_suggestions_v1_integration_sync_suggestions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "pending",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "integration_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Integration Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SuggestionOut"
+                  },
+                  "title": "Response List Suggestions V1 Integration Sync Suggestions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Suggestions",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/v1/integration-sync/suggestions/{suggestion_id}/accept": {
+      "post": {
+        "description": "Add the suggested value to scope through the normal scope add. The entry\nstill needs proof-of-control (``/v1/scope/{id}/challenge`` + ``/verify``)\nbefore anything is scanned.",
+        "operationId": "accept_suggestion_v1_integration_sync_suggestions__suggestion_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suggestion_id",
+            "required": true,
+            "schema": {
+              "title": "Suggestion Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Suggestion",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/v1/integration-sync/suggestions/{suggestion_id}/dismiss": {
+      "post": {
+        "description": "Dismiss: the suggestion stays recorded (so the next sync does not re-raise it).",
+        "operationId": "dismiss_suggestion_v1_integration_sync_suggestions__suggestion_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suggestion_id",
+            "required": true,
+            "schema": {
+              "title": "Suggestion Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__routers__integration_sync__DismissIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Suggestion",
         "tags": [
           "integrations"
         ]
@@ -20969,6 +25209,877 @@
         ]
       }
     },
+    "/v1/msp/customers": {
+      "get": {
+        "operationId": "list_customers_v1_msp_customers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "name",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "asc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Customers V1 Msp Customers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Customers",
+        "tags": [
+          "msp"
+        ]
+      },
+      "post": {
+        "operationId": "create_customer_v1_msp_customers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Customer V1 Msp Customers Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Customer",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/customers/{customer_id}/invites": {
+      "post": {
+        "operationId": "new_invite_v1_msp_customers__customer_id__invites_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Customer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response New Invite V1 Msp Customers  Customer Id  Invites Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "New Invite",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/customers/{customer_id}/reactivate": {
+      "post": {
+        "operationId": "reactivate_customer_v1_msp_customers__customer_id__reactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Customer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reactivate Customer V1 Msp Customers  Customer Id  Reactivate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reactivate Customer",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/customers/{customer_id}/suspend": {
+      "post": {
+        "operationId": "suspend_customer_v1_msp_customers__customer_id__suspend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Customer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Suspend Customer V1 Msp Customers  Customer Id  Suspend Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suspend Customer",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/customers/{customer_id}/switch": {
+      "post": {
+        "operationId": "switch_customer_v1_msp_customers__customer_id__switch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Customer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Switch Customer V1 Msp Customers  Customer Id  Switch Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Switch Customer",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/grants": {
+      "get": {
+        "operationId": "list_grants_v1_msp_grants_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Grants V1 Msp Grants Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Grants",
+        "tags": [
+          "msp"
+        ]
+      },
+      "post": {
+        "operationId": "set_grant_v1_msp_grants_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Grant V1 Msp Grants Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Grant",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/grants/{grant_id}": {
+      "delete": {
+        "operationId": "revoke_grant_v1_msp_grants__grant_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Grant V1 Msp Grants  Grant Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Grant",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/invites/redeem": {
+      "post": {
+        "description": "Public. The invite token is the credential; it is single use, expires,\nand only works while the customer is active.",
+        "operationId": "redeem_invite_v1_msp_invites_redeem_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Redeem Invite V1 Msp Invites Redeem Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Redeem Invite",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/me": {
+      "get": {
+        "operationId": "msp_me_v1_msp_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Msp Me V1 Msp Me Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Msp Me",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/summary": {
+      "get": {
+        "operationId": "customers_summary_v1_msp_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Customers Summary V1 Msp Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Customers Summary",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/templates": {
+      "get": {
+        "operationId": "list_templates_v1_msp_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Templates V1 Msp Templates Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Templates",
+        "tags": [
+          "msp"
+        ]
+      },
+      "post": {
+        "operationId": "create_template_v1_msp_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Template V1 Msp Templates Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Template",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/templates/{template_id}": {
+      "delete": {
+        "operationId": "delete_template_v1_msp_templates__template_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Template V1 Msp Templates  Template Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Template",
+        "tags": [
+          "msp"
+        ]
+      },
+      "put": {
+        "operationId": "update_template_v1_msp_templates__template_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Template V1 Msp Templates  Template Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Template",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/templates/{template_id}/apply": {
+      "post": {
+        "operationId": "apply_template_v1_msp_templates__template_id__apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Apply Template V1 Msp Templates  Template Id  Apply Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Template",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/usage": {
+      "get": {
+        "operationId": "usage_v1_msp_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Usage",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
+    "/v1/msp/usage/snapshot": {
+      "post": {
+        "description": "Record today's per-customer usage (cron-able). Idempotent per day.",
+        "operationId": "usage_snapshot_v1_msp_usage_snapshot_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Usage Snapshot V1 Msp Usage Snapshot Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Usage Snapshot",
+        "tags": [
+          "msp"
+        ]
+      }
+    },
     "/v1/onboarding": {
       "get": {
         "operationId": "get_onboarding_v1_onboarding_get",
@@ -21614,6 +26725,177 @@
         ]
       }
     },
+    "/v1/public/exposure-report": {
+      "post": {
+        "operationId": "create_report_v1_public_exposure_report_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExposureReportIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExposureSubmitOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Report",
+        "tags": [
+          "public"
+        ]
+      }
+    },
+    "/v1/public/exposure-report/{report_id}": {
+      "get": {
+        "operationId": "get_report_v1_public_exposure_report__report_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExposureReportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Report",
+        "tags": [
+          "public"
+        ]
+      }
+    },
+    "/v1/public/trust/{token}": {
+      "get": {
+        "operationId": "public_view_get_v1_public_trust__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Public View Get",
+        "tags": [
+          "public"
+        ]
+      },
+      "post": {
+        "operationId": "public_view_post_v1_public_trust__token__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrustUnlockIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Public View Post",
+        "tags": [
+          "public"
+        ]
+      }
+    },
     "/v1/remediation": {
       "get": {
         "operationId": "list_remediations_v1_remediation_get",
@@ -21729,6 +27011,65 @@
         "summary": "Propose",
         "tags": [
           "remediation"
+        ]
+      }
+    },
+    "/v1/remediation/{remediation_id}/merged": {
+      "post": {
+        "description": "Record that a remediation PR was merged; if its finding is marked fixed, a\nsafe re-check is scheduled (after the PR deploy delay).",
+        "operationId": "remediation_merged_v1_remediation__remediation_id__merged_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "remediation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Remediation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RemediationMergedIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remediation Merged",
+        "tags": [
+          "verification"
         ]
       }
     },
@@ -23362,7 +28703,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/VerifyIn"
+                    "$ref": "#/components/schemas/app__scope_proof__VerifyIn"
                   },
                   {
                     "type": "null"
@@ -23398,6 +28739,529 @@
         "summary": "Verify Scope",
         "tags": [
           "scope"
+        ]
+      }
+    },
+    "/v1/sensors": {
+      "get": {
+        "operationId": "list_sensors_v1_sensors_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_revoked",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Revoked",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SensorOut"
+                  },
+                  "title": "Response List Sensors V1 Sensors Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Sensors",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/enroll": {
+      "post": {
+        "description": "Redeem an enrollment token. Authenticated by the token itself; rate\nlimited per client, with a lockout after repeated failures.",
+        "operationId": "enroll_v1_sensors_enroll_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__routers__sensors__EnrollIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__routers__sensors__EnrollOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enroll",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/heartbeat": {
+      "post": {
+        "operationId": "heartbeat_v1_sensors_heartbeat_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Sensor-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sensor-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__routers__sensors__HeartbeatIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/ingest/claim": {
+      "post": {
+        "operationId": "ingest_claim_v1_sensors_ingest_claim_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Sensor-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sensor-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Claim",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/ingest/done": {
+      "post": {
+        "operationId": "ingest_done_v1_sensors_ingest_done_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Sensor-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sensor-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoneIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Done",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/tokens": {
+      "get": {
+        "operationId": "list_tokens_v1_sensors_tokens_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TokenOut"
+                  },
+                  "title": "Response List Tokens V1 Sensors Tokens Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tokens",
+        "tags": [
+          "sensors"
+        ]
+      },
+      "post": {
+        "description": "Create a one-time enrollment token. The token is returned ONCE.",
+        "operationId": "create_token_v1_sensors_tokens_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Token",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/tokens/{token_id}": {
+      "delete": {
+        "operationId": "revoke_token_v1_sensors_tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Token",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/{sensor_id}": {
+      "get": {
+        "operationId": "get_sensor_v1_sensors__sensor_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sensor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sensor Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Sensor",
+        "tags": [
+          "sensors"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_sensor_v1_sensors__sensor_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sensor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sensor Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Sensor",
+        "tags": [
+          "sensors"
+        ]
+      }
+    },
+    "/v1/sensors/{sensor_id}/revoke": {
+      "post": {
+        "description": "Revoke a sensor. Its credential stops working on the very next call.",
+        "operationId": "revoke_sensor_v1_sensors__sensor_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sensor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sensor Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Sensor",
+        "tags": [
+          "sensors"
         ]
       }
     },
@@ -23482,6 +29346,242 @@
         "summary": "Patch Sla Policy",
         "tags": [
           "sla"
+        ]
+      }
+    },
+    "/v1/suppliers": {
+      "get": {
+        "operationId": "list_suppliers_v1_suppliers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SupplierOut"
+                  },
+                  "title": "Response List Suppliers V1 Suppliers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Suppliers",
+        "tags": [
+          "suppliers"
+        ]
+      },
+      "post": {
+        "operationId": "add_supplier_v1_suppliers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupplierIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Supplier",
+        "tags": [
+          "suppliers"
+        ]
+      }
+    },
+    "/v1/suppliers/{supplier_id}": {
+      "delete": {
+        "operationId": "delete_supplier_v1_suppliers__supplier_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Supplier",
+        "tags": [
+          "suppliers"
+        ]
+      },
+      "get": {
+        "operationId": "get_supplier_v1_suppliers__supplier_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Supplier",
+        "tags": [
+          "suppliers"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_supplier_v1_suppliers__supplier_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupplierPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Supplier",
+        "tags": [
+          "suppliers"
+        ]
+      }
+    },
+    "/v1/suppliers/{supplier_id}/assess": {
+      "post": {
+        "description": "Queue an immediate re-assessment; the runner picks it up within seconds.",
+        "operationId": "assess_now_v1_suppliers__supplier_id__assess_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assess Now",
+        "tags": [
+          "suppliers"
         ]
       }
     },
@@ -24726,6 +30826,133 @@
         ]
       }
     },
+    "/v1/trust-links": {
+      "get": {
+        "operationId": "list_links_v1_trust_links_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrustLinkOut"
+                  },
+                  "title": "Response List Links V1 Trust Links Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Links",
+        "tags": [
+          "trust"
+        ]
+      },
+      "post": {
+        "operationId": "create_link_v1_trust_links_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrustLinkIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustLinkCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Link",
+        "tags": [
+          "trust"
+        ]
+      }
+    },
+    "/v1/trust-links/sections": {
+      "get": {
+        "operationId": "list_sections_v1_trust_links_sections_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Sections",
+        "tags": [
+          "trust"
+        ]
+      }
+    },
+    "/v1/trust-links/{link_id}": {
+      "delete": {
+        "description": "Revoke (kept, with its view history, for the audit trail).",
+        "operationId": "revoke_link_v1_trust_links__link_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustLinkOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Link",
+        "tags": [
+          "trust"
+        ]
+      }
+    },
     "/v1/usage": {
       "get": {
         "operationId": "get_usage_v1_usage_get",
@@ -24814,6 +31041,60 @@
         "summary": "List Snapshots",
         "tags": [
           "licensing"
+        ]
+      }
+    },
+    "/v1/verifications/{verification_id}/result": {
+      "post": {
+        "description": "Worker callback (capability ``write``, i.e. the service key).",
+        "operationId": "post_result_v1_verifications__verification_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "verification_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Verification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__verification__models__ResultIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Result",
+        "tags": [
+          "verification"
         ]
       }
     }
