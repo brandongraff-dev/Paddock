@@ -430,11 +430,11 @@ export default function Shell({ children, noScroll }: Props) {
             <span className="title mono">{title.toUpperCase()}</span>
           </div>
           <div className="spacer" />
+          <ClassificationBanner />
           <Ticker />
         </header>
 
         <main className={`main${noScroll ? " no-scroll" : ""}`}>
-          <ClassificationBanner />
           {children}
         </main>
       </div>

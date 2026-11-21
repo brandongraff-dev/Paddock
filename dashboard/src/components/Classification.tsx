@@ -56,21 +56,19 @@ export function ClassificationChip({ c, note = true, compact }: ChipProps) {
 export function ClassificationBanner() {
   const seen = useStore((s) => s.seenClassification);
   const level: Classification = seen ?? "public";
-  const color = classificationColor(level);
   const label = CLASSIFICATION_LABEL[level];
+  // Public is the baseline: quiet ink. Anything above it keeps its ramp colour.
+  const color = level === "public" ? "var(--text-2)" : classificationColor(level);
   return (
-    <div
-      className="class-banner"
+    <span
+      className="class-pill"
       role="status"
       aria-label={`Classification ${label}`}
-      style={{ color, borderColor: color, "--class-color": color } as CSSProperties}
+      title="Highest classification currently loaded"
+      style={{ "--class-color": color } as CSSProperties}
     >
-      <span className="class-banner-rule" />
-      <span className="class-banner-label">{label}</span>
-      <span className="class-banner-sub">
-        highest classification currently loaded
-      </span>
-      <span className="class-banner-rule" />
-    </div>
+      <i aria-hidden="true" />
+      {label.charAt(0) + label.slice(1).toLowerCase()}
+    </span>
   );
 }
