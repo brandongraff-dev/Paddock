@@ -25,6 +25,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from . import tenancy
 from .config import settings
 from .models import ScheduleOut, ScheduleRunOut
 from .routers import scans as scans_mod
@@ -282,7 +283,10 @@ async def scheduler_loop(app) -> None:
             r = getattr(app.state, "redis", None)
             if pool is None or r is None:
                 continue
-            await run_due_schedules(pool, r)
+            # Schedules are tenant-scoped (RLS): sweep each tenant in turn.
+            for tid in await tenancy.list_tenant_ids(pool):
+                with tenancy.tenant_context(tid):
+                    await run_due_schedules(pool, r)
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

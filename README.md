@@ -233,8 +233,9 @@ known gaps: [SECURITY.md §10](SECURITY.md).)
 - **Not verified on a clean box via full compose.** The stack has not been
   stood up end-to-end from scratch on a fresh machine as part of release QA. Expect
   to hit rough edges on first `up`; please file them.
-- **Single-tenant**, no FIPS/compliance accreditation, tamper-*evidence* (not
-  tamper-proofing), and some containers resist full lock-down (notably the active
+- **Single-tenant in practice** (RLS tenancy covers the API only — see
+  [docs/trust/TENANCY.md](docs/trust/TENANCY.md)), no FIPS/compliance accreditation,
+  audit tamper-resistance only with `AUDIT_HMAC_KEY` + an anchor sink, and some containers resist full lock-down (notably the active
   worker, which needs `NET_RAW` for SYN scans). Details in SECURITY.md §10.
 
 If you're evaluating this for serious use: run it in the hardened profile, read
@@ -273,6 +274,9 @@ away from people who run it themselves.
 
 - **Security:** [SECURITY.md](SECURITY.md) — threat model, scope invariant, and
   how to report a vulnerability (privately, please).
+- **Trust:** [`docs/trust/`](docs/trust/) — security whitepaper, SOC 2 mapping,
+  DPA/subprocessor templates, retention/IR/vuln-management policies, and
+  [how to verify a signed release](docs/trust/VERIFY.md).
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, running the
   tests + integration harness, and the "tests never touch a live DB" rule.
 - **Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

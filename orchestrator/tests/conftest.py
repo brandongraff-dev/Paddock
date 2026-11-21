@@ -57,6 +57,10 @@ else:
     )
 
 
+# host/port/dbname of the current test database (for the app-role pool).
+_DB_INFO: dict[str, dict] = {}
+
+
 @pytest_asyncio.fixture
 async def db_pool(postgresql_my_proc):
     """Fresh database per test, schema applied."""
@@ -73,6 +77,7 @@ async def db_pool(postgresql_my_proc):
     await admin.close()
 
     dsn = f"postgresql://{auth}@{host}:{port}/{dbname}"
+    _DB_INFO["current"] = {"host": host, "port": port, "dbname": dbname}
     pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=4)
     async with pool.acquire() as con:
         for f in sorted(SCHEMA_DIR.glob("*.sql")):
@@ -122,7 +127,28 @@ def reset_scope_caches():
 
 
 @pytest_asyncio.fixture
-async def app(db_pool, fake_redis):
+async def app_pool(db_pool):
+    """A pool connected as the NON-superuser `paddock_app` role (schema/099),
+    built by ``app.db.create_pool`` so every acquire stamps the context's
+    tenant -- i.e. exactly how production connects, with RLS enforced.
+    ``db_pool`` stays the superuser pool for seeding/tampering in tests."""
+    from app.db import create_pool
+
+    async with db_pool.acquire() as con:
+        await con.execute("ALTER ROLE paddock_app LOGIN")
+    info = _DB_INFO["current"]
+    pool = await create_pool(
+        f"postgresql://paddock_app@{info['host']}:{info['port']}/{info['dbname']}",
+        min_size=1,
+        max_size=4,
+    )
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+def _build_app(pool, fake_redis):
     """FastAPI app with lifespan bypassed; we attach pool/redis directly."""
     from app.main import create_app
     from contextlib import asynccontextmanager
@@ -141,9 +167,23 @@ async def app(db_pool, fake_redis):
     finally:
         main_mod.lifespan = original_lifespan
 
-    app_obj.state.pool = db_pool
+    app_obj.state.pool = pool
     app_obj.state.redis = fake_redis
     return app_obj
+
+
+if os.environ.get("ORCH_TEST_APP_ROLE"):
+    # Serve every request through the non-superuser `app_pool` (RLS enforced,
+    # default tenant); tests still seed/inspect through the superuser db_pool.
+    @pytest_asyncio.fixture
+    async def app(db_pool, app_pool, fake_redis):
+        return _build_app(app_pool, fake_redis)
+
+else:
+
+    @pytest_asyncio.fixture
+    async def app(db_pool, fake_redis):
+        return _build_app(db_pool, fake_redis)
 
 
 @pytest_asyncio.fixture

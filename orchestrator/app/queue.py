@@ -25,6 +25,7 @@ from typing import Any, AsyncIterator
 import redis.asyncio as aioredis
 from fastapi import Request
 
+from . import tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,11 @@ def get_redis(request: Request) -> aioredis.Redis:
 async def enqueue_scan(r: aioredis.Redis, job: dict[str, Any]) -> str:
     """Push a scan job onto its kind-specific stream. Returns the stream id."""
     stream = queue_name_for(job["kind"])
+    # Workers echo this back (X-Paddock-Tenant) so their callbacks land in the
+    # tenant that queued the job.
+    tid = tenancy.current_tenant_id()
+    if tid is not None and "tenant_id" not in job:
+        job = {**job, "tenant_id": tid}
     # Streams want flat string fields; encode the whole job as JSON under 'job'.
     sid = await r.xadd(stream, {"job": json.dumps(job, default=str)})
     logger.info(

@@ -107,5 +107,41 @@ class Settings(BaseSettings):
     otdiscovery_url: str = "http://otdiscovery:8101"
     remediation_url: str = "http://remediation:8102"
 
+    # --- Enterprise trust: tenancy + keyed/anchored audit (schema 098/099) --
+    # TENANCY_STRICT: code running with no tenant in context (no principal,
+    # background job that forgot to pick a tenant) sees NO rows and can write
+    # none, instead of falling back to the default tenant. Turn on for a
+    # multi-tenant deployment; single-tenant installs leave it off.
+    tenancy_strict: bool = False
+
+    # HMAC key for the audit chain. Keep it OUTSIDE the database (env, a docker
+    # secret file, or a KMS-decrypted file). Unset = legacy unkeyed sha256.
+    audit_hmac_key: str | None = None
+    audit_hmac_key_file: str | None = None
+    # Retired keys still needed to verify older rows (comma/space separated).
+    audit_hmac_previous_keys: str = ""
+
+    # Fail-closed audit: a mutating request whose write-ahead audit record
+    # cannot be persisted is refused with 503 before the handler runs.
+    audit_fail_closed: bool = True
+
+    # Anchoring of the chain head to an append-only sink. Comma-separated list
+    # of: file, s3, webhook. Empty = no anchoring.
+    audit_anchor_sinks: str = ""
+    audit_anchor_interval_sec: int = 3600
+    audit_anchor_file: str = "/var/lib/paddock/audit-anchors.jsonl"
+    audit_anchor_s3_bucket: str | None = None
+    audit_anchor_s3_prefix: str = "paddock/audit-anchors/"
+    audit_anchor_s3_region: str | None = None
+    audit_anchor_s3_endpoint_url: str | None = None
+    audit_anchor_s3_retention_days: int = 400
+    audit_anchor_s3_lock_mode: Literal["COMPLIANCE", "GOVERNANCE"] = "COMPLIANCE"
+    audit_anchor_webhook_url: str | None = None
+    audit_anchor_webhook_secret: str | None = None
+    # Optional read-back endpoint (GET ?tenant_id=) returning the latest anchor
+    # JSON, so verify() can compare against a webhook-only sink.
+    audit_anchor_webhook_latest_url: str | None = None
+    audit_verify_batch: int = 1000
+
 
 settings = Settings()

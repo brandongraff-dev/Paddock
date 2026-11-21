@@ -48,6 +48,9 @@ services:
       POSTGRES_DB: asm
       POSTGRES_USER: asm
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Password for the non-superuser app role `paddock_app` (set by
+      # schema/100_app_role.sh on first init). Falls back to POSTGRES_PASSWORD.
+      PADDOCK_APP_DB_PASSWORD: ${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./schema:/docker-entrypoint-initdb.d:ro
@@ -101,9 +104,18 @@ services:
     <<: *hardened-py
     ports: ["8080:8080"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      # Non-superuser role so Postgres row-level security (tenant isolation)
+      # applies; see schema/099_tenancy.sql + docs/trust/TENANCY.md. Existing
+      # volumes must apply 098/099 + 100_app_role.sh once (TENANCY.md).
+      DATABASE_URL: postgresql+asyncpg://paddock_app:${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: INFO
+      # Keyed + anchored audit chain (docs/trust/SECURITY_WHITEPAPER.md §8).
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:-}
+      AUDIT_ANCHOR_SINKS: ${AUDIT_ANCHOR_SINKS:-}
+      AUDIT_ANCHOR_S3_BUCKET: ${AUDIT_ANCHOR_S3_BUCKET:-}
+      AUDIT_ANCHOR_WEBHOOK_URL: ${AUDIT_ANCHOR_WEBHOOK_URL:-}
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       # Governance Stream A auth switch. Hardened default = enforce.
       AUTH_MODE: ${AUTH_MODE:-enforce}
       # Legacy MVP stub, kept coherent with AUTH_MODE: deny-closed in prod.

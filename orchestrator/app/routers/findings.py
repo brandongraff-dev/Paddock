@@ -84,7 +84,7 @@ RETURNING id, asset_id, rule_id, rule_source, severity, title, description,
 _ASSET_UPSERT_FOR_FINDING_SQL = """
 INSERT INTO assets (kind, value, canonical, source, confidence, metadata)
 VALUES ($1, $2, $3, 'finding-bulk', 100, '{}'::jsonb)
-ON CONFLICT (kind, canonical) DO UPDATE SET
+ON CONFLICT (tenant_id, kind, canonical) DO UPDATE SET
     last_seen = NOW()
 RETURNING id, kind, value, canonical, first_seen, last_seen, confidence,
           source, metadata, (xmax = 0) AS was_inserted

@@ -434,7 +434,7 @@ async def enroll(
                 (hostname, platform, agent_version, labels, capabilities,
                  status, token_prefix, token_hash, enrolled_by)
             VALUES ($1,$2,$3,$4::text[],$5::text[],'enrolled',$6,$7,$8)
-            ON CONFLICT (hostname) DO UPDATE SET
+            ON CONFLICT (tenant_id, hostname) DO UPDATE SET
                 platform = EXCLUDED.platform,
                 agent_version = EXCLUDED.agent_version,
                 labels = EXCLUDED.labels,

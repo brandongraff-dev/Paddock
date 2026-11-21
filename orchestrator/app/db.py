@@ -13,6 +13,7 @@ from typing import Any
 import asyncpg
 from fastapi import Request
 
+from . import tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -31,16 +32,51 @@ def _coerce_dsn(url: str) -> str:
     return url
 
 
-async def create_pool(dsn: str | None = None) -> asyncpg.Pool:
+async def create_pool(dsn: str | None = None, **overrides: Any) -> asyncpg.Pool:
+    """Create the app pool.
+
+    Every ``acquire()`` runs :func:`tenancy.setup_connection`, which stamps the
+    request's tenant (``app.tenant_id``) on the connection so Postgres RLS
+    scopes every query; the release-time ``RESET ALL`` clears it again.
+    """
     dsn = _coerce_dsn(dsn or settings.database_url)
-    pool = await asyncpg.create_pool(
-        dsn=dsn,
-        min_size=settings.db_pool_min,
-        max_size=settings.db_pool_max,
-        command_timeout=30,
-    )
+    kwargs: dict[str, Any] = {
+        "min_size": settings.db_pool_min,
+        "max_size": settings.db_pool_max,
+        "command_timeout": 30,
+        "setup": tenancy.setup_connection,
+    }
+    kwargs.update(overrides)
+    pool = await asyncpg.create_pool(dsn=dsn, **kwargs)
     assert pool is not None
     return pool
+
+
+async def warn_if_privileged(pool: asyncpg.Pool) -> dict[str, Any]:
+    """Log LOUDLY when the app connects as a role that bypasses RLS.
+
+    Superusers and BYPASSRLS roles ignore every row-level-security policy, so
+    tenant isolation (schema/099_tenancy.sql) would silently not apply. The app
+    should connect as the non-superuser ``paddock_app`` role.
+    """
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "SELECT current_user AS role, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user"
+        )
+    info = dict(row) if row else {"role": None, "rolsuper": None, "rolbypassrls": None}
+    if row is not None and (row["rolsuper"] or row["rolbypassrls"]):
+        banner = "!" * 78
+        logger.warning(
+            "\n%s\nDATABASE ROLE %r IS A %s: Postgres row-level security is BYPASSED.\n"
+            "Tenant isolation is NOT enforced by the database and the audit log is\n"
+            "rewritable by this process. Connect the orchestrator as the non-superuser\n"
+            "`paddock_app` role (see schema/099_tenancy.sql, docs/trust/TENANCY.md).\n%s",
+            banner,
+            row["role"],
+            "SUPERUSER" if row["rolsuper"] else "BYPASSRLS ROLE",
+            banner,
+        )
+    return info
 
 
 async def close_pool(pool: asyncpg.Pool) -> None:

@@ -43,6 +43,7 @@ from typing import Any
 
 import asyncpg
 
+from . import tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -331,7 +332,10 @@ class ScopeDecision:
 # --------------------------------------------------------------------------- #
 
 class ScopeCache:
-    """Process-local cache of active scope_entries.
+    """Process-local cache of active scope_entries, one slot PER TENANT.
+
+    (Scope rows are tenant-scoped by RLS; a single shared slot would let one
+    tenant's allowlist authorise another tenant's scans.)
 
     Reload is debounced; concurrent reloads collapse to a single DB read
     behind an asyncio.Lock.
@@ -340,18 +344,30 @@ class ScopeCache:
     def __init__(self) -> None:
         self._rows: list[dict[str, Any]] = []
         self._loaded_at: float = 0.0
+        self._tenant_key: str | None = None
+        self._by_tenant: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._lock = asyncio.Lock()
 
     def invalidate(self) -> None:
         self._loaded_at = 0.0
+        self._by_tenant.clear()
+
+    def _fresh(self, key: str) -> list[dict[str, Any]] | None:
+        hit = self._by_tenant.get(key)
+        if hit and hit[1] and time.monotonic() - hit[0] < settings.scope_cache_ttl_sec:
+            return hit[1]
+        return None
 
     async def entries(self, pool: asyncpg.Pool) -> list[dict[str, Any]]:
-        if time.monotonic() - self._loaded_at < settings.scope_cache_ttl_sec and self._rows:
-            return self._rows
+        key = tenancy.current_tenant_key()
+        rows = self._fresh(key)
+        if rows is not None:
+            return rows
         async with self._lock:
             # re-check under lock
-            if time.monotonic() - self._loaded_at < settings.scope_cache_ttl_sec and self._rows:
-                return self._rows
+            rows = self._fresh(key)
+            if rows is not None:
+                return rows
             async with pool.acquire() as con:
                 rows = await con.fetch(
                     """
@@ -363,6 +379,8 @@ class ScopeCache:
                 )
             self._rows = [dict(r) for r in rows]
             self._loaded_at = time.monotonic()
+            self._tenant_key = key
+            self._by_tenant[key] = (self._loaded_at, self._rows)
             return self._rows
 
 

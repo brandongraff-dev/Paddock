@@ -191,9 +191,18 @@ logged.
   can append but not rewrite history (logged if it lacks the privilege to do
   so).
 
-This gives tamper-**evidence** (you can prove the record was not altered), not
-tamper-**proofing** (a DB superuser can still rewrite rows and recompute hashes
-— see §10).
+- **Keyed + anchored + fail-closed** (schema 098/099): with `AUDIT_HMAC_KEY`
+  set (kept outside the DB) new rows are HMAC-SHA256 (per-row `hash_alg`, so
+  legacy rows still verify and keys rotate); each tenant has its own chain; the
+  chain head is periodically signed and anchored to an append-only sink (file /
+  S3 Object Lock / webhook) and `verify` also checks the head against the latest
+  anchor (detects tail truncation and rewrites); a mutating request whose
+  write-ahead audit record cannot be written is refused with 503. The
+  orchestrator connects as `paddock_app`, which has no UPDATE/DELETE on
+  `audit_log`. Details: `docs/trust/SECURITY_WHITEPAPER.md` §8.
+
+Without a key and an anchor sink this is tamper-**evidence** only (a DB
+superuser can rewrite rows and recompute hashes — see §10).
 
 ## 8. Provenance
 
@@ -240,14 +249,18 @@ This is an MVP-grade platform with real, un-papered-over gaps:
   (sha256 hashing, bcrypt/argon2 for passwords); there is no FIPS-validated
   module, no boundary accreditation, no control mapping (NIST 800-53, SOC 2,
   etc.). Do not represent it as compliant with any regime.
-- **Single-tenant.** There is no tenant isolation. RBAC/ABAC/classification
-  partition *access within one org*, not *data between orgs*. Running it as
-  shared multi-tenant SaaS is not supported and would leak across tenants.
-- **Tamper-evidence, not tamper-proofing.** The audit hash chain detects
-  after-the-fact edits by the application role, but a Postgres superuser (or
-  anyone with raw DB/disk access) can rewrite rows and recompute the chain.
-  There is no external notarization/anchoring, no append-only WORM storage, and
-  no off-box log shipping by default.
+- **Multi-tenancy is API-level only.** Postgres row-level security now
+  isolates tenants for everything served by the orchestrator (which connects
+  as the non-superuser `paddock_app` role), but the compute services
+  (brain/Ask, graphsync, correlation, …) still connect as the owner and are
+  not tenant-aware, and workers do not yet carry the tenant back. Running it as
+  shared multi-tenant SaaS is **not yet supported**; see
+  `docs/trust/TENANCY.md` for the model and its limits.
+- **Audit tamper-resistance depends on configuration.** Without
+  `AUDIT_HMAC_KEY` a Postgres superuser can rewrite rows and recompute the
+  chain; without `AUDIT_ANCHOR_SINKS` tail truncation is undetectable. Even
+  with both, rows newer than the last anchor (default: up to 1 h) can be
+  deleted undetected, and there is no off-box log shipping (SIEM export).
 - **Cold-start ML.** The `mlrisk` ranker/anomaly detector has no pretrained
   model and no persisted model artifact; it bootstraps from whatever is in the
   DB and is effectively uncalibrated until enough real history accumulates.
