@@ -191,6 +191,11 @@ const Icon = {
       <path d="M14 6 a3 3 0 1 0 4 4 L21 13 L13 21 L3 11 L11 3 Z" /><path d="M9 11 L13 15" />
     </svg>
   ),
+  Reports: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3 L15 3 L19 7 L19 21 L6 21 Z" /><path d="M15 3 L15 7 L19 7" /><path d="M9 17 L9 14 M12 17 L12 11 M15 17 L15 13" />
+    </svg>
+  ),
 };
 
 interface NavGroup {
@@ -239,6 +244,7 @@ const navGroups: NavGroup[] = [
       { to: "/timeline", label: "Timeline", icon: Icon.Timeline },
       { to: "/tickets", label: "Tickets", icon: Icon.Tickets },
       { to: "/remediation", label: "Remediation", icon: Icon.Remediation },
+      { to: "/reports", label: "Reports", icon: Icon.Reports },
     ],
   },
   {

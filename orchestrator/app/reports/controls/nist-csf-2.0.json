@@ -1,0 +1,175 @@
+{
+  "framework": "nist-csf-2.0",
+  "name": "NIST Cybersecurity Framework",
+  "version": "2.0",
+  "publisher": "National Institute of Standards and Technology",
+  "url": "https://www.nist.gov/cyberframework",
+  "description": "The CSF 2.0 Core outcomes Paddock can evidence: asset management, risk assessment, platform security and continuous monitoring. Govern (GV) outcomes are organisational.",
+  "controls": [
+    {
+      "id": "GV.SC-04", "family": "Govern · Supply chain",
+      "title": "Suppliers are known and prioritised by criticality",
+      "summary": "Suppliers are known and prioritized by criticality.",
+      "mode": "manual", "evidence": [],
+      "rationale": "Supplier management is organisational; Paddock's SBOM lists third-party components, not suppliers.",
+      "attestation": "Provide the supplier inventory and criticality ranking."
+    },
+    {
+      "id": "ID.AM-01", "family": "Identify · Asset management",
+      "title": "Hardware inventories are maintained",
+      "summary": "Inventories of hardware managed by the organization are maintained.",
+      "evidence": ["asset_inventory", "device_inventory"],
+      "rationale": "External discovery plus Sentry's passive device inventory (IoT/OT) keep the hardware view current."
+    },
+    {
+      "id": "ID.AM-02", "family": "Identify · Asset management",
+      "title": "Software, services and systems inventories are maintained",
+      "summary": "Inventories of software, services, and systems managed by the organization are maintained.",
+      "evidence": ["software_inventory", "asset_inventory"],
+      "rationale": "SBOM per project, plus discovered services and technologies on the external surface."
+    },
+    {
+      "id": "ID.AM-03", "family": "Identify · Asset management",
+      "title": "Network communication and data flows are represented",
+      "summary": "Representations of authorized network communication and network data flows are maintained.",
+      "evidence": ["segmentation_map"], "max_status": "partial",
+      "rationale": "Sentry records observed flows between segments; whether they are authorised is decided by the organisation.",
+      "attestation": "Mark which observed flows are authorised."
+    },
+    {
+      "id": "ID.AM-05", "family": "Identify · Asset management",
+      "title": "Assets are prioritised",
+      "summary": "Assets are prioritized based on classification, criticality, resources, and impact on the mission.",
+      "evidence": ["classification", "attack_path_analysis"], "max_status": "partial",
+      "rationale": "Classification labels and crown-jewel attack paths drive prioritisation; mission impact is organisational."
+    },
+    {
+      "id": "ID.AM-08", "family": "Identify · Asset management",
+      "title": "Assets are managed through their life cycles",
+      "summary": "Systems, hardware, software, services, and data are managed throughout their life cycles.",
+      "evidence": ["asset_inventory", "continuous_monitoring"], "max_status": "partial",
+      "rationale": "First/last-seen tracking and change detection show assets appearing and disappearing; disposal processes are organisational."
+    },
+    {
+      "id": "ID.RA-01", "family": "Identify · Risk assessment",
+      "title": "Vulnerabilities in assets are identified, validated and recorded",
+      "summary": "Vulnerabilities in assets are identified, validated, and recorded.",
+      "evidence": ["vuln_management", "external_scanning"],
+      "rationale": "Continuous scanning and CVE/OSV matching record vulnerabilities with evidence and provenance."
+    },
+    {
+      "id": "ID.RA-02", "family": "Identify · Risk assessment",
+      "title": "Cyber threat intelligence is received",
+      "summary": "Cyber threat intelligence is received from information sharing forums and sources.",
+      "evidence": ["threat_intel"],
+      "rationale": "STIX/TAXII feeds and CISA KEV are ingested and matched to assets."
+    },
+    {
+      "id": "ID.RA-04", "family": "Identify · Risk assessment",
+      "title": "Impacts and likelihoods are identified",
+      "summary": "Potential impacts and likelihoods of threats exploiting vulnerabilities are identified and recorded.",
+      "evidence": ["attack_path_analysis", "vuln_management"],
+      "rationale": "Attack paths estimate exploitability from foothold to crown jewel; EPSS/KEV inform likelihood."
+    },
+    {
+      "id": "ID.RA-05", "family": "Identify · Risk assessment",
+      "title": "Risk informs response prioritisation",
+      "summary": "Threats, vulnerabilities, likelihoods, and impacts are used to understand inherent risk and inform risk response prioritization.",
+      "evidence": ["attack_path_analysis", "ownership"], "max_status": "partial",
+      "rationale": "Risk-ranked findings are routed to owners; the risk appetite that sets priorities is organisational."
+    },
+    {
+      "id": "ID.RA-06", "family": "Identify · Risk assessment",
+      "title": "Risk responses are chosen, tracked and communicated",
+      "summary": "Risk responses are chosen, prioritized, planned, tracked, and communicated.",
+      "evidence": ["remediation_sla", "ownership"],
+      "rationale": "Tickets with owners and SLA clocks track each response; risk acceptance is recorded per finding."
+    },
+    {
+      "id": "ID.RA-08", "family": "Identify · Risk assessment",
+      "title": "Vulnerability disclosure handling is established",
+      "summary": "Processes for receiving, analyzing, and responding to vulnerability disclosures are established.",
+      "mode": "manual", "evidence": [],
+      "rationale": "A disclosure intake process is organisational.",
+      "attestation": "Provide the vulnerability disclosure policy and intake records."
+    },
+    {
+      "id": "ID.RA-09", "family": "Identify · Risk assessment",
+      "title": "Authenticity and integrity of software is assessed",
+      "summary": "The authenticity and integrity of hardware and software are assessed prior to acquisition and use.",
+      "evidence": ["component_vulns"], "max_status": "partial",
+      "rationale": "Supply-chain checks (known-vulnerable and typosquatted packages) cover open-source components only."
+    },
+    {
+      "id": "PR.DS-02", "family": "Protect · Data security",
+      "title": "Data in transit is protected",
+      "summary": "The confidentiality, integrity, and availability of data-in-transit are protected.",
+      "evidence": ["tls_posture", "cleartext_protocols"], "max_status": "partial",
+      "rationale": "TLS grading and cleartext detection cover observed endpoints and segments only."
+    },
+    {
+      "id": "PR.PS-01", "family": "Protect · Platform security",
+      "title": "Configuration management practices are applied",
+      "summary": "Configuration management practices are established and applied.",
+      "evidence": ["secure_configuration"], "max_status": "partial",
+      "rationale": "Policy-as-code and header/TLS checks verify outcomes of configuration management on the surface."
+    },
+    {
+      "id": "PR.PS-02", "family": "Protect · Platform security",
+      "title": "Software is maintained commensurate with risk",
+      "summary": "Software is maintained, replaced, and removed commensurate with risk.",
+      "evidence": ["component_vulns", "remediation_sla"],
+      "rationale": "Vulnerable components and outdated services are tracked to remediation."
+    },
+    {
+      "id": "PR.PS-04", "family": "Protect · Platform security",
+      "title": "Log records are generated for continuous monitoring",
+      "summary": "Log records are generated and made available for continuous monitoring.",
+      "evidence": ["audit_log"], "max_status": "partial",
+      "rationale": "Paddock's own audit log only; enterprise logging is out of scope."
+    },
+    {
+      "id": "PR.PS-06", "family": "Protect · Platform security",
+      "title": "Secure software development practices are integrated",
+      "summary": "Secure software development practices are integrated, and their performance is monitored throughout the software development life cycle.",
+      "evidence": ["code_analysis", "secrets_exposure"], "max_status": "partial",
+      "rationale": "SAST and secret scanning are monitored; the wider SDLC is organisational."
+    },
+    {
+      "id": "PR.IR-01", "family": "Protect · Infrastructure resilience",
+      "title": "Networks are protected from unauthorised logical access",
+      "summary": "Networks and environments are protected from unauthorized logical access and usage.",
+      "evidence": ["segmentation_violations", "exposure_hygiene"],
+      "rationale": "Observed segment crossings, OT exposure and unnecessary internet exposure are tracked as findings."
+    },
+    {
+      "id": "DE.CM-01", "family": "Detect · Continuous monitoring",
+      "title": "Networks and network services are monitored",
+      "summary": "Networks and network services are monitored to find potentially adverse events.",
+      "evidence": ["behaviour_detection", "continuous_monitoring"],
+      "rationale": "Sentry monitors mirrored segments; scheduled scans and change detection monitor the external surface."
+    },
+    {
+      "id": "DE.CM-09", "family": "Detect · Continuous monitoring",
+      "title": "Computing hardware and software are monitored",
+      "summary": "Computing hardware and software, runtime environments, and their data are monitored to find potentially adverse events.",
+      "evidence": ["internal_visibility"], "max_status": "partial",
+      "rationale": "Fleet agents report inventory and posture; this is not EDR."
+    },
+    {
+      "id": "DE.AE-07", "family": "Detect · Adverse event analysis",
+      "title": "Threat intelligence is integrated into analysis",
+      "summary": "Cyber threat intelligence and other contextual information are integrated into the analysis.",
+      "evidence": ["threat_intel"],
+      "rationale": "Indicators are matched against assets and findings."
+    },
+    {
+      "id": "RS.MA-01", "family": "Respond · Incident management",
+      "title": "Incident response plan is executed",
+      "summary": "The incident response plan is executed in coordination with relevant third parties once an incident is declared.",
+      "mode": "manual", "evidence": [],
+      "rationale": "Organisational.",
+      "attestation": "Provide the incident response plan and records."
+    }
+  ]
+}

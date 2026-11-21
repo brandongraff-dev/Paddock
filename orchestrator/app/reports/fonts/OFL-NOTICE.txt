@@ -1,0 +1,8 @@
+Fonts embedded in rendered reports (HTML via data: URIs, PDF via WeasyPrint).
+Copied unmodified from the dashboard's @fontsource packages (latin subsets).
+All are licensed under the SIL Open Font License, Version 1.1
+(https://openfontlicense.org):
+
+- Newsreader (variable weight, roman + italic) -- Copyright The Newsreader Project Authors
+- Inter 400/500/600 -- Copyright The Inter Project Authors
+- JetBrains Mono 400 -- Copyright The JetBrains Mono Project Authors

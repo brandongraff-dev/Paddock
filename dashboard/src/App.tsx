@@ -25,6 +25,7 @@ import FleetPage from "./pages/Fleet";
 import RemediationPage from "./pages/Remediation";
 import IntegrationsPage from "./pages/Integrations";
 import SuppressionsPage from "./pages/Suppressions";
+import ReportsPage from "./pages/Reports";
 import Login from "./pages/Login";
 import SsoCallback from "./pages/SsoCallback";
 import IdentitySettingsPage from "./pages/IdentitySettings";
@@ -95,6 +96,7 @@ function AuthedApp() {
         <Route path="/remediation" element={<Shell><RemediationPage /></Shell>} />
         <Route path="/integrations" element={<Shell><IntegrationsPage /></Shell>} />
         <Route path="/suppressions" element={<Shell><SuppressionsPage /></Shell>} />
+        <Route path="/reports" element={<Shell><ReportsPage /></Shell>} />
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
         <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />

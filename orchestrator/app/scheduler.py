@@ -356,6 +356,12 @@ async def scheduler_loop(app) -> None:
             except asyncio.CancelledError:
                 raise
                 logger.exception("scope_proof_sweep_failed")
+            # Weekly report digest (app/reports/digest.py): once per slot.
+                from .reports.digest import run_due_digests
+
+                await run_due_digests(pool)
+            except Exception:  # noqa: BLE001 - reporting never stops scanning
+                logger.exception("digest_tick_failed")
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

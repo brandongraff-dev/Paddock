@@ -23,6 +23,8 @@ dependencies = [
     "xmlsec==1.3.18",
     "lxml==6.1.3",
     "dnspython>=2.6",       # scope proof-of-control: DNS TXT challenge
+    "jinja2>=3.1",          # report templates (HTML)
+    "weasyprint>=62",       # report PDFs (needs Pango: see Dockerfile)
 ]
 
 [project.optional-dependencies]
@@ -39,6 +41,7 @@ dev = [
     "ada-url>=1.15",      # WHATWG URL oracle for the differential fuzzer
     "boto3>=1.34",        # AWS connector tests (in-process fake AWS below)
     "moto[ec2,elbv2,iam,rds,route53,s3]>=5.0",
+    "pypdf>=4",           # report PDF smoke tests (page count)
 ]
 
 [tool.pytest.ini_options]
@@ -50,3 +53,6 @@ filterwarnings = [
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.reports" = ["controls/*.json", "templates/*", "fonts/*"]

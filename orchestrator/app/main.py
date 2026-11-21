@@ -59,6 +59,7 @@ from .routers import scim as scim_router
 from .routers import sso as sso_router
 from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
+from .reports import router as reports_router
 from .scheduler import scheduler_loop
 
 logger = logging.getLogger(__name__)
@@ -269,6 +270,8 @@ def create_app() -> FastAPI:
     # First-run wizard state + optional-service status (schema 021).
     app.include_router(onboarding_router.router)
     app.include_router(onboarding_router.system_router)
+    # Reporting: executive report, weekly digest, compliance evidence packs
+    app.include_router(reports_router.router)
 
     return app
 
