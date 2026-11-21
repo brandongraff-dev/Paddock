@@ -144,19 +144,21 @@ class OtDiscoveryService:
         else:
             self.engines[tenancy.DEFAULT_TENANT_ID] = value
 
-    def engine_for(self, tenant_id: str) -> DiscoveryEngine:
+    def engine_for(self, tenant_id: str, *, managed: bool = False) -> DiscoveryEngine:
         """The tenant's own engine (observations, sensors, baselines), created
-        on first use. Observations never mix across tenants. Non-default
-        tenants are fed by managed sensors, so their analysis is throttled
-        (``managed_analyze_interval_s``) and the number of engines is capped."""
+        on first use. Observations never mix across tenants, and the number of
+        tenant engines is capped. An engine first created for a managed sensor
+        coalesces analysis (``managed_analyze_interval_s``): many small uploads,
+        one analysis per interval."""
         eng = self.engines.get(tenant_id)
         if eng is None:
             cfg, orch = self.cfg, self.orch
             if tenant_id != tenancy.DEFAULT_TENANT_ID:
                 if len(self.engines) >= self.cfg.max_tenant_engines:
                     raise RuntimeError("too many tenant engines")
-                cfg = dataclasses.replace(
-                    self.cfg, analyze_interval_s=self.cfg.managed_analyze_interval_s)
+                if managed:
+                    cfg = dataclasses.replace(
+                        self.cfg, analyze_interval_s=self.cfg.managed_analyze_interval_s)
                 # explicitly tenant-bound client, on top of the request's tenant context
                 bind = getattr(self.orch, "for_tenant", None)
                 orch = bind(tenant_id) if bind is not None else self.orch
@@ -390,7 +392,7 @@ class OtDiscoveryService:
                 log.warning("claim for batch %s carried no tenant; refusing", key)
                 return web.json_response({"error": "paddock server unavailable, retry"}, status=503,
                                          headers={"Retry-After": "30"})
-            engine = self.engine_for(tenant)
+            engine = self.engine_for(tenant, managed=True)
             sid = str(claim.get("sensor_id") or "")
             engine.note_sensor({**(sensor or {}), "id": f"{claim.get('name')}@{sid[:8]}",
                                 "site": claim.get("site")})

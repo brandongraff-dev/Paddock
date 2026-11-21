@@ -17,7 +17,7 @@ from pathlib import Path
 
 # alias -> (service dir relative to the repo root, files/dirs to copy from it)
 ENGINES: dict[str, tuple[str, tuple[str, ...]]] = {
-    "sca": ("sca/app", ("__init__.py", "osv.py", "orchestrator.py", "parsers", "risk")),
+    "sca": ("sca/app", ("__init__.py", "osv.py", "orchestrator.py", "tenancy.py", "parsers", "risk")),
     "codeanalysis": ("codeanalysis/app", ("__init__.py", "sast", "data")),
     "remediation": ("remediation/app", ("__init__.py", "gate.py", "generators.py", "verify.py",
                                         "injection.py")),
