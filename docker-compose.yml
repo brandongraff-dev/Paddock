@@ -70,10 +70,15 @@ services:
     build: ./orchestrator
     <<: *hardened-py
     restart: "no"
-    command: ["python", "-m", "app.migrate", "up"]
+    # then give paddock_app and the paddock_svc_* roles LOGIN + passwords
+    # (python -m app.tenancy provision-roles; idempotent).
+    command: ["sh", "-c", "python -m app.migrate up && python -m app.tenancy provision-roles"]
     environment:
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       SCHEMA_DIR: /schema
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PADDOCK_APP_DB_PASSWORD: ${PADDOCK_APP_DB_PASSWORD:-}
+      PADDOCK_SERVICES_DB_PASSWORD: ${PADDOCK_SERVICES_DB_PASSWORD:-}
     volumes:
       - ./schema:/schema:ro
     networks: [internal]
@@ -208,7 +213,9 @@ services:
     <<: *hardened-py
     command: ["python", "-m", "app.integrations.worker"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      # Non-superuser app role: fans events out per tenant under RLS
+      DATABASE_URL: postgresql+asyncpg://paddock_app:${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}@postgres:5432/asm
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: INFO
       PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:-}
@@ -235,7 +242,7 @@ services:
     cap_drop: ["ALL"]
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       WORKER_ID: passive-1
@@ -262,7 +269,7 @@ services:
     cap_add: ["NET_RAW", "NET_ADMIN"]
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       WORKER_ID: active-1
@@ -288,7 +295,11 @@ services:
     <<: *hardened-py
     environment:
       SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_intel:${PADDOCK_SVC_INTEL_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       SYNC_INTERVAL_MIN: "60"
     tmpfs:
       - /tmp
@@ -308,7 +319,12 @@ services:
     <<: *hardened-py
     # No host port in hardened profile; orchestrator proxies it over `internal`.
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_brain:${PADDOCK_SVC_BRAIN_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOG_LEVEL: INFO
     tmpfs:
@@ -327,7 +343,12 @@ services:
     build: ./mlrisk
     <<: *hardened-py
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_mlrisk:${PADDOCK_SVC_MLRISK_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
       MLRISK_INTERVAL_MIN: "30"
       LOG_LEVEL: INFO
     tmpfs:
@@ -345,7 +366,12 @@ services:
     build: ./changewatch
     <<: *hardened-py
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_changewatch:${PADDOCK_SVC_CHANGEWATCH_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
       REDIS_URL: redis://redis:6379/0
       CHANGEWATCH_INTERVAL_MIN: "10"
       LOG_LEVEL: INFO
@@ -364,7 +390,12 @@ services:
     build: ./triage
     <<: *hardened-py
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_triage:${PADDOCK_SVC_TRIAGE_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
       REDIS_URL: redis://redis:6379/0
       TRIAGE_INTERVAL_MIN: "10"
       LOG_LEVEL: INFO
@@ -384,7 +415,11 @@ services:
     <<: *hardened-py
     environment:
       SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_correlation:${PADDOCK_SVC_CORRELATION_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       REDIS_URL: redis://redis:6379/0
       POLICIES_DIR: /policies
     volumes:
@@ -405,7 +440,11 @@ services:
     <<: *hardened-py
     environment:
       SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_sca:${PADDOCK_SVC_SCA_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       LOG_LEVEL: INFO
@@ -425,7 +464,11 @@ services:
     <<: *hardened-py
     environment:
       SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_codeanalysis:${PADDOCK_SVC_CODEANALYSIS_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       ORCHESTRATOR_URL: http://orchestrator:8080
       LOG_LEVEL: INFO
     tmpfs:
@@ -443,7 +486,12 @@ services:
     build: ./graphsync
     <<: *hardened-py
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_graphsync:${PADDOCK_SVC_GRAPHSYNC_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
@@ -464,7 +512,12 @@ services:
     build: ./ontology
     <<: *hardened-py
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_ontology:${PADDOCK_SVC_ONTOLOGY_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
       ORCHESTRATOR_URL: http://orchestrator:8080
       ONTOLOGY_INTERVAL_MIN: "15"
     tmpfs:
@@ -485,7 +538,11 @@ services:
     <<: *hardened-py
     environment:
       SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_threatintel:${PADDOCK_SVC_THREATINTEL_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       TI_POLL_INTERVAL_MIN: "60"
@@ -507,7 +564,11 @@ services:
     <<: *hardened-py
     environment:
       SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_otdiscovery:${PADDOCK_SVC_OTDISCOVERY_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       ORCHESTRATOR_URL: http://orchestrator:8080
       OTDISCOVERY_HTTP_PORT: "8101"
       # Paddock Sentry sensors post here. Fail closed until tokens are set.
@@ -535,7 +596,12 @@ services:
     build: ./remediation
     <<: *hardened-py
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_remediation:${PADDOCK_SVC_REMEDIATION_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
       ORCHESTRATOR_URL: http://orchestrator:8080
       REMEDIATION_OPEN_PR: "false"   # opt-in: set true + GITHUB_TOKEN/GITHUB_REPO + add egress to open PRs
     tmpfs:

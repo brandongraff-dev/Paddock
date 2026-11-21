@@ -40,9 +40,15 @@ log = logging.getLogger("paddock.tenancy")
 DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 TENANT_HEADER = "X-Paddock-Tenant"
 SERVICE_KEY_HEADER = "X-API-Key"
+SCAN_HEADER = "X-Paddock-Scan"
 
 _tenant: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "paddock_service_tenant", default=None
+)
+
+
+_scan: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "paddock_service_scan", default=None
 )
 
 
@@ -257,6 +263,20 @@ def stamp_event(event: dict[str, Any]) -> dict[str, Any]:
     return {**event, "tenant_id": t} if t else event
 
 
+@contextlib.contextmanager
+def bind_job(job: Mapping[str, Any]) -> Iterator[str | None]:
+    """``bind_event`` for a queued job, plus the job's ``scan_id``: every
+    orchestrator callback made while it runs echoes ``X-Paddock-Tenant`` AND
+    ``X-Paddock-Scan``, so the orchestrator can verify the result belongs to the
+    tenant the job was issued to (it rejects a mismatch with 409)."""
+    with bind_event(job) as tid:
+        token = _scan.set(str(job["scan_id"]) if job.get("scan_id") else None)
+        try:
+            yield tid
+        finally:
+            _scan.reset(token)
+
+
 def echo_tenant(result: dict[str, Any]) -> dict[str, Any]:
     """Add the context's tenant to a result/summary payload (workers echo the
     job's tenant back so the orchestrator can verify it)."""
@@ -276,8 +296,14 @@ def outbound_headers() -> dict[str, str]:
     Only an explicitly bound tenant is sent; with none bound the orchestrator
     applies its own default (or, in strict mode, refuses the service key).
     """
+    out: dict[str, str] = {}
     t = _tenant.get()
-    return {TENANT_HEADER: t} if t else {}
+    if t:
+        out[TENANT_HEADER] = t
+        s = _scan.get()
+        if s:
+            out[SCAN_HEADER] = s
+    return out
 
 
 def aiohttp_trace_config():

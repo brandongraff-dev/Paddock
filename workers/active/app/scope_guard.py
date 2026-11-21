@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 
+from app import tenancy
 from app.config import settings
 from app.orchestrator import OrchestratorClient
 
@@ -81,6 +82,10 @@ class ScopeGuard:
         self._cache: dict[str, ScopeDecision] = {}
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _ckey(key: str) -> str:
+        return f"{tenancy.current_tenant_id()}|{key}"
+
     # -------- primary check -----------------------------------------------
 
     async def allow(self, target: str) -> ScopeDecision:
@@ -89,8 +94,11 @@ class ScopeGuard:
         The caller MUST not emit a request if this raises.
         """
         key = normalize_target(target)
+        # Cache per TENANT: a worker runs jobs of many tenants, and tenant A's
+        # allowed target must never authorise tenant B's scan of the same name.
+        ckey = self._ckey(key)
         now = time.time()
-        cached = self._cache.get(key)
+        cached = self._cache.get(ckey)
         if cached and (now - cached.cached_at) < self._ttl:
             # fail-closed on stale cache is handled by the ttl expiry
             if not cached.allow:
@@ -100,7 +108,7 @@ class ScopeGuard:
         # miss: ask the orchestrator (serialized per-key would be nicer; the
         # lock here prevents a stampede if many concurrent jobs share a target).
         async with self._lock:
-            cached = self._cache.get(key)
+            cached = self._cache.get(ckey)
             if cached and (time.time() - cached.cached_at) < self._ttl:
                 if not cached.allow:
                     raise ScopeDenied(target, cached.reason, cached.normalized)
@@ -117,7 +125,7 @@ class ScopeGuard:
                 reason=resp.get("reason") or ("ok" if resp.get("allow") else "denied"),
                 cached_at=time.time(),
             )
-            self._cache[key] = dec
+            self._cache[ckey] = dec
 
         if not dec.allow:
             log.warning("scope.deny", target=target, normalized=dec.normalized, reason=dec.reason)
@@ -183,4 +191,4 @@ class ScopeGuard:
 
     def _seed(self, target: str, decision: ScopeDecision) -> None:
         """Test-only cache injection."""
-        self._cache[normalize_target(target)] = decision
+        self._cache[self._ckey(normalize_target(target))] = decision

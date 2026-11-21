@@ -38,6 +38,14 @@ secrets:
   metricsToken: ""
   sentryTokens: ""        # comma-separated, one per Sentry sensor
   paddockSecretKey: ""      # PADDOCK_SECRET_KEY: 32-byte urlsafe-b64 (integration secrets at rest)
+  # Least-privilege DB roles for the compute services (schema/029_service_tenancy.sql).
+  # serviceRoles=true makes intel / correlation / otdiscovery connect with the
+  # secret key DATABASE_URL_<SERVICE> (a postgresql:// DSN for role paddock_svc_<service>)
+  # instead of the shared DATABASE_URL, and refuse to start as a superuser.
+  # With an existingSecret you add those keys yourself. Give the roles LOGIN + a
+  # password with `python -m app.tenancy provision-roles` (run as the schema owner).
+  serviceRoles: false
+  serviceDatabaseUrls: {intel: "", correlation: "", otdiscovery: ""}
 
 # --------------------------------------------------------------------------- #
 # Optional bundled data services (dev / evaluation; use managed services or

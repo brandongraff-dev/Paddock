@@ -21,6 +21,7 @@ from tenacity import (
 )
 
 from app import USER_AGENT
+from app import tenancy
 from app.config import settings
 
 log = structlog.get_logger(__name__)
@@ -39,6 +40,9 @@ class OrchestratorClient:
         self._client = httpx.AsyncClient(
             base_url=self._base,
             timeout=httpx.Timeout(settings.http_timeout_sec),
+            # Echo the job's tenant + scan on EVERY callback (app/tenancy.py): the
+            # orchestrator verifies they match the job it issued.
+            event_hooks={"request": [tenancy.httpx_request_hook]},
             headers={
                 "User-Agent": USER_AGENT,
                 "X-Worker-Id": self._worker_id,
