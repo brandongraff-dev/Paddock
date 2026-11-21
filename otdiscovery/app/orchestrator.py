@@ -30,8 +30,11 @@ class OrchestratorClient:
         timeout_s: int = 30,
         user_agent: str = "paddock-otdiscovery/0.1",
         session: aiohttp.ClientSession | None = None,
+        tenant: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        # Tenant the writes land in (X-Paddock-Tenant; honoured for the service key).
+        self.tenant = tenant
         self._timeout = aiohttp.ClientTimeout(total=timeout_s)
         self._ua = user_agent
         self._session = session
@@ -61,12 +64,49 @@ class OrchestratorClient:
             await self._session.close()
             self._session = None
 
+    def for_tenant(self, tenant: str | None) -> "OrchestratorClient":
+        """A view of this client whose writes land in ``tenant`` (shares the
+        connection pool; closing the view never closes the parent's session)."""
+        child = OrchestratorClient(self.base_url, timeout_s=int(self._timeout.total or 30),
+                                   user_agent=self._ua, session=self._session, tenant=tenant)
+        child._parent = self  # type: ignore[attr-defined]
+        child._owns_session = False
+        return child
+
+    async def request(self, method: str, path: str, *, json_body: Any = None,
+                      headers: dict[str, str] | None = None) -> tuple[int, Any]:
+        """Raw call returning ``(status, json)``; transport errors -> ``(503, {...})``.
+        Used for the sensor enrollment / heartbeat / idempotency endpoints, where
+        the HTTP status itself is the answer."""
+        parent = getattr(self, "_parent", None)
+        if parent is not None:
+            await parent.ensure()
+            self._session = parent._session
+        await self.ensure()
+        assert self._session is not None
+        try:
+            async with self._session.request(method, f"{self.base_url}{path}", json=json_body,
+                                             headers=headers) as resp:
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:  # noqa: BLE001
+                    data = {}
+                return resp.status, data
+        except (aiohttp.ClientError, TimeoutError) as exc:
+            log.warning("orchestrator %s %s failed: %s", method, path, exc)
+            return 503, {"detail": "orchestrator unavailable"}
+
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        parent = getattr(self, "_parent", None)
+        if parent is not None:
+            await parent.ensure()
+            self._session = parent._session
         await self.ensure()
         assert self._session is not None
         url = f"{self.base_url}{path}"
+        headers = {"X-Paddock-Tenant": self.tenant} if self.tenant else None
         try:
-            async with self._session.post(url, json=body) as resp:
+            async with self._session.post(url, json=body, headers=headers) as resp:
                 resp.raise_for_status()
                 return await resp.json()
         except aiohttp.ClientError as exc:

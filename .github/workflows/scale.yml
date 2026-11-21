@@ -13,6 +13,10 @@ on:
       findings:
         description: "number of findings to seed"
         default: "100000"
+      sentry_scale:
+        description: "also run the Sentry sensor scale test (100 sensors, 1M flows/day, 50x burst)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -51,3 +55,48 @@ jobs:
         with:
           name: scale-results
           path: scale-results.md
+
+  # 100 simulated Sentry sensors through otdiscovery -> orchestrator -> Postgres.
+  # Manual only (about 6 minutes): run it from the Actions tab with sentry_scale = true.
+  sentry-scale:
+    if: github.event_name == 'workflow_dispatch' && inputs.sentry_scale
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install orchestrator
+        run: pip install -e "orchestrator[dev]"
+      - name: Install otdiscovery in its own venv (its package is also called "app")
+        run: |
+          python -m venv /tmp/otd
+          /tmp/otd/bin/pip install aiohttp asyncpg
+      - name: Run Sentry scale test
+        run: |
+          python hardening/sentry_scale.py \
+            --admin-dsn postgresql://postgres:postgres@localhost:5432/postgres \
+            --otd-python /tmp/otd/bin/python \
+            --markdown sentry-scale-results.md --json sentry-scale-results.json \
+            --fail-over-budget
+          cat sentry-scale-results.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sentry-scale-results
+          path: |
+            sentry-scale-results.md
+            sentry-scale-results.json

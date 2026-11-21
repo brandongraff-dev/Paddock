@@ -1,0 +1,29 @@
+# pi-gen configuration for the Paddock Sentry image (shell syntax, sourced by pi-gen).
+# build.sh copies this to pi-gen/config after substituting the values from your
+# environment; edit by hand only if you know pi-gen.
+#
+# Base: Raspberry Pi OS Lite (stage0-2) + our stage "stage-paddock". No desktop.
+IMG_NAME=paddock-sentry
+RELEASE=bookworm
+TARGET_HOSTNAME=paddock-sentry
+STAGE_LIST="stage0 stage1 stage2 stage-paddock"
+
+# Access: key-only SSH for an admin account, no default password is usable.
+FIRST_USER_NAME=sentryadmin
+DISABLE_FIRST_BOOT_USER_RENAME=1
+ENABLE_SSH=1
+PUBKEY_ONLY_SSH=1
+PUBKEY_SSH_FIRST_USER="@SSH_PUBLIC_KEY@"
+# pi-gen insists on a password value; it is overwritten below by an unusable hash
+# (the account is key-only). Do not rely on it.
+FIRST_USER_PASS="@RANDOM_PASSWORD@"
+
+# Locale / clock. NTP is on by default; the sensor warns in the dashboard on skew.
+LOCALE_DEFAULT=en_GB.UTF-8
+KEYBOARD_KEYMAP=us
+KEYBOARD_LAYOUT="English (US)"
+TIMEZONE_DEFAULT=UTC
+
+# Output
+DEPLOY_COMPRESSION=xz
+COMPRESSION_LEVEL=6

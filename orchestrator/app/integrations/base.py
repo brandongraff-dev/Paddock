@@ -58,6 +58,8 @@ EVENT_TYPES: dict[str, str] = {
     "supplier.grade_changed": "A monitored supplier's passive security grade changed",
     "supplier.dangling_dns": "A monitored supplier has a new dangling DNS record (possible takeover)",
     "supplier.cert_expiring": "A monitored supplier has an expired or expiring certificate",
+    "sensor.offline": "A Sentry sensor stopped reporting",
+    "sensor.online": "A silent Sentry sensor is reporting again",
 }
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")

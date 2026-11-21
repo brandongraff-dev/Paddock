@@ -79,8 +79,12 @@ Why the exchange is safer:
 * **Not an access token.** `typ=msp_switch`; `verify_jwt` rejects it, and an
   ordinary access token is not accepted as a switch token.
 * **Narrowed surface.** A delegated session cannot call `/v1/msp/*` (no
-  nesting/pivoting), cannot create or revoke API keys, cannot configure SSO or
-  SCIM: nothing it creates can outlive its grant.
+  nesting/pivoting), cannot create or revoke API keys, ingest tokens, sensor
+  enrollment tokens or trust links, and cannot configure SSO or SCIM: nothing
+  it creates can outlive its grant. It also cannot change the customer's own
+  billing (Stripe checkout/portal) or licence; reading the licence is allowed.
+  To deploy a sensor or a CI integration for a customer, have the customer's
+  admin create the token, or create it as a user in the customer's tenant.
 * Only an interactive MSP **user session** can switch (not an API key, whose
   scopes the child token could not honour).
 

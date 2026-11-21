@@ -73,6 +73,8 @@ from .growth import suppliers as growth_suppliers
 from .growth import trust as growth_trust
 from .growth.config import growth_settings
 from .growth.runner import growth_loop
+from . import sensors as sensors_svc
+from .routers import sensors as sensors_router
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +138,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if growth_settings.runner_enabled:
         growth_task = asyncio.create_task(growth_loop(app))
         app.state.growth_task = growth_task
+    # Sentry liveness: flags silent sensors and emits sensor.offline/online.
+    sensor_task: asyncio.Task | None = asyncio.create_task(sensors_svc.monitor_loop(app))
 
     try:
         yield
     finally:
-        for task in (scheduler_task, anchor_task, growth_task):
+        for task in (scheduler_task, anchor_task, growth_task, sensor_task):
             if task is None:
                 continue
             task.cancel()
@@ -290,6 +294,7 @@ def create_app() -> FastAPI:
     # Fleet agents + gated enforcement, auto-remediation, IoT/OT devices
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
+    app.include_router(sensors_router.router)
     app.include_router(remediation_router.router)
     # Two-way ticketing: inbound callbacks from Jira / ServiceNow / Linear.
     app.include_router(integrations_inbound_router.router)

@@ -1,0 +1,22 @@
+# Runs install.sh once, on the first boot with network, for the flashable image.
+# It reads /boot/firmware/paddock-sentry.env (the file you put on the SD card).
+# If it fails (no network yet, token already used) it retries every minute and
+# writes the reason to /boot/firmware/paddock-sentry.status.
+[Unit]
+Description=Paddock Sentry first-boot setup
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/paddock-sentry/.installed
+ConditionPathExists=|/boot/firmware/paddock-sentry.env
+ConditionPathExists=|/boot/paddock-sentry.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/paddock-sentry/install.sh --firstboot
+Restart=on-failure
+RestartSec=60
+RemainAfterExit=yes
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

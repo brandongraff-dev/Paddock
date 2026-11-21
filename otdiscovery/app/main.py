@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import dataclasses
 import hmac
 import logging
 import os
@@ -43,6 +44,7 @@ from . import pcap
 from .db import Database
 from .orchestrator import OrchestratorClient
 from .pipeline import DiscoveryEngine
+from .sensorapi import SENSOR_PREFIX, SensorGateway
 
 log = logging.getLogger("otdiscovery")
 _STARTED_AT = time.time()
@@ -95,6 +97,8 @@ class OtDiscoveryService:
         self._stop = asyncio.Event()
         self._ready = False
         self._last_ingest_ts: float | None = None
+        self.gateway: Optional[SensorGateway] = None
+        self.tenant_engines: dict[str, DiscoveryEngine] = {}
 
     async def start(self) -> None:
         logging.basicConfig(
@@ -114,6 +118,7 @@ class OtDiscoveryService:
         )
         await self.orch.ensure()
         self.engine = DiscoveryEngine(self.cfg, db=self.db, orch=self.orch)
+        self.gateway = SensorGateway(self.orch)
         self._ready = True
         log.info("otdiscovery started (passive_only=%s) on :%d",
                  PASSIVE_ONLY, self.cfg.http_port)
@@ -124,6 +129,47 @@ class OtDiscoveryService:
             await self.orch.close()
         if self.db is not None:
             await self.db.close()
+
+    # ------------------------------------------------------------------ #
+    # per-tenant engines (managed sensors)
+    # ------------------------------------------------------------------ #
+    def engine_for(self, tenant_id: str | None) -> DiscoveryEngine:
+        """The discovery engine for a sensor's tenant. Observations never mix
+        across tenants: each tenant gets its own store, baselines and a
+        tenant-bound orchestrator client. Legacy shared-token sensors use the
+        default engine."""
+        assert self.engine is not None
+        if not tenant_id:
+            return self.engine
+        eng = self.tenant_engines.get(tenant_id)
+        if eng is None:
+            if len(self.tenant_engines) >= self.cfg.max_tenant_engines:
+                raise RuntimeError("too many tenant engines")
+            bp = self.cfg.baseline_path
+            cfg = dataclasses.replace(self.cfg, baseline_path=f"{bp}.{tenant_id}" if bp else None,
+                                      analyze_interval_s=self.cfg.managed_analyze_interval_s)
+            orch = self.orch.for_tenant(tenant_id) if self.orch is not None else None
+            eng = DiscoveryEngine(cfg, db=self.db, orch=orch)
+            self.tenant_engines[tenant_id] = eng
+        return eng
+
+    def _all_sensors(self) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = dict(self.engine.sensors) if self.engine is not None else {}
+        for eng in self.tenant_engines.values():
+            out.update(eng.sensors)
+        return out
+
+    @staticmethod
+    def _bearer(req: web.Request) -> str:
+        auth = req.headers.get("Authorization", "")
+        return auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+
+    def _client_ip(self, req: web.Request) -> str | None:
+        if self.cfg.trust_proxy:
+            fwd = req.headers.get("X-Forwarded-For", "")
+            if fwd:
+                return fwd.split(",")[0].strip()[:64] or None
+        return req.remote
 
     # ------------------------------------------------------------------ #
     # handlers
@@ -153,7 +199,7 @@ class OtDiscoveryService:
             "service": self.engine.stats,
             "passive_only": PASSIVE_ONLY,
             "observations_stored": len(self.engine.observations),
-            "sensors": self.engine.sensors,
+            "sensors": self._all_sensors(),
             "segment_matrix": self.engine.last_segment_matrix,
             "last_active_probe_attempts_to_devices": len(self.engine.last_guard_violations),
         })
@@ -167,7 +213,7 @@ class OtDiscoveryService:
                 return web.json_response({"error": "metrics token required"}, status=401)
         elif self.cfg.require_sentry_token:
             return web.json_response({"error": "not found"}, status=404)
-        sensors = self.engine.sensors if self.engine is not None else {}
+        sensors = self._all_sensors()
         return web.Response(
             text=_render_metrics(sensors, self._last_ingest_ts),
             content_type="text/plain", charset="utf-8",
@@ -229,8 +275,88 @@ class OtDiscoveryService:
         presented = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         return any(hmac.compare_digest(presented.encode(), t.encode()) for t in tokens)
 
+    # -- sensor-facing proxy (enrollment + heartbeat) ----------------------- #
+    async def _proxy(self, req: web.Request, call: str) -> web.Response:
+        if self.gateway is None:
+            return web.json_response({"detail": "starting"}, status=503)
+        if (req.content_length or 0) > 65_536:
+            return web.json_response({"detail": "request too large"}, status=413)
+        try:
+            body = await req.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"detail": "invalid JSON body"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"detail": "body must be a JSON object"}, status=400)
+        ip = self._client_ip(req)
+        if call == "enroll":
+            status, data = await self.gateway.enroll(body, ip)
+        else:
+            cred = self._bearer(req)
+            if not cred.startswith(SENSOR_PREFIX):
+                return web.json_response({"detail": "invalid sensor credential"}, status=401)
+            status, data = await self.gateway.heartbeat(cred, body, ip)
+        headers = {"Retry-After": "60"} if status == 429 else None
+        return web.json_response(data, status=status, headers=headers)
+
+    async def _handle_enroll(self, req: web.Request) -> web.Response:
+        return await self._proxy(req, "enroll")
+
+    async def _handle_heartbeat(self, req: web.Request) -> web.Response:
+        return await self._proxy(req, "heartbeat")
+
+    async def _ingest_managed(self, req: web.Request, credential: str) -> web.Response:
+        """A per-sensor credential: authenticate (revocation is immediate),
+        apply the batch id exactly once, ingest into the sensor's tenant."""
+        assert self.gateway is not None
+        key = req.headers.get("Idempotency-Key", "").strip()
+        if not key:
+            return web.json_response({"error": "missing Idempotency-Key header (batch id)"}, status=400)
+        status, claim = await self.gateway.claim(credential, key, self._client_ip(req))
+        if status in (401, 403):
+            return web.json_response({"error": (claim or {}).get("detail", "sensor not authorized")}, status=status)
+        if status == 422:
+            return web.json_response({"error": "invalid Idempotency-Key"}, status=400)
+        if status != 200:
+            return web.json_response({"error": "paddock server unavailable, retry"}, status=503,
+                                     headers={"Retry-After": "30"})
+        state = claim.get("state")
+        if state == "duplicate":
+            return web.json_response({"duplicate": True, "batch_id": key})
+        if state != "new":
+            return web.json_response({"error": "batch is being processed, retry"}, status=409,
+                                     headers={"Retry-After": "5"})
+        ok, flows = False, 0
+        try:
+            pcap_bytes, observations, err, sensor = await self._read_input(req)
+            if err is not None:
+                return err
+            flows = sum(1 for o in (observations or []) if isinstance(o, dict) and o.get("kind") == "flow")
+            engine = self.engine_for(claim.get("tenant_id"))
+            sid = str(claim.get("sensor_id") or "")
+            engine.note_sensor({**(sensor or {}), "id": f"{claim.get('name')}@{sid[:8]}",
+                                "site": claim.get("site")})
+            result = await engine.ingest(pcap_bytes=pcap_bytes, observations=observations)
+            failed = [k for k, v in (result.get("orchestrator") or {}).items()
+                      if isinstance(v, dict) and "error" in v]
+            if failed:  # the data did not land: let the sensor retry the same batch id
+                log.warning("orchestrator rejected %s for batch %s", failed, key)
+                return web.json_response({"error": "paddock server could not store the batch, retry"},
+                                         status=503, headers={"Retry-After": "30"})
+            ok = True
+            self._last_ingest_ts = time.time()
+            result["batch_id"] = key
+            return web.json_response(result)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("/ingest (managed) failed")
+            return web.json_response({"error": str(exc)}, status=500)
+        finally:
+            await self.gateway.done(credential, key, ok=ok, flows=flows)
+
     async def _handle_ingest(self, req: web.Request) -> web.Response:
         assert self.engine is not None
+        bearer = self._bearer(req)
+        if self.cfg.managed_sensors and self.gateway is not None and bearer.startswith(SENSOR_PREFIX):
+            return await self._ingest_managed(req, bearer)
         if self.cfg.require_sentry_token and not self.cfg.sentry_tokens:
             return web.json_response(
                 {"error": "sensor ingest is disabled: set SENTRY_TOKENS (comma-separated) "
@@ -269,6 +395,8 @@ class OtDiscoveryService:
             web.get("/stats", self._handle_stats),
             web.get("/metrics", self._handle_metrics),
             web.post("/ingest", self._handle_ingest),
+            web.post("/enroll", self._handle_enroll),
+            web.post("/heartbeat", self._handle_heartbeat),
             web.post("/analyze", self._handle_analyze),
         ])
         return app

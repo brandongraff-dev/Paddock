@@ -599,6 +599,15 @@ _rule("POST", r"/v1/public/exposure-report", None)
 _rule("GET", rf"/v1/public/exposure-report/{_ANY}", None)
 _rule("GET POST", rf"/v1/public/trust/{_ANY}", None)
 _rule("GET POST DELETE PATCH PUT", r"/v1/trust-links(/.*)?", "admin")
+# --- Sentry sensors (schema 034) -------------------------------------------- #
+# Sensor-facing: authenticated in-handler by the enrollment token / sensor
+# credential (rate limited, hashed at rest), not by a principal.
+_rule("POST", r"/v1/sensors/(enroll|heartbeat)", None)
+# otdiscovery (service key) brackets each upload with claim/done.
+_rule("POST", r"/v1/sensors/ingest/(claim|done)", "write")
+# Token metadata is admin-only; the rest of GET /v1/sensors falls to `read`,
+# every write to the deny-closed `admin` default.
+_rule("GET", r"/v1/sensors/tokens", "admin")
 
 
 def required_capability(method: str, path: str) -> str | None:
@@ -659,6 +668,14 @@ def _resource_from_path(path: str) -> tuple[str | None, str | None]:
 # Non-GET routes that do not mutate state: no write-ahead audit record (they
 # are still audited after the fact, exactly as before).
 _NO_WRITE_AHEAD = frozenset({"/v1/scope/check", "/v1/billing/webhook"})
+
+# Sentry data-plane calls: a heartbeat per sensor per minute and a claim/done
+# pair per upload (hundreds of thousands a day at fleet scale; measured with
+# hardening/sentry_scale.py, they were ~90% of audit_log growth). Successful
+# ones are not audited per request; rejected/denied ones still are, and the
+# lifecycle actions (token create/revoke, enroll, sensor revoke/update) are
+# audited by their handlers.
+_SENSOR_DATA_PLANE = re.compile(r"^/v1/sensors/(heartbeat|ingest/(claim|done))/?$")
 
 
 class GovernanceMiddleware(BaseHTTPMiddleware):
@@ -785,6 +802,8 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
             return False
         if (request.url.path.rstrip("/") or "/") in _NO_WRITE_AHEAD:
             return False
+        if _SENSOR_DATA_PLANE.match(request.url.path):
+            return False
         # No database -> the handler cannot mutate persistent state either.
         return getattr(request.app.state, "pool", None) is not None
 
@@ -828,6 +847,8 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         restricted_read = bool(getattr(request.state, "audit_restricted", False))
         delegated = bool(principal is not None and principal.msp_delegation)
         if not (denied or mutating or restricted_read or delegated):
+            return
+        if not denied and status_code < 400 and _SENSOR_DATA_PLANE.match(request.url.path):
             return
         try:
             await self._record(request, principal, status_code, denied=denied, details=details)

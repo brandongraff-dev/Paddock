@@ -184,6 +184,12 @@ const Icon = {
       <circle cx="7" cy="7" r="0.8" /><circle cx="7" cy="17" r="0.8" />
     </svg>
   ),
+  Sensors: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="14" r="1.6" /><path d="M8.5 10.5 a5 5 0 0 1 7 0 M5.5 7.5 a9 9 0 0 1 13 0" />
+      <path d="M12 15.6 L12 20 M9 20 L15 20" />
+    </svg>
+  ),
   Integrations: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5" /></svg>),
   Identity: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -248,6 +254,7 @@ const navGroups: NavGroup[] = [
       { to: "/devices", label: "Devices", icon: Icon.Devices },
       { to: "/fleet", label: "Fleet", icon: Icon.Fleet },
       { to: "/dependencies", label: "Dependencies", icon: Icon.Dependencies },
+      { to: "/sensors", label: "Sensors", icon: Icon.Sensors },
     ],
   },
   {
