@@ -11,6 +11,7 @@ trigger a command, login attempt or protocol handler.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import re
 from typing import Any
 
@@ -26,6 +27,7 @@ from .base import (
     excerpt,
     inconclusive,
     not_reproducible,
+    vetted_addrs,
 )
 
 # --------------------------------------------------------------------------- #
@@ -141,8 +143,29 @@ def _match_port(f: FindingCtx) -> bool:
         and f.rule_source != "chain"
 
 
-async def tcp_banner(host: str, port: int, timeout: float = CONNECT_TIMEOUT_SEC) -> dict[str, Any]:
-    """Connect, wait briefly for a server-first banner, close. Sends nothing."""
+async def tcp_banner(host: str, port: int, timeout: float = CONNECT_TIMEOUT_SEC,
+                     addrs: list[str] | None = None) -> dict[str, Any]:
+    """Connect, wait briefly for a server-first banner, close. Sends nothing.
+
+    Dials ONLY ``addrs`` (the orchestrator-vetted addresses for ``host``); a
+    hostname is never resolved here (DNS rebinding). Without ``addrs`` only a
+    literal IP host is accepted.
+    """
+    if addrs is None:
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            raise ValueError("tcp_banner needs vetted addrs for a hostname") from None
+        addrs = [host]
+    res: dict[str, Any] = {"state": "error", "error": "no vetted addresses"}
+    for ip in addrs[:4]:
+        res = await _banner_one(ip, port, timeout)
+        if res["state"] in ("open", "closed"):
+            return res
+    return res
+
+
+async def _banner_one(host: str, port: int, timeout: float) -> dict[str, Any]:
     try:
         r, w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
     except asyncio.TimeoutError:
@@ -169,8 +192,11 @@ async def _run_port(f: FindingCtx, env: CheckEnv) -> CheckResult:
     cid = "open_port"
     host, port = f.host, _port_for(f)
     assert port
-    await env.scope.allow(f"{host}:{port}")
-    res = await (env.tcp_banner or tcp_banner)(host, port)
+    if env.tcp_banner is not None:
+        await env.scope.allow(f"{host}:{port}")
+        res = await env.tcp_banner(host, port)
+    else:
+        res = await tcp_banner(host, port, addrs=await vetted_addrs(env, host, port))
     await env.audit(target=f"{host}:{port}", tool="safe_check:open_port", method="tcp_connect",
                     scope_matched=True, bytes_in=len(res.get("banner") or b""), error=res.get("error"))
     ev = {"host": host, "port": port, "state": res["state"]}

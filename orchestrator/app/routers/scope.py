@@ -322,6 +322,7 @@ async def check_scope(body: ScopeCheckIn, pool=Depends(get_pool)):
         reason=decision.reason,
         matched_entry=decision.matched_entry_id,
         matched_entry_metadata=matched_metadata,
+        resolved_ips=list(decision.resolved_ips) if decision.allow else [],
     )
 
 

@@ -6,7 +6,12 @@ is reviewable in one file:
 * HTTP: ``GET`` and ``HEAD`` only (``SafeFetcher._send`` refuses anything
   else), ``Accept-Encoding: identity`` (no decompression bombs), a hard byte
   cap per response, a strict timeout, at most ``MAX_REDIRECTS`` redirects, and
-  the scope guard on EVERY request including each redirect hop.
+  the scope guard on EVERY request including each redirect hop. Redirects are
+  followed by hand and ONLY to the same hostname: the job's proof-of-control
+  covers the finding's host, so a hop to another (possibly unproven) host is
+  refused and recorded (``Fetch.redirect_blocked``) instead of fetched.
+  Connections dial only the addresses the orchestrator vetted (see
+  ``app/pinned.py``); TCP/TLS checks do the same.
 * TLS: handshake only (``tls.py``); TCP: connect + passive banner read
   (``port.py``). Nothing is ever written to a service socket.
 * Evidence: redacted (secret-shaped values never leave the worker) and
@@ -35,6 +40,7 @@ Verdict = Literal["confirmed", "not_reproducible", "inconclusive"]
 ALLOWED_METHODS = frozenset({"GET", "HEAD"})
 HTTP_TIMEOUT_SEC = 8.0
 MAX_REDIRECTS = 3
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 MAX_BODY_BYTES = 16 * 1024          # per response, read cap
 MAX_EXCERPT_CHARS = 160
 MAX_EVIDENCE_BYTES = 4096           # serialized evidence cap
@@ -257,6 +263,12 @@ class CheckEnv:
             log.warning("safe_check.audit_failed")
 
 
+async def vetted_addrs(env: "CheckEnv", host: str, port: int) -> list[str]:
+    """Scope-check ``host:port`` and return the vetted addresses a raw TCP/TLS
+    connection may dial (raises ScopeDenied when none)."""
+    return await env.scope.vetted_addrs(f"{host}:{port}")
+
+
 # --------------------------------------------------------------------------- #
 # HTTP: GET / HEAD only
 # --------------------------------------------------------------------------- #
@@ -270,6 +282,7 @@ class Fetch:
     truncated: bool = False
     error: str | None = None
     redirected: bool = False
+    redirect_blocked: str | None = None   # cross-host redirect target we refused to follow
 
     @property
     def ok(self) -> bool:
@@ -300,8 +313,7 @@ class SafeFetcher:
         host = (urlsplit(url).hostname or "").lower()
         kwargs = dict(self.env.http_client_kwargs)
         client = scope.build_client(
-            follow_redirects=True,
-            max_redirects=MAX_REDIRECTS,
+            follow_redirects=False,  # hops are followed below, same host only
             timeout=httpx.Timeout(HTTP_TIMEOUT_SEC),
             verify=False,  # reading the response is the point; cert state has its own checks
             headers={"Accept-Encoding": "identity"},
@@ -311,23 +323,42 @@ class SafeFetcher:
         out = Fetch(url=url)
         try:
             async with _polite(self.env.politeness, host):
-                async with client.stream(method, url) as resp:
-                    out.url = str(resp.url)
-                    out.status = resp.status_code
-                    out.redirected = bool(resp.history)
-                    out.headers = {k.lower(): v for k, v in resp.headers.items()}
-                    if method == "GET" and max_bytes > 0:
-                        buf = bytearray()
-                        try:
-                            async for chunk in resp.aiter_raw():
-                                buf += chunk
-                                if len(buf) >= max_bytes:
-                                    out.truncated = True
-                                    break
-                        except httpx.StreamConsumed:  # in-memory transports pre-read the body
-                            buf = bytearray(resp.content)
-                            out.truncated = len(buf) > max_bytes
-                        out.body = bytes(buf[:max_bytes])
+                cur = url
+                for hop in range(MAX_REDIRECTS + 1):
+                    async with client.stream(method, cur) as resp:
+                        out.url = str(resp.url)
+                        out.status = resp.status_code
+                        out.headers = {k.lower(): v for k, v in resp.headers.items()}
+                        loc = resp.headers.get("location")
+                        if resp.status_code in REDIRECT_STATUSES and loc:
+                            nxt = str(resp.url.join(loc))
+                            if hop >= MAX_REDIRECTS:
+                                out.error = "too many redirects"
+                                break
+                            out.redirected = True
+                            # Same scope + proof gate as the first request.
+                            await scope.allow(nxt)
+                            if (urlsplit(nxt).hostname or "").lower() != host:
+                                # The job proves THIS host only; another in-scope
+                                # host may be unproven. Record, do not fetch.
+                                out.url = nxt
+                                out.redirect_blocked = nxt
+                                break
+                            cur = nxt
+                            continue
+                        if method == "GET" and max_bytes > 0:
+                            buf = bytearray()
+                            try:
+                                async for chunk in resp.aiter_raw():
+                                    buf += chunk
+                                    if len(buf) >= max_bytes:
+                                        out.truncated = True
+                                        break
+                            except httpx.StreamConsumed:  # in-memory transports pre-read the body
+                                buf = bytearray(resp.content)
+                                out.truncated = len(buf) > max_bytes
+                            out.body = bytes(buf[:max_bytes])
+                        break
                 if self.env.politeness is not None:
                     self.env.politeness.record_response(
                         host, out.status, out.headers.get("retry-after"))

@@ -33,6 +33,7 @@ from .base import (
     inconclusive,
     not_reproducible,
     sha_prefix,
+    vetted_addrs,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"app\.modules\.safe_checks\.tls")
@@ -81,8 +82,30 @@ async def do_handshake(
     max_version: str | None = None,
     ciphers: str | None = None,
     timeout: float = CONNECT_TIMEOUT_SEC,
+    addrs: list[str] | None = None,
 ) -> Handshake:
-    """One TLS handshake, then close. Never writes application data."""
+    """One TLS handshake, then close. Never writes application data.
+
+    ``addrs`` are the orchestrator-vetted addresses for ``host``: the socket
+    dials ONLY those (SNI stays the hostname). Without them only a literal IP
+    host is accepted; a name is never resolved here (DNS rebinding).
+    """
+    if addrs is None:
+        if not _is_ip(host):
+            raise ValueError("do_handshake needs vetted addrs for a hostname")
+        addrs = [host]
+    last: Handshake | None = None
+    for ip in addrs[:4]:
+        last = await _handshake_one(ip, host, port, min_version, max_version, ciphers, timeout)
+        if not last.network:
+            return last
+    return last or Handshake(False, error="no vetted addresses", network=True)
+
+
+async def _handshake_one(
+    ip: str, host: str, port: int, min_version: str | None, max_version: str | None,
+    ciphers: str | None, timeout: float,
+) -> Handshake:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -98,7 +121,7 @@ async def do_handshake(
                          reason="CLIENT_UNSUPPORTED")
     try:
         _r, w = await asyncio.wait_for(
-            asyncio.open_connection(host, port, ssl=ctx,
+            asyncio.open_connection(ip, port, ssl=ctx,
                                     server_hostname=None if _is_ip(host) else host,
                                     ssl_handshake_timeout=timeout),
             timeout + 1,
@@ -217,9 +240,11 @@ def parse_cert(der: bytes) -> dict[str, Any]:
 
 async def _handshake(env: CheckEnv, f: FindingCtx, **kw: Any) -> Handshake:
     host, port = _target(f)
-    await env.scope.allow(f"{host}:{port}")
-    fn = env.tls_handshake or do_handshake
-    hs = await fn(host, port, **kw)
+    if env.tls_handshake is not None:
+        await env.scope.allow(f"{host}:{port}")
+        hs = await env.tls_handshake(host, port, **kw)
+    else:
+        hs = await do_handshake(host, port, addrs=await vetted_addrs(env, host, port), **kw)
     await env.audit(target=f"{host}:{port}", tool="safe_check:tls", method="tls_handshake",
                     scope_matched=True, error=None if hs.ok else hs.error)
     return hs

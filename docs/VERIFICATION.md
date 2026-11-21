@@ -31,6 +31,12 @@ re-checked and could no longer be reproduced; cleared by any later status change
   evidence capped at 4 KiB.
 - **Scope on every request:** the worker's scope guard re-checks each URL,
   including every redirect hop. Every request is written to the outbound audit log.
+- **Pinned connections (anti DNS-rebinding):** `/v1/scope/check` returns the
+  addresses it vetted (`resolved_ips`); HTTP, TLS and TCP checks dial only those
+  (Host, SNI and certificate verification keep the hostname) and never resolve
+  the name themselves. No vetted address means no connection.
+- **Same-host redirects only:** the job proves one host, so a redirect to a
+  different host is not followed; its target is recorded (`final_url`, audit log).
 - **Scope AND proof-of-control:** the orchestrator queues nothing unless
   `scope.check` allows the target *and* the matched scope entry's proof is
   `verified` or `attested` (an attestation past its expiry does not count). This

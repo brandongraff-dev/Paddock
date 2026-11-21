@@ -11,6 +11,7 @@ check is the orchestrator's /v1/scope/check — this layer adds:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import re
 import time
 from dataclasses import dataclass
@@ -44,6 +45,9 @@ class ScopeDecision:
     matched_entry: int | None
     reason: str
     cached_at: float
+    # Addresses the orchestrator vetted for this target. Connections to the
+    # target MUST go to one of these (see ``ScopeGuard.vetted_addrs``).
+    resolved_ips: tuple[str, ...] = ()
 
 
 _IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$")
@@ -124,6 +128,7 @@ class ScopeGuard:
                 matched_entry=resp.get("matched_entry"),
                 reason=resp.get("reason") or ("ok" if resp.get("allow") else "denied"),
                 cached_at=time.time(),
+                resolved_ips=tuple(str(x) for x in (resp.get("resolved_ips") or ()) if x),
             )
             self._cache[ckey] = dec
 
@@ -140,6 +145,40 @@ class ScopeGuard:
             return True
         except ScopeDenied:
             return False
+
+    # -------- pinned addresses (anti DNS-rebinding) -------------------------
+
+    async def vetted_addrs(self, target: str) -> list[str]:
+        """Scope-check ``target`` and return the addresses a connection may use.
+
+        The orchestrator resolved and vetted these (HARD_DENY nets, internal
+        ranges, rebinding checks). Connect to them and NOTHING else: resolving
+        the name again here would let a hostile DNS server answer a public
+        address for the check and 169.254.169.254 / an internal IP for the
+        connect. Raises ScopeDenied when out of scope or when no vetted
+        address exists (fail closed).
+        """
+        dec = await self.allow(target)
+        host = _host_of(target)
+        lit = _ip_or_none(host)
+        cands = [str(lit)] if lit is not None else list(dec.resolved_ips)
+        out: list[str] = []
+        for c in cands:
+            ip = _ip_or_none(c)
+            if ip is None:
+                continue
+            if _never_dial(ip):
+                raise ScopeDenied(target, f"guardrail: {ip} is a protected address", dec.normalized)
+            out.append(str(ip))
+        if not out:
+            raise ScopeDenied(target, "no vetted addresses for this host (refusing to resolve it myself)",
+                              dec.normalized)
+        return out
+
+    def pinned_transport(self, *, verify: Any = True) -> httpx.AsyncBaseTransport:
+        from app.pinned import VettedTransport
+
+        return VettedTransport(self, verify=verify)
 
     # -------- httpx integration -------------------------------------------
 
@@ -160,8 +199,22 @@ class ScopeGuard:
     def build_client(self, **kwargs) -> httpx.AsyncClient:
         """Return an httpx.AsyncClient pre-wired with the scope hook and the
         defensive User-Agent.
+
+        Unless the caller supplies its own ``transport`` (tests), the client
+        dials ONLY the addresses the orchestrator vetted for each request's
+        host, for every redirect hop too (``app.pinned.VettedTransport``);
+        it never resolves DNS itself and ignores proxy environment variables.
         """
         from app import USER_AGENT  # local to avoid cycle at import
+
+        if kwargs.get("proxy") or kwargs.get("mounts") or kwargs.get("proxies"):
+            raise ValueError("a pinned scope client cannot use proxies or mounts")
+        verify = kwargs.pop("verify", True)
+        if "transport" not in kwargs:
+            kwargs["transport"] = self.pinned_transport(verify=verify)
+            kwargs["trust_env"] = False
+        elif verify is not True:
+            kwargs["verify"] = verify
 
         hooks = kwargs.pop("event_hooks", {})
         hooks.setdefault("request", []).append(self.httpx_request_hook())
@@ -192,3 +245,34 @@ class ScopeGuard:
     def _seed(self, target: str, decision: ScopeDecision) -> None:
         """Test-only cache injection."""
         self._cache[self._ckey(normalize_target(target))] = decision
+
+
+def _host_of(target: str) -> str:
+    t = target.strip()
+    if "://" in t:
+        return (urlsplit(t).hostname or "").lower()
+    try:
+        return (urlsplit("//" + t).hostname or "").lower()
+    except ValueError:
+        return t.lower()
+
+
+def _ip_or_none(v: str):
+    try:
+        return ipaddress.ip_address(v.strip("[]").split("%", 1)[0])
+    except ValueError:
+        return None
+
+
+_NEVER = tuple(ipaddress.ip_network(n) for n in (
+    "169.254.0.0/16", "fd00:ec2::/32", "fe80::/10", "0.0.0.0/8", "::/128",
+    "224.0.0.0/4", "ff00::/8", "100.100.100.200/32",
+))
+
+
+def _never_dial(ip) -> bool:
+    """Defense in depth behind the orchestrator's guardrails: cloud metadata,
+    link-local, unspecified and multicast are never a legitimate destination."""
+    if getattr(ip, "ipv4_mapped", None) is not None:
+        ip = ip.ipv4_mapped
+    return any(ip.version == n.version and ip in n for n in _NEVER)
