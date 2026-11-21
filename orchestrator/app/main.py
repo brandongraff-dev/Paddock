@@ -32,6 +32,7 @@ from .routers import attackpaths as attackpaths_router
 from .routers import changes as changes_router
 from .routers import code as code_router
 from .routers import findings as findings_router
+from .routers import licensing as licensing_router
 from .routers import ml as ml_router
 from .routers import monitoring as monitoring_router
 from .routers import devices as devices_router
@@ -227,6 +228,8 @@ def create_app() -> FastAPI:
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
     app.include_router(remediation_router.router)
+    # Editions/licensing + usage metering (schema 024)
+    app.include_router(licensing_router.router)
 
     return app
 

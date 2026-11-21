@@ -269,6 +269,11 @@ license. That keeps the self-hosted project healthy and in the open while
 protecting the option of a future managed-cloud offering, without taking anything
 away from people who run it themselves.
 
+Editions & the CLA: everything in this repository is the free **Community**
+edition; paid editions add new enterprise features, hosting and support
+([docs/EDITIONS.md](docs/EDITIONS.md)). Contributions are accepted under a
+[CLA](CLA.md) so the project can offer that commercial license.
+
 ## Community
 
 - **Security:** [SECURITY.md](SECURITY.md) — threat model, scope invariant, and
@@ -280,6 +285,8 @@ away from people who run it themselves.
   notes, the [product vision](docs/VISION.md), the
   [cloud roadmap](docs/CLOUD_ROADMAP.md), [commercial readiness](docs/READINESS.md),
   and the [Sentry sensor guide](docs/SENTRY.md).
+- **API & tooling:** the [`/v1` API contract](docs/API.md) and
+  [Python/TypeScript SDKs, `paddockctl` and the Terraform provider](docs/SDK.md).
 - **Chat:** Discord — *link coming at launch* (badge above is a placeholder).
 
 Issues and PRs welcome. If you're here from r/netsec: the

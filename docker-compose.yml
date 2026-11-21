@@ -110,6 +110,9 @@ services:
       ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
       # First-boot admin password (set once; see .env.example). Never shipped.
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      # Optional commercial license (unset = Community; see docs/EDITIONS.md).
+      PADDOCK_LICENSE_KEY: ${PADDOCK_LICENSE_KEY:-}
+      PADDOCK_LICENSE_PUBLIC_KEYS: ${PADDOCK_LICENSE_PUBLIC_KEYS:-}
     tmpfs:
       - /tmp
     networks: [edge, internal]

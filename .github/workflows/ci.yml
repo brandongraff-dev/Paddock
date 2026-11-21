@@ -133,3 +133,110 @@ jobs:
         run: npx tsc -b
       - name: Unit tests
         run: npx vitest run
+
+  # --------------------------------------------------------------------- #
+  # API contract: the committed OpenAPI spec + generated SDKs must match the
+  # code, and /v1 must not break vs the base branch (docs/API.md). A PR
+  # labelled `api-breaking` may break deliberately (reported, not failed).
+  # --------------------------------------------------------------------- #
+  api-contract:
+    name: api contract (openapi + breaking changes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install orchestrator (for in-process spec export)
+        run: pip install -e orchestrator pytest
+      - name: Spec is up to date
+        run: python scripts/export_openapi.py --check
+      - name: SDKs are regenerated
+        run: |
+          python sdk/python/codegen.py --check
+          node sdk/typescript/scripts/codegen.mjs --check
+      - name: Contract tooling tests
+        run: pytest -q scripts/tests
+      - name: Breaking changes vs base branch
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          ALLOW: ${{ contains(github.event.pull_request.labels.*.name, 'api-breaking') }}
+        run: |
+          if ! git show "origin/${BASE_REF}:docs/api/openapi.json" > /tmp/base-openapi.json 2>/dev/null; then
+            echo "No committed spec on ${BASE_REF} yet; skipping breaking-change diff." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          flags=""
+          if [ "$ALLOW" = "true" ]; then flags="--allow-breaking"; fi
+          set -o pipefail
+          python scripts/openapi_diff.py /tmp/base-openapi.json docs/api/openapi.json --markdown $flags \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------- #
+  # Developer platform: Python SDK + paddockctl, TypeScript SDK, Terraform
+  # provider, docs site.
+  # --------------------------------------------------------------------- #
+  sdk-python:
+    name: sdk python (+ paddockctl)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test]"
+      - run: pytest -q
+
+  sdk-typescript:
+    name: sdk typescript (tsc + vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  terraform-provider:
+    name: terraform provider (go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform-provider-paddock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: terraform-provider-paddock/go.mod
+          cache-dependency-path: terraform-provider-paddock/go.sum
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./...
+
+  docs:
+    name: docs (mkdocs --strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r docs/requirements.txt
+      - run: mkdocs build --strict
