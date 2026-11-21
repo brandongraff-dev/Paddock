@@ -340,6 +340,14 @@ async def scheduler_loop(app) -> None:
             await run_due_schedules(pool, r)
             kick_integration_syncs(pool, r)
             await maybe_run_retention(pool)
+            # Finding lifecycle: reopen expired acceptances, release expired
+            # suppressions (app/lifecycle.py; never raises into the loop).
+            try:
+                from .lifecycle import sweep_expired
+
+                await sweep_expired(pool)
+            except Exception:  # noqa: BLE001
+                logger.exception("lifecycle_sweep_failed")
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

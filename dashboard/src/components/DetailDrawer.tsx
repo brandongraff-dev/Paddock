@@ -6,10 +6,20 @@
  * no terminal styling.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useStore } from "../state/store";
 import { useAsset, useAssetGraph } from "../hooks/useAssets";
-import { useFinding, usePatchFinding } from "../hooks/useFindings";
+import { useFinding, useFindingTransition, usePatchFinding } from "../hooks/useFindings";
+import { ApiError } from "../api/client";
+import {
+  HistoryList,
+  PriorityScore,
+  ReasonDialog,
+  SlaBadge,
+  SourcesList,
+  WhyChips,
+  type ReasonKind,
+} from "./Lifecycle";
 import { useQuery } from "@tanstack/react-query";
 import { getScan } from "../api/scans";
 import { listFindings } from "../api/findings";
@@ -135,12 +145,28 @@ function AssetDetail({ id }: { id: string }) {
   );
 }
 
+function errText(e: unknown): string | null {
+  if (!e) return null;
+  if (e instanceof ApiError) {
+    const d = (e.body as { detail?: unknown } | null)?.detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d) && d[0]?.msg) return String(d[0].msg);
+    if (e.status === 403) return "Your role can't triage findings.";
+  }
+  return "Could not update the finding.";
+}
+
+const DISMISSED = new Set(["accepted", "accepted_risk", "false_positive", "wontfix", "fixed"]);
+
 function FindingDetail({ id }: { id: string }) {
   const q = useFinding(id);
   const mut = usePatchFinding();
+  const tr = useFindingTransition();
+  const [dialog, setDialog] = useState<ReasonKind | null>(null);
   if (q.isLoading) return <div style={{ padding: 16, color: "var(--text-2)" }}>Loading finding…</div>;
   if (q.isError || !q.data) return <div style={{ padding: 16 }}>Finding not found.</div>;
   const f = q.data;
+  const dismissed = DISMISSED.has(f.status);
 
   return (
     <>
@@ -159,7 +185,67 @@ function FindingDetail({ id }: { id: string }) {
             <ClassificationChip c={f.classification} />
           </div>
         )}
+        <div className="lc-header">
+          <PriorityScore score={f.priority_score} large />
+          <span className={`chip chip-status chip-status-${f.status}`}>{f.status}</span>
+          <SlaBadge finding={f} />
+          {f.suppressed && <span className="chip chip-status">suppressed</span>}
+          {f.owner && <span style={{ color: "var(--text-2)", fontSize: 12 }}>owner · {f.owner}</span>}
+        </div>
       </div>
+
+      {f.why && f.why.length > 0 && (
+        <div className="section">
+          <h3>Why this priority</h3>
+          <div style={{ marginTop: 6 }}><WhyChips why={f.why} /></div>
+        </div>
+      )}
+
+      <div className="section">
+        <h3>Triage</h3>
+        {f.status_reason && (
+          <div className="lc-reason">
+            {f.status_reason}
+            <div className="meta">
+              {f.status_by && <>by {f.status_by}</>}
+              {f.accepted_until && <> · until {f.accepted_until.slice(0, 10)}</>}
+            </div>
+          </div>
+        )}
+        <Gate need="triage">
+          <div className="lc-actions">
+            {f.status === "open" && (
+              <button disabled={mut.isPending} onClick={() => mut.mutate({ id: f.id, patch: { status: "triaged" } })}>
+                Triage
+              </button>
+            )}
+            {f.status !== "fixed" && f.status !== "accepted" && (
+              <button onClick={() => setDialog("accept")}>Accept risk…</button>
+            )}
+            {f.status !== "false_positive" && (
+              <button onClick={() => setDialog("false_positive")}>False positive…</button>
+            )}
+            {(dismissed || f.status === "triaged") && (
+              <button onClick={() => setDialog("reopen")}>Reopen</button>
+            )}
+            {!dismissed && (
+              <button disabled={mut.isPending} onClick={() => mut.mutate({ id: f.id, patch: { status: "fixed" } })}>
+                Mark fixed
+              </button>
+            )}
+          </div>
+        </Gate>
+        {mut.isError && <div style={{ color: "var(--bad)", fontSize: 11, marginTop: 4 }}>
+          Could not update status.
+        </div>}
+      </div>
+
+      {(f.source_count ?? 1) > 1 && (
+        <div className="section">
+          <h3>Reported by {f.source_count} engines</h3>
+          <SourcesList sources={f.sources} />
+        </div>
+      )}
 
       {f.asset && (
         <div className="section">
@@ -202,25 +288,28 @@ function FindingDetail({ id }: { id: string }) {
 
       <ProvenanceSection subjectType="finding" subjectId={id} />
 
-      <div className="section">
-        <h3>Triage</h3>
-        <Gate need="triage">
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-            {(["triaged", "fixed", "accepted_risk", "false_positive"] as const).map((s) => (
-              <button
-                key={s}
-                disabled={mut.isPending}
-                onClick={() => mut.mutate({ id: f.id, patch: { status: s } })}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </Gate>
-        {mut.isError && <div style={{ color: "var(--bad)", fontSize: 11, marginTop: 4 }}>
-          Could not update status.
-        </div>}
-      </div>
+      {f.history && f.history.length > 0 && (
+        <div className="section">
+          <h3>History</h3>
+          <HistoryList history={f.history} />
+        </div>
+      )}
+
+      {dialog && (
+        <ReasonDialog
+          kind={dialog}
+          findingTitle={f.title}
+          pending={tr.isPending}
+          error={errText(tr.error)}
+          onCancel={() => { setDialog(null); tr.reset(); }}
+          onSubmit={(v) =>
+            tr.mutate(
+              { id: f.id, kind: dialog, ...v },
+              { onSuccess: () => setDialog(null) },
+            )
+          }
+        />
+      )}
     </>
   );
 }

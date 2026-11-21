@@ -1,0 +1,148 @@
+# Passive fingerprinting range (pcap-free observation dicts, the shape
+# otdiscovery's pcap/Sentry front-ends produce). The `subject` is the device
+# being judged; `role:ot` / `role:iot` must fire exactly when it is OT / IoT.
+engine: ot_fingerprint
+cases:
+  # ------------------------------------------------------------- OT devices
+  - id: modbus-server-banner
+    expect: ["role:ot"]
+    subject: {ip: 10.0.5.10}
+    observations:
+      - {kind: packet, proto: tcp, src_ip: 10.0.5.50, dst_ip: 10.0.5.10, src_port: 50100,
+         dst_port: 502, payload_hex: "000100000006010300000001"}
+  - id: siemens-oui-only
+    expect: ["role:ot"]
+    subject: {ip: 10.0.5.11}
+    observations:
+      - {kind: arp, src_ip: 10.0.5.11, src_mac: "00:1b:1b:00:00:11"}
+  - id: dnp3-outstation-banner
+    expect: ["role:ot"]
+    subject: {ip: 10.0.7.20}
+    observations:
+      - {kind: packet, proto: tcp, src_ip: 10.0.7.20, dst_ip: 10.0.7.1, src_port: 20000,
+         dst_port: 41000, payload_hex: "056405c0010000000000"}
+  - id: bacnet-controller
+    expect: ["role:ot"]
+    subject: {ip: 10.0.8.30}
+    observations:
+      - {kind: packet, proto: udp, src_ip: 10.0.8.2, dst_ip: 10.0.8.30, src_port: 47808,
+         dst_port: 47808, payload_hex: "810a001101040005"}
+  - id: s7comm-plc
+    expect: ["role:ot"]
+    subject: {ip: 10.0.5.40}
+    observations:
+      - {kind: packet, proto: tcp, src_ip: 10.0.5.99, dst_ip: 10.0.5.40, src_port: 49200,
+         dst_port: 102, payload_hex: "0300001902f08032010000000000080000f0000001000101e0"}
+  - id: rockwell-dhcp-vendor-class
+    expect: ["role:ot"]
+    subject: {mac: "00:11:22:33:44:01"}
+    observations:
+      - {kind: dhcp, mac: "00:11:22:33:44:01", ip: 10.0.5.60, vendor_class: "Rockwell Automation CompactLogix"}
+  - id: niagara-ssdp
+    expect: ["role:ot"]
+    subject: {ip: 10.0.8.40}
+    observations:
+      - {kind: ssdp, src_ip: 10.0.8.40, server: "QNX UPnP/1.0 Niagara/4.10 Tridium JACE-8000"}
+  - id: moxa-gateway-oui
+    expect: ["role:ot"]
+    subject: {ip: 10.0.5.70}
+    observations:
+      - {kind: arp, src_ip: 10.0.5.70, src_mac: "00:90:e8:00:00:70"}
+
+  # ------------------------------------------------------------ IoT devices
+  - id: axis-camera-oui
+    expect: ["role:iot"]
+    subject: {ip: 10.10.1.61}
+    observations:
+      - {kind: arp, src_ip: 10.10.1.61, src_mac: "00:40:8c:00:00:61"}
+  - id: printer-ipp-mdns
+    expect: ["role:iot"]
+    subject: {ip: 10.10.2.15}
+    observations:
+      - {kind: mdns, src_ip: 10.10.2.15, src_mac: "02:aa:bb:cc:dd:15",
+         service: "_ipp._tcp.local", name: "Office Printer"}
+  - id: hikvision-onvif-ssdp
+    expect: ["role:iot"]
+    subject: {ip: 10.10.1.70}
+    observations:
+      - {kind: ssdp, src_ip: 10.10.1.70, nt: "urn:schemas-onvif-org:device:NetworkVideoTransmitter:1",
+         server: "Linux UPnP/1.0 Hikvision-Webs/1.0"}
+  - id: hue-bridge-oui
+    expect: ["role:iot"]
+    subject: {ip: 10.10.3.5}
+    observations:
+      - {kind: arp, src_ip: 10.10.3.5, src_mac: "00:17:88:00:00:05"}
+  - id: chromecast-mdns
+    expect: ["role:iot"]
+    subject: {ip: 10.10.3.20}
+    observations:
+      - {kind: mdns, src_ip: 10.10.3.20, service: "_googlecast._tcp.local", txt: {md: Chromecast}}
+  - id: espressif-oui
+    expect: ["role:iot"]
+    subject: {ip: 10.10.3.33}
+    observations:
+      - {kind: arp, src_ip: 10.10.3.33, src_mac: "24:0a:c4:00:00:33"}
+
+  # ------------------------------------------------- IT look-alikes (silent)
+  - id: workstation-polling-modbus
+    expect: []
+    note: the Modbus CLIENT is an engineering workstation, not a PLC
+    subject: {ip: 10.0.5.50}
+    observations:
+      - {kind: packet, proto: tcp, src_ip: 10.0.5.50, src_mac: "00:50:56:00:00:50",
+         dst_ip: 10.0.5.10, src_port: 50100, dst_port: 502, payload_hex: "000100000006010300000001"}
+  - id: windows-dhcp
+    expect: []
+    subject: {mac: "00:11:22:33:44:02"}
+    observations:
+      - {kind: dhcp, mac: "00:11:22:33:44:02", ip: 10.20.0.15, vendor_class: "MSFT 5.0",
+         param_req_list: "1,3,6,15,31,33,43,44,46,47,119,121,249,252"}
+  - id: https-server
+    expect: []
+    subject: {ip: 10.20.0.80}
+    observations:
+      - {kind: flow, proto: tcp, src_ip: 10.20.0.9, dst_ip: 10.20.0.80, src_port: 51000, dst_port: 443}
+  - id: ssh-on-2222-is-not-enip-io
+    expect: []
+    note: EtherNet/IP implicit I/O is UDP/2222; TCP/2222 is the classic alternate SSH port
+    subject: {ip: 10.20.0.81}
+    observations:
+      - {kind: flow, proto: tcp, src_ip: 10.20.0.9, dst_ip: 10.20.0.81, src_port: 51001, dst_port: 2222}
+  - id: raspberry-pi-oui
+    expect: []
+    subject: {ip: 10.20.0.90}
+    observations:
+      - {kind: arp, src_ip: 10.20.0.90, src_mac: "b8:27:eb:00:00:90"}
+  - id: ubiquiti-ap
+    expect: []
+    subject: {ip: 10.20.0.2}
+    observations:
+      - {kind: arp, src_ip: 10.20.0.2, src_mac: "24:a4:3c:00:00:02"}
+  - id: linux-server-ssh-mdns
+    expect: []
+    subject: {ip: 10.20.0.30}
+    observations:
+      - {kind: mdns, src_ip: 10.20.0.30, service: "_ssh._tcp.local", name: build-01}
+  - id: randomized-mac-laptop
+    expect: []
+    subject: {ip: 10.20.0.120}
+    observations:
+      - {kind: arp, src_ip: 10.20.0.120, src_mac: "da:a1:19:00:00:01"}
+  - id: usermin-on-20000
+    expect: []
+    note: >-
+      KNOWN FP -- TCP/20000 is also Webmin/Usermin. A TLS server there fails the
+      DNP3 banner check but the port alone still marks the host OT.
+    subject: {ip: 10.20.0.40}
+    observations:
+      - {kind: packet, proto: tcp, src_ip: 10.20.0.40, dst_ip: 10.20.0.9, src_port: 20000,
+         dst_port: 52000, payload_hex: "160303007a0200007603035f"}
+  - id: macbook-airplay-receiver
+    expect: []
+    note: >-
+      KNOWN FP -- macOS 12+ advertises an AirPlay receiver, so a laptop reads
+      as a media player (IoT) even next to its _device-info record.
+    subject: {ip: 10.20.0.55}
+    observations:
+      - {kind: mdns, src_ip: 10.20.0.55, service: "_device-info._tcp.local", txt: {model: "MacBookPro18,3"}}
+      - {kind: mdns, src_ip: 10.20.0.55, service: "_airplay._tcp.local", name: "Dana's MacBook Pro"}

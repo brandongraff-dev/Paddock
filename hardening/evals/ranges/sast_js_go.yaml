@@ -1,0 +1,243 @@
+# SAST range: JavaScript/TypeScript and Go (regex rules in
+# codeanalysis/app/data/taint_rules.json).
+engine: sast
+cases:
+  # ===================================================== JavaScript positives
+  - id: js-sqli-template
+    lang: javascript
+    expect: [sql_injection]
+    code: |
+      app.get("/u", async (req, res) => {
+        const rows = await db.query(`SELECT * FROM users WHERE id = ${req.query.id}`);
+        res.json(rows);
+      });
+
+  - id: js-cmdi-exec-concat
+    lang: javascript
+    expect: [command_injection]
+    code: |
+      const child_process = require("child_process");
+      app.get("/ping", (req, res) => {
+        child_process.exec("ping -c1 " + req.query.host, (e, out) => res.send(out));
+      });
+
+  - id: js-code-injection-eval
+    lang: javascript
+    expect: [code_injection]
+    code: |
+      app.post("/calc", (req, res) => {
+        res.send(String(eval(req.body.expr)));
+      });
+
+  - id: js-ssrf-fetch
+    lang: typescript
+    expect: [ssrf]
+    code: |
+      export async function proxy(req: Request, res: Response) {
+        const r = await fetch(req.query.url as string);
+        res.send(await r.text());
+      }
+
+  - id: js-path-traversal-readfile
+    lang: javascript
+    expect: [path_traversal]
+    code: |
+      app.get("/file", (req, res) => {
+        fs.readFile(path.join(__dirname, "public", req.params.name), (e, b) => res.send(b));
+      });
+
+  - id: js-weak-crypto-md5
+    lang: javascript
+    expect: [weak_crypto]
+    code: |
+      const crypto = require("crypto");
+      const h = crypto.createHash("md5").update(password).digest("hex");
+
+  - id: js-tls-verify-off
+    lang: javascript
+    expect: [insecure_transport]
+    code: |
+      const agent = new https.Agent({ rejectUnauthorized: false });
+
+  - id: js-aws-key-literal
+    lang: javascript
+    expect: [hardcoded_secret]
+    code: |
+      const s3 = new S3({ region: "eu-west-1", accessKeyId: "AKIAZ4QW7RTY2MNB8KLP" });
+
+  - id: ts-api-key-literal
+    lang: typescript
+    expect: [hardcoded_secret]
+    code: |
+      const apiKey = "sk9f8a7d6s5a4d3f2g1h";
+
+  # ==================================================== JavaScript look-alikes
+  - id: js-sqli-parameterised
+    lang: javascript
+    expect: []
+    code: |
+      app.get("/u", async (req, res) => {
+        const rows = await db.query("SELECT * FROM users WHERE id = $1", [req.query.id]);
+        res.json(rows);
+      });
+
+  - id: js-exec-constant
+    lang: javascript
+    expect: []
+    code: |
+      const { exec } = require("child_process");
+      exec("git rev-parse HEAD", (e, out) => console.log(out));
+
+  - id: js-evaluate-is-not-eval
+    lang: javascript
+    expect: []
+    code: |
+      app.post("/score", (req, res) => res.json(evaluate(req.body.answers)));
+
+  - id: js-fetch-constant
+    lang: typescript
+    expect: []
+    code: |
+      const status = await fetch("https://status.example.com/api/v2/status.json");
+
+  - id: js-sha256
+    lang: javascript
+    expect: []
+    code: |
+      const h = crypto.createHash("sha256").update(body).digest("hex");
+
+  - id: js-tls-verify-on
+    lang: javascript
+    expect: []
+    code: |
+      const agent = new https.Agent({ rejectUnauthorized: true });
+
+  - id: js-secret-from-env
+    lang: javascript
+    expect: []
+    code: |
+      const apiKey = process.env.API_KEY;
+      const token = req.headers.authorization;
+
+  # ============================================================ Go positives
+  - id: go-cmdi-exec-command
+    lang: go
+    expect: [command_injection]
+    code: |
+      func run(w http.ResponseWriter, r *http.Request) {
+          out, _ := exec.Command("sh", "-c", r.FormValue("cmd")).Output()
+          w.Write(out)
+      }
+
+  - id: go-sqli-sprintf
+    lang: go
+    expect: [sql_injection]
+    code: |
+      func user(w http.ResponseWriter, r *http.Request) {
+          q := fmt.Sprintf("SELECT * FROM users WHERE name = '%s'", r.URL.Query().Get("name"))
+          rows, _ := db.Query(q)
+          _ = rows
+      }
+
+  - id: go-ssrf-http-get
+    lang: go
+    expect: [ssrf]
+    code: |
+      func proxy(w http.ResponseWriter, r *http.Request) {
+          resp, _ := http.Get(r.FormValue("url"))
+          io.Copy(w, resp.Body)
+      }
+
+  - id: go-path-traversal-open
+    lang: go
+    expect: [path_traversal]
+    code: |
+      func file(w http.ResponseWriter, r *http.Request) {
+          f, _ := os.Open(filepath.Join("/srv", r.URL.Query().Get("f")))
+          io.Copy(w, f)
+      }
+
+  - id: go-weak-crypto-md5
+    lang: go
+    expect: [weak_crypto]
+    code: |
+      sum := md5.Sum([]byte(password))
+
+  - id: go-tls-insecure-skip
+    lang: go
+    expect: [insecure_transport]
+    code: |
+      tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+
+  - id: go-github-token-literal
+    lang: go
+    expect: [hardcoded_secret]
+    code: |
+      client := github.NewTokenClient(ctx, "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5")
+
+  # =========================================================== Go look-alikes
+  - id: go-sqli-placeholder
+    lang: go
+    expect: []
+    code: |
+      func user(w http.ResponseWriter, r *http.Request) {
+          rows, _ := db.Query("SELECT * FROM users WHERE name = $1", r.FormValue("name"))
+          _ = rows
+      }
+
+  - id: go-exec-constant
+    lang: go
+    expect: []
+    code: |
+      out, err := exec.Command("git", "status", "--porcelain").Output()
+
+  - id: go-http-constant
+    lang: go
+    expect: []
+    code: |
+      resp, err := http.Get("https://status.example.com/health")
+
+  - id: go-sha256
+    lang: go
+    expect: []
+    code: |
+      sum := sha256.Sum256(data)
+
+  - id: go-tls-verify-on
+    lang: go
+    expect: []
+    code: |
+      cfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: false}
+
+  - id: go-secret-from-env
+    lang: go
+    expect: []
+    code: |
+      apiToken := os.Getenv("API_TOKEN")
+
+  # ============================================== hard cases (known limits)
+  - id: js-sqli-concat-before-call
+    lang: javascript
+    expect: [sql_injection]
+    note: >-
+      KNOWN GAP -- regex rules only see concatenation inside the call; a query
+      string built on the previous statement is missed.
+    code: |
+      app.get("/u", async (req, res) => {
+        const sql = "SELECT * FROM users WHERE id = " + req.query.id;
+        res.json(await db.query(sql));
+      });
+
+  - id: js-token-url-not-secret
+    lang: javascript
+    expect: []
+    note: KNOWN FP -- a URL assigned to a *token*-named variable looks like a credential.
+    code: |
+      const tokenUrl = "https://auth.acme.io/oauth2/v1/token";
+
+  - id: go-token-endpoint-not-secret
+    lang: go
+    expect: []
+    note: KNOWN FP -- same shape in Go.
+    code: |
+      tokenEndpoint := "https://login.acme.io/v2/token"

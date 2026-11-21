@@ -1,0 +1,151 @@
+# SCA supply-chain risk range. Each case is ONE dependency the owner already
+# has, plus whatever registry/OSV context the detector would have seen.
+# Clock is fixed at 2026-11-01 (see engines.Sca) so `abandoned` never rots.
+engine: sca
+cases:
+  # ------------------------------------------------------------ typosquat
+  - id: npm-lodash-transposed
+    expect: [typosquat]
+    component: {ecosystem: npm, name: lodahs, version: 4.17.21}
+  - id: npm-express-extra-letter
+    expect: [typosquat]
+    component: {ecosystem: npm, name: expresss, version: 4.18.2}
+  - id: npm-electron-transposed
+    expect: [typosquat]
+    component: {ecosystem: npm, name: electorn, version: 1.0.0}
+  - id: npm-mongoose-missing-letter
+    expect: [typosquat]
+    component: {ecosystem: npm, name: mongose, version: 8.0.0}
+  - id: npm-jsonwebtoken-missing-letter
+    expect: [typosquat]
+    component: {ecosystem: npm, name: jsonwebtokn, version: 9.0.0}
+  - id: pypi-requests-transposed
+    expect: [typosquat]
+    component: {ecosystem: PyPI, name: reqeusts, version: 2.31.0}
+  - id: pypi-colorama-british
+    expect: [typosquat]
+    component: {ecosystem: PyPI, name: colourama, version: 0.4.6}
+  - id: pypi-dateutil-plural
+    expect: [typosquat]
+    component: {ecosystem: PyPI, name: python-dateutils, version: 2.8.2}
+  - id: pypi-django-vowel
+    expect: [typosquat]
+    component: {ecosystem: PyPI, name: djanga, version: 4.2.0}
+  - id: crates-tokio-transposed
+    expect: [typosquat]
+    component: {ecosystem: crates.io, name: tokoi, version: 1.0.0}
+
+  - id: npm-lodash-exact
+    expect: []
+    component: {ecosystem: npm, name: lodash, version: 4.17.21}
+  - id: pypi-requests-oauthlib-exact
+    expect: []
+    component: {ecosystem: PyPI, name: requests-oauthlib, version: 1.3.1}
+  - id: npm-axios-plugin
+    expect: []
+    component: {ecosystem: npm, name: axios-retry, version: 4.0.0}
+  - id: pypi-httpcore-not-httpx
+    expect: []
+    component: {ecosystem: PyPI, name: httpcore, version: 1.0.2}
+  - id: npm-two-letter-package
+    expect: []
+    note: short names are never compared (every 2-letter name is near 'qs'/'ws')
+    component: {ecosystem: npm, name: pq, version: 1.0.0}
+  - id: pypi-same-name-other-ecosystem
+    expect: []
+    note: "lodash is popular on npm, not a PyPI impersonation target"
+    component: {ecosystem: PyPI, name: lodahs, version: 1.0.0}
+  - id: npm-preact-is-real
+    expect: []
+    note: KNOWN FP -- preact is a popular framework one insertion away from react.
+    component: {ecosystem: npm, name: preact, version: 10.19.0}
+  - id: pypi-boto-legacy-is-real
+    expect: []
+    note: KNOWN FP -- boto (legacy AWS SDK) is one edit from boto3.
+    component: {ecosystem: PyPI, name: boto, version: 2.49.0}
+
+  # -------------------------------------------------- dependency confusion
+  - id: npm-private-scope
+    expect: [dependency_confusion]
+    component: {ecosystem: npm, name: "@acme/payments-sdk", version: 2.3.1}
+  - id: pypi-internal-marker
+    expect: [dependency_confusion]
+    component: {ecosystem: PyPI, name: acme-internal-auth, version: 0.9.0}
+  - id: maven-corp-group
+    expect: [dependency_confusion]
+    component: {ecosystem: Maven, name: "com.acmecorp.internal:billing-core", version: 3.1.0}
+  - id: pypi-internal-name-public-exists
+    expect: [dependency_confusion]
+    public_names: [acme-private-utils]
+    component: {ecosystem: PyPI, name: acme-private-utils, version: 1.0.0}
+
+  - id: npm-public-unscoped
+    expect: []
+    component: {ecosystem: npm, name: helmet, version: 7.1.0}
+  - id: maven-public-group
+    expect: []
+    component: {ecosystem: Maven, name: "org.apache.commons:commons-lang3", version: 3.14.0}
+  - id: npm-types-scope-is-public
+    expect: []
+    note: KNOWN FP -- every scoped name is flagged, including public scopes like @types.
+    component: {ecosystem: npm, name: "@types/node", version: 20.11.0}
+
+  # -------------------------------------------------------------- unpinned
+  - id: npm-caret-range
+    expect: [unpinned]
+    component: {ecosystem: npm, name: chalk, version: "^5.3.0"}
+  - id: pypi-spec-gte
+    expect: [unpinned]
+    component: {ecosystem: PyPI, name: flask, version: 3.0.0, metadata: {spec: ">=2.0"}}
+  - id: npm-star
+    expect: [unpinned]
+    component: {ecosystem: npm, name: debug, version: "*"}
+  - id: pypi-compatible-release
+    expect: [unpinned]
+    component: {ecosystem: PyPI, name: rich, version: 13.7.0, metadata: {spec: "~=13.7"}}
+
+  - id: npm-exact-pin
+    expect: []
+    component: {ecosystem: npm, name: chalk, version: 5.3.0}
+  - id: pypi-double-equals
+    expect: []
+    component: {ecosystem: PyPI, name: flask, version: 3.0.0, metadata: {spec: "==3.0.0"}}
+  - id: npm-prerelease-next
+    expect: []
+    note: KNOWN FP -- the 'x' range marker is a substring test, so '-next.' reads as a range.
+    component: {ecosystem: npm, name: react, version: 19.0.0-next.4}
+
+  # ------------------------------------------------------ malicious / yanked
+  - id: npm-osv-malware
+    expect: [malicious_version]
+    component: {ecosystem: npm, name: event-stream, version: 3.3.6}
+    osv: [{osv_id: MAL-2024-0001, malicious: true}]
+  - id: pypi-yanked
+    expect: [yanked]
+    component: {ecosystem: PyPI, name: urllib3, version: 2.0.0}
+    yanked: true
+  - id: npm-ordinary-vuln-not-malware
+    expect: []
+    component: {ecosystem: npm, name: minimist, version: 1.2.5}
+    osv: [{osv_id: GHSA-xvch-5gv4-984h, malicious: false}]
+  - id: pypi-not-yanked
+    expect: []
+    component: {ecosystem: PyPI, name: urllib3, version: 2.2.1}
+
+  # -------------------------------------------------------------- abandoned
+  - id: npm-abandoned-5y
+    expect: [abandoned]
+    component: {ecosystem: npm, name: left-pad, version: 1.3.0}
+    last_release: "2021-03-01T00:00:00Z"
+  - id: npm-recent-release
+    expect: []
+    component: {ecosystem: npm, name: zod, version: 3.23.0}
+    last_release: "2026-06-01T00:00:00Z"
+  - id: pypi-just-under-two-years
+    expect: []
+    component: {ecosystem: PyPI, name: attrs, version: 23.2.0}
+    last_release: "2025-01-15T00:00:00Z"
+  - id: pypi-unknown-release-offline
+    expect: []
+    note: no registry metadata (offline) must never be read as abandoned
+    component: {ecosystem: PyPI, name: attrs, version: 23.2.0}

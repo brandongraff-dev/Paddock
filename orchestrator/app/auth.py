@@ -486,6 +486,9 @@ _rule("PATCH", rf"/v1/findings/{_ANY}", "triage")
 _rule("PATCH", rf"/v1/tickets/{_ANY}", "triage")
 _rule("POST", rf"/v1/anomalies/{_ANY}/ack", "triage")
 _rule("POST", rf"/v1/changes/{_ANY}/ack", "triage")
+# finding lifecycle (schema 019): transitions + suppression rules
+_rule("POST", rf"/v1/findings/{_ANY}/(accept|false-positive|reopen)", "triage")
+_rule("POST PATCH DELETE", rf"/v1/suppressions(/{_ANY})?", "triage")
 
 # --- scan / operational triggers (analyst + admin + service) --------------- #
 _rule("POST", r"/v1/scans", "scan")

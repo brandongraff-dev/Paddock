@@ -1,0 +1,37 @@
+# Detection-quality floors, enforced by `python hardening/evals/run.py` in CI.
+#
+# Keys are `<engine>/<detector>`. Anything not listed uses `defaults`.
+# A floor BELOW 1.0 is a recorded, known weakness -- each one names the range
+# case(s) that cost it, so the debt is visible and the number can only go up:
+#   * improve the engine  -> raise the floor in the same PR (ratchet);
+#   * lower a floor       -> only with a reviewer's sign-off and a reason here.
+#
+# precision = TP / (TP + FP)   (noise: how often a fired alert is real)
+# recall    = TP / (TP + FN)   (coverage: how often a real issue fires)
+
+defaults:
+  precision: 1.0
+  recall: 1.0
+
+detectors:
+  # -- codeanalysis (bundled taint scanner) --------------------------------
+  sast/command_injection:
+    recall: 0.80      # py-cmdi-interprocedural: scanner is intra-procedural
+  sast/sql_injection:
+    recall: 0.83      # js-sqli-concat-before-call: regex sees only in-call concat
+  sast/hardcoded_secret:
+    precision: 0.66   # js-token-url-not-secret, go-token-endpoint-not-secret
+
+  # -- sca supply-chain risk -------------------------------------------------
+  sca/typosquat:
+    precision: 0.83   # npm-preact-is-real, pypi-boto-legacy-is-real
+  sca/dependency_confusion:
+    precision: 0.80   # npm-types-scope-is-public (@types/* flagged)
+  sca/unpinned:
+    precision: 0.80   # npm-prerelease-next ('x' substring marker)
+
+  # -- otdiscovery passive fingerprinting -----------------------------------
+  ot_fingerprint/role:ot:
+    precision: 0.88   # usermin-on-20000 (port-only DNP3 match)
+  ot_fingerprint/role:iot:
+    precision: 0.85   # macbook-airplay-receiver

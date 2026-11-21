@@ -1,0 +1,220 @@
+# Sentry behaviour range. Devices are fingerprinted from `observations`
+# (an ARP line with a vendor MAC is enough), then `flows` -- the aggregated
+# shape Sentry ships -- go through otdiscovery.behavior.analyze. Only findings
+# about the `subject` device count.
+engine: ot_behaviour
+defaults:
+  observations:
+    - {kind: arp, src_ip: 10.10.1.61, src_mac: "00:40:8c:00:00:61"}   # Axis camera (IoT)
+    - {kind: arp, src_ip: 10.10.5.10, src_mac: "00:1b:1b:00:00:10"}   # Siemens PLC (OT)
+    - {kind: arp, src_ip: 10.10.3.5, src_mac: "00:17:88:00:00:05"}    # Hue bridge (IoT)
+    - {kind: arp, src_ip: 10.10.4.7, src_mac: "18:b4:30:00:00:07"}    # Nest thermostat (IoT)
+    - {kind: arp, src_ip: 10.10.2.15, src_mac: "00:1b:78:00:00:15"}   # HP printer (IoT)
+    - {kind: arp, src_ip: 10.10.9.5, src_mac: "00:50:56:00:00:05"}    # admin workstation (IT)
+cases:
+  # ------------------------------------------------------ lateral scanning
+  - id: camera-telnet-sweep
+    expect: [device_lateral_scan]
+    subject: {ip: 10.10.1.61}
+    flows: &sweep
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.100, proto: tcp, dst_port: 23, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.101, proto: tcp, dst_port: 23, last_seen: 1001}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.102, proto: tcp, dst_port: 23, last_seen: 1002}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.103, proto: tcp, dst_port: 23, last_seen: 1003}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.104, proto: tcp, dst_port: 23, last_seen: 1004}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.105, proto: tcp, dst_port: 23, last_seen: 1005}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.106, proto: tcp, dst_port: 23, last_seen: 1006}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.107, proto: tcp, dst_port: 23, last_seen: 1007}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.108, proto: tcp, dst_port: 23, last_seen: 1008}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.109, proto: tcp, dst_port: 23, last_seen: 1009}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.110, proto: tcp, dst_port: 23, last_seen: 1010}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.111, proto: tcp, dst_port: 23, last_seen: 1011}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.112, proto: tcp, dst_port: 23, last_seen: 1012}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.113, proto: tcp, dst_port: 23, last_seen: 1013}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.114, proto: tcp, dst_port: 23, last_seen: 1014}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.115, proto: tcp, dst_port: 23, last_seen: 1015}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.116, proto: tcp, dst_port: 23, last_seen: 1016}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.117, proto: tcp, dst_port: 23, last_seen: 1017}
+  - id: camera-port-sweep-one-host
+    expect: [device_lateral_scan]
+    subject: {ip: 10.10.1.61}
+    flows:
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 21, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 23, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 25, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 53, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 80, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 110, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 111, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 135, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 139, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 143, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 443, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 445, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 993, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 995, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 1433, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 1723, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 3306, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 3389, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 5900, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 8080, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 8443, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 9000, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.20, proto: tcp, dst_port: 9100, last_seen: 1000}
+  - id: camera-talks-to-nvr
+    expect: []
+    subject: {ip: 10.10.1.61}
+    flows:
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.2, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.2, proto: tcp, dst_port: 80, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.1, proto: udp, dst_port: 53, last_seen: 1000}
+  - id: camera-streams-to-nvr-cluster
+    expect: []
+    note: ten recorders is a busy camera, not a scan (threshold is 16 hosts)
+    subject: {ip: 10.10.1.61}
+    flows:
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.2, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.3, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.4, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.5, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.6, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.7, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.8, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.9, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.10, proto: tcp, dst_port: 554, last_seen: 1000}
+      - {src_ip: 10.10.1.61, dst_ip: 10.10.1.11, proto: tcp, dst_port: 554, last_seen: 1000}
+  - id: workstation-sweep-is-not-a-device
+    expect: []
+    note: an IT host scanning is out of scope for device behaviour (EDR's job)
+    subject: {ip: 10.10.9.5}
+    flows:
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.100, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.101, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.102, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.103, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.104, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.105, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.106, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.107, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.108, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.109, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.110, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.111, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.112, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.113, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.114, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.115, proto: tcp, dst_port: 22, last_seen: 1000}
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.9.116, proto: tcp, dst_port: 22, last_seen: 1000}
+
+  # ------------------------------------------------------- OT internet egress
+  - id: plc-phones-home
+    expect: [ot_internet_egress]
+    subject: {ip: 10.10.5.10}
+    flows:
+      - {src_ip: 10.10.5.10, dst_ip: 8.8.4.4, proto: tcp, dst_port: 443, last_seen: 1000}
+  - id: plc-to-internal-historian
+    expect: []
+    subject: {ip: 10.10.5.10}
+    flows:
+      - {src_ip: 10.10.5.10, dst_ip: 10.10.6.20, proto: tcp, dst_port: 1433, last_seen: 1000}
+  - id: iot-camera-to-cloud-is-not-ot
+    expect: []
+    note: IoT cloud traffic is expected; only OT->internet is a policy violation
+    subject: {ip: 10.10.1.61}
+    flows:
+      - {src_ip: 10.10.1.61, dst_ip: 52.10.20.30, proto: tcp, dst_port: 443, last_seen: 1000}
+  - id: internet-scanner-hits-plc
+    expect: []
+    note: inbound to the PLC is exposure, not the PLC initiating egress
+    subject: {ip: 10.10.5.10}
+    flows:
+      - {src_ip: 45.33.32.156, dst_ip: 10.10.5.10, proto: tcp, dst_port: 502, last_seen: 1000}
+
+  # ---------------------------------------------------- cleartext management
+  - id: telnet-into-camera
+    expect: [cleartext_management]
+    subject: {ip: 10.10.1.61}
+    flows:
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.1.61, proto: tcp, dst_port: 23, last_seen: 1000}
+  - id: snmpv2-to-printer
+    expect: [cleartext_management]
+    subject: {ip: 10.10.2.15}
+    flows:
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.2.15, proto: udp, dst_port: 161, last_seen: 1000}
+  - id: ftp-to-plc
+    expect: [cleartext_management]
+    subject: {ip: 10.10.5.10}
+    flows:
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.5.10, proto: tcp, dst_port: 21, last_seen: 1000}
+  - id: ssh-into-camera
+    expect: []
+    subject: {ip: 10.10.1.61}
+    flows:
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.1.61, proto: tcp, dst_port: 22, last_seen: 1000}
+  - id: https-to-printer
+    expect: []
+    subject: {ip: 10.10.2.15}
+    flows:
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.2.15, proto: tcp, dst_port: 443, last_seen: 1000}
+  - id: telnet-port-over-udp
+    expect: []
+    note: udp/23 is not a Telnet session
+    subject: {ip: 10.10.1.61}
+    flows:
+      - {src_ip: 10.10.9.5, dst_ip: 10.10.1.61, proto: udp, dst_port: 23, last_seen: 1000}
+
+  # ---------------------------------------------------- IoT crossing segments
+  - id: hue-bridge-to-file-server
+    expect: [iot_crosses_segment]
+    subject: {ip: 10.10.3.5}
+    flows:
+      - {src_ip: 10.10.3.5, dst_ip: 10.10.2.50, proto: tcp, dst_port: 445, last_seen: 1000}
+  - id: thermostat-to-payment-vlan
+    expect: [iot_crosses_segment]
+    subject: {ip: 10.10.4.7}
+    flows:
+      - {src_ip: 10.10.4.7, dst_ip: 10.10.20.10, proto: tcp, dst_port: 8443, last_seen: 1000}
+  - id: iot-uses-dns-ntp-on-other-segment
+    expect: []
+    subject: {ip: 10.10.3.5}
+    flows:
+      - {src_ip: 10.10.3.5, dst_ip: 10.10.0.53, proto: udp, dst_port: 53, last_seen: 1000}
+      - {src_ip: 10.10.3.5, dst_ip: 10.10.0.123, proto: udp, dst_port: 123, last_seen: 1000}
+  - id: iot-same-segment-peer
+    expect: []
+    subject: {ip: 10.10.3.5}
+    flows:
+      - {src_ip: 10.10.3.5, dst_ip: 10.10.3.40, proto: tcp, dst_port: 80, last_seen: 1000}
+
+  # ----------------------------------------------- learned per-class baselines
+  - id: thermostat-new-port-after-learning
+    expect: [behavior_drift]
+    subject: {ip: 10.10.4.7}
+    baseline: true
+    params: {learn_s: 3600}
+    learn_flows:
+      - {src_ip: 10.10.4.7, dst_ip: 34.120.1.1, proto: tcp, dst_port: 443, first_seen: 1000, last_seen: 1000}
+    flows:
+      - {src_ip: 10.10.4.7, dst_ip: 34.120.1.1, proto: tcp, dst_port: 443, first_seen: 9000, last_seen: 9000}
+      - {src_ip: 10.10.4.7, dst_ip: 185.199.1.1, proto: tcp, dst_port: 6667, first_seen: 9000, last_seen: 9000}
+  - id: thermostat-known-behaviour-after-learning
+    expect: []
+    subject: {ip: 10.10.4.7}
+    baseline: true
+    params: {learn_s: 3600}
+    learn_flows:
+      - {src_ip: 10.10.4.7, dst_ip: 34.120.1.1, proto: tcp, dst_port: 443, first_seen: 1000, last_seen: 1000}
+    flows:
+      - {src_ip: 10.10.4.7, dst_ip: 34.120.9.9, proto: tcp, dst_port: 443, first_seen: 9000, last_seen: 9000}
+  - id: thermostat-new-port-during-learning
+    expect: []
+    note: anything first seen inside the learning window is learned, not alerted
+    subject: {ip: 10.10.4.7}
+    baseline: true
+    params: {learn_s: 3600}
+    learn_flows:
+      - {src_ip: 10.10.4.7, dst_ip: 34.120.1.1, proto: tcp, dst_port: 443, first_seen: 1000, last_seen: 1000}
+    flows:
+      - {src_ip: 10.10.4.7, dst_ip: 34.120.1.1, proto: tcp, dst_port: 8883, first_seen: 2000, last_seen: 2000}

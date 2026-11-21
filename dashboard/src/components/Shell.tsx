@@ -46,6 +46,13 @@ const Icon = {
       <circle cx="12" cy="17" r="0.8" fill="currentColor" />
     </svg>
   ),
+  Suppressions: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12 C5.5 7.5 8.5 5.5 12 5.5 C15.5 5.5 18.5 7.5 21 12 C18.5 16.5 15.5 18.5 12 18.5 C8.5 18.5 5.5 16.5 3 12 Z" />
+      <circle cx="12" cy="12" r="2.6" />
+      <path d="M4 20 L20 4" />
+    </svg>
+  ),
   Chains: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 7 L15 7 M9 17 L15 17" />
@@ -214,6 +221,7 @@ const navGroups: NavGroup[] = [
     label: "Risk",
     items: [
       { to: "/findings", label: "Findings", icon: Icon.Findings },
+      { to: "/suppressions", label: "Suppressions", icon: Icon.Suppressions },
       { to: "/chains", label: "Chains", icon: Icon.Chains },
       { to: "/attack-paths", label: "Attack Paths", icon: Icon.AttackPaths },
       { to: "/risk-model", label: "Risk Model", icon: Icon.RiskModel },
