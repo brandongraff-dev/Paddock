@@ -439,3 +439,15 @@
   100% { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) { .wm-o { opacity: 1; } .lp-mega-mark.in .wm-o { animation: none; } }
+
+.lp-mega-ripple { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; }
+/* a small thud on each landing */
+.lp-mega-mark.in { animation: wm-thud 2.6s linear 0.45s both; }
+@keyframes wm-thud {
+  0%, 40% { transform: none; }
+  42% { transform: translateY(9px); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  49%, 61% { transform: none; }
+  63% { transform: translateY(5px); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  70%, 100% { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .lp-mega-mark.in { animation: none; } }

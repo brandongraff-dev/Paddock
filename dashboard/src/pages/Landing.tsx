@@ -6,6 +6,7 @@ import PixelField from "../brand/PixelField";
 import GallopTrail from "../brand/GallopTrail";
 import PlateStrip from "../brand/PlateStrip";
 import DitherRule from "../brand/DitherRule";
+import ShockRipple from "../brand/ShockRipple";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
 import { useInView } from "./landing/hooks";
@@ -209,6 +210,7 @@ export default function Landing() {
 
 
       <section className="lp-mega">
+        <ShockRipple fire={megaIn} anchor={megaRef} className="lp-mega-ripple" />
         <div className="lp-mega-cta">
           <h2>Close the paths before they&apos;re walked.</h2>
           <div>
