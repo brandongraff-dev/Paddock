@@ -329,23 +329,46 @@ async def httpx_request_hook(request) -> None:
 # Inbound HTTP (service endpoints called by the orchestrator)
 # --------------------------------------------------------------------------- #
 
-def request_tenant(headers: Mapping[str, str], *, service_key: str | None = None) -> str | None:
-    """Tenant requested by an inbound HTTP call, or ``None`` if it named none.
+#: Probe / scrape routes every service leaves open (no data, no tenant).
+OPEN_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
+#: Sensor-facing routes (otdiscovery): authenticated by the sensor's own
+#: credential, not by the service key, and never able to pick a tenant.
+SENSOR_PATHS = frozenset({"/ingest", "/enroll", "/heartbeat"})
 
-    Naming a tenant is a privileged act: it needs the shared service key (the
-    orchestrator sends both). With no ``SERVICE_API_KEY`` configured the header
-    is honoured only outside strict mode (dev), never in strict mode.
+
+def _presented_key(headers: Mapping[str, str]) -> str:
+    return headers.get(SERVICE_KEY_HEADER) or headers.get(SERVICE_KEY_HEADER.lower()) or ""
+
+
+def _key_ok(headers: Mapping[str, str], key: str) -> bool:
+    return hmac.compare_digest(_presented_key(headers).encode("utf-8"), key.encode("utf-8"))
+
+
+def request_tenant(
+    headers: Mapping[str, str], *, service_key: str | None = None, path: str | None = None
+) -> str | None:
+    """Authorize an inbound HTTP call and return the tenant it names (or ``None``).
+
+    * ``SERVICE_API_KEY`` configured: every call except the open probe routes
+      (``OPEN_PATHS``) and the sensor-facing routes (``SENSOR_PATHS``, which
+      carry their own credential) must present it -- with OR without a tenant
+      header. (``path`` is the request path; ``None`` skips the route check, for
+      callers that only want the tenant-selection rule.)
+    * Naming a tenant is a privileged act: it always needs the service key, and
+      it is REFUSED when no key is configured (never honoured on trust, strict
+      mode or not), so an unauthenticated caller cannot pick a tenant.
     """
     ref = headers.get(TENANT_HEADER) or headers.get(TENANT_HEADER.lower())
+    key = service_key if service_key is not None else os.environ.get("SERVICE_API_KEY", "")
+    if key and path is not None and path not in OPEN_PATHS and path not in SENSOR_PATHS:
+        if not _key_ok(headers, key):
+            raise TenantError("service key required")
     if not ref:
         return None
-    key = service_key if service_key is not None else os.environ.get("SERVICE_API_KEY", "")
-    if key:
-        presented = headers.get(SERVICE_KEY_HEADER) or headers.get(SERVICE_KEY_HEADER.lower()) or ""
-        if not hmac.compare_digest(presented.encode("utf-8"), key.encode("utf-8")):
-            raise TenantError("tenant selection requires the service key")
-    elif strict():
-        raise TenantError("tenant selection requires SERVICE_API_KEY (TENANCY_STRICT)")
+    if not key:
+        raise TenantError("tenant selection requires SERVICE_API_KEY to be configured")
+    if not _key_ok(headers, key):
+        raise TenantError("tenant selection requires the service key")
     return norm(ref)
 
 
@@ -356,7 +379,7 @@ def aiohttp_middleware():
     @web.middleware
     async def _mw(request, handler):
         try:
-            tid = request_tenant(request.headers)
+            tid = request_tenant(request.headers, path=request.path)
         except TenantError as exc:
             return web.json_response({"error": "tenant_forbidden", "detail": str(exc)}, status=403)
         if tid is None:

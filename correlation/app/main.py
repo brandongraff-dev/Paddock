@@ -526,7 +526,7 @@ async def _tenant_middleware(request: Request, call_next):
     """Bind the tenant the caller (the orchestrator, with the service key)
     names via X-Paddock-Tenant; naming one without the key is refused."""
     try:
-        tid = tenancy.request_tenant(request.headers)
+        tid = tenancy.request_tenant(request.headers, path=request.url.path)
     except tenancy.TenantError as exc:
         return JSONResponse({"error": "tenant_forbidden", "detail": str(exc)}, status_code=403)
     if tid is None:

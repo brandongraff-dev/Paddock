@@ -24,6 +24,7 @@ from .. import licensing as lic_svc
 from ..auth import current_principal, require
 from ..config import settings
 from ..db import get_pool
+from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,7 @@ async def _otdiscovery_sites() -> tuple[int | None, int | None, str | None]:
         import httpx
 
         async with httpx.AsyncClient(timeout=_OTD_TIMEOUT) as http:
-            resp = await http.get(settings.otdiscovery_url.rstrip("/") + "/stats")
+            resp = await http.get(settings.otdiscovery_url.rstrip("/") + "/stats", headers=service_headers())
         if resp.status_code != 200:
             return None, None, f"otdiscovery /stats returned {resp.status_code}"
         sensors = (resp.json() or {}).get("sensors") or {}

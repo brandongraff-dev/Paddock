@@ -49,12 +49,41 @@ def test_tenant_header_needs_the_service_key(monkeypatch):
         T.request_tenant({"X-Paddock-Tenant": "not-a-uuid", "X-API-Key": "k"})
 
 
-def test_header_is_not_honoured_without_a_key_in_strict_mode(monkeypatch):
+def test_header_is_never_honoured_without_a_configured_key(monkeypatch):
+    """No SERVICE_API_KEY: nobody may pick a tenant, strict mode or not."""
     monkeypatch.delenv("SERVICE_API_KEY", raising=False)
-    assert T.request_tenant({"X-Paddock-Tenant": A}) == A  # dev: open network
+    monkeypatch.delenv("TENANCY_STRICT", raising=False)
+    with pytest.raises(T.TenantError):
+        T.request_tenant({"X-Paddock-Tenant": A})
+    with pytest.raises(T.TenantError):
+        T.request_tenant({"X-Paddock-Tenant": A, "X-API-Key": "anything"})
+    assert T.request_tenant({}) is None          # a tenantless dev call still works
     monkeypatch.setenv("TENANCY_STRICT", "true")
     with pytest.raises(T.TenantError):
         T.request_tenant({"X-Paddock-Tenant": A})
+
+
+def test_a_configured_key_is_required_on_every_non_probe_route(monkeypatch):
+    monkeypatch.setenv("SERVICE_API_KEY", "k")
+    # no tenant header at all: the key is still required (this used to be unchecked)
+    for path in ("/stats", "/sync/nvd", "/analyze", "/compute-paths", "/"):
+        with pytest.raises(T.TenantError):
+            T.request_tenant({}, path=path)
+        with pytest.raises(T.TenantError):
+            T.request_tenant({"X-API-Key": "wrong"}, path=path)
+        assert T.request_tenant({"X-API-Key": "k"}, path=path) is None
+        assert T.request_tenant({"X-API-Key": "k", "X-Paddock-Tenant": A}, path=path) == A
+    # probe routes stay open ...
+    for path in ("/healthz", "/readyz", "/metrics"):
+        assert T.request_tenant({}, path=path) is None
+    # ... but an open route still cannot be used to pick a tenant without the key
+    with pytest.raises(T.TenantError):
+        T.request_tenant({"X-Paddock-Tenant": A}, path="/healthz")
+    # sensor-facing routes carry their own credential (not a service call)
+    for path in ("/ingest", "/enroll", "/heartbeat"):
+        assert T.request_tenant({}, path=path) is None
+        with pytest.raises(T.TenantError):
+            T.request_tenant({"X-Paddock-Tenant": A}, path=path)
 
 
 def test_context_default_strict_and_outbound(monkeypatch):
