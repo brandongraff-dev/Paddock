@@ -61,10 +61,12 @@ export function WhyChips({ why, max, dense }: { why?: WhyFactor[]; max?: number;
           className="why-chip"
           data-key={w.key}
           data-zero={w.weight === 0 ? "true" : undefined}
-          title={w.weight ? `+${w.weight} priority` : "context"}
+          title={w.weight ? `${w.weight > 0 ? "+" : "\u2212"}${Math.abs(w.weight)} priority` : "context"}
         >
           {w.label}
-          {w.weight > 0 && <span className="w">+{w.weight}</span>}
+          {w.weight !== 0 && (
+            <span className="w">{w.weight > 0 ? `+${w.weight}` : `\u2212${Math.abs(w.weight)}`}</span>
+          )}
         </span>
       ))}
       {rest > 0 && <span className="why-chip" data-zero="true">+{rest} more</span>}

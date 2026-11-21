@@ -33,6 +33,8 @@ export interface FindingFilter {
   q?: string;
   suppressed?: SuppressedFilter;
   sla_breached?: boolean;
+  exploitability?: "unverified" | "confirmed" | "not_reproducible" | "inconclusive";
+  fix_verified?: boolean;
 }
 
 const PAGE = 50;

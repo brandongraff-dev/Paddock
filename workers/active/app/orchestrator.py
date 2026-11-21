@@ -144,6 +144,23 @@ class OrchestratorClient:
         r.raise_for_status()
         return r.json()
 
+    # -------- verification (safe checks) ------------------------------------
+
+    async def verification_result(
+        self, verification_id: str, payload: dict[str, Any], tenant_id: str | None = None
+    ) -> dict:
+        """POST /v1/verifications/{id}/result: report a safe-check verdict.
+
+        The orchestrator owns every consequence (finding state, priority,
+        reopen on a failed fix, events); the worker only reports what it saw.
+        """
+        headers = {"X-Paddock-Tenant": tenant_id} if tenant_id else {}
+        r = await self._request(
+            "POST", f"/v1/verifications/{verification_id}/result", json=payload, headers=headers
+        )
+        r.raise_for_status()
+        return r.json()
+
     # -------- audit --------------------------------------------------------
 
     async def outbound_log(self, row: dict[str, Any]) -> None:

@@ -25,6 +25,10 @@ export interface FindingQuery {
   suppressed?: SuppressedFilter;
   include_duplicates?: boolean;
   sla_breached?: boolean;
+  /** Safe-check verdict filter (schema 026). */
+  exploitability?: "unverified" | "confirmed" | "not_reproducible" | "inconclusive";
+  /** Only findings proven fixed (true) or not yet proven (false). */
+  fix_verified?: boolean;
   sort?: "last_seen" | "due_at" | "severity";
 }
 

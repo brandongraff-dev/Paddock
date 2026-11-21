@@ -61,6 +61,7 @@ from .routers import scim as scim_router
 from .routers import sso as sso_router
 from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
+from .verification import router as verification_router
 from .reports import router as reports_router
 from .scheduler import scheduler_loop
 from .billing import gate as billing_gate
@@ -302,6 +303,7 @@ def create_app() -> FastAPI:
     app.include_router(billing_router.router)
     app.include_router(billing_status.router)
     app.add_exception_handler(billing_gate.PaymentRequired, billing_gate.payment_required_handler)
+    app.include_router(verification_router.router)
 
     return app
 

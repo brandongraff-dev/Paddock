@@ -220,4 +220,12 @@ async def integration_inbound(
                 })
             except Exception:  # noqa: BLE001
                 logger.exception("publish_event_failed")
+    # A ticket closed as "fixed" is a claim: schedule the safe re-check that proves it.
+    from ..verification import service as verification_service
+
+    for ev in result.events:
+        if ev.data.get("status") == "fixed" and ev.data.get("finding_id"):
+            await verification_service.schedule_fix_check(
+                pool, redis, ev.data["finding_id"], trigger="fix_ticket",
+                actor=f"integration:{integration.get('kind') or 'ticket'}")
     return result.as_dict()

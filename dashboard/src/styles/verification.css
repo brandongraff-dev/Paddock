@@ -1,0 +1,41 @@
+/* ------------------------------------------------------------------ *
+ * Verified findings (schema 026): exploitability + "verified fixed"    *
+ * badges, evidence excerpt, verification history. Tokens only; no      *
+ * shadows, rims or hover glow (CLAUDE.md design rules).                *
+ * ------------------------------------------------------------------ */
+
+.xbadge {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 20px; padding: 0 7px; border-radius: var(--radius-s);
+  border: 1px solid var(--border-strong); background: var(--bg-2); color: var(--text-1);
+  font-size: 10.5px; letter-spacing: 0.02em; white-space: nowrap; flex-shrink: 0;
+}
+.xbadge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.9; }
+.xbadge[data-state="confirmed"] { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.xbadge[data-state="not_reproducible"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.xbadge[data-state="inconclusive"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.xbadge[data-state="unverified"] { color: var(--text-2); }
+.xbadge[data-state="unverified"]::before { background: transparent; border: 1px solid currentColor; }
+.xbadge[data-state="verified_fixed"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.xbadge[data-state="verified_fixed"]::before { border-radius: 1px; }
+
+.vpanel .vhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.vpanel .vhead .when { color: var(--text-2); font-size: 11px; }
+.vpanel .vactions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.vpanel .vnote { color: var(--text-2); font-size: 11px; }
+.vpanel .vnote[data-tone="bad"] { color: var(--bad); }
+
+.vevidence {
+  margin-top: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-s);
+  background: var(--bg-1); font-family: var(--mono); font-size: 11px; color: var(--text-1);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto;
+}
+.vevidence .k { color: var(--text-2); }
+
+.vhist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.vhist li {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center;
+  font-size: 11px; color: var(--text-1);
+}
+.vhist .t { color: var(--text-2); font-family: var(--mono); font-size: 10.5px; }
+.vhist .r { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

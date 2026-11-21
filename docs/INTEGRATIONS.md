@@ -79,6 +79,9 @@ The **Test** button is the one synchronous path: the API sends an
 | `finding.resolved` | fixed or verified closed | finding's | as above + `status` |
 | `finding.reopened` | a fixed finding came back | finding's | as above |
 | `finding.accepted` | risk-accepted, false positive or won't-fix | finding's | as above + `status` |
+| `finding.verified` | a safe check ran against a finding ([Verification](VERIFICATION.md)) | finding's | as above + `verdict`, `check_id`, `verification_id` |
+| `finding.fix_verified` | a fix was re-checked and could no longer be reproduced | finding's | as above |
+| `finding.fix_failed` | a fix did not hold; the finding was reopened (also emits `finding.reopened`) | finding's | as above |
 | `attack_path.opened` | a new path to a crown jewel | path's | `attack_path_id`, `fingerprint`, `source_asset`, `target_asset`, `exploitability`, `kev_on_path` |
 | `change.detected` | the attack surface changed | change's | `change_type`, `asset` |
 | `asset.discovered` | a new asset | none | `asset_id`, `asset`, `asset_kind`, `source` |

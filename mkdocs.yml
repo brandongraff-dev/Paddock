@@ -87,6 +87,7 @@ nav:
       - Integrations: INTEGRATIONS.md
       - Single sign-on (SSO): SSO.md
       - Reports: REPORTS.md
+      - Verified findings: VERIFICATION.md
       - Editions & licensing: EDITIONS.md
       - Billing (hosted edition): BILLING.md
   - Developers:
