@@ -440,6 +440,10 @@ _rule("POST", r"/v1/tls-grades/bulk", "write")
 _rule("PATCH", rf"/v1/scans/{_ANY}", "write")
 _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
 
+# --- standards exports (read) + SBOM / lockfile imports (scan) -------------- #
+_rule("GET", r"/v1/export/(findings\.ocsf|sarif|sbom|vex)", "read")
+_rule("POST", r"/v1/import/(sbom|lockfiles)", "scan")
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.

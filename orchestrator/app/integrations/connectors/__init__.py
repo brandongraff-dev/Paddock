@@ -10,7 +10,13 @@ import logging
 
 log = logging.getLogger(__name__)
 
-_MODULES: tuple[str, ...] = ()
+_MODULES: tuple[str, ...] = (
+    # SIEM (OCSF 1.3): see docs/INTEGRATIONS-SIEM.md
+    "splunk_hec",
+    "sentinel",
+    "elastic",
+    "syslog",
+)
 
 
 def load_all() -> None:

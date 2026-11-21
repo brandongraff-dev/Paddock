@@ -35,6 +35,7 @@ from .routers import findings as findings_router
 from .routers import ml as ml_router
 from .routers import monitoring as monitoring_router
 from .routers import devices as devices_router
+from .routers import exports as exports_router
 from .routers import fleet as fleet_router
 from .routers import ontology as ontology_router
 from .routers import remediation as remediation_router
@@ -227,6 +228,9 @@ def create_app() -> FastAPI:
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
     app.include_router(remediation_router.router)
+    # Standards exports/imports: OCSF, SARIF, CycloneDX/SPDX, VEX
+    app.include_router(exports_router.export_router)
+    app.include_router(exports_router.import_router)
 
     return app
 
