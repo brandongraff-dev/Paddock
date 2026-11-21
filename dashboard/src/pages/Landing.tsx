@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
-import Wordmark from "../brand/Wordmark";
+import Wordmark, { WORDMARK_ASPECT } from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
@@ -85,6 +85,7 @@ export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
   const [railRef, railIn] = useInView<HTMLDivElement>(0.15);
+  const [megaRef, megaIn] = useInView<HTMLElement>(0.2);
 
   return (
     <div className="lp">
@@ -217,6 +218,23 @@ export default function Landing() {
           Horse after Eadweard Muybridge, <i>The Horse in Motion</i>, 1878 (public domain).
         </span>
       </footer>
+
+      <section className="lp-mega" ref={megaRef}>
+        <div className="lp-mega-cta">
+          <h2>Close the paths before they&apos;re walked.</h2>
+          <div>
+            <Link to={enter} className="lp-run lp-mega-btn">
+              {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
+            </Link>
+            <a className="lp-mega-link" href="https://github.com/brandongraff-dev/cybersec" target="_blank" rel="noreferrer">
+              Read the source ↗
+            </a>
+          </div>
+        </div>
+        <div className={`lp-mega-mark${megaIn ? " in" : ""}`} style={{ aspectRatio: `${WORDMARK_ASPECT / 0.73}` }} aria-hidden="true">
+          <Wordmark fluid shimmer />
+        </div>
+      </section>
     </div>
   );
 }
