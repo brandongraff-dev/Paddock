@@ -203,7 +203,14 @@ async def stripe_webhook(request: Request) -> JSONResponse:
         declared = 0
     if declared > events.MAX_BODY_BYTES:
         return JSONResponse({"error": "payload_too_large"}, status_code=413)
-    raw = await request.body()
+    # No Content-Length (chunked) must not mean no cap: this route is public and
+    # the body is only authenticated AFTER it is read, so stop at the limit.
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > events.MAX_BODY_BYTES:
+            return JSONResponse({"error": "payload_too_large"}, status_code=413)
+    raw = bytes(buf)
     result = await events.handle_webhook(request.app, raw, request.headers.get("stripe-signature"))
     return JSONResponse(result.body, status_code=result.status)
 

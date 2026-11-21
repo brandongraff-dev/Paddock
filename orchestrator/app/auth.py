@@ -691,6 +691,40 @@ _NO_WRITE_AHEAD = frozenset({"/v1/scope/check", "/v1/billing/webhook"})
 _SENSOR_DATA_PLANE = re.compile(r"^/v1/sensors/(heartbeat|ingest/(claim|done))/?$")
 
 
+#: anonymous requests per client per minute on public routes (Stripe's webhook
+#: gets a larger bucket: it is signature-checked and arrives from few addresses).
+ANON_PUBLIC_PER_MIN = int(os.environ.get("PADDOCK_ANON_PUBLIC_PER_MIN", "240") or 240)
+ANON_WEBHOOK_PER_MIN = int(os.environ.get("PADDOCK_ANON_WEBHOOK_PER_MIN", "1200") or 1200)
+
+
+#: routes that read their own (larger) bodies with their own caps
+_ANON_OWN_BODY_CAP = re.compile(r"^/v1/(ingest|billing/webhook|integrations/|auth/sso/[^/]+/acs)")
+ANON_BODY_MAX = 256 * 1024
+
+
+def _anon_body_too_large(request: Request) -> bool:
+    """Declared body size for anonymous public routes whose payloads are tiny
+    JSON documents (exposure report, enrollment, invite redemption, trust unlock)."""
+    if _ANON_OWN_BODY_CAP.match(request.url.path):
+        return False
+    cl = request.headers.get("content-length")
+    return bool(cl and cl.isdigit() and int(cl) > ANON_BODY_MAX)
+
+
+def _anon_throttled(request: Request) -> bool:
+    from .netkey import SlidingWindowLimiter, client_key
+
+    state = request.app.state
+    lim = getattr(state, "anon_public_limiter", None)
+    if lim is None:
+        lim = state.anon_public_limiter = SlidingWindowLimiter(limit=1, window_s=60)
+    path = request.url.path.rstrip("/")
+    webhook = path == "/v1/billing/webhook"
+    lim.limit = ANON_WEBHOOK_PER_MIN if webhook else ANON_PUBLIC_PER_MIN
+    key = ("w:" if webhook else "p:") + client_key(client_ip(request))
+    return not lim.hit(key)
+
+
 class GovernanceMiddleware(BaseHTTPMiddleware):
     """Authenticate, enforce RBAC deny-closed, scope to a tenant, and audit.
 
@@ -739,6 +773,20 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
                     "AUTH_MODE=dev: injecting synthetic admin principal for "
                     "unauthenticated requests. DO NOT run this way in production."
                 )
+
+        # 1b. Anonymous callers of public routes: a cheap per-client throttle BEFORE
+        #     anything is written. Without it every anonymous POST costs two audit
+        #     rows (write-ahead + outcome) ahead of the handler's own limits, so
+        #     the audit chain itself becomes the amplifier.
+        if principal is None and required is None and _anon_body_too_large(request):
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        if principal is None and required is None and _anon_throttled(request):
+            resp = JSONResponse({"detail": "too many requests; slow down"}, status_code=429,
+                                headers={"Retry-After": "60"})
+            rid = getattr(request.state, "request_id", None)
+            if rid:
+                resp.headers["X-Request-ID"] = rid
+            return resp
 
         # 2. Bind the principal's tenant for everything below (RLS scoping).
         #    (Only a service principal can pick its tenant, via X-Paddock-Tenant;

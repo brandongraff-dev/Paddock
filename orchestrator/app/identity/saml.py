@@ -364,6 +364,28 @@ class SLSResult:
     session_indexes: list[str] = field(default_factory=list)
 
 
+MAX_SLS_XML_BYTES = 256 * 1024
+
+
+def _bounded_inflate(value: str) -> None:
+    """Raise ``SAMLError`` unless ``value`` (base64, raw-deflate) inflates to a sane size."""
+    import base64
+    import binascii
+    import zlib
+
+    try:
+        raw = base64.b64decode(value.encode("ascii"), validate=False)
+    except (binascii.Error, ValueError, UnicodeEncodeError):
+        raise SAMLError("invalid_logout", "malformed logout message") from None
+    d = zlib.decompressobj(-15)
+    try:
+        out = d.decompress(raw, MAX_SLS_XML_BYTES + 1)
+    except zlib.error:
+        return  # not deflated: the library falls back to the raw bytes (already <= the query cap)
+    if len(out) > MAX_SLS_XML_BYTES:
+        raise SAMLError("invalid_logout", "logout message too large")
+
+
 def process_sls(
     slug: str, cfg: dict[str, Any], *, query_string: str, request_id: str | None = None,
     sp_private_key: str | None = None,
@@ -379,6 +401,12 @@ def process_sls(
         raise SAMLError("invalid_binding", "no SAMLRequest or SAMLResponse (only HTTP-Redirect is supported)")
     if "Signature" not in get:
         raise SAMLError("invalid_logout", "single-logout messages must be signed")
+    # The XML library inflates the message BEFORE it checks the signature, with no
+    # output cap: a ~64 KB query could expand to tens of MB per unauthenticated
+    # request. Bound it ourselves first.
+    for part in ("SAMLRequest", "SAMLResponse"):
+        if part in get:
+            _bounded_inflate(get[part])
     auth = OneLogin_Saml2_Auth(
         _request_data(slug, which="sls_url", get=get, query_string=query_string),
         build_settings(slug, cfg, sp_private_key, require_signed_messages=True),

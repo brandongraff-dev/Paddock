@@ -24,8 +24,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .. import audit, sensors as svc
-from ..auth import Principal, current_principal
+from ..auth import Principal, client_ip, current_principal
 from ..db import get_pool
+from ..netkey import client_key
 
 router = APIRouter(prefix="/v1/sensors", tags=["sensors"])
 
@@ -201,8 +202,11 @@ def _client_ip(request: Request) -> str:
     p = getattr(request.state, "principal", None)
     fwd = request.headers.get("x-sensor-client-ip")
     if fwd and p is not None and getattr(p, "kind", "") == "service":
-        return fwd[:64]
-    return request.client.host if request.client else "unknown"
+        return client_key(fwd[:64])
+    # client_ip() honours X-Forwarded-For only from a configured trusted proxy;
+    # keying on the raw socket peer would make every client behind the proxy
+    # share one lockout bucket (one attacker locks every sensor out).
+    return client_key(client_ip(request))
 
 
 def _require_service(principal: Principal) -> None:

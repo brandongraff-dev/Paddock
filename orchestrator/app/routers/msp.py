@@ -24,6 +24,7 @@ from .. import audit, tenancy
 from ..auth import client_ip, current_principal, require
 from ..db import get_pool
 from ..msp import core, health, lifecycle
+from ..netkey import SlidingWindowLimiter, client_key
 from ..msp.core import DelegationError, MspContext
 
 logger = logging.getLogger(__name__)
@@ -268,10 +269,31 @@ async def new_invite(
 async def redeem_invite(body: RedeemIn, request: Request, pool=Depends(get_pool)) -> dict[str, Any]:
     """Public. The invite token is the credential; it is single use, expires,
     and only works while the customer is active."""
-    return await lifecycle.redeem_invite(
-        pool, token=body.token, username=body.username, password=body.password, email=body.email,
-        display_name=body.display_name, request_id=_rid(request), ip=client_ip(request),
-    )
+    ip = client_ip(request)
+    # Failed redemptions per client (the secret is 256-bit, so this is about cost
+    # and noise: a bad attempt must not be a free amplifier). Held on the app so
+    # it is per-process state with the app's lifetime.
+    lim = _redeem_limiter(request)
+    who = client_key(ip)
+    if lim.blocked(who):
+        raise HTTPException(status_code=429, detail="too many failed attempts; wait and retry",
+                            headers={"Retry-After": "600"})
+    try:
+        return await lifecycle.redeem_invite(
+            pool, token=body.token, username=body.username, password=body.password, email=body.email,
+            display_name=body.display_name, request_id=_rid(request), ip=ip,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 400:
+            lim.hit(who)
+        raise
+
+
+def _redeem_limiter(request: Request) -> SlidingWindowLimiter:
+    lim = getattr(request.app.state, "msp_redeem_limiter", None)
+    if lim is None:
+        lim = request.app.state.msp_redeem_limiter = SlidingWindowLimiter(limit=10, window_s=600)
+    return lim
 
 
 # --------------------------------------------------------------------------- #

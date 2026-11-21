@@ -16,7 +16,7 @@ from typing import Any
 
 from .. import lifecycle
 from ..scope import normalize
-from .common import ParseResult, clean
+from .common import ParseResult, clean, scrub_json
 
 _NET_KINDS = {"domain", "subdomain", "ipv4", "ipv6", "endpoint"}
 
@@ -71,7 +71,7 @@ async def persist(con, res: ParseResult, *, source: str, project: str | None) ->
         row = await con.fetchrow(
             findings_router._BULK_SQL, aid, f.rule_id, f.rule_source, f.severity,
             clean(f.title, 512) or f.rule_id, f.description or f.title, f.impact, f.remediation,
-            json.dumps(f.evidence, default=str), f.cvss, None, list(f.references), json.dumps(md, default=str))
+            json.dumps(scrub_json(f.evidence), default=str), f.cvss, None, list(f.references), json.dumps(scrub_json(md), default=str))
         d = findings_router._coerce_finding_row(row)
         inserted = d.pop("was_inserted")
         d.update(await lifecycle.apply_ingest(con, d, suppressions, lc_cache))
@@ -117,8 +117,8 @@ async def _store_components(con, exports_router, pname: str, fmt: str, comps: li
         [c["ecosystem"] for c in comps], [c["name"] for c in comps], [c["version"] for c in comps],
         [c.get("purl") for c in comps], [bool(c.get("direct")) for c in comps],
         [min(int(c.get("depth") or 0), 32767) for c in comps],
-        [json.dumps(c.get("paths") or []) for c in comps],
-        [json.dumps(c.get("metadata") or {}) for c in comps])
+        [json.dumps(scrub_json(c.get("paths") or [])) for c in comps],
+        [json.dumps(scrub_json(c.get("metadata") or {})) for c in comps])
     ids = {(r["ecosystem"], r["name"], r["version"]): r["id"] for r in rows}
     n_v = 0
     for v in vulns:

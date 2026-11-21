@@ -202,13 +202,22 @@ def parse_payload(raw_text: str, hint: Optional[str] = None, hints: Optional[Hin
     res = ParseResult(format=fmt)
     res.errors, res.skipped = res_lines.errors, res_lines.skipped
     body = _unwrap(doc, fmt)
-    if fmt in ("nuclei", "ocsf"):
-        if not isinstance(body, list):
-            raise IngestError(f"{fmt} input must be JSON lines or an array of records")
-        (parse_nuclei if fmt == "nuclei" else parse_ocsf)(iter(body), h, res)
-        return res
-    if not isinstance(body, dict):
-        raise IngestError(f"{fmt} input must be a JSON object")
-    {"sarif": parse_sarif, "trivy": parse_trivy, "grype": parse_grype, "semgrep": parse_semgrep,
-     "zap": parse_zap, "cyclonedx": parse_sbom_doc, "spdx": parse_sbom_doc}[fmt](body, h, res)
+    try:
+        if fmt in ("nuclei", "ocsf"):
+            if not isinstance(body, list):
+                raise IngestError(f"{fmt} input must be JSON lines or an array of records")
+            (parse_nuclei if fmt == "nuclei" else parse_ocsf)(iter(body), h, res)
+            return res
+        if not isinstance(body, dict):
+            raise IngestError(f"{fmt} input must be a JSON object")
+        {"sarif": parse_sarif, "trivy": parse_trivy, "grype": parse_grype, "semgrep": parse_semgrep,
+         "zap": parse_zap, "cyclonedx": parse_sbom_doc, "spdx": parse_sbom_doc}[fmt](body, h, res)
+    except IngestError:
+        raise
+    except (TypeError, AttributeError, ValueError, KeyError, IndexError, OverflowError, UnicodeError,
+            RecursionError, ArithmeticError):
+        # A field of the wrong type deep inside a hostile (or just buggy) document.
+        # Per-record guards catch the common cases; this is the net under them so
+        # the answer is always a 422, never a 500 with the stack in the logs.
+        raise IngestError(f"the {fmt} document has an unexpected structure", 422) from None
     return res

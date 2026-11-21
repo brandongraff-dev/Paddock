@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from .. import audit, tenancy
 from ..auth import client_ip
 from ..db import get_pool
+from ..netkey import client_key
 from ..ingest import CSV_COLUMNS, FORMATS, Hints, IngestError, decode_body, parse_payload, store, tokens
 from ..queue import get_redis, publish_event
 
@@ -66,27 +67,39 @@ def max_findings() -> int:
 class _Window:
     """Sliding one-minute window per key (in process memory; bounded)."""
 
+    MAX_KEYS = 10_000
+
     def __init__(self) -> None:
         self._hits: dict[str, deque[float]] = {}
 
-    def allow(self, key: str, limit: int) -> bool:
-        now = time.monotonic()
-        q = self._hits.setdefault(key, deque())
+    def _sweep(self, now: float) -> None:
+        for k in [k for k, v in self._hits.items() if not v or now - v[-1] > 60.0]:
+            self._hits.pop(k, None)
+        if len(self._hits) >= self.MAX_KEYS:  # all live: drop the least active tenth
+            for k in sorted(self._hits, key=lambda k: len(self._hits[k]))[: self.MAX_KEYS // 10]:
+                self._hits.pop(k, None)
+
+    def _queue(self, key: str, now: float) -> deque[float]:
+        q = self._hits.get(key)
+        if q is None:
+            if len(self._hits) >= self.MAX_KEYS:
+                self._sweep(now)
+            q = self._hits[key] = deque(maxlen=6001)
         while q and now - q[0] > 60.0:
             q.popleft()
+        return q
+
+    def allow(self, key: str, limit: int) -> bool:
+        now = time.monotonic()
+        q = self._queue(key, now)
         if len(q) >= limit:
             return False
         q.append(now)
-        if len(self._hits) > 10_000:
-            for k in [k for k, v in self._hits.items() if not v or now - v[-1] > 60.0]:
-                self._hits.pop(k, None)
         return True
 
     def hit(self, key: str) -> int:
-        q = self._hits.setdefault(key, deque())
         now = time.monotonic()
-        while q and now - q[0] > 60.0:
-            q.popleft()
+        q = self._queue(key, now)
         q.append(now)
         return len(q)
 
@@ -188,7 +201,7 @@ async def ingest(
         else:
             ok = False
         if not ok or row is None or not row["enabled"] or row["revoked_at"] is not None:
-            if failure_limiter.hit(f"fail:{ip}") > FAILED_PER_MIN:
+            if failure_limiter.hit(f"fail:{client_key(ip)}") > FAILED_PER_MIN:
                 return _json(429, {"detail": "too many invalid tokens"}, {"Retry-After": "60"})
             return _json(401, {"detail": "invalid ingest token"})
         src = dict(row)
