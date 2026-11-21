@@ -205,28 +205,8 @@ export default function Landing() {
             </div>
           ))}
         </div>
-        <div className="lp-proof">
-          <div>
-            <b>10,000,000</b>
-            <span>hostile targets fuzzed against WHATWG + RFC 3986 parsers</span>
-          </div>
-          <div>
-            <b>0</b>
-            <span>scope parser differentials after hardening (from 77,554 per million)</span>
-          </div>
-          <div>
-            <b>SHA-256</b>
-            <span>hash-chained, verifiable audit log of every decision</span>
-          </div>
-        </div>
       </section>
 
-      <footer className="lp-foot">
-        <span className="mono">paddock · AGPL-3.0 · self-hosted</span>
-        <span>
-          Horse after Eadweard Muybridge, <i>The Horse in Motion</i>, 1878 (public domain).
-        </span>
-      </footer>
 
       <section className="lp-mega" ref={megaRef}>
         <div className="lp-mega-cta">
