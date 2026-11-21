@@ -14,6 +14,7 @@ import DetailDrawer from "./DetailDrawer";
 import CommandPalette from "./CommandPalette";
 import { ClassificationBanner } from "./Classification";
 import HorseMark from "../brand/HorseMark";
+import PixelField from "../brand/PixelField";
 
 interface NavEntry {
   to: string;
@@ -392,6 +393,7 @@ export default function Shell({ children, noScroll }: Props) {
 
   return (
     <div className="shell">
+      <PixelField className="shell-pixels" cell={6} animate={false} />
       <nav className="rail" aria-label="primary">
         <NavLink to="/welcome" className="brand" title="Paddock — about">
           <HorseMark size={26} />
@@ -421,6 +423,7 @@ export default function Shell({ children, noScroll }: Props) {
       </nav>
 
       <div className="canvas">
+        <PixelField className="canvas-pixels" cell={6} animate={false} />
         <header className="topbar">
           <div className="crumbs">
             <span className="crumb-group">{group}</span>
