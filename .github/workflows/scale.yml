@@ -1,0 +1,53 @@
+name: Scale test
+
+# Seeds 10k assets / 100k findings / 1M scope decisions into a scratch
+# Postgres and times the main API reads (hardening/scale_test.py). Too slow
+# for every PR: nightly + on demand. Results are attached as an artifact and
+# printed in the job summary; compare with docs/OPERATIONS.md "Scale test".
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      findings:
+        description: "number of findings to seed"
+        default: "100000"
+
+permissions:
+  contents: read
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install orchestrator
+        run: pip install -e "orchestrator[dev]"
+      - name: Run scale test
+        run: |
+          python hardening/scale_test.py \
+            --admin-dsn postgresql://postgres:postgres@localhost:5432/postgres \
+            --findings "${{ github.event.inputs.findings || '100000' }}" \
+            --markdown scale-results.md --budget-ms 1000
+          cat scale-results.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scale-results
+          path: scale-results.md

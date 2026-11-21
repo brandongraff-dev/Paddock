@@ -1,4 +1,4 @@
-"""palantir-asm SCA (Software Composition Analysis) service.
+"""paddock SCA (Software Composition Analysis) service.
 
 Extracts the dependency graph (SBOM) from a build's lockfiles, matches the
 components against OSV.dev, and flags the supply-chain *risk the owner is

@@ -46,11 +46,11 @@
   color: var(--text-1);
 }
 .fl-agent:hover {
-  border-color: color-mix(in srgb, var(--accent, #4ea3ff) 50%, var(--border));
+  border-color: color-mix(in srgb, var(--accent, #9fc2d8) 50%, var(--border));
 }
 .fl-agent.selected {
-  border-color: var(--accent, #4ea3ff);
-  background: color-mix(in srgb, var(--accent, #4ea3ff) 8%, transparent);
+  border-color: var(--accent, #9fc2d8);
+  background: color-mix(in srgb, var(--accent, #9fc2d8) 8%, transparent);
 }
 .fl-agent-top {
   display: flex;
@@ -88,10 +88,10 @@
   font-size: 10px;
   letter-spacing: 0.04em;
 }
-.fl-agent-status.s-online { color: #58d68d; }
-.fl-agent-status.s-stale { color: #f0b429; }
-.fl-agent-status.s-revoked { color: #e06c75; }
-.fl-agent-status.s-enrolled { color: #4ea3ff; }
+.fl-agent-status.s-online { color: #8fbf8a; }
+.fl-agent-status.s-stale { color: #e3b265; }
+.fl-agent-status.s-revoked { color: #e67350; }
+.fl-agent-status.s-enrolled { color: #9fc2d8; }
 .fl-caps {
   display: flex;
   gap: 4px;
@@ -199,7 +199,7 @@
   font-weight: 600;
 }
 .fl-action-target {
-  color: var(--accent, #4ea3ff);
+  color: var(--accent, #9fc2d8);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -219,12 +219,12 @@
   border: 1px solid;
 }
 .fl-badge.dry {
-  color: #f0b429;
+  color: #e3b265;
   border-color: #5a4a1e;
   background: #2a2412;
 }
 .fl-badge.real {
-  color: #e06c75;
+  color: #e67350;
   border-color: #5a2a30;
   background: #2a1a1e;
 }
@@ -254,7 +254,7 @@
 /* ------------------------------- buttons ------------------------------- */
 
 .fl-page button.primary {
-  background: var(--accent, #4ea3ff);
+  background: var(--accent, #9fc2d8);
   color: #04121f;
   border: none;
   border-radius: 5px;
@@ -281,11 +281,11 @@
   cursor: not-allowed;
 }
 .fl-page button.ghost.ok {
-  color: #58d68d;
+  color: #8fbf8a;
   border-color: #2a5a3a;
 }
 .fl-page button.ghost.danger {
-  color: #e06c75;
+  color: #e67350;
   border-color: #5a2a30;
 }
 

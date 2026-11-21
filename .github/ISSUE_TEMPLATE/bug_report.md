@@ -10,7 +10,7 @@ Thanks for the report. Before filing:
  • Do NOT include output from scans of a real/production target you don't fully
    control. Reproduce against the demo graph (`make demo`) or scanme.nmap.org.
  • Do NOT paste secrets, `.env` contents, API keys, or JWTs.
- • Security vulnerabilities in palantir-asm itself: see SECURITY.md — report
+ • Security vulnerabilities in Paddock itself: see SECURITY.md — report
    privately, do not open a public issue.
 -->
 
@@ -41,7 +41,7 @@ What you expected instead.
 
 ## Environment
 
-- palantir-asm version / commit:
+- Paddock version / commit:
 - Profile: `make up` (dev) / `docker compose -f docker-compose.yml` (hardened)
 - OS + Docker / Compose versions:
 

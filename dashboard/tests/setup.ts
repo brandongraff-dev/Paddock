@@ -43,3 +43,9 @@ if (typeof window !== "undefined" && !window.matchMedia) {
     }),
   });
 }
+
+// jsdom has no canvas backend and logs "Not implemented" on getContext; the
+// brand canvases already treat a null context as "render nothing".
+if (typeof HTMLCanvasElement !== "undefined") {
+  HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
+}

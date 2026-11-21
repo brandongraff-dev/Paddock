@@ -1,0 +1,69 @@
+{{- /* Queue workers: no inbound port. HOME is an emptyDir so tool caches
+       (subfinder config, chromium profile) work on a read-only root fs. */ -}}
+{{- if .Values.workerPassive.enabled }}
+{{- $v := .Values.workerPassive -}}
+{{- $env := include "paddock.commonPythonEnv" . -}}
+{{- $env = printf "%s\n- name: WORKER_ID\n  valueFrom:\n    fieldRef:\n      fieldPath: metadata.name\n- name: HOME\n  value: /home/appuser" $env -}}
+{{- range $k, $val := $v.env }}
+{{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
+{{- end }}
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "worker-passive" "values" $v
+  "env" $env
+  "probes" (include "paddock.workerProbes" .)
+  "extraMounts" "- name: home\n  mountPath: /home/appuser"
+  "extraVolumes" "- name: home\n  emptyDir:\n    sizeLimit: 1Gi") }}
+{{- end }}
+{{- if .Values.workerActive.enabled }}
+{{- $v := .Values.workerActive -}}
+{{- $sel := dict "root" $ "component" "worker-active" -}}
+{{- $env := include "paddock.commonPythonEnv" . -}}
+{{- $env = printf "%s\n- name: WORKER_ID\n  valueFrom:\n    fieldRef:\n      fieldPath: metadata.name\n- name: HOME\n  value: /home/appuser" $env -}}
+{{- range $k, $val := $v.env }}
+{{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
+{{- end }}
+{{- $data := ternary (printf "- name: data\n  persistentVolumeClaim:\n    claimName: %s-data" (include "paddock.componentName" $sel)) "- name: data\n  emptyDir:\n    sizeLimit: 2Gi" $v.screenshots.persistence }}
+---
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "worker-active" "values" $v
+  "env" $env
+  "netRaw" $v.addNetRaw
+  "probes" (include "paddock.workerProbes" .)
+  "extraMounts" "- name: home\n  mountPath: /home/appuser\n- name: data\n  mountPath: /data"
+  "extraVolumes" (printf "- name: home\n  emptyDir:\n    sizeLimit: 2Gi\n%s" $data)) }}
+{{- if $v.screenshots.persistence }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "paddock.componentName" $sel }}-data
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $v.screenshots.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $v.screenshots.size }}
+{{- end }}
+{{- end }}
+{{- if .Values.integrationsWorker.enabled }}
+{{- $v := .Values.integrationsWorker -}}
+{{- $env := include "paddock.commonPythonEnv" . -}}
+{{- $env = printf "%s\n%s" $env (include "paddock.secretEnv" (dict "root" $ "name" "PADDOCK_SECRET_KEY" "optional" true)) -}}
+{{- $env = printf "%s\n- name: AUTH_MODE\n  value: %s" $env (.Values.config.authMode | quote) -}}
+{{- range $k, $val := $v.env }}
+{{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
+{{- end }}
+---
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "integrations-worker" "values" $v
+  "image" .Values.orchestrator.image
+  "command" $v.command
+  "env" $env
+  "initContainers" (include "paddock.waitForSchemaInit" .)
+  "extraVolumes" (include "paddock.schemaVolume" .)
+  "probes" (include "paddock.workerProbes" .)) }}
+{{- end }}

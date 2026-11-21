@@ -1,6 +1,6 @@
-# Contributing to palantir-asm
+# Contributing to Paddock
 
-Thanks for wanting to help. palantir-asm is a **defensive, detection-only**
+Thanks for wanting to help. Paddock is a **defensive, detection-only**
 Attack Surface Management platform, and that framing shapes what we will and
 won't merge. Please skim the [README](README.md) and [SECURITY.md](SECURITY.md)
 before you start — especially the "Hard rules" and §6 ("Detection, not
@@ -15,6 +15,7 @@ exploitation").
 - [Linting & formatting](#linting--formatting)
 - [Making a change](#making-a-change)
 - [Pull requests](#pull-requests)
+- [Contributor License Agreement (CLA)](#contributor-license-agreement-cla)
 
 ## Ground rules
 
@@ -118,7 +119,12 @@ incident.
   freely `TRUNCATE` — so that URL must only ever point at a **disposable** DB.
 - The orchestrator suite uses **`pytest-postgresql`**, which spins up its own
   throwaway Postgres instance and a fresh database **per test**. It never reads
-  your `DATABASE_URL`.
+  your `DATABASE_URL`. `pg_ctl` refuses to run as root (e.g. in dev
+  containers); there, start a disposable server as another user and point the
+  suite at it with `ORCH_TEST_PG=127.0.0.1:<port>[:<user>]` — it still creates
+  and drops its own database per test.
+- Scope changes must keep the differential fuzzer green:
+  `pip install ada-url && python hardening/stress_scope.py --n 1000000`.
 - When you add a DB test, follow the existing `conftest.py` pattern (skip
   without a test DSN; create/own your data; clean up after). **Never** hardcode
   a DSN, and never let a suite connect to the compose `postgres` service that's
@@ -178,3 +184,22 @@ egress, or auth boundaries — that scrutiny is the point.
 
 By contributing, you agree your contributions are licensed under the project's
 [AGPL-3.0](LICENSE).
+
+## Contributor License Agreement (CLA)
+
+Before your first pull request can be merged you'll be asked to sign the
+[CLA](CLA.md) — a one-line PR comment, checked by the CLA Assistant bot
+(`.github/workflows/cla.yml`). Companies contributing on behalf of employees
+sign the Corporate CLA once.
+
+**Why:** Paddock is AGPL-3.0, and it is *also* offered under commercial
+licenses (see [docs/EDITIONS.md](docs/EDITIONS.md)) — that is what pays for
+sustained full-time work on the open-source code. The project can only offer
+code under a second license if it has the right to, and it can't relicense
+contributions it doesn't have rights to. The CLA grants that right while you
+**keep your copyright**, and it commits the project to keeping every accepted
+contribution available under the AGPL (or another OSI-approved license). It
+also adds an explicit patent grant, which protects every user.
+
+If you can't sign a CLA, you can still help: open issues, review PRs, and
+write detailed bug reports — those don't need one.

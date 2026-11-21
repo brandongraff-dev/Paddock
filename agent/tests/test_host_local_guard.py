@@ -6,8 +6,8 @@ import inspect
 
 import pytest
 
-from palantir_agent import actions
-from palantir_agent.actions import Action, HostLocalError, apply_action, assert_host_local
+from paddock_agent import actions
+from paddock_agent.actions import Action, HostLocalError, apply_action, assert_host_local
 
 
 # Valid host-local targets normalise cleanly --------------------------------- #
@@ -65,7 +65,7 @@ def test_no_remote_host_parameter_anywhere_in_action_or_apply():
 def test_enforcer_apply_signature_takes_only_type_and_target():
     """The enforcer's whole vocabulary is (action_type, target) on THIS host —
     there is no destination/host argument to route a block elsewhere."""
-    from palantir_agent.platform_block import LinuxEnforcer
+    from paddock_agent.platform_block import LinuxEnforcer
     sig = inspect.signature(LinuxEnforcer.apply)
     params = [p for p in sig.parameters if p != "self"]
     assert params == ["action_type", "target"]

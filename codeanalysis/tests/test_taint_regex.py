@@ -97,3 +97,59 @@ def test_scan_files_routes_by_extension():
     langs = {h["language"] for h in hits}
     assert "python" in langs and "javascript" in langs
     assert all(h["file"] != "readme.md" for h in hits)
+
+
+# --------------------------------------------------------------------------- #
+# Rule-pack integrity + coverage added with the bundled rules file
+# --------------------------------------------------------------------------- #
+
+def test_rules_file_ships_and_is_populated():
+    # The rules once went missing (a stray gitignore) and the scanner silently
+    # found nothing. Guard against that ever happening quietly again.
+    rules = tf._rules()
+    assert len(rules["python_sources"]) >= 10
+    assert len(rules["regex_rules"]) >= 15
+    import re
+    for r in rules["regex_rules"]:
+        re.compile(r["pattern"])
+        assert r["class"] and r["severity"] and r["cwe"].startswith("CWE-")
+
+
+def test_js_tls_verification_disabled():
+    classes, _ = _classes("a.js", "https.request({ host, rejectUnauthorized: false });\n", "javascript")
+    assert "insecure_transport" in classes
+
+
+def test_go_tls_verification_disabled():
+    src = "tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}\n"
+    classes, _ = _classes("a.go", src, "go")
+    assert "insecure_transport" in classes
+
+
+def test_js_eval_of_request_input():
+    classes, _ = _classes("a.js", "app.get('/x', (req) => eval(req.query.code));\n", "javascript")
+    assert "code_injection" in classes
+
+
+def test_known_key_format_in_any_language():
+    for path, lang in (("a.js", "javascript"), ("a.go", "go")):
+        classes, _ = _classes(path, 'x := "ghp_' + "a1B2" * 9 + '"\n', lang)
+        assert "hardcoded_secret" in classes
+
+
+def test_regexp_exec_is_not_command_injection():
+    src = "const m = /id=(\\d+)/.exec(req.query.q);\nconst n = pattern.exec(req.body.s);\n"
+    classes, _ = _classes("a.js", src, "javascript")
+    assert "command_injection" not in classes
+
+
+def test_identifier_values_are_not_secrets():
+    src = "const map = {\n  certificate: 'cert_added',\n  secret_candidate: 'secret_found',\n};\n"
+    _, hits = _classes("a.ts", src, "typescript")
+    assert hits == []
+
+
+def test_window_match_reported_once_on_its_own_line():
+    src = "const a = 1;\nconst b = 2;\nconst h = crypto.createHash('md5');\n"
+    _, hits = _classes("a.js", src, "javascript")
+    assert [h["start_line"] for h in hits] == [3]

@@ -69,6 +69,7 @@ export default function FilterBar({
             <option value="open">Open</option>
             <option value="triaged">Triaged</option>
             <option value="fixed">Fixed</option>
+            <option value="accepted">Accepted</option>
             <option value="accepted_risk">Accepted risk</option>
             <option value="false_positive">False positive</option>
           </select>

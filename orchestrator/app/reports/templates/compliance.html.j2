@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ p.framework.name }} {{ p.framework.version }} evidence pack · {{ p.org_name }}</title>
+<style>
+{{ font_css | safe }}
+{% include "report.css" %}
+.score { display: flex; gap: 0; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule-2); margin: 4pt 0 6pt; }
+.score div { flex: 1; padding: 6pt 8pt 7pt; border-left: 1px solid var(--rule); }
+.score div:first-child { border-left: 0; padding-left: 0; }
+.score b { display: block; font-family: var(--serif); font-weight: 400; font-size: 20pt; line-height: 1.1; }
+.score span { font-size: 6.8pt; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.fam { margin-top: 10pt; }
+.fam h2 { border-top: 1px solid var(--rule-2); padding-top: 6pt; }
+.ev-rows { margin: 2pt 0 2pt 54pt; width: calc(100% - 54pt); font-size: 7pt; }
+.ev-rows td, .ev-rows th { padding: 1.5pt 6pt 1.5pt 0; }
+.att { margin: 3pt 0 0 54pt; font-size: 7.6pt; color: var(--ink-2); font-style: italic; font-family: var(--serif); }
+</style>
+</head>
+<body>
+{% set sheet_cls = "sheet letter" if page_size == "Letter" else "sheet" %}
+{% set fw = p.framework %}
+<section class="{{ sheet_cls }}">
+  <header class="mast">
+    <div class="brand">{{ svg.horse_mark(24) }}<span class="word">Paddock</span></div>
+    <div class="kind">Compliance evidence pack<b>{{ p.org_name }} · {{ p.generated_at | date }}</b></div>
+  </header>
+  <h1>{{ fw.name }} <em>{{ fw.version }}</em></h1>
+  <p class="dek">{{ fw.description }}</p>
+
+  <div class="score">
+    <div><b>{{ fw.counts.satisfied }}</b><span>Satisfied</span></div>
+    <div><b>{{ fw.counts.partial }}</b><span>Partial</span></div>
+    <div><b>{{ fw.counts.gap }}</b><span>Gap</span></div>
+    <div><b>{{ fw.counts.requires_attestation }}</b><span>Requires attestation</span></div>
+    <div><b>{{ fw.total }}</b><span>Controls mapped</span></div>
+  </div>
+  {{ svg.status_strip(fw.counts, width=680, height=8) }}
+  <div class="legend" style="margin-bottom:10pt">
+    {% for s in ["satisfied","partial","gap","requires_attestation"] %}<span><i style="background:{{ STATUS[s] }}"></i>{{ s | title_ }} <span class="mono">{{ fw.counts[s] }}</span></span>{% endfor %}
+  </div>
+  <p class="disclaimer">{{ p.disclaimer }}</p>
+
+  {% for fam, controls in families.items() %}
+  <div class="fam">
+    <h2>{{ fam }}</h2>
+    {% for c in controls %}
+    <div class="control">
+      <div class="control-h">
+        <span class="id">{{ c.id }}</span>
+        <span class="tt">{{ c.title }}</span>
+        <span class="status st-{{ c.status }}">{{ c.status | title_ }}</span>
+      </div>
+      <p>{{ c.summary }}</p>
+      {% if c.rationale %}<p><b>How Paddock evidences this:</b> {{ c.rationale }}</p>{% endif %}
+      {% if c.evidence %}
+      <ul class="ev">
+        {% for e in c.evidence %}
+        <li><span class="es es-{{ e.status }}">{{ e.status }}</span><b>{{ e.title }}.</b> {{ e.detail }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if c.attestation and c.status != 'satisfied' %}<div class="att">Needs from you: {{ c.attestation }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="section" style="margin-top:12pt">
+    <h2>Evidence appendix</h2>
+    {% for key, e in evidence.items() if e.rows %}
+    <h3>{{ e.title }} <span class="es es-{{ e.status }}">· {{ e.status }}</span></h3>
+    <table class="ev-rows" style="margin-left:0;width:100%">
+      <thead><tr>{% for k in e.rows[0].keys() %}<th>{{ k | title_ }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in e.rows[:12] %}<tr>{% for v in row.values() %}<td class="w">{{ v if v is not none else '—' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table>
+    {% endfor %}
+    <p class="defs">Generated {{ p.generated_at | date("%-d %b %Y %H:%M UTC") }} from data classified up to <b>{{ p.clearance }}</b>. {{ fw.publisher }}{% if fw.url %} · {{ fw.url }}{% endif %}.</p>
+  </div>
+  <div class="foot"><span>Paddock · {{ footer_left }}</span><span>{{ fw.name }}</span></div>
+</section>
+</body>
+</html>

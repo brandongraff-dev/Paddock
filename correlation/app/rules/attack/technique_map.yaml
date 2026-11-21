@@ -1,4 +1,4 @@
-# MITRE ATT&CK + CWE technique map for palantir-asm findings.
+# MITRE ATT&CK + CWE technique map for paddock findings.
 #
 # Each finding produced by the platform is tagged with the technique(s) /
 # tactic(s) / weakness(es) it represents, so findings roll up into an

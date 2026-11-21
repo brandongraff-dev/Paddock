@@ -1,4 +1,4 @@
-# palantir-asm — operator targets
+# paddock — operator targets
 .DEFAULT_GOAL := help
 
 COMPOSE ?= docker compose
@@ -21,7 +21,7 @@ demo: ## seed a demo graph + print the dashboard URL and default login
 	python3 scripts/seed_demo.py
 	@echo ""
 	@echo "  ┌─────────────────────────────────────────────────────────────┐"
-	@echo "  │  palantir-asm is ready                                        │"
+	@echo "  │  paddock is ready                                        │"
 	@echo "  ├─────────────────────────────────────────────────────────────┤"
 	@echo "  │  Dashboard      http://localhost:3000                         │"
 	@echo "  │  API docs       http://localhost:8080/docs                    │"
@@ -60,6 +60,46 @@ status: ## hit /healthz on every service
 	@echo "intel:"        && curl -fsS http://localhost:8090/healthz || echo "  down"
 	@echo "correlation:"  && curl -fsS http://localhost:8091/healthz || echo "  down"
 	@echo "dashboard:"    && curl -fsS -I http://localhost:3000 | head -1 || echo "  down"
+
+# ---------- lite (single node) ----------
+# postgres + redis + orchestrator + dashboard + worker-passive, hardened
+# (AUTH_MODE=enforce, REQUIRE_SCOPE_PROOF=true). No neo4j/graphsync/ML/LLM.
+
+LITE ?= $(COMPOSE) -f docker-compose.lite.yml
+
+.PHONY: lite-env
+lite-env:
+	@test -f .env || (cp .env.example .env && echo "==> created .env from .env.example")
+	@grep -Eq '^SERVICE_API_KEY=.+' .env || ( \
+	  echo "SERVICE_API_KEY=$$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" >> .env && \
+	  echo "==> generated SERVICE_API_KEY in .env (worker -> orchestrator credential)")
+
+.PHONY: lite
+lite: lite-env ## single-node LITE stack (~1 GB RAM): sign in as admin, the /setup wizard takes it from there
+	$(LITE) up -d --build
+	@echo ""
+	@echo "  Paddock lite is starting:  http://localhost:3000"
+	@echo "  Sign in as 'admin' with ADMIN_BOOTSTRAP_PASSWORD from .env;"
+	@echo "  the first-run wizard (/setup) walks you through domain -> proof -> first scan."
+	@echo "  make lite-demo seeds demo data · make lite-status · make lite-down"
+
+.PHONY: lite-active
+lite-active: lite-env ## lite + the active worker (polite HTTP/TLS/port probing)
+	$(LITE) --profile active up -d --build
+
+.PHONY: lite-demo
+lite-demo: ## seed the demo graph into the lite stack (uses SERVICE_API_KEY from .env)
+	@SERVICE_API_KEY="$$(grep -E '^SERVICE_API_KEY=' .env | tail -1 | cut -d= -f2-)" python3 scripts/seed_demo.py
+
+.PHONY: lite-status
+lite-status: ## health of the lite stack
+	@$(LITE) ps
+	@curl -fsS $(ORCH_URL)/healthz && echo "  <- orchestrator" || echo "orchestrator: down"
+	@curl -fsS -o /dev/null -w "%{http_code}  <- dashboard\n" http://localhost:3000/ || echo "dashboard: down"
+
+.PHONY: lite-down
+lite-down: ## stop the lite stack (keeps data)
+	$(LITE) --profile active down
 
 # ---------- scope ----------
 
@@ -141,6 +181,51 @@ integration: ## end-to-end pipeline harness (drives all services, asserts cross-
 .PHONY: realrun
 realrun: ## authorized real-target run + crude FP measurement (default scanme.nmap.org)
 	python3 hardening/realrun.py $(TARGET)
+
+# ---------- developer platform (API contract, SDKs, docs) ----------
+
+.PHONY: api-regen
+api-regen: ## regenerate docs/api/openapi.json + the Python and TypeScript SDKs from code
+	python3 scripts/export_openapi.py
+	python3 sdk/python/codegen.py
+	node sdk/typescript/scripts/codegen.mjs
+
+.PHONY: api-check
+api-check: ## fail if the committed spec/SDKs are stale (what CI runs)
+	python3 scripts/export_openapi.py --check
+	python3 sdk/python/codegen.py --check
+	node sdk/typescript/scripts/codegen.mjs --check
+
+.PHONY: docs-serve
+docs-serve: ## serve the MkDocs site locally (pip install -r docs/requirements.txt)
+	mkdocs serve
+# ---------- operations (docs/OPERATIONS.md) ----------
+
+.PHONY: migrate
+migrate: ## apply pending schema migrations (compose one-shot)
+	$(COMPOSE) run --rm migrate
+
+.PHONY: migrate-status
+migrate-status: ## show applied / pending / drifted schema migrations
+	$(COMPOSE) run --rm migrate python -m app.migrate status
+
+.PHONY: backup
+backup: ## pg_dump + sha256 (+ BACKUP_ENCRYPT=age|gpg) into ./backups, with retention
+	bash scripts/backup.sh
+
+.PHONY: restore
+restore: ## restore a backup: make restore FILE=backups/paddock-....dump[.age|.gpg]
+	@test -n "$(FILE)" || (echo "FILE required" && exit 1)
+	bash scripts/restore.sh "$(FILE)"
+
+.PHONY: scale-test
+scale-test: ## seed 10k assets/100k findings/1M scope decisions into a scratch DB and time the API (SCALE_ADMIN_DSN=...)
+	python3 hardening/scale_test.py
+
+.PHONY: helm-lint
+helm-lint: ## helm lint + template the chart
+	helm lint deploy/helm/paddock
+	helm template paddock deploy/helm/paddock >/dev/null
 
 # ---------- housekeeping ----------
 

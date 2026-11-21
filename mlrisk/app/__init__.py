@@ -1,4 +1,4 @@
-"""palantir-asm mlrisk service.
+"""paddock mlrisk service.
 
 An adaptive ML layer over the platform's OWN data:
 

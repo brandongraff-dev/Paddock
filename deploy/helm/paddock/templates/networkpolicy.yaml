@@ -1,0 +1,227 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+Mirrors docker-compose's network tiers:
+  edge     -> only dashboard + orchestrator (+ otdiscovery /ingest) accept
+              traffic from the ingress controller.
+  internal -> everything else accepts traffic only from Paddock pods; data
+              stores only from Paddock pods.
+  egress   -> only worker-passive, worker-active, intel and the integrations
+              worker may reach the internet (minus cloud metadata).
+Everything not listed is denied (default-deny below).
+*/ -}}
+{{- $np := .Values.networkPolicy -}}
+{{- $inst := dict "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/name" (include "paddock.name" .) -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" . }}-default-deny
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $inst | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+---
+# Every Paddock pod: DNS, Postgres, Redis, and the orchestrator API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" . }}-base-egress
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $inst | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - ports:
+        - {protocol: TCP, port: {{ $np.databasePort }}}
+      {{- if .Values.postgresql.enabled }}
+      to:
+        - {{- include "paddock.np.component" (dict "root" $ "component" "postgresql") | nindent 10 }}
+      {{- else if $np.databaseCIDRs }}
+      to:
+        {{- range $np.databaseCIDRs }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      {{- end }}
+    - ports:
+        - {protocol: TCP, port: {{ $np.redisPort }}}
+      {{- if .Values.redis.enabled }}
+      to:
+        - {{- include "paddock.np.component" (dict "root" $ "component" "redis") | nindent 10 }}
+      {{- else if $np.redisCIDRs }}
+      to:
+        {{- range $np.redisCIDRs }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      {{- end }}
+    - to:
+        - {{- include "paddock.np.component" (dict "root" $ "component" "orchestrator") | nindent 10 }}
+      ports:
+        - {protocol: TCP, port: {{ .Values.orchestrator.port }}}
+---
+# Orchestrator -> the internal services it proxies.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" . }}-orchestrator-egress
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+spec:
+  {{- include "paddock.np.component" (dict "root" $ "component" "orchestrator") | nindent 2 }}
+  policyTypes: [Egress]
+  egress:
+    {{- range $c := list "intel" "correlation" "otdiscovery" }}
+    - to:
+        - {{- include "paddock.np.component" (dict "root" $ "component" $c) | nindent 10 }}
+      ports:
+        - {protocol: TCP, port: {{ (index $.Values $c).port }}}
+    {{- end }}
+---
+# Internet egress: only the services that must reach the outside world.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" . }}-internet-egress
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [worker-passive, worker-active, intel, integrations-worker]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range $np.egressExcept }}
+              {{- if not (contains ":" .) }}
+              - {{ . }}
+              {{- end }}
+              {{- end }}
+        - ipBlock:
+            cidr: ::/0
+            except:
+              {{- range $np.egressExcept }}
+              {{- if contains ":" . }}
+              - {{ . }}
+              {{- end }}
+              {{- end }}
+---
+# Edge tier ingress: ingress controller -> orchestrator; plus every Paddock
+# pod (workers / compute call the API) and Prometheus (/metrics).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" . }}-orchestrator-ingress
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+spec:
+  {{- include "paddock.np.component" (dict "root" $ "component" "orchestrator") | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.ingressControllerNamespaceSelector | nindent 12 }}
+        - {{- include "paddock.np.anyPaddock" . | nindent 10 }}
+        - namespaceSelector:
+            {{- toYaml $np.monitoringNamespaceSelector | nindent 12 }}
+      ports:
+        - {protocol: TCP, port: {{ .Values.orchestrator.port }}}
+{{- if .Values.dashboard.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" . }}-dashboard-ingress
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+spec:
+  {{- include "paddock.np.component" (dict "root" $ "component" "dashboard") | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.ingressControllerNamespaceSelector | nindent 12 }}
+      ports:
+        - {protocol: TCP, port: {{ .Values.dashboard.port }}}
+{{- end }}
+{{- if .Values.otdiscovery.enabled }}
+---
+# Sentry sensors arrive through the ingress controller (/ingest only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" . }}-otdiscovery-ingress
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+spec:
+  {{- include "paddock.np.component" (dict "root" $ "component" "otdiscovery") | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.ingressControllerNamespaceSelector | nindent 12 }}
+        - {{- include "paddock.np.component" (dict "root" $ "component" "orchestrator") | nindent 10 }}
+        - namespaceSelector:
+            {{- toYaml $np.monitoringNamespaceSelector | nindent 12 }}
+      ports:
+        - {protocol: TCP, port: {{ .Values.otdiscovery.port }}}
+{{- end }}
+{{- range $c := list "intel" "correlation" }}
+{{- if (index $.Values $c).enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" $ }}-{{ $c }}-ingress
+  labels:
+    {{- include "paddock.labels" $ | nindent 4 }}
+spec:
+  {{- include "paddock.np.component" (dict "root" $ "component" $c) | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- include "paddock.np.anyPaddock" $ | nindent 10 }}
+        - namespaceSelector:
+            {{- toYaml $np.monitoringNamespaceSelector | nindent 12 }}
+      ports:
+        - {protocol: TCP, port: {{ (index $.Values $c).port }}}
+{{- end }}
+{{- end }}
+{{- range $c, $port := dict "postgresql" 5432 "redis" 6379 }}
+{{- if (index $.Values $c).enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "paddock.fullname" $ }}-{{ $c }}-ingress
+  labels:
+    {{- include "paddock.labels" $ | nindent 4 }}
+spec:
+  {{- include "paddock.np.component" (dict "root" $ "component" $c) | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- include "paddock.np.anyPaddock" $ | nindent 10 }}
+      ports:
+        - {protocol: TCP, port: {{ $port }}}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,189 @@
+{
+ "_source": "Derived from the community can-i-take-over-xyz project (https://github.com/EdOverflow/can-i-take-over-xyz), services listed as vulnerable with an HTTP body fingerprint. NXDOMAIN-only services are excluded: this detector works from HTTP responses.",
+ "_comment": "DETECTION ONLY. A match means the DNS record points at an unclaimed third-party resource; Paddock never claims it. fingerprint_text is a case-insensitive body substring and is authoritative; http_status is informational unless no text is given.",
+ "version": 1,
+ "services": {
+  "AWS/S3": {
+   "cname_suffixes": [
+    "s3.amazonaws.com",
+    "s3-website-us-east-1.amazonaws.com",
+    "s3-website.us-east-1.amazonaws.com",
+    "s3-website-us-west-2.amazonaws.com",
+    "s3-website.eu-west-1.amazonaws.com",
+    "s3-website-eu-west-1.amazonaws.com",
+    "s3-website.eu-central-1.amazonaws.com",
+    "s3-website.ap-southeast-1.amazonaws.com"
+   ],
+   "fingerprint_text": "The specified bucket does not exist",
+   "http_status": 404,
+   "docs": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/website-hosting-custom-domain-walkthrough.html"
+  },
+  "GitHub Pages": {
+   "cname_suffixes": [
+    "github.io"
+   ],
+   "fingerprint_text": "There isn't a GitHub Pages site here.",
+   "http_status": 404,
+   "docs": "https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/verifying-your-custom-domain-for-github-pages"
+  },
+  "Heroku": {
+   "cname_suffixes": [
+    "herokuapp.com",
+    "herokudns.com",
+    "herokussl.com"
+   ],
+   "fingerprint_text": "No such app",
+   "http_status": 404,
+   "docs": "https://devcenter.heroku.com/articles/custom-domains"
+  },
+  "Azure App Service": {
+   "cname_suffixes": [
+    "azurewebsites.net"
+   ],
+   "fingerprint_text": "404 Web Site not found",
+   "http_status": 404,
+   "docs": "https://learn.microsoft.com/azure/security/fundamentals/subdomain-takeover"
+  },
+  "Bitbucket": {
+   "cname_suffixes": [
+    "bitbucket.io"
+   ],
+   "fingerprint_text": "Repository not found",
+   "http_status": 404
+  },
+  "Ghost": {
+   "cname_suffixes": [
+    "ghost.io"
+   ],
+   "fingerprint_text": "The thing you were looking for is no longer here, or never was",
+   "http_status": 404
+  },
+  "Pantheon": {
+   "cname_suffixes": [
+    "pantheonsite.io"
+   ],
+   "fingerprint_text": "404 error unknown site!",
+   "http_status": 404
+  },
+  "Shopify": {
+   "cname_suffixes": [
+    "myshopify.com"
+   ],
+   "fingerprint_text": "Sorry, this shop is currently unavailable.",
+   "http_status": 404
+  },
+  "Surge.sh": {
+   "cname_suffixes": [
+    "surge.sh"
+   ],
+   "fingerprint_text": "project not found",
+   "http_status": 404
+  },
+  "Tumblr": {
+   "cname_suffixes": [
+    "domains.tumblr.com"
+   ],
+   "fingerprint_text": "Whatever you were looking for doesn't currently exist at this address",
+   "http_status": 404
+  },
+  "WordPress.com": {
+   "cname_suffixes": [
+    "wordpress.com"
+   ],
+   "fingerprint_text": "Do you want to register",
+   "http_status": 200
+  },
+  "Help Scout": {
+   "cname_suffixes": [
+    "helpscoutdocs.com"
+   ],
+   "fingerprint_text": "No settings were found for this company:",
+   "http_status": 404
+  },
+  "Readme.io": {
+   "cname_suffixes": [
+    "readme.io"
+   ],
+   "fingerprint_text": "Project doesnt exist... yet!",
+   "http_status": 404
+  },
+  "Webflow": {
+   "cname_suffixes": [
+    "proxy.webflow.com",
+    "proxy-ssl.webflow.com"
+   ],
+   "fingerprint_text": "The page you are looking for doesn't exist or has been moved.",
+   "http_status": 404
+  },
+  "Agile CRM": {
+   "cname_suffixes": [
+    "agilecrm.com"
+   ],
+   "fingerprint_text": "Sorry, this page is no longer available.",
+   "http_status": 404
+  },
+  "Uberflip": {
+   "cname_suffixes": [
+    "read.uberflip.com"
+   ],
+   "fingerprint_text": "The URL you've accessed does not provide a hub.",
+   "http_status": 404
+  },
+  "Canny": {
+   "cname_suffixes": [
+    "canny.io"
+   ],
+   "fingerprint_text": "There is no such company. Did you enter the right URL?",
+   "http_status": 404
+  },
+  "Ngrok": {
+   "cname_suffixes": [
+    "ngrok.io"
+   ],
+   "fingerprint_text": "not found",
+   "http_status": 404
+  },
+  "Kinsta": {
+   "cname_suffixes": [
+    "kinsta.cloud"
+   ],
+   "fingerprint_text": "No Site For Domain",
+   "http_status": 404
+  },
+  "LaunchRock": {
+   "cname_suffixes": [
+    "launchrock.com"
+   ],
+   "fingerprint_text": "It looks like you may have taken a wrong turn somewhere",
+   "http_status": 500
+  },
+  "Pingdom": {
+   "cname_suffixes": [
+    "stats.pingdom.com"
+   ],
+   "fingerprint_text": "Sorry, couldn't find the status page",
+   "http_status": 404
+  },
+  "SurveySparrow": {
+   "cname_suffixes": [
+    "surveysparrow.com"
+   ],
+   "fingerprint_text": "Account not found.",
+   "http_status": 404
+  },
+  "JetBrains YouTrack": {
+   "cname_suffixes": [
+    "myjetbrains.com"
+   ],
+   "fingerprint_text": "is not a registered InCloud YouTrack",
+   "http_status": 404
+  },
+  "Worksites": {
+   "cname_suffixes": [
+    "worksites.net"
+   ],
+   "fingerprint_text": "Sorry, but the website you’re looking for doesn’t exist.",
+   "http_status": 404
+  }
+ }
+}

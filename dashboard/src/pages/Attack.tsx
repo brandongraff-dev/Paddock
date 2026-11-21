@@ -133,9 +133,9 @@ export default function AttackPage() {
       </div>
 
       <div className="stat-row">
-        <StatTile label="Techniques covered" value={techniqueCount} accent="#4ea3ff" />
-        <StatTile label="Tactics touched" value={tacticCount} accent="#c084fc" />
-        <StatTile label="Findings mapped" value={cov?.total_findings_mapped ?? 0} accent="#58d68d" />
+        <StatTile label="Techniques covered" value={techniqueCount} accent="#9fc2d8" />
+        <StatTile label="Tactics touched" value={tacticCount} accent="#b9a3d6" />
+        <StatTile label="Findings mapped" value={cov?.total_findings_mapped ?? 0} accent="#8fbf8a" />
       </div>
 
       <div className="panel" style={{ padding: 0, overflow: "hidden" }}>

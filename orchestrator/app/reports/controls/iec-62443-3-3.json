@@ -1,0 +1,146 @@
+{
+  "framework": "iec-62443-3-3",
+  "name": "IEC 62443-3-3",
+  "version": "2013",
+  "publisher": "IEC / ISA",
+  "url": "https://webstore.iec.ch/publication/7033",
+  "description": "System security requirements (SRs) for industrial automation and control systems relevant to zones and conduits, network segmentation, monitoring and component inventory. Zone/conduit evidence comes from Sentry's observed segmentation map (segments = observed zones, observed reachability = conduits in use). Security-level (SL) targets are set in the 62443-3-2 risk assessment, not here.",
+  "controls": [
+    {
+      "id": "ZCR 3",
+      "family": "Zones and conduits (IEC 62443-3-2)",
+      "title": "Partition the system into zones and conduits",
+      "summary": "The system under consideration is partitioned into zones and conduits.",
+      "evidence": [
+        "segmentation_map"
+      ],
+      "max_status": "partial",
+      "rationale": "The observed map shows the zones and conduits that exist on the wire; the designed partition and SL-T are documented in the 62443-3-2 assessment.",
+      "attestation": "Provide the zone and conduit drawing and SL-T per zone."
+    },
+    {
+      "id": "SR 1.13",
+      "family": "FR 1 · Identification and authentication control",
+      "title": "Access via untrusted networks",
+      "summary": "Monitor and control all access to the control system via untrusted networks.",
+      "evidence": [
+        "segmentation_violations",
+        "exposure_hygiene"
+      ],
+      "max_status": "partial",
+      "rationale": "Detects OT assets on public addresses and OT reachable from IT."
+    },
+    {
+      "id": "SR 3.1",
+      "family": "FR 3 · System integrity",
+      "title": "Communication integrity",
+      "summary": "Protect the integrity of transmitted information.",
+      "evidence": [
+        "cleartext_protocols"
+      ],
+      "max_status": "partial",
+      "rationale": "Flags cleartext management protocols observed on the network; integrity of industrial protocols themselves is not assessed."
+    },
+    {
+      "id": "SR 3.3",
+      "family": "FR 3 · System integrity",
+      "title": "Security functionality verification",
+      "summary": "Verify the intended operation of security functions.",
+      "evidence": [
+        "segmentation_violations",
+        "behaviour_detection"
+      ],
+      "max_status": "partial",
+      "rationale": "Continuous passive verification that segmentation behaves as intended."
+    },
+    {
+      "id": "SR 5.1",
+      "family": "FR 5 · Restricted data flow",
+      "title": "Network segmentation",
+      "summary": "Logically segment control system networks from non-control system networks and segment critical networks.",
+      "evidence": [
+        "segmentation_map",
+        "segmentation_violations"
+      ],
+      "rationale": "Observed segments and their reachability, with violations such as OT reachable from IT."
+    },
+    {
+      "id": "SR 5.2",
+      "family": "FR 5 · Restricted data flow",
+      "title": "Zone boundary protection",
+      "summary": "Monitor and control communications at zone boundaries.",
+      "evidence": [
+        "segmentation_map",
+        "behaviour_detection"
+      ],
+      "max_status": "partial",
+      "rationale": "Sentry monitors observed traffic at boundaries it can see; it does not enforce (deny-by-default is a firewall function).",
+      "attestation": "Provide boundary device configurations."
+    },
+    {
+      "id": "SR 5.3",
+      "family": "FR 5 · Restricted data flow",
+      "title": "General purpose person-to-person communication restrictions",
+      "summary": "Prevent general-purpose person-to-person messages reaching the control system.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "Not observable passively in a reliable way.",
+      "attestation": "Describe the restriction mechanism."
+    },
+    {
+      "id": "SR 6.1",
+      "family": "FR 6 · Timely response to events",
+      "title": "Audit log accessibility",
+      "summary": "Authorized humans and tools can access audit logs on a read-only basis.",
+      "evidence": [
+        "audit_log"
+      ],
+      "max_status": "partial",
+      "rationale": "Paddock's own audit log only."
+    },
+    {
+      "id": "SR 6.2",
+      "family": "FR 6 · Timely response to events",
+      "title": "Continuous monitoring",
+      "summary": "Continuously monitor control system security mechanisms to detect, characterize and report breaches.",
+      "evidence": [
+        "behaviour_detection",
+        "device_inventory"
+      ],
+      "rationale": "Sentry detectors run continuously on mirrored OT segments: lateral scanning, internet egress, behaviour drift."
+    },
+    {
+      "id": "SR 7.6",
+      "family": "FR 7 · Resource availability",
+      "title": "Network and security configuration settings",
+      "summary": "Configure network and security settings as recommended and report the current settings.",
+      "evidence": [
+        "secure_configuration"
+      ],
+      "max_status": "partial",
+      "rationale": "Externally observable configuration only."
+    },
+    {
+      "id": "SR 7.7",
+      "family": "FR 7 · Resource availability",
+      "title": "Least functionality",
+      "summary": "Prohibit or restrict unnecessary functions, ports, protocols and services.",
+      "evidence": [
+        "exposure_hygiene",
+        "cleartext_protocols"
+      ],
+      "max_status": "partial",
+      "rationale": "Detects unnecessary exposure and insecure protocols in use."
+    },
+    {
+      "id": "SR 7.8",
+      "family": "FR 7 · Resource availability",
+      "title": "Control system component inventory",
+      "summary": "Provide the capability to report the current list of installed components and their properties.",
+      "evidence": [
+        "device_inventory"
+      ],
+      "rationale": "Passive OT/IoT inventory with vendor, model, protocols and firmware where observable. Device models are also matched against CVEs (see the vulnerability evidence in other packs)."
+    }
+  ]
+}

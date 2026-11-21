@@ -119,8 +119,9 @@ class Service:
         try:
             import redis.asyncio as aioredis
 
+            # socket_timeout > XREADGROUP block (redis-py >= 6 defaults it to 5s).
             self._redis = aioredis.from_url(
-                self.cfg.redis_url, decode_responses=True
+                self.cfg.redis_url, decode_responses=True, socket_timeout=30
             )
             await self._redis.ping()
             self.attackpaths.set_redis(self._redis)
@@ -478,7 +479,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="palantir-asm correlation",
+    title="paddock correlation",
     version="0.1.0",
     lifespan=_lifespan,
 )

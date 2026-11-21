@@ -41,7 +41,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from . import audit
+from . import audit, tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -99,9 +99,15 @@ _VALID_SCOPES = frozenset({"read", "triage", "scan", "ask", "write", "audit", "a
 
 
 def capabilities_for(role: str, scopes: frozenset[str] | set[str] | None = None) -> frozenset[str]:
+    """Capabilities of a principal.
+
+    API-key scopes can only NARROW the owning user's role, never widen it:
+    an admin's key minted with ["read"] is read-only, and a viewer's key
+    minted with ["admin"] is still a viewer (and stays one after demotion).
+    """
     caps = set(ROLE_CAPABILITIES.get(role, ROLE_CAPABILITIES["viewer"]))
-    if scopes:
-        caps |= {s for s in scopes if s in _VALID_SCOPES}
+    if scopes is not None:
+        caps &= {s for s in scopes if s in _VALID_SCOPES}
     return frozenset(caps)
 
 
@@ -115,6 +121,9 @@ class Principal:
     user_id: str | None = None
     api_key_id: str | None = None
     raw_scopes: tuple[str, ...] = field(default_factory=tuple)
+    # The tenant every query of this principal is scoped to (Postgres RLS).
+    # None = the context default (the default tenant unless TENANCY_STRICT).
+    tenant_id: str | None = None
 
     @property
     def clearance_rank(self) -> int:
@@ -131,16 +140,21 @@ def dev_principal() -> Principal:
         clearance="restricted",
         capabilities=capabilities_for("admin"),
         kind="dev",
+        tenant_id=tenancy.DEFAULT_TENANT_ID,
     )
 
 
-def service_principal() -> Principal:
+def service_principal(tenant_id: str | None = None) -> Principal:
+    """The shared service key. It acts in the tenant named by the
+    ``X-Paddock-Tenant`` header (resolved by ``resolve_principal``), else the
+    context default."""
     return Principal(
         actor="service",
         role="service",
         clearance="restricted",
         capabilities=capabilities_for("service"),
         kind="service",
+        tenant_id=tenant_id,
     )
 
 
@@ -208,6 +222,18 @@ def generate_api_key() -> tuple[str, str, str]:
     return full, prefix, hash_api_key(full)
 
 
+# SCIM bearer tokens (schema 020): pscim_<prefix>_<secret>, sha256 at rest.
+# They resolve to a principal whose ONLY capability is `scim`.
+SCIM_TOKEN_PREFIX = "pscim_"
+
+
+def generate_scim_token() -> tuple[str, str, str]:
+    """Return (full_token, prefix, token_hash). The full token is shown once."""
+    prefix = secrets.token_hex(4)
+    full = f"{SCIM_TOKEN_PREFIX}{prefix}_{secrets.token_urlsafe(32)}"
+    return full, prefix, hash_api_key(full)
+
+
 # --------------------------------------------------------------------------- #
 # JWT
 # --------------------------------------------------------------------------- #
@@ -219,7 +245,14 @@ def _jwt_secret() -> str:
     return settings.jwt_secret or _RUNTIME_JWT_SECRET
 
 
-def issue_jwt(*, user_id: str | None, username: str, role: str, clearance: str) -> tuple[str, int]:
+def issue_jwt(
+    *,
+    user_id: str | None,
+    username: str,
+    role: str,
+    clearance: str,
+    tenant_id: str | None = None,
+) -> tuple[str, int]:
     now = int(time.time())
     ttl = int(settings.jwt_ttl_sec)
     payload = {
@@ -232,6 +265,8 @@ def issue_jwt(*, user_id: str | None, username: str, role: str, clearance: str) 
         "nbf": now,
         "exp": now + ttl,
     }
+    if tenant_id:
+        payload["tid"] = str(tenant_id)
     token = jwt.encode(payload, _jwt_secret(), algorithm=settings.jwt_algorithm)
     # PyJWT<2 returns bytes; normalise.
     if isinstance(token, bytes):
@@ -240,7 +275,15 @@ def issue_jwt(*, user_id: str | None, username: str, role: str, clearance: str) 
 
 
 def verify_jwt(token: str) -> dict[str, Any]:
-    return jwt.decode(token, _jwt_secret(), algorithms=[settings.jwt_algorithm])
+    claims = jwt.decode(
+        token,
+        _jwt_secret(),
+        algorithms=[settings.jwt_algorithm],
+        options={"require": ["exp", "iat", "sub"]},
+    )
+    if claims.get("typ") != "access":
+        raise jwt.InvalidTokenError("not an access token")
+    return claims
 
 
 # --------------------------------------------------------------------------- #
@@ -276,23 +319,31 @@ async def _principal_from_api_key(request: Request, key: str) -> Principal:
     if pool is None:
         raise AuthError("auth backend unavailable")
     key_hash = hash_api_key(key)
-    async with pool.acquire() as con:
-        row = await con.fetchrow(
-            """
-            SELECT k.id AS key_id, k.scopes, k.expires_at, k.revoked,
-                   u.id AS user_id, u.username, u.role, u.clearance, u.active
-              FROM api_keys k
-              JOIN app_users u ON u.id = k.user_id
-             WHERE k.key_hash = $1
-            """,
-            key_hash,
-        )
-        if row is None or row["revoked"] or not row["active"]:
-            raise AuthError("invalid API key")
-        exp = row["expires_at"]
-        if exp is not None and exp <= datetime.now(timezone.utc):
-            raise AuthError("API key expired")
-        await con.execute("UPDATE api_keys SET last_used = NOW() WHERE id = $1", row["key_id"])
+    # The tenant is unknown until the key row is read: look it up in
+    # auth-lookup mode (app_users/api_keys readable across tenants; nothing
+    # else is), then the principal carries the key's tenant.
+    with tenancy.auth_lookup():
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                """
+                SELECT k.id AS key_id, k.scopes, k.expires_at, k.revoked,
+                       u.id AS user_id, u.username, u.role, u.clearance, u.active,
+                       u.tenant_id, t.status AS tenant_status
+                  FROM api_keys k
+                  JOIN app_users u ON u.id = k.user_id AND u.tenant_id = k.tenant_id
+                  LEFT JOIN tenants t ON t.id = u.tenant_id
+                 WHERE k.key_hash = $1
+                """,
+                key_hash,
+            )
+            if row is None or row["revoked"] or not row["active"]:
+                raise AuthError("invalid API key")
+            if row["tenant_status"] != "active":
+                raise AuthError("tenant suspended")
+            exp = row["expires_at"]
+            if exp is not None and exp <= datetime.now(timezone.utc):
+                raise AuthError("API key expired")
+            await con.execute("UPDATE api_keys SET last_used = NOW() WHERE id = $1", row["key_id"])
     scopes = frozenset(row["scopes"] or ["read"])
     return Principal(
         actor=row["username"],
@@ -303,6 +354,7 @@ async def _principal_from_api_key(request: Request, key: str) -> Principal:
         user_id=str(row["user_id"]),
         api_key_id=str(row["key_id"]),
         raw_scopes=tuple(row["scopes"] or ["read"]),
+        tenant_id=str(row["tenant_id"]),
     )
 
 
@@ -316,16 +368,34 @@ async def _principal_from_jwt(request: Request, token: str) -> Principal:
     role = claims.get("role", "viewer")
     clearance = claims.get("clearance", _DEFAULT_CLASS)
     user_id = claims.get("sub")
-    # Prefer live DB state (role/clearance/active) over possibly-stale claims.
+    tenant_id = claims.get("tid")
+    # Prefer live DB state (role/clearance/active/tenant) over possibly-stale claims.
     if pool is not None and username:
-        async with pool.acquire() as con:
-            row = await con.fetchrow(
-                "SELECT id, username, role, clearance, active FROM app_users WHERE username = $1",
-                username,
-            )
+        with tenancy.auth_lookup():
+            async with pool.acquire() as con:
+                row = await con.fetchrow(
+                    "SELECT u.id, u.username, u.role, u.clearance, u.active, u.tenant_id, "
+                    "       u.sessions_revoked_at, t.status AS tenant_status "
+                    "  FROM app_users u LEFT JOIN tenants t ON t.id = u.tenant_id "
+                    " WHERE u.username = $1",
+                    username,
+                )
+        if row is None:
+            # Deleted user: never fall back to trusting role claims in a token.
+            raise AuthError("unknown user")
         if row is not None:
             if not row["active"]:
                 raise AuthError("user disabled")
+            # Session watermark (schema 020): SCIM deactivation etc. revokes
+            # every token issued at or before it, even after re-activation.
+            revoked = row["sessions_revoked_at"]
+            if revoked is not None and float(claims.get("iat", 0)) <= revoked.timestamp():
+                raise AuthError("session revoked")
+            if row["tenant_status"] != "active":
+                raise AuthError("tenant suspended")
+            if tenant_id and str(tenant_id) != str(row["tenant_id"]):
+                raise AuthError("token tenant mismatch")
+            tenant_id = str(row["tenant_id"])
             role = row["role"]
             clearance = row["clearance"]
             user_id = str(row["id"])
@@ -337,6 +407,31 @@ async def _principal_from_jwt(request: Request, token: str) -> Principal:
         capabilities=capabilities_for(role),
         kind="user",
         user_id=str(user_id) if user_id else None,
+        tenant_id=str(tenant_id) if tenant_id else None,
+    )
+
+
+async def _principal_from_scim_token(request: Request, token: str) -> Principal:
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise AuthError("auth backend unavailable")
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "SELECT id, name, expires_at, revoked FROM scim_tokens WHERE token_hash = $1",
+            hash_api_key(token),
+        )
+        if row is None or row["revoked"]:
+            raise AuthError("invalid SCIM token")
+        if row["expires_at"] is not None and row["expires_at"] <= datetime.now(timezone.utc):
+            raise AuthError("SCIM token expired")
+        await con.execute("UPDATE scim_tokens SET last_used = NOW() WHERE id = $1", row["id"])
+    return Principal(
+        actor=f"scim:{row['name']}",
+        role="scim",
+        clearance="public",
+        capabilities=frozenset({"scim"}),  # SCIM only -- never capabilities_for()
+        kind="scim",
+        api_key_id=str(row["id"]),
     )
 
 
@@ -346,10 +441,21 @@ async def resolve_principal(request: Request) -> Principal | None:
     Raises ``AuthError`` when a credential IS presented but is invalid.
     """
     api_key, token = _extract_credentials(request)
+    if token and token.startswith(SCIM_TOKEN_PREFIX):
+        return await _principal_from_scim_token(request, token)
     if api_key:
         svc = settings.service_api_key
-        if svc and hmac.compare_digest(api_key, svc):
-            return service_principal()
+        # compare bytes: compare_digest(str, str) raises on non-ASCII input,
+        # which used to surface as an unaudited 500.
+        if svc and hmac.compare_digest(api_key.encode("utf-8"), svc.encode("utf-8")):
+            ref = request.headers.get(tenancy.TENANT_HEADER)
+            if not ref:
+                return service_principal()
+            pool = getattr(request.app.state, "pool", None)
+            tid = await tenancy.resolve_tenant_ref(pool, ref) if pool is not None else None
+            if tid is None:
+                raise AuthError("unknown or inactive tenant")
+            return service_principal(tid)
         return await _principal_from_api_key(request, api_key)
     if token:
         return await _principal_from_jwt(request, token)
@@ -375,6 +481,19 @@ _ANY = r"[^/]+"
 
 # --- public ---------------------------------------------------------------- #
 _rule("POST", r"/v1/auth/login", None)
+# Two-way ticket sync callbacks (Jira/ServiceNow/Linear). Authenticated by the
+# integration's inbound token / webhook signature inside the handler instead.
+_rule("POST", rf"/v1/integrations/{_ANY}/inbound", None)
+
+# --- SSO (schema 020): admin config first, then the public login flow ------ #
+_rule("GET POST PUT PATCH DELETE", r"/v1/auth/sso/admin(/.*)?", "admin")
+_rule("GET", r"/v1/auth/sso/providers", None)
+_rule("POST", r"/v1/auth/sso/exchange", None)
+_rule("GET", rf"/v1/auth/sso/{_ANY}/(start|callback|metadata)", None)
+_rule("POST", rf"/v1/auth/sso/{_ANY}/acs", None)
+
+# --- SCIM 2.0: only a SCIM token carries the `scim` capability -------------- #
+_rule("GET POST PUT PATCH DELETE", r"/scim/v2(/.*)?", "scim")
 
 # --- read-only operational checks that use non-GET verbs ------------------- #
 _rule("POST", r"/v1/scope/check", "read")
@@ -392,16 +511,29 @@ _rule("GET", r"/v1/provenance", "read")
 
 # --- admin config: scope / owners / alert-rules / schedules / sla ---------- #
 _rule("POST DELETE PATCH PUT", rf"/v1/scope(/{_ANY})?", "admin")
+_rule("POST", rf"/v1/scope/{_ANY}/(challenge|verify)", "admin")  # proof-of-control (021)
+_rule("PUT PATCH POST", r"/v1/onboarding", "admin")  # first-run wizard (021)
 _rule("POST DELETE PATCH PUT", rf"/v1/owners(/{_ANY})?", "admin")
 _rule("POST DELETE PATCH PUT", rf"/v1/alert-rules(/{_ANY})?", "admin")
 _rule("POST DELETE PATCH PUT", rf"/v1/schedules(/{_ANY}(/run-now)?)?", "admin")
 _rule("PATCH", rf"/v1/sla-policies/{_ANY}", "admin")
+
+# --- integrations (reads: read; every write: admin) ------------------------ #
+_rule("GET", r"/v1/integrations(/catalog|/health)?", "read")
+_rule("GET", rf"/v1/integrations/{_ANY}(/deliveries)?", "read")
+_rule("POST", r"/v1/integrations", "admin")
+_rule("PATCH PUT DELETE", rf"/v1/integrations/{_ANY}", "admin")
+_rule("POST", rf"/v1/integrations/{_ANY}/(test|enable|disable)", "admin")
+_rule("POST", rf"/v1/integrations/{_ANY}/deliveries/{_ANY}/retry", "admin")
 
 # --- triage (analyst + admin) ---------------------------------------------- #
 _rule("PATCH", rf"/v1/findings/{_ANY}", "triage")
 _rule("PATCH", rf"/v1/tickets/{_ANY}", "triage")
 _rule("POST", rf"/v1/anomalies/{_ANY}/ack", "triage")
 _rule("POST", rf"/v1/changes/{_ANY}/ack", "triage")
+# finding lifecycle (schema 019): transitions + suppression rules
+_rule("POST", rf"/v1/findings/{_ANY}/(accept|false-positive|reopen)", "triage")
+_rule("POST PATCH DELETE", rf"/v1/suppressions(/{_ANY})?", "triage")
 
 # --- scan / operational triggers (analyst + admin + service) --------------- #
 _rule("POST", r"/v1/scans", "scan")
@@ -410,6 +542,10 @@ _rule("POST", r"/v1/ml/retrain", "scan")
 
 # --- ask -------------------------------------------------------------------- #
 _rule("POST", r"/v1/ask", "ask")
+
+# --- reports: read everywhere; sending a digest on demand is admin --------- #
+_rule("POST", r"/v1/reports/digest/send", "admin")
+_rule("GET", r"/v1/reports(/.*)?", "read")
 
 # --- service ingest + worker lifecycle (write) ----------------------------- #
 _rule("POST", r"/v1/assets/bulk", "write")
@@ -420,6 +556,10 @@ _rule("POST", r"/v1/chains", "write")
 _rule("POST", r"/v1/tls-grades/bulk", "write")
 _rule("PATCH", rf"/v1/scans/{_ANY}", "write")
 _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
+
+# --- standards exports (read) + SBOM / lockfile imports (scan) -------------- #
+_rule("GET", r"/v1/export/(findings\.ocsf|sarif|sbom|vex)", "read")
+_rule("POST", r"/v1/import/(sbom|lockfiles)", "scan")
 
 
 def required_capability(method: str, path: str) -> str | None:
@@ -477,12 +617,30 @@ def _resource_from_path(path: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+# Non-GET routes that do not mutate state: no write-ahead audit record (they
+# are still audited after the fact, exactly as before).
+_NO_WRITE_AHEAD = frozenset({"/v1/scope/check"})
+
+
 class GovernanceMiddleware(BaseHTTPMiddleware):
-    """Authenticate, enforce RBAC deny-closed, and write the audit trail.
+    """Authenticate, enforce RBAC deny-closed, scope to a tenant, and audit.
 
     Runs inside ``RequestContextMiddleware`` so ``request.state.request_id`` is
-    already set. Audit writes are best-effort: a failure there never fails the
-    request (the hash chain + verify endpoint remain the integrity authority).
+    already set.
+
+    Tenancy: once the principal is resolved its tenant is bound to the request
+    context (``tenancy.set_tenant``); every ``pool.acquire()`` made while
+    handling the request stamps that tenant on the DB session, so Postgres RLS
+    scopes every query.
+
+    Fail-closed audit (``AUDIT_FAIL_CLOSED``, default on): before a mutating
+    handler runs, a write-ahead ``phase=intent`` audit record is committed. If
+    that append fails the request is refused with 503 and the handler never
+    runs, so no mutation can happen unaudited. After the handler, a
+    ``phase=outcome`` record with the response status links back to the intent
+    (best-effort: if it fails, the intent record still proves the attempt).
+    Handlers that want an audit row in the SAME transaction as their write can
+    call ``audit.record(..., con=con)`` themselves.
     """
 
     async def dispatch(
@@ -513,7 +671,21 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
                     "unauthenticated requests. DO NOT run this way in production."
                 )
 
-        # 2. Authorize (RBAC, deny-closed) for non-public routes.
+        # 2. Bind the principal's tenant for everything below (RLS scoping).
+        tenant_token = tenancy.set_tenant(principal.tenant_id if principal else None)
+        try:
+            return await self._handle(request, call_next, principal, required)
+        finally:
+            tenancy.reset_tenant(tenant_token)
+
+    async def _handle(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+        principal: Principal | None,
+        required: str | None,
+    ) -> Response:
+        # 3. Authorize (RBAC, deny-closed) for non-public routes.
         if required is not None:
             if principal is None:
                 return await self._deny(request, 401, "authentication required", None)
@@ -525,12 +697,45 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         if principal is not None:
             request.state.principal = principal
 
-        # 3. Handle.
+        # 4. Write-ahead audit for mutations (fail-closed).
+        intent_id: int | None = None
+        if self._needs_write_ahead(request):
+            try:
+                intent = await self._record(
+                    request, principal, None, denied=False, details={"phase": "intent"}
+                )
+                intent_id = intent["id"] if intent else None
+            except Exception:  # noqa: BLE001
+                logger.exception("audit_intent_failed", extra={"path": request.url.path})
+                _count_audit_failure()
+                rid = getattr(request.state, "request_id", None)
+                resp = JSONResponse(
+                    {"detail": "audit log unavailable; mutation refused (fail-closed)"},
+                    status_code=503,
+                )
+                if rid:
+                    resp.headers["X-Request-ID"] = rid
+                return resp
+            request.state.audit_intent_id = intent_id
+
+        # 5. Handle.
         response = await call_next(request)
 
-        # 4. Audit mutating + restricted-read requests (best-effort).
-        await self._audit(request, principal, response.status_code)
+        # 6. Audit mutating + restricted-read requests (outcome; best-effort).
+        details = {"phase": "outcome", "intent_id": intent_id} if intent_id is not None else None
+        await self._audit(request, principal, response.status_code, details=details)
         return response
+
+    @staticmethod
+    def _needs_write_ahead(request: Request) -> bool:
+        if not settings.audit_fail_closed:
+            return False
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+            return False
+        if (request.url.path.rstrip("/") or "/") in _NO_WRITE_AHEAD:
+            return False
+        # No database -> the handler cannot mutate persistent state either.
+        return getattr(request.app.state, "pool", None) is not None
 
     async def _deny(
         self,
@@ -540,7 +745,20 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         principal: Principal | None,
     ) -> JSONResponse:
         rid = getattr(request.state, "request_id", None)
-        resp = JSONResponse({"detail": detail}, status_code=status_code)
+        if request.url.path.startswith("/scim/"):
+            # SCIM clients (Okta, Entra) expect the RFC 7644 §3.12 error shape.
+            resp = JSONResponse(
+                {
+                    "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+                    "status": str(status_code),
+                    "detail": detail,
+                },
+                status_code=status_code,
+                media_type="application/scim+json",
+                headers={"WWW-Authenticate": "Bearer"} if status_code == 401 else None,
+            )
+        else:
+            resp = JSONResponse({"detail": detail}, status_code=status_code)
         if rid:
             resp.headers["X-Request-ID"] = rid
         await self._audit(request, principal, status_code, denied=True)
@@ -552,41 +770,101 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         principal: Principal | None,
         status_code: int,
         denied: bool = False,
+        details: dict[str, Any] | None = None,
     ) -> None:
         method = request.method
         mutating = method in ("POST", "PUT", "PATCH", "DELETE")
         restricted_read = bool(getattr(request.state, "audit_restricted", False))
         if not (denied or mutating or restricted_read):
             return
+        try:
+            await self._record(request, principal, status_code, denied=denied, details=details)
+        except Exception:  # noqa: BLE001 -- the outcome record never fails the request
+            logger.exception("audit_record_failed", extra={"path": request.url.path})
+            _count_audit_failure()
+
+    async def _record(
+        self,
+        request: Request,
+        principal: Principal | None,
+        status_code: int | None,
+        *,
+        denied: bool,
+        details: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
         pool = getattr(request.app.state, "pool", None)
         if pool is None:
-            return
+            return None
         rtype, rid_val = _resource_from_path(request.url.path)
         classification = getattr(request.state, "audit_classification", None)
-        client = request.client
-        ip = client.host if client else None
-        fwd = request.headers.get("x-forwarded-for")
-        if fwd:
-            ip = fwd.split(",")[0].strip()
-        try:
-            await audit.record(
+        ip = client_ip(request)
+        if details is None:
+            details = {"denied": True} if denied else {}
+        # Anonymous / tenant-less events go to the default (platform) chain.
+        tenant = (principal.tenant_id if principal else None) or tenancy.current_tenant_id()
+        with tenancy.tenant_context(tenant or tenancy.DEFAULT_TENANT_ID):
+            return await audit.record(
                 pool,
-                action=_action_for(method, denied),
+                action=_action_for(request.method, denied),
                 actor=principal.actor if principal else "anonymous",
                 actor_role=principal.role if principal else None,
                 resource_type=rtype,
                 resource_id=rid_val,
-                method=method,
+                method=request.method,
                 path=request.url.path,
                 status=status_code,
                 classification=classification,
                 justification=request.headers.get("x-justification"),
                 ip=ip,
                 request_id=getattr(request.state, "request_id", None),
-                details={"denied": True} if denied else {},
+                details=details,
             )
-        except Exception:  # noqa: BLE001 -- never fail the request on audit
-            logger.exception("audit_record_failed", extra={"path": request.url.path})
+
+
+def _count_audit_failure() -> None:
+    """Prometheus counter (app/metrics.py); never let metrics break auditing."""
+    try:
+        from .metrics import audit_append_failed
+
+        audit_append_failed()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _trusted_proxies() -> tuple:
+    import ipaddress
+
+    nets = []
+    for c in settings.trusted_proxy_cidrs.split(","):
+        c = c.strip()
+        if c:
+            try:
+                nets.append(ipaddress.ip_network(c, strict=False))
+            except ValueError:
+                logger.warning("bad_trusted_proxy_cidr", extra={"cidr": c})
+    return tuple(nets)
+
+
+def client_ip(request: Request) -> str | None:
+    """Socket peer, or the X-Forwarded-For client ONLY when the peer is a
+    configured trusted proxy. Otherwise XFF is attacker-controlled."""
+    import ipaddress
+
+    peer = request.client.host if request.client else None
+    fwd = request.headers.get("x-forwarded-for")
+    if not (peer and fwd):
+        return peer
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+    if any(peer_ip.version == n.version and peer_ip in n for n in _trusted_proxies()):
+        cand = fwd.split(",")[0].strip()
+        try:
+            return str(ipaddress.ip_address(cand))
+        except ValueError:
+            return peer
+    return peer
 
 
 # --------------------------------------------------------------------------- #
@@ -695,6 +973,14 @@ async def harden_audit_table(pool) -> None:
     try:
         async with pool.acquire() as con:
             role = await con.fetchval("SELECT current_user")
+            writable = await con.fetchval(
+                "SELECT has_table_privilege(current_user, 'audit_log', 'UPDATE') "
+                "    OR has_table_privilege(current_user, 'audit_log', 'DELETE')"
+            )
+            if not writable:
+                # The normal case with the paddock_app role (schema 099).
+                logger.info("audit_log is append-only for %s", role)
+                return
             await con.execute(
                 f'REVOKE UPDATE, DELETE ON audit_log FROM "{role}"'
             )

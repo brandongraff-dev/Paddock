@@ -34,7 +34,7 @@
   font-size: 12px;
 }
 .ti-error {
-  color: var(--bad, #e06c75);
+  color: var(--bad, #e67350);
 }
 
 /* ------------------------------- chips --------------------------------- */
@@ -62,12 +62,12 @@
   white-space: nowrap;
 }
 .ti-tag.malware {
-  color: #e06c75;
+  color: #e67350;
   border-color: #5a2a30;
   background: #2a1a1e;
 }
 .ti-tag.actor {
-  color: #c678dd;
+  color: #b9a3d6;
   border-color: #4a2a52;
   background: #241a2a;
 }
@@ -100,7 +100,7 @@
   border-bottom: 1px solid var(--border);
 }
 .ti-match-row:hover {
-  background: color-mix(in srgb, var(--accent, #4ea3ff) 6%, transparent);
+  background: color-mix(in srgb, var(--accent, #9fc2d8) 6%, transparent);
 }
 
 .ti-match-body {
@@ -118,7 +118,7 @@
   font-size: 11px;
 }
 .ti-asset {
-  color: var(--accent, #4ea3ff);
+  color: var(--accent, #9fc2d8);
   background: none;
   border: none;
   padding: 0;
@@ -170,7 +170,7 @@
   background: none;
   border: none;
   padding: 0;
-  color: var(--accent, #4ea3ff);
+  color: var(--accent, #9fc2d8);
   cursor: pointer;
   font-size: 11px;
 }
@@ -320,10 +320,10 @@
   flex: none;
 }
 .ti-status-dot.ok {
-  background: #58d68d;
+  background: #8fbf8a;
 }
 .ti-status-dot.err {
-  background: #e06c75;
+  background: #e67350;
 }
 .ti-feed-actions {
   display: flex;
@@ -392,7 +392,7 @@
 
 /* buttons: fall back gracefully if the global .primary/.ghost aren't scoped */
 .ti-page button.primary {
-  background: var(--accent, #4ea3ff);
+  background: var(--accent, #9fc2d8);
   color: #04121f;
   border: none;
   border-radius: 5px;
@@ -419,6 +419,6 @@
   cursor: not-allowed;
 }
 .ti-page button.ghost.danger {
-  color: #e06c75;
+  color: #e67350;
   border-color: #5a2a30;
 }

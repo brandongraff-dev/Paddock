@@ -1,6 +1,6 @@
 # Architecture
 
-palantir-asm is a set of small services around one authoritative API. This doc
+Paddock is a set of small services around one authoritative API. This doc
 is the map: what each service does, how they're wired, and how a fact travels
 from "we discovered a host" to "here's an attack path to your crown jewels".
 

@@ -1,0 +1,46 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+{{- range $c := list "orchestrator" "otdiscovery" }}
+{{- if or (eq $c "orchestrator") (index $.Values $c).enabled }}
+{{- $sel := dict "root" $ "component" $c }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "paddock.componentName" $sel }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+    {{- with $.Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "paddock.selectorLabels" $sel | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $.Values.metrics.serviceMonitor.interval }}
+      # /metrics requires the METRICS_TOKEN bearer token (app/metrics.py).
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ include "paddock.secretName" $ }}
+          key: METRICS_TOKEN
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.metrics.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "paddock.fullname" . }}
+  labels:
+    {{- include "paddock.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- /* Same file as deploy/prometheus/paddock-alerts.yml (symlinked). */}}
+  {{- .Files.Get "files/paddock-alerts.yml" | nindent 2 }}
+{{- end }}

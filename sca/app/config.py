@@ -62,8 +62,8 @@ class Config:
     http_timeout_s: int = field(default_factory=lambda: _env_int("HTTP_TIMEOUT_S", 60))
     osv_batch_size: int = field(default_factory=lambda: _env_int("OSV_BATCH_SIZE", 1000))
     user_agent: str = field(default_factory=lambda: _env(
-        "SCA_USER_AGENT", "palantir-asm-sca/0.1 (+defensive-asm)"
-    ) or "palantir-asm-sca/0.1")
+        "SCA_USER_AGENT", "paddock-sca/0.1 (+defensive-asm)"
+    ) or "paddock-sca/0.1")
 
     # Risk tuning
     typosquat_distance: int = field(default_factory=lambda: _env_int("TYPOSQUAT_DISTANCE", 2))

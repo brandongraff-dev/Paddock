@@ -23,7 +23,14 @@ import ThreatIntelPage from "./pages/ThreatIntel";
 import DevicesPage from "./pages/Devices";
 import FleetPage from "./pages/Fleet";
 import RemediationPage from "./pages/Remediation";
+import IntegrationsPage from "./pages/Integrations";
+import SuppressionsPage from "./pages/Suppressions";
+import ReportsPage from "./pages/Reports";
 import Login from "./pages/Login";
+import SsoCallback from "./pages/SsoCallback";
+import IdentitySettingsPage from "./pages/IdentitySettings";
+import Landing from "./pages/Landing";
+import Setup, { FirstRunRedirect } from "./pages/Setup";
 import { useLiveEvents } from "./hooks/useLiveEvents";
 import { useAuth, canViewAudit } from "./state/auth";
 import type { ReactNode } from "react";
@@ -50,12 +57,22 @@ function RequireAudit({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** Route guard: identity settings are admin-only. Others bounce to Overview. */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const role = useAuth((s) => s.user?.role);
+  if (role !== "admin") return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 /** Everything behind auth: the router, live events, and the governed pages. */
 function AuthedApp() {
   return (
     <BrowserRouter>
       <LiveEvents />
+      <FirstRunRedirect />
       <Routes>
+        <Route path="/welcome" element={<Landing />} />
+        <Route path="/setup" element={<Setup />} />
         <Route path="/" element={<Shell><Overview /></Shell>} />
         <Route path="/graph" element={<Shell noScroll><GraphPage /></Shell>} />
         <Route path="/findings" element={<Shell><FindingsPage /></Shell>} />
@@ -77,17 +94,35 @@ function AuthedApp() {
         <Route path="/devices" element={<Shell><DevicesPage /></Shell>} />
         <Route path="/fleet" element={<Shell><FleetPage /></Shell>} />
         <Route path="/remediation" element={<Shell><RemediationPage /></Shell>} />
+        <Route path="/integrations" element={<Shell><IntegrationsPage /></Shell>} />
+        <Route path="/suppressions" element={<Shell><SuppressionsPage /></Shell>} />
+        <Route path="/reports" element={<Shell><ReportsPage /></Shell>} />
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
+        <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
 }
 
-/** Top-level gate: no token → Login; otherwise the authenticated app. */
+/** Signed-out surface: the public landing page and the sign-in screen. */
+function PublicApp() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/welcome" element={<Landing />} />
+        <Route path="/sso/callback" element={<SsoCallback />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+/** Top-level gate: no token → landing / Login; otherwise the authenticated app. */
 function Gate() {
   const token = useAuth((s) => s.token);
-  if (!token) return <Login />;
+  if (!token) return <PublicApp />;
   return <AuthedApp />;
 }
 

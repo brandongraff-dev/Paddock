@@ -17,11 +17,16 @@ from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from . import audit as audit_svc
 from . import auth as auth_svc
+from . import metrics as metrics_svc
 from .auth import GovernanceMiddleware
 from .config import settings
-from .db import create_pool
+from .audit_anchor import sink_from_settings
+from .db import create_pool, warn_if_privileged
 from .middleware import RequestContextMiddleware, configure_logging
+from .migrate import run_startup_migrations
+from .opsconfig import ops_settings
 from .queue import create_redis, read_events
 from .routers import ask as ask_router
 from .routers import assets as assets_router
@@ -32,10 +37,18 @@ from .routers import attackpaths as attackpaths_router
 from .routers import changes as changes_router
 from .routers import code as code_router
 from .routers import findings as findings_router
+from .routers import integrations_inbound as integrations_inbound_router
+from .routers import licensing as licensing_router
+from .routers import lifecycle as lifecycle_router
 from .routers import ml as ml_router
 from .routers import monitoring as monitoring_router
+from .routers import onboarding as onboarding_router
 from .routers import devices as devices_router
+from .routers import exports as exports_router
 from .routers import fleet as fleet_router
+from .routers import integrations as integrations_router
+from .routers import integration_sync as integration_sync_router
+from .routers import network_actions as network_actions_router
 from .routers import ontology as ontology_router
 from .routers import remediation as remediation_router
 from .routers import posture as posture_router
@@ -44,8 +57,11 @@ from .routers import provenance as provenance_router
 from .routers import sbom as sbom_router
 from .routers import scans as scans_router
 from .routers import scope as scope_router
+from .routers import scim as scim_router
+from .routers import sso as sso_router
 from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
+from .reports import router as reports_router
 from .scheduler import scheduler_loop
 
 logger = logging.getLogger(__name__)
@@ -55,8 +71,31 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     logger.info("orchestrator_startup", extra={"version": "0.1.0", "auth_mode": settings.auth_mode})
+    # Versioned schema migrations (app/migrate.py). Advisory-locked, so N
+    # replicas starting at once is safe; a failure (e.g. checksum drift)
+    # aborts startup rather than serving against an unknown schema.
+    if ops_settings.migrate_on_startup:
+        await run_startup_migrations()
     app.state.pool = await create_pool()
     app.state.redis = await create_redis()
+
+    # Enterprise trust: shout if RLS is bypassed (superuser), note an unkeyed
+    # audit chain, and start anchoring the chain head if a sink is configured.
+    try:
+        await warn_if_privileged(app.state.pool)
+    except Exception:  # noqa: BLE001
+        logger.exception("db_role_check_failed")
+    if audit_svc.keyring()[0] is None:
+        logger.warning(
+            "AUDIT_HMAC_KEY unset: the audit chain is unkeyed sha256 (tamper-evident "
+            "only against non-owners). Set AUDIT_HMAC_KEY for a keyed chain."
+        )
+    app.state.audit_anchor_sink = sink_from_settings()
+    anchor_task: asyncio.Task | None = None
+    if app.state.audit_anchor_sink is not None:
+        anchor_task = asyncio.create_task(audit_svc.anchor_loop(app))
+    else:
+        logger.warning("AUDIT_ANCHOR_SINKS unset: audit chain head is not anchored externally")
 
     # Governance bootstrap: set the admin password on first boot, and try to
     # revoke UPDATE/DELETE on the audit log at the DB layer (best-effort).
@@ -84,10 +123,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        if scheduler_task is not None:
-            scheduler_task.cancel()
+        for task in (scheduler_task, anchor_task):
+            if task is None:
+                continue
+            task.cancel()
             try:
-                await scheduler_task
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
         try:
@@ -103,7 +144,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="palantir-asm orchestrator",
+        title="paddock orchestrator",
         description=(
             "Defensive ASM orchestrator: scope service, job dispatch, and the "
             "asset/finding/timeline API. Workers in this platform perform "
@@ -125,11 +166,14 @@ def create_app() -> FastAPI:
     # before external exposure.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip() and o.strip() != "*"],
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Justification", "X-Request-ID"],
     )
+    # Prometheus: outermost, so it times auth + audit too and serves /metrics
+    # (METRICS_TOKEN-protected) without touching the user-auth middleware.
+    metrics_svc.install(app)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -193,6 +237,9 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(audit_router.router)
     app.include_router(provenance_router.router)
+    # Enterprise identity (schema 020): OIDC/SAML SSO + SCIM 2.0 provisioning.
+    app.include_router(sso_router.router)
+    app.include_router(scim_router.router)
 
     app.include_router(scope_router.router)
     app.include_router(scans_router.router)
@@ -227,6 +274,26 @@ def create_app() -> FastAPI:
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
     app.include_router(remediation_router.router)
+    # Two-way ticketing: inbound callbacks from Jira / ServiceNow / Linear.
+    app.include_router(integrations_inbound_router.router)
+    # Integrations: connector catalogue, CRUD, test, delivery log
+    app.include_router(integrations_router.router)
+    # Standards exports/imports: OCSF, SARIF, CycloneDX/SPDX, VEX
+    app.include_router(exports_router.export_router)
+    app.include_router(exports_router.import_router)
+    # Context SOURCE sync status + network quarantine via the fleet gate (schema 025)
+    app.include_router(integration_sync_router.router)
+    app.include_router(network_actions_router.router)
+    # Editions/licensing + usage metering (schema 024)
+    app.include_router(licensing_router.router)
+    # Finding lifecycle (schema 019): accept / false-positive / reopen + suppressions
+    app.include_router(lifecycle_router.router)
+    app.include_router(lifecycle_router.suppressions_router)
+    # First-run wizard state + optional-service status (schema 021).
+    app.include_router(onboarding_router.router)
+    app.include_router(onboarding_router.system_router)
+    # Reporting: executive report, weekly digest, compliance evidence packs
+    app.include_router(reports_router.router)
 
     return app
 

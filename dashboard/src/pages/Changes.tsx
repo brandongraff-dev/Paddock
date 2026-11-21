@@ -161,13 +161,13 @@ function ChangeVelocity() {
         <div style={{ height: 150 }}>
           <ResponsiveContainer>
             <AreaChart data={data} margin={{ top: 6, right: 10, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke="#1d2430" strokeDasharray="2 4" />
-              <XAxis dataKey="day" stroke="#6f7a8c" tick={{ fontSize: 10 }} />
-              <YAxis stroke="#6f7a8c" tick={{ fontSize: 10 }} width={28} allowDecimals={false} />
+              <CartesianGrid stroke="rgba(236,226,208,0.07)" strokeDasharray="2 4" />
+              <XAxis dataKey="day" stroke="#8a8175" tick={{ fontSize: 10 }} />
+              <YAxis stroke="#8a8175" tick={{ fontSize: 10 }} width={28} allowDecimals={false} />
               <Tooltip
                 contentStyle={{
-                  background: "#10151d",
-                  border: "1px solid #2a3344",
+                  background: "#191613",
+                  border: "1px solid rgba(236,226,208,0.13)",
                   borderRadius: 6,
                   fontSize: 11,
                 }}
@@ -608,8 +608,8 @@ export default function ChangesPage() {
       </div>
 
       <div className="stat-row">
-        <StatTile label="Changes (7d)" value={stats.total} accent="#4ea3ff" />
-        <StatTile label="Today" value={stats.today} accent="#58d68d" />
+        <StatTile label="Changes (7d)" value={stats.total} accent="#9fc2d8" />
+        <StatTile label="Today" value={stats.today} accent="#8fbf8a" />
         <StatTile label="Secrets found" value={stats.secrets} accent={SEV_COLOR.critical} />
         <StatTile label="Exposure increases" value={stats.exposure} accent={SEV_COLOR.high} />
       </div>

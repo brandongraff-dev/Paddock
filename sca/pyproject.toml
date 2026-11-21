@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "palantir-asm-sca"
+name = "paddock-sca"
 version = "0.1.0"
 description = "Software Composition Analysis: lockfile SBOM extraction, OSV vuln matching, and defensive supply-chain risk detection."
 requires-python = ">=3.11"
@@ -19,7 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=7.4",
-    "pytest-asyncio>=0.23",
+    "pytest-asyncio>=0.24",  # loop_scope= support on fixtures/marks
 ]
 
 [tool.setuptools.packages.find]

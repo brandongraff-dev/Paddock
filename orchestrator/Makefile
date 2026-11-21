@@ -17,7 +17,7 @@ run:
 	$(PYTHON) -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 build:
-	docker build -t palantir-asm/orchestrator .
+	docker build -t paddock/orchestrator .
 
 clean:
 	rm -rf .pytest_cache __pycache__ app/__pycache__ app/routers/__pycache__ tests/__pycache__

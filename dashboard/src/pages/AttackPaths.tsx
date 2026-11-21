@@ -85,7 +85,7 @@ export default function AttackPathsPage() {
       </div>
 
       <div className="stat-row">
-        <StatTile label="Total paths" value={stats.total} accent="#c084fc" />
+        <StatTile label="Total paths" value={stats.total} accent="#b9a3d6" />
         <StatTile
           label="Paths with KEV"
           value={stats.kev}
@@ -95,7 +95,7 @@ export default function AttackPathsPage() {
           label="Shortest length"
           value={stats.shortest || "—"}
           delta={{ value: "hops", dir: undefined }}
-          accent="#4ea3ff"
+          accent="#9fc2d8"
         />
         <StatTile
           label="Highest exploitability"

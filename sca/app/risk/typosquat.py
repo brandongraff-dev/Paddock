@@ -58,6 +58,39 @@ def levenshtein(a: str, b: str, *, cap: int | None = None) -> int:
     return prev[lb]
 
 
+def typo_distance(a: str, b: str) -> int:
+    """Optimal-string-alignment distance: Levenshtein plus adjacent
+    transposition as ONE edit. Swapped letters ("reqeust") are the most common
+    real-world typosquat, and plain Levenshtein scores them as two edits."""
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    d = [[0] * (lb + 1) for _ in range(la + 1)]
+    for i in range(la + 1):
+        d[i][0] = i
+    for j in range(lb + 1):
+        d[0][j] = j
+    for i in range(1, la + 1):
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[la][lb]
+
+
+def _allowed_distance(name: str, target: str, max_distance: int) -> int:
+    """Short names collide by accident: every 2-letter package is within 2 of
+    'qs' or 'ws', and 'parse5' is 2 from 'parcel'. Real squats are almost all
+    one edit, so: < 4 chars never compared, 4-7 chars allow 1, 8+ allow max."""
+    shortest = min(len(name), len(target))
+    if shortest < 4:
+        return 0
+    if shortest < 8:
+        return min(1, max_distance)
+    return max_distance
+
+
 def nearest_popular(ecosystem: str, name: str, max_distance: int) -> tuple[str, int] | None:
     """Return (popular_name, distance) of the closest popular package within
     ``max_distance``, or None. Exact matches are excluded (distance 0)."""
@@ -69,8 +102,11 @@ def nearest_popular(ecosystem: str, name: str, max_distance: int) -> tuple[str, 
         return None
     best: tuple[str, int] | None = None
     for target in targets:
-        d = levenshtein(n, target, cap=max_distance)
-        if 0 < d <= max_distance and (best is None or d < best[1]):
+        allowed = _allowed_distance(n, target, max_distance)
+        if allowed == 0 or levenshtein(n, target, cap=2 * allowed) > 2 * allowed:
+            continue  # cheap prefilter: OSA <= allowed implies Levenshtein <= 2*allowed
+        d = typo_distance(n, target)
+        if 0 < d <= allowed and (best is None or d < best[1]):
             best = (target, d)
             if d == 1:
                 break

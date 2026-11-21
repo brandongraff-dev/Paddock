@@ -1,0 +1,131 @@
+/* ------------------------------------------------------------------ *
+ * Finding lifecycle: priority score, why-chips, SLA badges, reason     *
+ * dialog, suppression toggle. Built only from tokens.css variables.    *
+ * ------------------------------------------------------------------ */
+
+/* Priority score: a compact numeric pill with a 4-step meter. */
+.prio {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 18px; padding: 0 6px 0 5px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-s);
+  background: var(--bg-2);
+  font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums;
+  color: var(--text-1); white-space: nowrap; flex-shrink: 0;
+}
+.prio .bars { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 9px; }
+.prio .bars i { display: block; width: 2.5px; border-radius: 1px; background: var(--text-3); }
+.prio .bars i:nth-child(1) { height: 3px; }
+.prio .bars i:nth-child(2) { height: 5px; }
+.prio .bars i:nth-child(3) { height: 7px; }
+.prio .bars i:nth-child(4) { height: 9px; }
+.prio[data-band="urgent"] { color: var(--sev-crit); border-color: color-mix(in srgb, var(--sev-crit) 45%, transparent); }
+.prio[data-band="high"]   { color: var(--sev-high); border-color: color-mix(in srgb, var(--sev-high) 40%, transparent); }
+.prio[data-band="medium"] { color: var(--sev-med); }
+.prio .bars i.on { background: currentColor; }
+.prio.lg { height: 26px; padding: 0 9px 0 8px; font-size: 14px; gap: 7px; }
+.prio.lg .bars { height: 12px; }
+.prio.lg .bars i { width: 3px; }
+.prio.lg .bars i:nth-child(4) { height: 12px; }
+.prio.lg .bars i:nth-child(3) { height: 9px; }
+
+/* Why chips: label + weight, muted when the factor is context-only. */
+.why-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.why-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 20px; padding: 0 7px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-2); color: var(--text-1);
+  font-size: 11px; white-space: nowrap;
+}
+.why-chip .w { font-family: var(--mono); font-size: 10px; color: var(--text-2); }
+.why-chip[data-key="kev"], .why-chip[data-key="crown_jewel"] {
+  color: var(--sev-crit); border-color: color-mix(in srgb, var(--sev-crit) 40%, transparent);
+}
+.why-chip[data-key="attack_path"], .why-chip[data-key="epss"], .why-chip[data-key="sla"] {
+  color: var(--sev-high); border-color: color-mix(in srgb, var(--sev-high) 35%, transparent);
+}
+.why-chip[data-zero="true"] { color: var(--text-2); background: transparent; }
+.why-chips.dense .why-chip { height: 17px; font-size: 10.5px; padding: 0 6px; }
+
+/* SLA badge */
+.sla {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 18px; padding: 0 6px; border-radius: var(--radius-s);
+  font-size: 10.5px; white-space: nowrap; flex-shrink: 0;
+  border: 1px solid var(--border-strong); color: var(--text-1); background: var(--bg-2);
+}
+.sla::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.85; }
+.sla[data-state="breached"] { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.sla[data-state="soon"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.sla[data-state="ok"] { color: var(--text-2); }
+
+/* Inline meta on a finding row's title cell */
+.finding-row .title { display: flex; align-items: center; gap: 6px; }
+.finding-row .title .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dup-count {
+  font-family: var(--mono); font-size: 10px; color: var(--text-2);
+  border: 1px dashed var(--border-strong); border-radius: var(--radius-s); padding: 0 5px;
+  flex-shrink: 0;
+}
+
+/* Status chips for the new states */
+.chip-status-accepted, .chip-status-accepted_risk { color: var(--warn); border-color: var(--warn); }
+.chip-status-false_positive { color: var(--text-2); border-color: var(--border-strong); text-decoration: line-through; }
+.chip-status-wontfix { color: var(--text-2); }
+
+/* Segmented control (Active | Suppressed) */
+.segmented {
+  display: inline-flex; padding: 2px; gap: 2px;
+  border: 1px solid var(--border); border-radius: var(--radius-m); background: var(--bg-1);
+}
+.segmented button {
+  height: 24px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-2); font-size: 12px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.segmented button:hover { background: var(--bg-2); color: var(--text-1); border: 0; }
+.segmented button[aria-pressed="true"] { background: var(--bg-3); color: var(--text-0); box-shadow: var(--shadow-1); }
+.segmented .n { font-family: var(--mono); font-size: 10.5px; color: var(--text-2); }
+
+.findings-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.findings-toolbar .hint { color: var(--text-2); font-size: 12px; }
+.findings-toolbar .spacer { flex: 1; }
+
+/* Drawer: lifecycle header + actions */
+.lc-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.lc-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.lc-actions button { height: 26px; padding: 0 10px; font-size: 12px; }
+.lc-reason {
+  margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-s);
+  background: var(--bg-1); border: 1px solid var(--border); font-size: 12px; color: var(--text-1);
+}
+.lc-reason .meta { color: var(--text-2); font-size: 11px; margin-top: 3px; }
+.lc-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.lc-list li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.lc-list .mono { font-size: 11px; color: var(--text-2); }
+.lc-list .primary-tag { font-size: 10px; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 4px; padding: 0 4px; }
+
+/* Reason dialog */
+.reason-dialog { width: 460px; }
+.reason-dialog textarea {
+  width: 100%; min-height: 84px; resize: vertical;
+  background: var(--bg-1); color: var(--text-0);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-s);
+  padding: 8px 10px; font: inherit; font-size: 13px;
+}
+.reason-dialog textarea:focus, .reason-dialog input:focus { outline: none; border-color: var(--border-focus); }
+.reason-dialog .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.reason-dialog .help { color: var(--text-2); font-size: 11.5px; }
+.reason-dialog .err { color: var(--bad); font-size: 12px; }
+.reason-dialog .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-1); }
+
+/* Suppressions page */
+.supp-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.supp-form .wide { grid-column: span 3; }
+.supp-form input, .supp-form select { width: 100%; }
+.supp-match { display: flex; gap: 4px; flex-wrap: wrap; }
+.supp-match code {
+  font-family: var(--mono); font-size: 11px; color: var(--text-1);
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px;
+}
+.supp-inactive { opacity: 0.55; }

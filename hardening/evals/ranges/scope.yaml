@@ -1,0 +1,66 @@
+# Scope range: the platform's safety invariant. Every target is normalised by
+# orchestrator/app/scope.py exactly as the API does before any worker may
+# touch it. Hostile spellings come from the parser-differential classes the
+# fuzzer in hardening/stress_scope.py hunts for.
+engine: scope
+cases:
+  # ------------------------------------------- reject: ambiguous / hostile
+  - {id: backslash-userinfo, expect: [reject], target: "http://evil.com\\@target.com"}
+  - {id: tab-in-host, expect: [reject], target: "target.com\t"}
+  - {id: newline-smuggle, expect: [reject], target: "http://target.com\n.evil.com"}
+  - {id: nul-byte, expect: [reject], target: "http://evil.com\u0000.target.com"}
+  - {id: percent-encoded-host, expect: [reject], target: "http://target.com%2f@evil.com"}
+  - {id: unterminated-ipv6, expect: [reject], target: "http://[::1"}
+  - {id: bare-ipv6-trailing-colon, expect: [reject], target: "c1::"}
+  - {id: port-out-of-range, expect: [reject], target: "http://target.com:99999/"}
+  - {id: empty-label, expect: [reject], target: "target..com"}
+  - {id: five-part-ipv4, expect: [reject], target: "1.2.3.4.5"}
+  - {id: ipv6-zone-id, expect: [reject], target: "fe80::1%eth0"}
+  - {id: space-in-host, expect: [reject], target: "http://ta rget.com/"}
+  - {id: empty-host-after-userinfo, expect: [reject], target: "http://user@:80/"}
+  - {id: zero-width-space, expect: [reject], target: "target​.com"}
+  - {id: empty-string, expect: [reject], target: ""}
+  - {id: bad-octal-ipv4, expect: [reject], target: "0389.1.1.1"}
+
+  # ------------------------------ accepted, exactly one canonical identity
+  - {id: url-with-port-path-query, expect: [canonical], target: "https://Example.COM:8443/foo?q=1", canonical: example.com}
+  - {id: bracketed-ipv6-port, expect: [canonical], target: "[2001:db8::1]:443", canonical: "2001:db8::1"}
+  - {id: fragment-at-is-not-userinfo, expect: [canonical], target: "http://evil.com#@target.com", canonical: evil.com}
+  - {id: query-at-is-not-userinfo, expect: [canonical], target: "http://evil.com?@target.com", canonical: evil.com}
+  - {id: userinfo-stripped, expect: [canonical], target: "http://user:pw@target.com/", canonical: target.com}
+  - {id: last-at-wins, expect: [canonical], target: "http://a@b@target.com/", canonical: target.com}
+  - {id: hex-short-ipv4, expect: [canonical], target: "0x7f.1", canonical: 127.0.0.1}
+  - {id: decimal-ipv4, expect: [canonical], target: "2130706433", canonical: 127.0.0.1}
+  - {id: octal-ipv4, expect: [canonical], target: "017700000001", canonical: 127.0.0.1}
+  - {id: mapped-ipv6-to-imds, expect: [canonical], target: "[::ffff:a9fe:a9fe]", canonical: 169.254.169.254}
+  - {id: fullwidth-hostname, expect: [canonical], target: "ＥＸＡＭＰＬＥ.com", canonical: example.com}
+  - {id: fullwidth-digits-ipv4, expect: [canonical], target: "１２７.0.0.1", canonical: 127.0.0.1}
+  - {id: trailing-root-dot, expect: [canonical], target: "example.com.", canonical: example.com}
+  - {id: idn-punycode, expect: [canonical], target: "bücher.de", canonical: xn--bcher-kva.de}
+  - {id: host-port, expect: [canonical], target: "api.example.com:443", canonical: api.example.com}
+  - {id: dot-segments-in-path, expect: [canonical], target: "http://a.b.example.com/x/../y", canonical: a.b.example.com}
+
+  # --------------------------------------------- in scope vs look-alikes
+  - id: wildcard-subdomain-url
+    expect: [in_scope, canonical]
+    target: "https://api.example.com/v1"
+    canonical: api.example.com
+    entries: &entries
+      - {kind: subdomain_wildcard, value: example.com}
+      - {kind: ipv4_cidr, value: 203.0.113.0/24}
+      - {kind: domain, value: shop.example.org}
+  - {id: wildcard-base, expect: [in_scope, canonical], target: example.com, canonical: example.com, entries: *entries}
+  - {id: wildcard-deep, expect: [in_scope, canonical], target: "http://u@deep.dev.example.com:8080/", canonical: deep.dev.example.com, entries: *entries}
+  - {id: cidr-member, expect: [in_scope, canonical], target: 203.0.113.77, canonical: 203.0.113.77, entries: *entries}
+  - {id: cidr-member-decimal, expect: [in_scope, canonical], target: "3405803853", canonical: 203.0.113.77, entries: *entries}
+  - {id: exact-domain, expect: [in_scope, canonical], target: shop.example.org, canonical: shop.example.org, entries: *entries}
+
+  - {id: suffix-lookalike, expect: [canonical], target: example.com.evil.io, canonical: example.com.evil.io, entries: *entries}
+  - {id: prefix-lookalike, expect: [canonical], target: evilexample.com, canonical: evilexample.com, entries: *entries}
+  - {id: hyphen-lookalike, expect: [canonical], target: example-com.net, canonical: example-com.net, entries: *entries}
+  - {id: userinfo-lookalike, expect: [canonical], target: "http://example.com@evil.io/", canonical: evil.io, entries: *entries}
+  - {id: fragment-lookalike, expect: [canonical], target: "http://evil.io#.example.com", canonical: evil.io, entries: *entries}
+  - {id: cidr-neighbour-above, expect: [canonical], target: 203.0.114.1, canonical: 203.0.114.1, entries: *entries}
+  - {id: cidr-neighbour-below, expect: [canonical], target: 203.0.112.255, canonical: 203.0.112.255, entries: *entries}
+  - {id: exact-domain-is-not-wildcard, expect: [canonical], target: www.shop.example.org, canonical: www.shop.example.org, entries: *entries}
+  - {id: backslash-lookalike-rejected, expect: [reject], target: "http://evil.io\\@example.com", entries: *entries}

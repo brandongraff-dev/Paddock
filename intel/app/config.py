@@ -64,8 +64,8 @@ class Config:
     # Networking
     http_timeout_s: int = field(default_factory=lambda: _env_int("HTTP_TIMEOUT_S", 60))
     user_agent: str = field(default_factory=lambda: _env(
-        "INTEL_USER_AGENT", "palantir-asm-intel/0.1 (+defensive-asm)"
-    ) or "palantir-asm-intel/0.1")
+        "INTEL_USER_AGENT", "paddock-intel/0.1 (+defensive-asm)"
+    ) or "paddock-intel/0.1")
 
     # Behaviour
     log_level: str = field(default_factory=lambda: (_env("LOG_LEVEL", "INFO") or "INFO").upper())

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# palantir-asm — ops hardening self-audit.
+# paddock — ops hardening self-audit.
 # Invoked by `make harden-check`. Static checks always run; the audit-chain
 # check runs only if the orchestrator is reachable. Exits non-zero if any
 # hard check fails.
@@ -17,7 +17,7 @@ ok()   { printf "  \033[32mPASS\033[0m  %s\n" "$1"; pass=$((pass+1)); }
 bad()  { printf "  \033[31mFAIL\033[0m  %s\n" "$1"; fail=$((fail+1)); }
 note() { printf "  \033[33mWARN\033[0m  %s\n" "$1"; warn=$((warn+1)); }
 
-echo "palantir-asm hardening self-audit"
+echo "paddock hardening self-audit"
 echo "================================="
 
 # 1. AUTH_MODE defaults to enforce in the PROD compose (not the dev override).

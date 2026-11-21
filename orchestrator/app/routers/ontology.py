@@ -4,7 +4,7 @@ The ontology service (`ontology/`) projects the raw tables into a typed object
 + link model (ontology_object_types / ontology_link_types / ontology_objects /
 ontology_links). This router is *read-only*: it serves the type system, paged
 typed objects, the per-object "object view" (an entity plus its neighbours
-grouped by link type and direction -- the Palantir pivot), and a cross-type
+grouped by link type and direction -- the ontology pivot), and a cross-type
 title search.
 
 - `GET /v1/ontology/types`          object types (+ live object counts) + link types.

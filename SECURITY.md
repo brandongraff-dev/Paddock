@@ -1,13 +1,13 @@
 # SECURITY.md — threat model & security posture
 
-palantir-asm is a **defensive** Attack Surface Management platform for
+Paddock is a **defensive** Attack Surface Management platform for
 authorized asset defense. This document is an honest threat model: what the
 system protects, the trust boundaries, the invariants it enforces, how it is
 hardened operationally, and — just as importantly — the gaps it does **not**
 yet close. It ends with the authorized-use statement that governs the whole
 project.
 
-> Reporting a vulnerability in palantir-asm itself: open a private advisory /
+> Reporting a vulnerability in Paddock itself: open a private advisory /
 > contact the maintainers before public disclosure. Do not file exploit details
 > in a public issue.
 
@@ -15,7 +15,7 @@ project.
 
 ## 1. What this system is (and is not)
 
-palantir-asm **discovers** assets from passive sources, **politely probes** the
+Paddock **discovers** assets from passive sources, **politely probes** the
 subset you have explicitly authorized, **correlates** findings against public
 vulnerability feeds, and **surfaces** the result to an analyst. It is a
 detection and situational-awareness tool.
@@ -122,6 +122,24 @@ when run without the orchestrator.
   `ALLOW_NO_AUTH` stub is pinned deny-closed (`false`) in the prod compose.
 - **Service principals.** Inter-service callers (workers, correlation, …)
   authenticate with a per-service API key injected via env, scoped `write`.
+- **Single sign-on (OIDC + SAML 2.0).** Authorization-code flow with PKCE,
+  `state` (bound to the browser by an HttpOnly cookie) and `nonce`; ID tokens
+  verified against the IdP's JWKS (asymmetric algorithms only; `iss`/`aud`/
+  `azp`/`exp`/`nonce`). SAML assertions must be signed by the pinned IdP
+  certificate, with audience/destination/`InResponseTo` checks and an
+  assertion-ID replay cache. The callback never puts a token in a URL: it
+  hands the SPA a 60-second one-time code that only redeems together with a
+  verifier generated in the tab that started the login. IdP client secrets
+  are AES-GCM encrypted at rest (`PADDOCK_SECRET_KEY`). Every SSO login
+  (success or failure) and every identity-config change is audited.
+  Break-glass accounts can never be claimed by an IdP identity, and with
+  **SSO required** they are the only accounts that may use a password.
+- **SCIM 2.0.** `/scim/v2` accepts only admin-minted SCIM tokens (sha256 at
+  rest) whose sole capability is `scim`. SCIM can see SCIM/SSO-provisioned
+  users only — never local or break-glass accounts. Deactivation revokes the
+  user's API keys and every JWT issued so far (a per-user session watermark
+  checked on each request; re-activation does not revive old tokens).
+  See [docs/SSO.md](docs/SSO.md).
 
 ## 5. Authorization — RBAC + ABAC + classification
 
@@ -161,7 +179,7 @@ The platform will not, by construction:
   passwords.
 - **evade** — no stealth/fragmented scans, no WAF-bypass headers, no decoys, no
   source spoofing. The scanner's User-Agent names itself
-  (`palantir-asm-scanner/1.0 (+defensive-scanner)`). Evasion-flavoured config
+  (`paddock-scanner/1.0 (+defensive-scanner)`). Evasion-flavoured config
   env vars and CLI flags are **refused at import/exec time**, not merely
   ignored. nuclei runs with `-exclude-tags intrusive,fuzz,dos` and fixed rate
   caps that narrowing config can tighten but never widen.
@@ -191,9 +209,18 @@ logged.
   can append but not rewrite history (logged if it lacks the privilege to do
   so).
 
-This gives tamper-**evidence** (you can prove the record was not altered), not
-tamper-**proofing** (a DB superuser can still rewrite rows and recompute hashes
-— see §10).
+- **Keyed + anchored + fail-closed** (schema 098/099): with `AUDIT_HMAC_KEY`
+  set (kept outside the DB) new rows are HMAC-SHA256 (per-row `hash_alg`, so
+  legacy rows still verify and keys rotate); each tenant has its own chain; the
+  chain head is periodically signed and anchored to an append-only sink (file /
+  S3 Object Lock / webhook) and `verify` also checks the head against the latest
+  anchor (detects tail truncation and rewrites); a mutating request whose
+  write-ahead audit record cannot be written is refused with 503. The
+  orchestrator connects as `paddock_app`, which has no UPDATE/DELETE on
+  `audit_log`. Details: `docs/trust/SECURITY_WHITEPAPER.md` §8.
+
+Without a key and an anchor sink this is tamper-**evidence** only (a DB
+superuser can rewrite rows and recompute hashes — see §10).
 
 ## 8. Provenance
 
@@ -240,14 +267,18 @@ This is an MVP-grade platform with real, un-papered-over gaps:
   (sha256 hashing, bcrypt/argon2 for passwords); there is no FIPS-validated
   module, no boundary accreditation, no control mapping (NIST 800-53, SOC 2,
   etc.). Do not represent it as compliant with any regime.
-- **Single-tenant.** There is no tenant isolation. RBAC/ABAC/classification
-  partition *access within one org*, not *data between orgs*. Running it as
-  shared multi-tenant SaaS is not supported and would leak across tenants.
-- **Tamper-evidence, not tamper-proofing.** The audit hash chain detects
-  after-the-fact edits by the application role, but a Postgres superuser (or
-  anyone with raw DB/disk access) can rewrite rows and recompute the chain.
-  There is no external notarization/anchoring, no append-only WORM storage, and
-  no off-box log shipping by default.
+- **Multi-tenancy is API-level only.** Postgres row-level security now
+  isolates tenants for everything served by the orchestrator (which connects
+  as the non-superuser `paddock_app` role), but the compute services
+  (brain/Ask, graphsync, correlation, …) still connect as the owner and are
+  not tenant-aware, and workers do not yet carry the tenant back. Running it as
+  shared multi-tenant SaaS is **not yet supported**; see
+  `docs/trust/TENANCY.md` for the model and its limits.
+- **Audit tamper-resistance depends on configuration.** Without
+  `AUDIT_HMAC_KEY` a Postgres superuser can rewrite rows and recompute the
+  chain; without `AUDIT_ANCHOR_SINKS` tail truncation is undetectable. Even
+  with both, rows newer than the last anchor (default: up to 1 h) can be
+  deleted undetected, and there is no off-box log shipping (SIEM export).
 - **Cold-start ML.** The `mlrisk` ranker/anomaly detector has no pretrained
   model and no persisted model artifact; it bootstraps from whatever is in the
   DB and is effectively uncalibrated until enough real history accumulates.
@@ -300,7 +331,7 @@ This is an MVP-grade platform with real, un-papered-over gaps:
 
 ## 12. Authorized-use statement
 
-**palantir-asm may be pointed only at assets you own or are explicitly,
+**Paddock may be pointed only at assets you own or are explicitly,
 documentedly authorized to assess.** The safe default scope is
 `scanme.nmap.org` (Nmap's official legal scan target —
 <https://nmap.org/book/legal-issues.html>) and loopback (`127.0.0.0/8`). Any

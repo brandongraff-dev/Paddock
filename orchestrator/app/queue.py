@@ -25,6 +25,7 @@ from typing import Any, AsyncIterator
 import redis.asyncio as aioredis
 from fastapi import Request
 
+from . import tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -66,8 +67,11 @@ def queue_name_for(kind: str) -> str:
 
 
 async def create_redis(url: str | None = None) -> aioredis.Redis:
+    # socket_timeout must exceed the longest XREAD block (SSE tails the event
+    # stream with block=15s); redis-py >= 6 defaults it to 5s, which made every
+    # idle /v1/events read fail with "Timeout reading from redis".
     r: aioredis.Redis = aioredis.from_url(
-        url or settings.redis_url, decode_responses=True
+        url or settings.redis_url, decode_responses=True, socket_timeout=60
     )
     await r.ping()
     return r
@@ -83,6 +87,11 @@ def get_redis(request: Request) -> aioredis.Redis:
 async def enqueue_scan(r: aioredis.Redis, job: dict[str, Any]) -> str:
     """Push a scan job onto its kind-specific stream. Returns the stream id."""
     stream = queue_name_for(job["kind"])
+    # Workers echo this back (X-Paddock-Tenant) so their callbacks land in the
+    # tenant that queued the job.
+    tid = tenancy.current_tenant_id()
+    if tid is not None and "tenant_id" not in job:
+        job = {**job, "tenant_id": tid}
     # Streams want flat string fields; encode the whole job as JSON under 'job'.
     sid = await r.xadd(stream, {"job": json.dumps(job, default=str)})
     logger.info(

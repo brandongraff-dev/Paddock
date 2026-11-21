@@ -47,7 +47,7 @@ Run on a periodic sweep (env `ATTACKPATH_INTERVAL_MIN`, default 20) and expose `
 
 ## changewatch service (NEW)
 
-New service at `/home/user/palantir-asm/changewatch/`, same shape as `intel/` (Dockerfile, pyproject, app/main.py, config, db, HTTP on port 8092 with /healthz /readyz /stats + POST /run). Add it to `docker-compose.yml`.
+New service at `/home/user/paddock/changewatch/`, same shape as `intel/` (Dockerfile, pyproject, app/main.py, config, db, HTTP on port 8092 with /healthz /readyz /stats + POST /run). Add it to `docker-compose.yml`.
 
 **Detection loop** (env `CHANGEWATCH_INTERVAL_MIN`, default 10; also react to `stream:events`):
 - cursor in `intel_cursors` where source='changewatch' (`last_synced`)

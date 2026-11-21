@@ -7,12 +7,13 @@
 
 import type { AssetKind, Severity } from "../api/types";
 
+/** Single-hue ordinal ramp (validated for dark surfaces); info is neutral. */
 export const SEV_COLOR: Record<Severity, string> = {
-  info: "#6f7a8c",
-  low: "#4ea3ff",
-  medium: "#f0b429",
-  high: "#ff7a45",
-  critical: "#ff4d6d",
+  info: "#8a8175",
+  low: "#f3c6a5",
+  medium: "#ee9d72",
+  high: "#e67350",
+  critical: "#d5493c",
 };
 
 export const SEV_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
@@ -30,25 +31,25 @@ export function severityColor(s: Severity | string | undefined | null): string {
 }
 
 export const KIND_COLOR: Record<AssetKind, string> = {
-  org: "#c084fc",
-  domain: "#4ea3ff",
-  subdomain: "#6cc6ff",
-  ipv4: "#58d68d",
-  ipv6: "#3eb673",
-  port: "#f0b429",
-  service: "#ffb86b",
-  technology: "#c7a7ff",
-  certificate: "#f78da7",
-  endpoint: "#ff7a45",
-  repository: "#e6edf7",
-  secret_candidate: "#ff4d6d",
-  cloud_account: "#22d3ee",
-  cloud_resource: "#0ea5e9",
+  org: "#b9a3d6",
+  domain: "#9fc2d8",
+  subdomain: "#b6d3e3",
+  ipv4: "#8fbf8a",
+  ipv6: "#76a872",
+  port: "#e3b265",
+  service: "#e9c48f",
+  technology: "#c9b5e0",
+  certificate: "#e3a3b4",
+  endpoint: "#e67350",
+  repository: "#ece6da",
+  secret_candidate: "#d5493c",
+  cloud_account: "#7fc4c4",
+  cloud_resource: "#6fb0c8",
 };
 
 export function kindColor(k: AssetKind | string | undefined | null): string {
-  if (!k) return "#4ea3ff";
-  return (KIND_COLOR as Record<string, string>)[k] ?? "#4ea3ff";
+  if (!k) return "#9fc2d8";
+  return (KIND_COLOR as Record<string, string>)[k] ?? "#9fc2d8";
 }
 
 /** Clamp a numeric blast score (0..100) to a width %. */
@@ -79,23 +80,23 @@ export function blastColor(score: number | undefined | null): string {
 import type { ChangeType } from "../api/types";
 
 export const CHANGE_TYPE_COLOR: Record<ChangeType, string> = {
-  subdomain_discovered: "#6cc6ff",
-  endpoint_discovered: "#ff7a45",
-  ip_discovered: "#58d68d",
-  port_opened: "#f0b429",
-  port_closed: "#6f7a8c",
-  tech_detected: "#c7a7ff",
-  tech_version_changed: "#c7a7ff",
-  cert_added: "#f78da7",
-  cert_expiring: "#f0b429",
-  secret_found: "#ff4d6d",
-  repository_found: "#e6edf7",
-  finding_opened: "#ff7a45",
-  finding_resolved: "#58d68d",
-  exposure_increased: "#ff4d6d",
-  asset_removed: "#6f7a8c",
-  chain_detected: "#c084fc",
-  attack_path_found: "#c084fc",
+  subdomain_discovered: "#b6d3e3",
+  endpoint_discovered: "#e67350",
+  ip_discovered: "#8fbf8a",
+  port_opened: "#e3b265",
+  port_closed: "#8a8175",
+  tech_detected: "#c9b5e0",
+  tech_version_changed: "#c9b5e0",
+  cert_added: "#e3a3b4",
+  cert_expiring: "#e3b265",
+  secret_found: "#d5493c",
+  repository_found: "#ece6da",
+  finding_opened: "#e67350",
+  finding_resolved: "#8fbf8a",
+  exposure_increased: "#d5493c",
+  asset_removed: "#8a8175",
+  chain_detected: "#b9a3d6",
+  attack_path_found: "#b9a3d6",
 };
 
 export function changeTypeColor(t: ChangeType | string | undefined | null): string {
@@ -137,14 +138,14 @@ export function changeTypeTag(t: ChangeType | string): string {
 import type { Grade } from "../api/types";
 
 export const GRADE_COLOR: Record<Grade, string> = {
-  "A+": "#58d68d",
-  A: "#58d68d",
-  B: "#22d3ee",
-  C: "#f0b429",
-  D: "#ff7a45",
-  E: "#ff7a45",
-  F: "#ff4d6d",
-  T: "#ff4d6d",
+  "A+": "#8fbf8a",
+  A: "#8fbf8a",
+  B: "#7fc4c4",
+  C: "#e3b265",
+  D: "#e67350",
+  E: "#e67350",
+  F: "#d5493c",
+  T: "#d5493c",
 };
 
 /** Grade display order for the distribution strip and filters. */
@@ -179,10 +180,10 @@ export const CLASSIFICATION_RANK: Record<Classification, number> = {
 };
 
 export const CLASSIFICATION_COLOR: Record<Classification, string> = {
-  public: "#58d68d",
-  internal: "#4ea3ff",
-  confidential: "#f0b429",
-  restricted: "#ff4d6d",
+  public: "#8fbf8a",
+  internal: "#9fc2d8",
+  confidential: "#e3b265",
+  restricted: "#d5493c",
 };
 
 export const CLASSIFICATION_LABEL: Record<Classification, string> = {
@@ -233,20 +234,20 @@ import type { Ecosystem, RiskType } from "../api/types";
 
 /** Ecosystem chip accent (SBOM table). Reuses the kind/severity palette. */
 export const ECOSYSTEM_COLOR: Record<string, string> = {
-  npm: "#ff7a45",
-  pypi: "#4ea3ff",
-  go: "#22d3ee",
-  cargo: "#ffb86b",
-  maven: "#c084fc",
-  rubygems: "#ff4d6d",
-  nuget: "#58d68d",
-  composer: "#c7a7ff",
-  hex: "#f78da7",
+  npm: "#e67350",
+  pypi: "#9fc2d8",
+  go: "#7fc4c4",
+  cargo: "#e9c48f",
+  maven: "#b9a3d6",
+  rubygems: "#d5493c",
+  nuget: "#8fbf8a",
+  composer: "#c9b5e0",
+  hex: "#e3a3b4",
 };
 
 export function ecosystemColor(e: Ecosystem | string | undefined | null): string {
-  if (!e) return "#6f7a8c";
-  return ECOSYSTEM_COLOR[String(e).toLowerCase()] ?? "#6f7a8c";
+  if (!e) return "#8a8175";
+  return ECOSYSTEM_COLOR[String(e).toLowerCase()] ?? "#8a8175";
 }
 
 /** Human label for a supply-chain risk category. */
@@ -287,7 +288,7 @@ export function attackHeat(
   }
   const frac = max > 0 ? Math.min(1, count / max) : 1;
   const op = (0.12 + frac * 0.46).toFixed(3); // 0.12 → 0.58
-  return { bg: `rgba(78, 163, 255, ${op})`, border: "var(--accent-dim)", text: "var(--text-0)" };
+  return { bg: `rgba(159, 194, 216, ${op})`, border: "var(--accent-dim)", text: "var(--text-0)" };
 }
 
 /* ------------------------------------------------------------------ *
@@ -302,9 +303,9 @@ import type { ReachabilityGrade } from "../api/types";
  * unreachable = muted grey ("not reached"), unknown = faint (don't alarm).
  */
 export const REACHABILITY_COLOR: Record<ReachabilityGrade, string> = {
-  reachable: "#ff4d6d",
-  potential: "#f0b429",
-  unreachable: "#6f7a8c",
+  reachable: "#d5493c",
+  potential: "#e3b265",
+  unreachable: "#8a8175",
   unknown: "#4a5263",
 };
 
@@ -350,8 +351,8 @@ export function mlRiskColor(score: number | undefined | null): string {
  * negative lowers it (green/ok), ~zero is neutral grey.
  */
 export function contributionColor(c: number | undefined | null): string {
-  if (c == null || Number.isNaN(c) || Math.abs(c) < 0.5) return "#6f7a8c";
-  return c > 0 ? SEV_COLOR.high : "#58d68d";
+  if (c == null || Number.isNaN(c) || Math.abs(c) < 0.5) return "#8a8175";
+  return c > 0 ? SEV_COLOR.high : "#8fbf8a";
 }
 
 /** Humanize a model feature key ("on_kev_path" → "on KEV path"). */

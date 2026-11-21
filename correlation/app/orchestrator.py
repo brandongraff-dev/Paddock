@@ -3,6 +3,8 @@ raw INSERTs — everything goes through the orchestrator so its audit log
 is the source of truth."""
 from __future__ import annotations
 
+import os
+
 import logging
 from typing import Any, Optional
 
@@ -14,7 +16,12 @@ log = logging.getLogger(__name__)
 class OrchestratorClient:
     def __init__(self, base_url: str, timeout: float = 15.0) -> None:
         self._base = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self._base, timeout=timeout)
+        # Service credential for AUTH_MODE=enforce (hardened profile).
+        key = os.environ.get("SERVICE_API_KEY")
+        self._client = httpx.AsyncClient(
+            base_url=self._base, timeout=timeout,
+            headers={"X-API-Key": key} if key else None,
+        )
 
     async def close(self) -> None:
         await self._client.aclose()

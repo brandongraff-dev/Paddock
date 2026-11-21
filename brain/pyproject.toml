@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "palantir-asm-brain"
+name = "paddock-brain"
 version = "0.1.0"
 description = "LLM brain: finding-cluster triage + natural-language -> validated read-only SQL over the ask_* views."
 requires-python = ">=3.11"

@@ -1,7 +1,10 @@
 """Audit-log read + integrity-verify endpoints (auditor/admin).
 
 - ``GET /v1/audit``        -- paged, filterable view of the hash-chained log.
-- ``GET /v1/audit/verify`` -- walks the chain and reports whether it is intact.
+- ``GET /v1/audit/verify`` -- walks the caller's tenant chain (streamed) and
+  checks its head against the latest external anchor (truncation / rewrite).
+- ``POST /v1/audit/anchor`` -- publish the chain head to the anchor sink now
+  (admin; the background loop does this every AUDIT_ANCHOR_INTERVAL_SEC).
 """
 from __future__ import annotations
 
@@ -10,12 +13,12 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import audit as audit_svc
 from ..auth import require_scope
 from ..db import get_pool
-from ..models import AuditEntryOut, AuditPage, AuditVerifyOut
+from ..models import AuditAnchorOut, AuditEntryOut, AuditPage, AuditVerifyOut
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/audit", tags=["audit"])
@@ -83,6 +86,23 @@ async def list_audit(
 
 
 @router.get("/verify", response_model=AuditVerifyOut, dependencies=[Depends(require_scope("audit"))])
-async def verify_audit(pool=Depends(get_pool)):
-    result = await audit_svc.verify(pool)
+async def verify_audit(request: Request, pool=Depends(get_pool)):
+    kwargs = {}
+    if hasattr(request.app.state, "audit_anchor_sink"):
+        kwargs["sink"] = request.app.state.audit_anchor_sink
+    result = await audit_svc.verify(pool, **kwargs)
     return AuditVerifyOut(**result)
+
+
+@router.post("/anchor", response_model=AuditAnchorOut, dependencies=[Depends(require_scope("admin"))])
+async def anchor_audit(request: Request, pool=Depends(get_pool)):
+    kwargs = {}
+    if hasattr(request.app.state, "audit_anchor_sink"):
+        kwargs["sink"] = request.app.state.audit_anchor_sink
+    try:
+        result = await audit_svc.anchor_head(pool, **kwargs)
+    except audit_svc.AuditIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except audit_svc.AnchorSinkError as exc:
+        raise HTTPException(status_code=502, detail=f"anchor sink: {exc}") from exc
+    return AuditAnchorOut(**result)

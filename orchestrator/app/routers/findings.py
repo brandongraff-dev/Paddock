@@ -4,12 +4,20 @@
   Also accepts `asset_value` (+ optional `asset_kind`) and resolves /
   upserts the asset by (kind, canonical) when no asset_id is given.
 - `GET  /v1/findings` -- paged response `{items,total,limit,offset}` with
-  severity, status, asset_id, rule_source, kev and `q` filters.
+  severity, status, asset_id, rule_source, kev and `q` filters. Lifecycle
+  (schema 019, app/lifecycle.py): suppressed findings and collapsed
+  duplicates are hidden by default (`suppressed=include|only`,
+  `include_duplicates=true`) and counted in `suppressed_total` /
+  `duplicates_total`; `sla_breached`, `fingerprint` and `sort` filters; every
+  item carries `priority_score`, `why`, `sources`, `due_at`, `sla_breached`.
 - `GET  /v1/findings/list` -- legacy bare-list response for callers that
   don't want the envelope (kept for dashboard back-compat).
 - `GET  /v1/findings/{id}` -- finding + its asset + any chain it is in.
 - `PATCH /v1/findings/{id}` -- status/notes/assigned_to. Publishes
-  `finding_closed` on a transition to a terminal status.
+  `finding_closed` on a transition to a terminal status. `accepted` /
+  `false_positive` require a reason (`notes`); prefer the dedicated
+  accept / false-positive / reopen endpoints in routers/lifecycle.py.
+- `POST /v1/findings/recompute-identity` -- admin backfill of dedupe identity.
 - `GET  /v1/chains` -- list correlated finding chains.
 - `POST /v1/chains` -- upsert from the correlator.
 - `POST /v1/outbound/bulk` -- the active worker's audit sink.
@@ -24,6 +32,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from .. import audit
+from .. import lifecycle
 from ..auth import Principal, classification_rank_sql, current_principal
 from ..db import get_pool
 from ..models import (
@@ -31,11 +41,7 @@ from ..models import (
     ChainIn,
     ChainOut,
     FindingBulkIn,
-    FindingBulkOut,
-    FindingDetailOut,
     FindingIn,
-    FindingOut,
-    FindingPage,
     FindingPatch,
     FindingStatus,
     OutboundBulkIn,
@@ -77,14 +83,16 @@ ON CONFLICT (asset_id, rule_id, rule_source) DO UPDATE SET
     metadata = findings.metadata || EXCLUDED.metadata
 RETURNING id, asset_id, rule_id, rule_source, severity, title, description,
           impact, remediation, evidence, cvss, epss, "references", status,
-          first_seen, last_seen, assigned_to, metadata, (xmax = 0) AS was_inserted
+          first_seen, last_seen, assigned_to, metadata, (xmax = 0) AS was_inserted,
+          status_reason, status_by, status_changed_at, accepted_until,
+          suppressed_by, suppressed_at, fingerprint, vuln_keys, duplicate_of
 """
 
 
 _ASSET_UPSERT_FOR_FINDING_SQL = """
 INSERT INTO assets (kind, value, canonical, source, confidence, metadata)
 VALUES ($1, $2, $3, 'finding-bulk', 100, '{}'::jsonb)
-ON CONFLICT (kind, canonical) DO UPDATE SET
+ON CONFLICT (tenant_id, kind, canonical) DO UPDATE SET
     last_seen = NOW()
 RETURNING id, kind, value, canonical, first_seen, last_seen, confidence,
           source, metadata, (xmax = 0) AS was_inserted
@@ -130,7 +138,7 @@ async def _resolve_or_upsert_asset(
     return row["id"], event
 
 
-@router.post("/findings/bulk", response_model=FindingBulkOut)
+@router.post("/findings/bulk", response_model=lifecycle.FindingBulkLifecycleOut)
 async def bulk_upsert(
     body: FindingBulkIn,
     pool=Depends(get_pool),
@@ -138,11 +146,17 @@ async def bulk_upsert(
 ):
     inserted = 0
     updated = 0
-    out: list[FindingOut] = []
+    n_suppressed = 0
+    n_duplicates = 0
+    out: list[lifecycle.FindingLifecycleOut] = []
     events: list[dict[str, Any]] = []
 
     async with pool.acquire() as con:
         async with con.transaction():
+            # Lifecycle (schema 019): suppression rules are loaded once per
+            # batch; identity/dedupe/suppression are stamped per row below.
+            suppressions = await lifecycle.load_active_suppressions(con)
+            asset_cache: dict[UUID, dict[str, Any]] = {}
             for item in body.items:
                 asset_id, ev_asset = await _resolve_or_upsert_asset(con, item)
                 if ev_asset is not None:
@@ -165,22 +179,31 @@ async def bulk_upsert(
                 )
                 d = _coerce_finding_row(row)
                 was_inserted = d.pop("was_inserted")
+                d.update(await lifecycle.apply_ingest(con, d, suppressions, asset_cache))
+                d["suppressed"] = d.get("suppressed_by") is not None
+                n_suppressed += 1 if d["suppressed"] else 0
+                n_duplicates += 1 if d.get("duplicate_of") else 0
                 if was_inserted:
                     inserted += 1
+                    # A suppressed finding is stored but must not page anyone:
+                    # it gets its own event instead of `finding_opened`.
                     events.append(
                         {
-                            "event": "finding_opened",
+                            "event": "finding_suppressed" if d["suppressed"] else "finding_opened",
                             "finding_id": str(d["id"]),
                             "asset_id": str(d["asset_id"]),
                             "severity": d["severity"],
                             "rule_id": d["rule_id"],
                             "rule_source": d["rule_source"],
+                            "duplicate_of": (
+                                str(d["duplicate_of"]) if d.get("duplicate_of") else None
+                            ),
                             "ts": d["first_seen"].isoformat(),
                         }
                     )
                 else:
                     updated += 1
-                out.append(FindingOut.model_validate(d))
+                out.append(lifecycle.FindingLifecycleOut.model_validate(d))
 
     for ev in events:
         try:
@@ -188,7 +211,10 @@ async def bulk_upsert(
         except Exception:
             logger.exception("publish_event_failed", extra=ev)
 
-    return FindingBulkOut(inserted=inserted, updated=updated, items=out)
+    return lifecycle.FindingBulkLifecycleOut(
+        inserted=inserted, updated=updated, items=out,
+        suppressed=n_suppressed, duplicates=n_duplicates,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -199,7 +225,10 @@ _FINDING_LIST_COLS = (
     'f.id, f.asset_id, f.rule_id, f.rule_source, f.severity, f.title, '
     'f.description, f.impact, f.remediation, f.evidence, f.cvss, f.epss, '
     'f."references", f.status, f.first_seen, f.last_seen, f.assigned_to, '
-    'f.metadata, f.classification'
+    'f.metadata, f.classification, '
+    # lifecycle (schema 019)
+    'f.status_reason, f.status_by, f.status_changed_at, f.accepted_until, '
+    'f.suppressed_by, f.suppressed_at, f.fingerprint, f.vuln_keys, f.duplicate_of'
 )
 
 # ABAC: SQL expression comparing a finding's classification rank to the
@@ -219,11 +248,26 @@ _BLAST_FINDING_EXPR = (
 # the finding's asset. Additive to the response shape.
 _FINDING_EXTRA_COLS = (
     "a.value AS asset_value, a.kind AS asset_kind, "
-    f"{_BLAST_FINDING_EXPR} AS blast_score"
+    f"{_BLAST_FINDING_EXPR} AS blast_score, "
+    # lifecycle enrichment inputs (consumed by lifecycle.enrich, not returned raw)
+    "a.metadata AS asset_metadata, sp.hours AS sla_hours, "
+    "t.owner_team AS ticket_owner, t.sla_due AS ticket_due"
 )
 
-# FROM clause shared by the list/detail queries: finding joined to its asset.
-_FINDING_FROM = "FROM findings f LEFT JOIN assets a ON a.id = f.asset_id"
+# FROM clause shared by the list/detail queries: finding joined to its asset,
+# its severity's SLA policy and its ticket (UNIQUE(finding_id): no fan-out).
+_FINDING_FROM = (
+    "FROM findings f LEFT JOIN assets a ON a.id = f.asset_id "
+    "LEFT JOIN sla_policies sp ON sp.severity = f.severity "
+    "LEFT JOIN tickets t ON t.finding_id = f.id"
+)
+
+# SLA due date in SQL (mirrors lifecycle.compute_due) so it can be filtered.
+_DUE_EXPR = (
+    "COALESCE(t.sla_due, CASE WHEN sp.hours > 0 "
+    "THEN f.first_seen + make_interval(hours => sp.hours) END)"
+)
+_BREACHED_EXPR = f"(f.status IN ('open','triaged') AND {_DUE_EXPR} < NOW())"
 
 
 def _build_find_where(
@@ -233,6 +277,8 @@ def _build_find_where(
     rule_source: RuleSource | None,
     kev: bool | None,
     q: str | None,
+    sla_breached: bool | None = None,
+    fingerprint: str | None = None,
 ) -> tuple[list[str], list[Any], bool]:
     clauses: list[str] = []
     args: list[Any] = []
@@ -265,10 +311,105 @@ def _build_find_where(
         clauses.append(
             f"(f.title ILIKE ${len(args)} OR f.description ILIKE ${len(args)})"
         )
+    if sla_breached is not None:
+        clauses.append(
+            _BREACHED_EXPR if sla_breached else f"NOT COALESCE({_BREACHED_EXPR}, FALSE)"
+        )
+    if fingerprint:
+        args.append(fingerprint)
+        clauses.append(f"f.fingerprint = ${len(args)}")
     return clauses, args, needs_cve_join
 
 
-@router.get("/findings", response_model=FindingPage)
+# Default reads hide suppressed findings and collapsed duplicates; both stay
+# countable via `suppressed_total` / `duplicates_total` on the page envelope.
+_SUPPRESSED_CLAUSE = {
+    "exclude": "f.suppressed_by IS NULL",
+    "only": "f.suppressed_by IS NOT NULL",
+    "include": None,
+}
+_SORTS = {
+    "last_seen": "f.last_seen DESC",
+    "due_at": f"{_DUE_EXPR} ASC NULLS LAST, f.last_seen DESC",
+    "severity": (
+        "CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 "
+        "WHEN 'low' THEN 3 ELSE 4 END, f.last_seen DESC"
+    ),
+}
+
+
+async def _query_findings(
+    pool,
+    principal: Principal,
+    *,
+    severity: Severity | None,
+    status: FindingStatus | None,
+    asset_id: UUID | None,
+    rule_source: RuleSource | None,
+    kev: bool | None,
+    q: str | None,
+    limit: int,
+    offset: int,
+    suppressed: str = "exclude",
+    include_duplicates: bool = False,
+    sla_breached: bool | None = None,
+    fingerprint: str | None = None,
+    sort: str = "last_seen",
+    with_counts: bool = False,
+) -> tuple[list[lifecycle.FindingLifecycleOut], int, int, int]:
+    """Shared list query. Returns (items, total, suppressed_total, duplicates_total)."""
+    await lifecycle.maybe_sweep(pool)
+    base, args, _needs_join = _build_find_where(
+        severity, status, asset_id, rule_source, kev, q, sla_breached, fingerprint
+    )
+    args.append(principal.clearance_rank)
+    base.append(f"{_FINDING_ABAC}${len(args)}")
+    clauses = list(base)
+    sup = _SUPPRESSED_CLAUSE.get(suppressed)
+    if sup:
+        clauses.append(sup)
+    if not include_duplicates:
+        clauses.append("f.duplicate_of IS NULL")
+    where = "WHERE " + " AND ".join(clauses)
+    args_list = list(args)
+    args_list.extend([limit, offset])
+    sql = f"""
+        SELECT {_FINDING_LIST_COLS}, {_FINDING_EXTRA_COLS}
+          {_FINDING_FROM}
+          {where}
+         ORDER BY {_SORTS.get(sort, _SORTS["last_seen"])}
+         LIMIT ${len(args_list) - 1} OFFSET ${len(args_list)}
+    """
+    async with pool.acquire() as con:
+        total = sup_total = dup_total = 0
+        if with_counts:
+            row = await con.fetchrow(
+                f"""
+                SELECT COUNT(*) FILTER (WHERE {' AND '.join(clauses)}) AS total,
+                       COUNT(*) FILTER (WHERE f.suppressed_by IS NOT NULL
+                                          AND f.duplicate_of IS NULL) AS sup,
+                       COUNT(*) FILTER (WHERE f.duplicate_of IS NOT NULL) AS dup
+                  {_FINDING_FROM} WHERE {' AND '.join(base)}
+                """,
+                *args,
+            )
+            total, sup_total, dup_total = int(row["total"]), int(row["sup"]), int(row["dup"])
+        rows = await con.fetch(sql, *args_list)
+        items = await lifecycle.enrich(con, [_coerce_finding_row(r) for r in rows])
+    return items, total, sup_total, dup_total
+
+
+async def fetch_enriched(con, ids: list[UUID]) -> list[lifecycle.FindingLifecycleOut]:
+    """Re-read findings by id with the full list projection + enrichment."""
+    rows = await con.fetch(
+        f"SELECT {_FINDING_LIST_COLS}, {_FINDING_EXTRA_COLS} {_FINDING_FROM} "
+        "WHERE f.id = ANY($1::uuid[])",
+        ids,
+    )
+    return await lifecycle.enrich(con, [_coerce_finding_row(r) for r in rows])
+
+
+@router.get("/findings", response_model=lifecycle.FindingLifecyclePage)
 async def list_findings_paged(
     severity: Severity | None = None,
     status: FindingStatus | None = None,
@@ -276,35 +417,31 @@ async def list_findings_paged(
     rule_source: RuleSource | None = None,
     kev: bool | None = None,
     q: str | None = Query(None, max_length=256),
+    suppressed: lifecycle.SuppressedFilter = Query(
+        "exclude", description="exclude (default) | include | only"),
+    include_duplicates: bool = Query(
+        False, description="also return findings collapsed into a primary"),
+    sla_breached: bool | None = None,
+    fingerprint: str | None = Query(None, max_length=64),
+    sort: str = Query("last_seen", pattern="^(last_seen|due_at|severity)$"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     pool=Depends(get_pool),
     principal: Principal = Depends(current_principal),
 ):
-    clauses, args, _needs_join = _build_find_where(
-        severity, status, asset_id, rule_source, kev, q
+    items, total, sup_total, dup_total = await _query_findings(
+        pool, principal, severity=severity, status=status, asset_id=asset_id,
+        rule_source=rule_source, kev=kev, q=q, limit=limit, offset=offset,
+        suppressed=suppressed, include_duplicates=include_duplicates,
+        sla_breached=sla_breached, fingerprint=fingerprint, sort=sort, with_counts=True,
     )
-    args.append(principal.clearance_rank)
-    clauses.append(f"{_FINDING_ABAC}${len(args)}")
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    sql_count = f"SELECT COUNT(*) FROM findings f {where}"
-    args_list = list(args)
-    args_list.extend([limit, offset])
-    sql = f"""
-        SELECT {_FINDING_LIST_COLS}, {_FINDING_EXTRA_COLS}
-          {_FINDING_FROM}
-          {where}
-         ORDER BY f.last_seen DESC
-         LIMIT ${len(args_list) - 1} OFFSET ${len(args_list)}
-    """
-    async with pool.acquire() as con:
-        total = await con.fetchval(sql_count, *args)
-        rows = await con.fetch(sql, *args_list)
-    items = [FindingOut.model_validate(_coerce_finding_row(r)) for r in rows]
-    return FindingPage(items=items, total=int(total or 0), limit=limit, offset=offset)
+    return lifecycle.FindingLifecyclePage(
+        items=items, total=total, limit=limit, offset=offset,
+        suppressed_total=sup_total, duplicates_total=dup_total,
+    )
 
 
-@router.get("/findings/list", response_model=list[FindingOut])
+@router.get("/findings/list", response_model=list[lifecycle.FindingLifecycleOut])
 async def list_findings_legacy(
     severity: Severity | None = None,
     status: FindingStatus | None = None,
@@ -312,40 +449,40 @@ async def list_findings_legacy(
     rule_source: RuleSource | None = None,
     kev: bool | None = None,
     q: str | None = Query(None, max_length=256),
+    suppressed: lifecycle.SuppressedFilter = "exclude",
+    include_duplicates: bool = False,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     pool=Depends(get_pool),
     principal: Principal = Depends(current_principal),
 ):
     """Legacy bare-list response for pre-pagination clients."""
-    clauses, args, _needs_join = _build_find_where(
-        severity, status, asset_id, rule_source, kev, q
+    items, *_ = await _query_findings(
+        pool, principal, severity=severity, status=status, asset_id=asset_id,
+        rule_source=rule_source, kev=kev, q=q, limit=limit, offset=offset,
+        suppressed=suppressed, include_duplicates=include_duplicates,
     )
-    args.append(principal.clearance_rank)
-    clauses.append(f"{_FINDING_ABAC}${len(args)}")
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    args_list = list(args)
-    args_list.extend([limit, offset])
-    sql = f"""
-        SELECT {_FINDING_LIST_COLS}, {_FINDING_EXTRA_COLS}
-          {_FINDING_FROM}
-          {where}
-         ORDER BY f.last_seen DESC
-         LIMIT ${len(args_list) - 1} OFFSET ${len(args_list)}
-    """
+    return items
+
+
+@router.post("/findings/recompute-identity")
+async def recompute_identity(pool=Depends(get_pool)):
+    """Admin: stamp dedupe identity on rows that predate schema 019 (or were
+    inserted directly) and collapse duplicates among them."""
     async with pool.acquire() as con:
-        rows = await con.fetch(sql, *args_list)
-    return [FindingOut.model_validate(_coerce_finding_row(r)) for r in rows]
+        async with con.transaction():
+            return await lifecycle.backfill_identity(con)
 
 
-@router.get("/findings/{finding_id}", response_model=FindingDetailOut)
+@router.get("/findings/{finding_id}", response_model=lifecycle.FindingLifecycleDetailOut)
 async def get_finding(
     finding_id: UUID,
     request: Request,
     pool=Depends(get_pool),
     principal: Principal = Depends(current_principal),
 ):
-    """Finding + its asset + any chain it participates in."""
+    """Finding + its asset + any chain it participates in (+ lifecycle)."""
+    await lifecycle.maybe_sweep(pool)
     async with pool.acquire() as con:
         row = await con.fetchrow(
             f"""
@@ -383,8 +520,16 @@ async def get_finding(
             """,
             finding_id,
         )
+        history_rows = await con.fetch(
+            """
+            SELECT id, from_status, to_status, reason, accepted_until, actor, at
+              FROM finding_status_history WHERE finding_id = $1
+             ORDER BY at DESC LIMIT 50
+            """,
+            finding_id,
+        )
+        (finding,) = await lifecycle.enrich(con, [_coerce_finding_row(row)])
 
-    finding = FindingOut.model_validate(_coerce_finding_row(row))
     asset = None
     if asset_row is not None:
         d = dict(asset_row)
@@ -392,21 +537,40 @@ async def get_finding(
             d["metadata"] = json.loads(d["metadata"])
         asset = AssetOut.model_validate(d)
     chains = [_coerce_chain_row(r) for r in chain_rows]
-    return FindingDetailOut(finding=finding, asset=asset, chains=chains)
+    history = [lifecycle.StatusHistoryOut.model_validate(dict(h)) for h in history_rows]
+    return lifecycle.FindingLifecycleDetailOut(
+        finding=finding, asset=asset, chains=chains, history=history
+    )
 
 
-@router.patch("/findings/{finding_id}", response_model=FindingOut)
+@router.patch("/findings/{finding_id}", response_model=lifecycle.FindingLifecycleOut)
 async def patch_finding(
     finding_id: UUID,
     patch: FindingPatch,
+    request: Request,
     pool=Depends(get_pool),
     r=Depends(get_redis),
+    principal: Principal = Depends(current_principal),
 ):
     set_parts: list[str] = []
     args: list[Any] = []
     if patch.status is not None:
+        # Dismissals need a reason (schema 019); PATCH carries it as `notes`.
+        reason = (patch.notes or "").strip()
+        if patch.status in lifecycle.DISMISSED_STATUSES and not reason:
+            raise HTTPException(
+                status_code=422,
+                detail=f"status '{patch.status}' requires a reason (send it as notes)",
+            )
         args.append(patch.status)
         set_parts.append(f"status = ${len(args)}")
+        args.append(reason or None)
+        set_parts.append(f"status_reason = ${len(args)}")
+        args.append(principal.actor)
+        set_parts.append(f"status_by = ${len(args)}")
+        set_parts.append("status_changed_at = NOW()")
+        if patch.status not in lifecycle.EXPIRING_STATUSES:
+            set_parts.append("accepted_until = NULL")
     if patch.assigned_to is not None:
         args.append(patch.assigned_to)
         set_parts.append(f"assigned_to = ${len(args)}")
@@ -424,14 +588,36 @@ async def patch_finding(
      RETURNING id, asset_id, rule_id, rule_source, severity, title,
                description, impact, remediation, evidence, cvss, epss,
                "references", status, first_seen, last_seen, assigned_to,
-               metadata
+               metadata, status_reason, status_by, status_changed_at,
+               accepted_until, suppressed_by, suppressed_at, fingerprint,
+               vuln_keys, duplicate_of
     """
     async with pool.acquire() as con:
-        row = await con.fetchrow(sql, *args)
+        async with con.transaction():
+            prev = await con.fetchval("SELECT status FROM findings WHERE id = $1", finding_id)
+            row = await con.fetchrow(sql, *args)
+            changed = row is not None and patch.status is not None and prev != patch.status
+            if changed:
+                await lifecycle.record_history(
+                    con, finding_id, prev, patch.status, (patch.notes or "").strip() or None,
+                    None, principal.actor,
+                )
     if row is None:
         raise HTTPException(status_code=404, detail="finding not found")
+    if changed:
+        try:
+            await audit.record(
+                pool, action="update", actor=principal.actor, actor_role=principal.role,
+                resource_type="findings", resource_id=str(finding_id),
+                method="PATCH", path=request.url.path, status=200,
+                request_id=getattr(request.state, "request_id", None),
+                details={"transition": "patch", "from": prev, "to": patch.status,
+                         "reason": (patch.notes or "").strip() or None},
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("finding_audit_failed")
 
-    if patch.status in ("fixed", "wontfix", "false_positive", "accepted_risk"):
+    if patch.status in ("fixed", "wontfix", "false_positive", "accepted_risk", "accepted"):
         try:
             await publish_event(
                 r,
@@ -443,7 +629,9 @@ async def patch_finding(
             )
         except Exception:
             logger.exception("publish_event_failed")
-    return FindingOut.model_validate(_coerce_finding_row(row))
+    d = _coerce_finding_row(row)
+    d["suppressed"] = d.get("suppressed_by") is not None
+    return lifecycle.FindingLifecycleOut.model_validate(d)
 
 
 # --------------------------------------------------------------------------- #

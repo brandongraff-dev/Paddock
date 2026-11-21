@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paddock-sentry"
+version = "0.1.0"
+description = "Paddock Sentry: a passive (listen-only) network sensor for IoT/OT visibility. Standard library only."
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-only" }
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+
+[project.scripts]
+paddock-sentry = "paddock_sentry.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["paddock_sentry*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -24,6 +24,8 @@ _CLASS_TITLE = {
     "ssrf": "Server-side request forgery (SSRF)",
     "weak_crypto": "Weak cryptography",
     "hardcoded_secret": "Hardcoded secret",
+    "code_injection": "Code injection",
+    "insecure_transport": "TLS verification disabled",
 }
 
 _CLASS_REMEDIATION = {
@@ -34,6 +36,8 @@ _CLASS_REMEDIATION = {
     "ssrf": "Validate and allow-list outbound hosts; block internal/metadata ranges and disable redirects.",
     "weak_crypto": "Use SHA-256+ (integrity) and a password hash (bcrypt/argon2/scrypt) for credentials.",
     "hardcoded_secret": "Remove the secret from source; load it from a secrets manager or environment and rotate it.",
+    "code_injection": "Never pass untrusted input to eval/Function/vm; parse data with a real parser instead.",
+    "insecure_transport": "Keep certificate verification on; trust a private CA explicitly instead of disabling checks.",
 }
 
 
@@ -138,4 +142,6 @@ def _impact(cls: str) -> str:
         "ssrf": "An attacker could coerce the server into making requests to internal systems.",
         "weak_crypto": "Weak hashing undermines credential and integrity protections.",
         "hardcoded_secret": "A leaked secret grants unauthorized access if the source is exposed.",
+        "code_injection": "An attacker could run arbitrary code inside the application process.",
+        "insecure_transport": "Traffic can be intercepted or altered by anyone on the network path.",
     }.get(cls, "This weakness may be exploitable; review the dataflow.")

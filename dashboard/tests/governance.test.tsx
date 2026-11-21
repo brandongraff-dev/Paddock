@@ -53,7 +53,7 @@ describe("Login", () => {
 
     render(React.createElement(Login));
     // It renders a recognizable sign-in surface.
-    expect(screen.getByText("palantir-asm")).toBeInTheDocument();
+    expect(screen.getByText("Paddock")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "nel" } });

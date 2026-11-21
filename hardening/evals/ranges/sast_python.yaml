@@ -1,0 +1,192 @@
+# SAST range: Python. Positive cases carry the weakness class they must raise;
+# `expect: []` cases are look-alikes (same sink, safe usage) that must stay quiet.
+engine: sast
+defaults:
+  lang: python
+cases:
+  # ---------------------------------------------------------------- positives
+  - id: py-sqli-fstring
+    expect: [sql_injection]
+    code: |
+      from flask import request
+      def user(cur):
+          cur.execute(f"SELECT * FROM users WHERE id = {request.args['id']}")
+
+  - id: py-sqli-concat-via-variable
+    expect: [sql_injection]
+    code: |
+      from flask import request
+      def search(cur):
+          term = request.args.get("q")
+          query = "SELECT * FROM items WHERE name = '" + term + "'"
+          cur.execute(query)
+
+  - id: py-sqli-django-raw-percent
+    expect: [sql_injection]
+    code: |
+      def view(request):
+          return Item.objects.raw("SELECT * FROM item WHERE owner = '%s'" % request.GET["u"])
+
+  - id: py-cmdi-os-system
+    expect: [command_injection]
+    code: |
+      import os
+      from flask import request
+      def ping():
+          os.system("ping -c1 " + request.args["host"])
+
+  - id: py-cmdi-subprocess-shell
+    expect: [command_injection]
+    code: |
+      import subprocess
+      from flask import request
+      def run():
+          cmd = request.form["cmd"]
+          subprocess.run(cmd, shell=True)
+
+  - id: py-path-traversal-join
+    expect: [path_traversal]
+    code: |
+      import os
+      from flask import request
+      def download():
+          name = request.args["file"]
+          return open(os.path.join("/srv/files", name)).read()
+
+  - id: py-ssrf-requests
+    expect: [ssrf]
+    code: |
+      import requests
+      from flask import request
+      def proxy():
+          return requests.get(request.args["url"]).text
+
+  - id: py-ssrf-urlopen-argv
+    expect: [ssrf]
+    code: |
+      import sys, urllib.request
+      urllib.request.urlopen(sys.argv[1])
+
+  - id: py-pickle-loads
+    expect: [insecure_deserialization]
+    code: |
+      import pickle
+      def load(blob):
+          return pickle.loads(blob)
+
+  - id: py-yaml-load-unsafe
+    expect: [insecure_deserialization]
+    code: |
+      import yaml
+      def parse(text):
+          return yaml.load(text)
+
+  - id: py-md5-password
+    expect: [weak_crypto]
+    code: |
+      import hashlib
+      def hash_pw(pw):
+          return hashlib.md5(pw.encode()).hexdigest()
+
+  - id: py-hardcoded-db-password
+    expect: [hardcoded_secret]
+    code: |
+      DB_PASSWORD = "S3cr3tPassw0rd2024"
+
+  # --------------------------------------------------------------- look-alikes
+  - id: py-sqli-parameterised
+    expect: []
+    note: the canonical safe pattern -- tainted value passed as a bound parameter
+    code: |
+      from flask import request
+      def user(cur):
+          cur.execute("SELECT * FROM users WHERE id = %s", (request.args["id"],))
+
+  - id: py-sqli-constant-query
+    expect: []
+    code: |
+      def health(cur):
+          cur.execute("SELECT 1")
+
+  - id: py-sqli-sanitised-int
+    expect: []
+    code: |
+      from flask import request
+      def user(cur):
+          uid = request.args["id"]
+          uid = int(uid)
+          cur.execute("SELECT * FROM users WHERE id = %d" % uid)
+
+  - id: py-subprocess-constant-argv
+    expect: []
+    code: |
+      import subprocess
+      subprocess.run(["git", "status", "--porcelain"], check=True)
+
+  - id: py-open-constant
+    expect: []
+    code: |
+      with open("config.yaml") as fh:
+          cfg = fh.read()
+
+  - id: py-requests-constant
+    expect: []
+    code: |
+      import requests
+      requests.get("https://api.example.com/health", timeout=5)
+
+  - id: py-urlopen-env-config
+    expect: []
+    note: operator configuration is not attacker input
+    code: |
+      import os, urllib.request
+      urllib.request.urlopen(os.environ["HEALTHCHECK_URL"])
+
+  - id: py-yaml-safe-loader
+    expect: []
+    code: |
+      import yaml
+      def parse(text):
+          a = yaml.load(text, Loader=yaml.SafeLoader)
+          return a, yaml.safe_load(text)
+
+  - id: py-json-not-pickle
+    expect: []
+    code: |
+      import json, pickle  # imported, never used for untrusted data
+      def load(blob):
+          return json.loads(blob)
+
+  - id: py-sha256
+    expect: []
+    code: |
+      import hashlib
+      digest = hashlib.sha256(b"data").hexdigest()
+
+  - id: py-secret-from-env
+    expect: []
+    code: |
+      import os
+      DB_PASSWORD = os.environ["DB_PASSWORD"]
+      API_KEY = "changeme-placeholder-1"
+
+  - id: py-secret-lookalike-name
+    expect: []
+    note: tokenizer/passive are not secret names
+    code: |
+      tokenizer_path = "models/v2/tok123"
+      queue_passive = "jobs-passive-v2"
+
+  # ------------------------------------------------ hard cases (known limits)
+  - id: py-cmdi-interprocedural
+    expect: [command_injection]
+    note: >-
+      KNOWN GAP -- the bundled scanner is intra-procedural; taint passed as an
+      argument to a helper is lost. Semgrep (optional) catches it.
+    code: |
+      import os
+      from flask import request
+      def _run(c):
+          os.system(c)
+      def handler():
+          _run("nslookup " + request.args["host"])

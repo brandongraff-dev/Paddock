@@ -49,9 +49,21 @@ async def timeline(
         finding_counts = await con.fetch(
             """
             SELECT (first_seen AT TIME ZONE 'UTC')::date AS day,
+                   severity,
                    COUNT(*) AS c
               FROM findings
              WHERE first_seen >= $1 AND first_seen < $2
+             GROUP BY 1, 2
+            """,
+            start,
+            end,
+        )
+        scan_counts = await con.fetch(
+            """
+            SELECT (queued_at AT TIME ZONE 'UTC')::date AS day,
+                   COUNT(*) AS c
+              FROM scans
+             WHERE queued_at >= $1 AND queued_at < $2
              GROUP BY 1
             """,
             start,
@@ -100,7 +112,12 @@ async def timeline(
             )
 
     a_counts = {r["day"]: r["c"] for r in asset_counts}
-    f_counts = {r["day"]: r["c"] for r in finding_counts}
+    f_counts: dict[date, int] = {}
+    f_by_sev: dict[date, dict[str, int]] = {}
+    for r in finding_counts:
+        f_counts[r["day"]] = f_counts.get(r["day"], 0) + int(r["c"])
+        f_by_sev.setdefault(r["day"], {})[str(r["severity"])] = int(r["c"])
+    s_counts = {r["day"]: int(r["c"]) for r in scan_counts}
     a_samples: dict[date, list[dict[str, Any]]] = {}
     for r in asset_samples:
         a_samples.setdefault(r["day"], []).append(
@@ -134,6 +151,8 @@ async def timeline(
                 day=cur,
                 asset_count=int(a_counts.get(cur, 0)),
                 finding_count=int(f_counts.get(cur, 0)),
+                new_findings_by_severity=f_by_sev.get(cur, {}),
+                scans_run=s_counts.get(cur, 0),
                 sample_assets=a_samples.get(cur, []),
                 sample_findings=f_samples.get(cur, []),
             )

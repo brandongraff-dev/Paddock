@@ -1,91 +1,119 @@
 /* ------------------------------------------------------------------ *
- * Design tokens — dark-first, Palantir-inspired.                      *
+ * Design tokens — "Daguerreotype".                                    *
+ *                                                                     *
+ * Warm sepia blacks and cream ink, after 19th-century plate           *
+ * photography; precise, layered surfaces after modern product UI.     *
+ * Depth comes from three things only: a lighter surface per layer,    *
+ * a 1px top highlight, and a soft long shadow. No glows, no neon.     *
  * ------------------------------------------------------------------ */
 
 :root,
 :root[data-theme="dark"] {
-  /* Surfaces */
-  --bg-0: #0a0d12;
-  --bg-1: #0f1319;
-  --bg-2: #141921;
-  --bg-3: #1a2029;
-  --panel: #10151d;
+  color-scheme: dark;
 
-  /* Lines */
-  --border: #1d2430;
-  --border-strong: #2a3344;
+  /* Surfaces — each layer one step warmer/lighter than the last */
+  --bg-0: #0b0a09;      /* app chrome, behind everything */
+  --bg-1: #12100e;      /* main canvas */
+  --bg-2: #191613;      /* panels */
+  --bg-3: #221e1a;      /* raised / hover */
+  --bg-4: #2b2621;      /* pressed / selected */
+  --panel: #171411;
 
-  /* Text */
-  --text-0: #e6edf7;
-  --text-1: #aab4c4;
-  --text-2: #6f7a8c;
+  /* Lines — cream at low alpha so they tint with the surface */
+  --border: rgba(236, 226, 208, 0.07);
+  --border-strong: rgba(236, 226, 208, 0.13);
+  --border-focus: rgba(236, 226, 208, 0.32);
 
-  /* Accent */
-  --accent: #4ea3ff;
-  --accent-dim: #2b6cb0;
-  --accent-glow: rgba(78, 163, 255, 0.35);
+  /* Ink */
+  --text-0: #ece6da;    /* primary — cream */
+  --text-1: #b4ab9c;    /* secondary */
+  --text-2: #7d7468;    /* muted */
+  --text-3: #57504a;    /* faint / disabled */
 
-  /* Severity palette */
-  --sev-info: #6f7a8c;
-  --sev-low: #4ea3ff;
-  --sev-med: #f0b429;
-  --sev-high: #ff7a45;
-  --sev-crit: #ff4d6d;
+  /* Accent — a patina blue (the one cool note in a warm palette) */
+  --accent: #9fc2d8;
+  --accent-dim: #5f87a0;
+  --accent-glow: rgba(159, 194, 216, 0.18);
+  --accent-bg: rgba(159, 194, 216, 0.08);
 
-  /* Status */
-  --ok: #58d68d;
-  --warn: #f0b429;
-  --bad: #ff4d6d;
+  /* Severity — a single-hue ordinal ramp (validated: monotone L,
+     29° hue spread, light end ≥ 4:1 on --bg-2). Info is neutral ink. */
+  --sev-info: #8a8175;
+  --sev-low: #f3c6a5;
+  --sev-med: #ee9d72;
+  --sev-high: #e67350;
+  --sev-crit: #d5493c;
 
-  /* Asset-kind palette (graph nodes, chips) */
-  --kind-org: #c084fc;
-  --kind-domain: #4ea3ff;
-  --kind-subdomain: #6cc6ff;
-  --kind-ipv4: #58d68d;
-  --kind-ipv6: #3eb673;
-  --kind-port: #f0b429;
-  --kind-service: #ffb86b;
-  --kind-technology: #c7a7ff;
-  --kind-certificate: #f78da7;
-  --kind-endpoint: #ff7a45;
-  --kind-repository: #e6edf7;
-  --kind-secret_candidate: #ff4d6d;
-  --kind-cloud_account: #22d3ee;
-  --kind-cloud_resource: #0ea5e9;
+  /* Status — reserved; always shipped with an icon or label */
+  --ok: #8fbf8a;
+  --warn: #e3b265;
+  --bad: #d5493c;
+
+  /* Asset kinds (graph nodes, chips) — muted to sit in the warm field */
+  --kind-org: #b9a3d6;
+  --kind-domain: #9fc2d8;
+  --kind-subdomain: #b6d3e3;
+  --kind-ipv4: #8fbf8a;
+  --kind-ipv6: #76a872;
+  --kind-port: #e3b265;
+  --kind-service: #e9c48f;
+  --kind-technology: #c9b5e0;
+  --kind-certificate: #e3a3b4;
+  --kind-endpoint: #e67350;
+  --kind-repository: #ece6da;
+  --kind-secret_candidate: #d5493c;
+  --kind-cloud_account: #7fc4c4;
+  --kind-cloud_resource: #6fb0c8;
 
   /* Type */
-  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  --sans: Inter, -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --serif: "Newsreader Variable", "Newsreader", "Iowan Old Style", "Times New Roman", serif;
+  --sans: "Inter", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* Radius */
-  --radius-s: 4px;
-  --radius-m: 6px;
-  --radius-l: 10px;
+  --radius-s: 5px;
+  --radius-m: 8px;
+  --radius-l: 12px;
+  --radius-xl: 16px;
 
-  /* Shadow */
-  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
-              0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.55),
-              0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  /* Depth */
+  --hl: inset 0 1px 0 rgba(255, 244, 228, 0.045);
+  --shadow-1: var(--hl), 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: var(--hl), 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -12px rgba(0, 0, 0, 0.7);
+  --shadow-3: var(--hl), 0 2px 4px rgba(0, 0, 0, 0.5), 0 24px 64px -16px rgba(0, 0, 0, 0.85);
+  --panel-fill: linear-gradient(180deg, rgba(255, 244, 228, 0.028) 0%, rgba(255, 244, 228, 0) 60%), var(--bg-2);
+
+  /* Film grain (inline SVG turbulence; no network) */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .95 0 0 0 0 .88 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  /* Same noise at ~3% for app surfaces */
+  --grain-faint: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .95 0 0 0 0 .88 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --fast: 120ms;
 
   /* Layout */
-  --rail-w: 72px;
-  --topbar-h: 44px;
-  --drawer-w: 420px;
+  --rail-w: 236px;
+  --topbar-h: 48px;
+  --drawer-w: 440px;
 }
 
-/* Reserve for future light theme — not primary. */
+/* Reserved light theme ("albumen print"). Not primary. */
 :root[data-theme="light"] {
-  --bg-0: #f4f6fa;
-  --bg-1: #ffffff;
-  --bg-2: #f4f6fa;
-  --bg-3: #e8edf5;
-  --panel: #ffffff;
-  --border: #d5dbe5;
-  --border-strong: #b8c0cf;
-  --text-0: #0a0d12;
-  --text-1: #3a4253;
-  --text-2: #6f7a8c;
-  --accent: #2b6cb0;
-  --accent-dim: #4ea3ff;
+  color-scheme: light;
+  --bg-0: #e9e3d7;
+  --bg-1: #f4efe6;
+  --bg-2: #fbf8f2;
+  --bg-3: #efe9de;
+  --bg-4: #e4dccd;
+  --panel: #fbf8f2;
+  --border: rgba(40, 30, 20, 0.1);
+  --border-strong: rgba(40, 30, 20, 0.18);
+  --text-0: #1b1712;
+  --text-1: #4a4239;
+  --text-2: #7a7064;
+  --accent: #3f6a85;
+  --accent-dim: #6d93ab;
+  --panel-fill: var(--bg-2);
 }

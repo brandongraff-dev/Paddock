@@ -1,0 +1,236 @@
+{
+ "_comment": "IEEE MA-L (OUI) prefixes -> vendor/role/type for passive device identification. Curated for OT/IoT/building vendors; generic phone/PC vendors are omitted on purpose (an OUI alone must never call a phone a fridge). Extend from the IEEE registry: https://standards-oui.ieee.org/",
+ "version": 1,
+ "prefixes": {
+  "000054": {
+   "vendor": "Schneider Electric",
+   "role": "ot",
+   "type": "plc"
+  },
+  "000085": {
+   "vendor": "Canon",
+   "role": "iot",
+   "type": "printer"
+  },
+  "0000AA": {
+   "vendor": "Xerox",
+   "role": "iot",
+   "type": "printer"
+  },
+  "0000BC": {
+   "vendor": "Rockwell Automation",
+   "role": "ot",
+   "type": "plc"
+  },
+  "000105": {
+   "vendor": "Beckhoff Automation",
+   "role": "ot",
+   "type": "plc"
+  },
+  "000C29": {
+   "vendor": "VMware",
+   "role": "it",
+   "type": "virtual-machine"
+  },
+  "000E58": {
+   "vendor": "Sonos",
+   "role": "iot",
+   "type": "speaker"
+  },
+  "000E8C": {
+   "vendor": "Siemens",
+   "role": "ot",
+   "type": "plc"
+  },
+  "001788": {
+   "vendor": "Signify (Philips Hue)",
+   "role": "iot",
+   "type": "lighting"
+  },
+  "001B1B": {
+   "vendor": "Siemens",
+   "role": "ot",
+   "type": "plc"
+  },
+  "001B78": {
+   "vendor": "Hewlett-Packard",
+   "role": "iot",
+   "type": "printer"
+  },
+  "001C06": {
+   "vendor": "Siemens",
+   "role": "ot",
+   "type": "plc"
+  },
+  "001D9C": {
+   "vendor": "Rockwell Automation",
+   "role": "ot",
+   "type": "plc"
+  },
+  "0030A7": {
+   "vendor": "Schweitzer Engineering Laboratories",
+   "role": "ot",
+   "type": "relay"
+  },
+  "0030DE": {
+   "vendor": "WAGO",
+   "role": "ot",
+   "type": "plc"
+  },
+  "004084": {
+   "vendor": "Honeywell",
+   "role": "ot",
+   "type": "hvac-controller"
+  },
+  "00408C": {
+   "vendor": "Axis Communications",
+   "role": "iot",
+   "type": "camera"
+  },
+  "005056": {
+   "vendor": "VMware",
+   "role": "it",
+   "type": "virtual-machine"
+  },
+  "008063": {
+   "vendor": "Hirschmann",
+   "role": "ot",
+   "type": "industrial-switch"
+  },
+  "008077": {
+   "vendor": "Brother",
+   "role": "iot",
+   "type": "printer"
+  },
+  "0080F4": {
+   "vendor": "Schneider Electric",
+   "role": "ot",
+   "type": "plc"
+  },
+  "0090E8": {
+   "vendor": "Moxa",
+   "role": "ot",
+   "type": "gateway"
+  },
+  "00A045": {
+   "vendor": "Phoenix Contact",
+   "role": "ot",
+   "type": "plc"
+  },
+  "18B430": {
+   "vendor": "Nest Labs",
+   "role": "iot",
+   "type": "thermostat"
+  },
+  "240AC4": {
+   "vendor": "Espressif",
+   "role": "iot",
+   "type": "embedded"
+  },
+  "246F28": {
+   "vendor": "Espressif",
+   "role": "iot",
+   "type": "embedded"
+  },
+  "24A43C": {
+   "vendor": "Ubiquiti",
+   "role": "it",
+   "type": "network"
+  },
+  "286336": {
+   "vendor": "Siemens",
+   "role": "ot",
+   "type": "plc"
+  },
+  "30AEA4": {
+   "vendor": "Espressif",
+   "role": "iot",
+   "type": "embedded"
+  },
+  "3CD92B": {
+   "vendor": "Hewlett-Packard",
+   "role": "iot",
+   "type": "printer"
+  },
+  "3CEF8C": {
+   "vendor": "Dahua",
+   "role": "iot",
+   "type": "camera"
+  },
+  "4419B6": {
+   "vendor": "Hikvision",
+   "role": "iot",
+   "type": "camera"
+  },
+  "446132": {
+   "vendor": "ecobee",
+   "role": "iot",
+   "type": "thermostat"
+  },
+  "5CAAFD": {
+   "vendor": "Sonos",
+   "role": "iot",
+   "type": "speaker"
+  },
+  "788A20": {
+   "vendor": "Ubiquiti",
+   "role": "it",
+   "type": "network"
+  },
+  "A4CF12": {
+   "vendor": "Espressif",
+   "role": "iot",
+   "type": "embedded"
+  },
+  "ACCC8E": {
+   "vendor": "Axis Communications",
+   "role": "iot",
+   "type": "camera"
+  },
+  "B827EB": {
+   "vendor": "Raspberry Pi",
+   "role": "it",
+   "type": "single-board-computer"
+  },
+  "B8A44F": {
+   "vendor": "Axis Communications",
+   "role": "iot",
+   "type": "camera"
+  },
+  "B8E937": {
+   "vendor": "Sonos",
+   "role": "iot",
+   "type": "speaker"
+  },
+  "BCAD28": {
+   "vendor": "Hikvision",
+   "role": "iot",
+   "type": "camera"
+  },
+  "BCDDC2": {
+   "vendor": "Espressif",
+   "role": "iot",
+   "type": "embedded"
+  },
+  "DCA632": {
+   "vendor": "Raspberry Pi",
+   "role": "it",
+   "type": "single-board-computer"
+  },
+  "E45F01": {
+   "vendor": "Raspberry Pi",
+   "role": "it",
+   "type": "single-board-computer"
+  },
+  "F45433": {
+   "vendor": "Rockwell Automation",
+   "role": "ot",
+   "type": "plc"
+  },
+  "FCECDA": {
+   "vendor": "Ubiquiti",
+   "role": "it",
+   "type": "network"
+  }
+ }
+}

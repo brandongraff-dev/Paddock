@@ -61,6 +61,8 @@ jobs:
           - { service: graphsync,       path: graphsync,       extra: test }
           - { service: worker-passive,  path: workers/passive, extra: test }
           - { service: worker-active,   path: workers/active,  extra: dev }
+          - { service: otdiscovery,     path: otdiscovery,     extra: test }
+          - { service: sentry,          path: sentry,          extra: test }
 
     services:
       postgres:
@@ -110,6 +112,36 @@ jobs:
         run: pytest -q
 
   # --------------------------------------------------------------------- #
+  # Detection quality: seeded ranges (true positives + look-alikes) run
+  # through each engine's real detection code; fails when any detector's
+  # precision/recall drops below hardening/evals/thresholds.yaml, or when an
+  # engine silently stops firing. See docs/EVALS.md.
+  # --------------------------------------------------------------------- #
+  evals:
+    name: detection quality (evals)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install engines under test
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml pytest \
+            -e ./codeanalysis -e ./sca -e ./otdiscovery -e ./correlation -e ./orchestrator
+      - name: Harness self-tests
+        run: pytest -q hardening/evals/test_harness.py
+      - name: Precision/recall gate
+        run: python hardening/evals/run.py --json evals-results.json
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evals-results
+          path: evals-results.json
+
+  # --------------------------------------------------------------------- #
   # Dashboard: type-check + unit tests (Vitest).
   # --------------------------------------------------------------------- #
   dashboard:
@@ -131,3 +163,147 @@ jobs:
         run: npx tsc -b
       - name: Unit tests
         run: npx vitest run
+
+  # --------------------------------------------------------------------- #
+  # API contract: the committed OpenAPI spec + generated SDKs must match the
+  # code, and /v1 must not break vs the base branch (docs/API.md). A PR
+  # labelled `api-breaking` may break deliberately (reported, not failed).
+  # --------------------------------------------------------------------- #
+  api-contract:
+    name: api contract (openapi + breaking changes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install orchestrator (for in-process spec export)
+        run: pip install -e orchestrator pytest
+      - name: Spec is up to date
+        run: python scripts/export_openapi.py --check
+      - name: SDKs are regenerated
+        run: |
+          python sdk/python/codegen.py --check
+          node sdk/typescript/scripts/codegen.mjs --check
+      - name: Contract tooling tests
+        run: pytest -q scripts/tests
+      - name: Breaking changes vs base branch
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          ALLOW: ${{ contains(github.event.pull_request.labels.*.name, 'api-breaking') }}
+        run: |
+          if ! git show "origin/${BASE_REF}:docs/api/openapi.json" > /tmp/base-openapi.json 2>/dev/null; then
+            echo "No committed spec on ${BASE_REF} yet; skipping breaking-change diff." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          flags=""
+          if [ "$ALLOW" = "true" ]; then flags="--allow-breaking"; fi
+          set -o pipefail
+          python scripts/openapi_diff.py /tmp/base-openapi.json docs/api/openapi.json --markdown $flags \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------- #
+  # Developer platform: Python SDK + paddockctl, TypeScript SDK, Terraform
+  # provider, docs site.
+  # --------------------------------------------------------------------- #
+  sdk-python:
+    name: sdk python (+ paddockctl)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test]"
+      - run: pytest -q
+
+  sdk-typescript:
+    name: sdk typescript (tsc + vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  terraform-provider:
+    name: terraform provider (go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform-provider-paddock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: terraform-provider-paddock/go.mod
+          cache-dependency-path: terraform-provider-paddock/go.sum
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./...
+
+  docs:
+    name: docs (mkdocs --strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r docs/requirements.txt
+      - run: mkdocs build --strict
+
+  # --------------------------------------------------------------------- #
+  # Deploy artefacts: Helm chart (lint + template in 4 profiles +
+  # kubeconform + hardening invariants), Prometheus rules (promtool check +
+  # unit tests), Grafana dashboard JSON, compose file syntax.
+  # --------------------------------------------------------------------- #
+  deploy:
+    name: deploy (helm + kubeconform + promtool)
+    runs-on: ubuntu-latest
+    env:
+      HELM_VERSION: v3.16.4
+      KUBECONFORM_VERSION: v0.6.7
+      PROM_VERSION: 2.53.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install helm, kubeconform, promtool
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && cd "$(mktemp -d)"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz
+          mv linux-amd64/helm "$HOME/bin/"
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz
+          mv kubeconform "$HOME/bin/"
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" | tar -xz
+          mv "prometheus-${PROM_VERSION}.linux-amd64/promtool" "$HOME/bin/"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Helm chart
+        run: bash deploy/helm/ci-check.sh
+      - name: Prometheus rules
+        working-directory: deploy/prometheus
+        run: |
+          promtool check rules paddock-alerts.yml
+          promtool test rules paddock-alerts.test.yml
+      - name: Grafana dashboard is valid JSON
+        run: python3 -c "import json; d=json.load(open('deploy/grafana/paddock-overview.json')); assert d['uid'] and d['panels']"
+      - name: Backup/restore scripts parse
+        run: bash -n scripts/backup.sh && bash -n scripts/restore.sh

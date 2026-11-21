@@ -22,7 +22,7 @@ import type { AuthUser, Classification, Role } from "../api/types";
 /** A user's clearance is a point on the same ladder as data classification. */
 export type Clearance = Classification;
 
-const LS_KEY = "pasm.auth.v1";
+const LS_KEY = "paddock.auth.v1";
 
 interface Persisted {
   token: string | null;

@@ -1,0 +1,33 @@
+{
+  "name": "@paddock/sdk",
+  "version": "0.1.0",
+  "description": "Typed, fetch-based client for the Paddock /v1 API.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "generate": "node scripts/codegen.mjs",
+    "generate:check": "node scripts/codegen.mjs --check",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "typescript": "5.5.4",
+    "vitest": "2.0.5"
+  }
+}

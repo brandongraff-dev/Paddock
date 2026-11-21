@@ -1,4 +1,4 @@
-"""changewatch: surface-change detection + alerting for palantir-asm.
+"""changewatch: surface-change detection + alerting for paddock.
 
 This service gives the platform a memory. It periodically (and in response to
 ``stream:events``) diffs the asset/finding graph against a cursor, writes a

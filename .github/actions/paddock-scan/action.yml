@@ -1,0 +1,186 @@
+name: Paddock scan
+description: >-
+  Upload this repository's dependency lockfiles to a Paddock instance (SBOM +
+  OSV matching + supply-chain risk), then fetch the project's findings as
+  SARIF 2.1.0 and (optionally) upload them to GitHub code scanning.
+author: Paddock
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  paddock-url:
+    description: Base URL of your Paddock orchestrator, e.g. https://paddock.example.com
+    required: true
+  api-key:
+    description: >-
+      Paddock API key with the `scan` and `read` capabilities (an analyst's key,
+      or one minted with scopes ["scan","read"]). Pass it from a secret.
+    required: true
+  project:
+    description: "Paddock project name (default: owner/repo)"
+    required: false
+    default: ${{ github.repository }}
+  path:
+    description: Directory to search for lockfiles
+    required: false
+    default: "."
+  max-files:
+    description: Maximum number of lockfiles to upload (server limit 200)
+    required: false
+    default: "50"
+  include-sca:
+    description: Include dependency vulnerabilities in the SARIF (true/false)
+    required: false
+    default: "true"
+  min-severity:
+    description: Only export results at or above this severity (info|low|medium|high|critical)
+    required: false
+    default: ""
+  fail-on:
+    description: >-
+      Fail the step when an unsuppressed result at or above this severity exists
+      (low|medium|high|critical). Empty = never fail.
+    required: false
+    default: ""
+  sarif-file:
+    description: Where to write the SARIF log
+    required: false
+    default: paddock.sarif
+  upload-sarif:
+    description: Upload the SARIF to GitHub code scanning (needs `security-events write`)
+    required: false
+    default: "true"
+  category:
+    description: Code scanning category (distinguishes Paddock from other analyzers)
+    required: false
+    default: paddock
+  ca-bundle:
+    description: Optional path to a PEM CA bundle for a Paddock behind a private CA
+    required: false
+    default: ""
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF file written
+    value: ${{ steps.sarif.outputs.sarif-file }}
+  results:
+    description: Number of SARIF results
+    value: ${{ steps.sarif.outputs.results }}
+  components:
+    description: Number of components Paddock recorded for the project
+    value: ${{ steps.upload.outputs.components }}
+
+runs:
+  using: composite
+  steps:
+    - name: Collect lockfiles
+      id: collect
+      shell: bash
+      env:
+        PADDOCK_PATH: ${{ inputs.path }}
+        PADDOCK_PROJECT: ${{ inputs.project }}
+        PADDOCK_MAX_FILES: ${{ inputs.max-files }}
+        PADDOCK_SOURCE_REF: ${{ github.server_url }}/${{ github.repository }}@${{ github.sha }}
+      run: |
+        set -euo pipefail
+        command -v jq >/dev/null || { echo "::error::jq is required"; exit 1; }
+        payload="${RUNNER_TEMP}/paddock-lockfiles.json"
+        jq -n --arg project "$PADDOCK_PROJECT" --arg ref "$PADDOCK_SOURCE_REF" \
+          '{project: $project, source_ref: $ref, files: {}}' > "$payload"
+        n=0
+        while IFS= read -r -d '' f; do
+          rel="${f#./}"
+          if [ "$n" -ge "$PADDOCK_MAX_FILES" ]; then
+            echo "::warning::max-files ($PADDOCK_MAX_FILES) reached; skipping $rel"
+            continue
+          fi
+          jq --arg p "$rel" --rawfile c "$f" '.files[$p] = $c' "$payload" > "$payload.tmp"
+          mv "$payload.tmp" "$payload"
+          echo "lockfile: $rel"
+          n=$((n + 1))
+        done < <(find "$PADDOCK_PATH" \
+            \( -name node_modules -o -name .git -o -name vendor -o -name dist -o -name build \
+               -o -name .venv -o -name target \) -prune -o -type f \
+            \( -iname package-lock.json -o -iname npm-shrinkwrap.json -o -iname yarn.lock \
+               -o -iname pnpm-lock.yaml -o -iname requirements.txt -o -iname poetry.lock \
+               -o -iname Pipfile.lock -o -iname Cargo.lock -o -iname pom.xml \
+               -o -iname Gemfile.lock -o -iname go.sum -o -iname go.mod \) -print0 | sort -z)
+        echo "count=$n" >> "$GITHUB_OUTPUT"
+        echo "payload=$payload" >> "$GITHUB_OUTPUT"
+        echo "Found $n lockfile(s)"
+
+    - name: Upload lockfiles to Paddock
+      id: upload
+      if: steps.collect.outputs.count != '0'
+      shell: bash
+      env:
+        PADDOCK_URL: ${{ inputs.paddock-url }}
+        PADDOCK_API_KEY: ${{ inputs.api-key }}
+        PADDOCK_CA: ${{ inputs.ca-bundle }}
+        PAYLOAD: ${{ steps.collect.outputs.payload }}
+      run: |
+        set -euo pipefail
+        case "$PADDOCK_URL" in https://*) ;; *) echo "::error::paddock-url must be https://"; exit 1;; esac
+        ca=(); [ -n "$PADDOCK_CA" ] && ca=(--cacert "$PADDOCK_CA")
+        out="${RUNNER_TEMP}/paddock-upload.json"
+        curl -sS --fail-with-body "${ca[@]}" --retry 3 --retry-all-errors --max-time 600 \
+          -X POST "${PADDOCK_URL%/}/v1/import/lockfiles" \
+          -H "X-API-Key: ${PADDOCK_API_KEY}" -H "Content-Type: application/json" \
+          --data-binary "@${PAYLOAD}" -o "$out"
+        jq '{project, project_id, components, vulnerable_components, files, ignored}' "$out"
+        echo "components=$(jq -r '.components // 0' "$out")" >> "$GITHUB_OUTPUT"
+
+    - name: Fetch SARIF from Paddock
+      id: sarif
+      shell: bash
+      env:
+        PADDOCK_URL: ${{ inputs.paddock-url }}
+        PADDOCK_API_KEY: ${{ inputs.api-key }}
+        PADDOCK_CA: ${{ inputs.ca-bundle }}
+        PADDOCK_PROJECT: ${{ inputs.project }}
+        INCLUDE_SCA: ${{ inputs.include-sca }}
+        MIN_SEVERITY: ${{ inputs.min-severity }}
+        SARIF_FILE: ${{ inputs.sarif-file }}
+      run: |
+        set -euo pipefail
+        case "$PADDOCK_URL" in https://*) ;; *) echo "::error::paddock-url must be https://"; exit 1;; esac
+        ca=(); [ -n "$PADDOCK_CA" ] && ca=(--cacert "$PADDOCK_CA")
+        args=(--data-urlencode "project=${PADDOCK_PROJECT}" --data-urlencode "include_sca=${INCLUDE_SCA}")
+        [ -n "$MIN_SEVERITY" ] && args+=(--data-urlencode "min_severity=${MIN_SEVERITY}")
+        curl -sS --fail-with-body "${ca[@]}" --retry 3 --retry-all-errors --max-time 300 -G \
+          "${PADDOCK_URL%/}/v1/export/sarif" "${args[@]}" \
+          -H "X-API-Key: ${PADDOCK_API_KEY}" -o "$SARIF_FILE"
+        results=$(jq '[.runs[].results[]] | length' "$SARIF_FILE")
+        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
+        echo "results=$results" >> "$GITHUB_OUTPUT"
+        echo "Paddock returned $results SARIF result(s)"
+
+    - name: Upload SARIF to GitHub code scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.sarif.outputs.sarif-file }}
+        category: ${{ inputs.category }}
+
+    - name: Enforce severity threshold
+      if: inputs.fail-on != ''
+      shell: bash
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        SARIF_FILE: ${{ steps.sarif.outputs.sarif-file }}
+      run: |
+        set -euo pipefail
+        case "$FAIL_ON" in
+          critical) t=9.0;; high) t=7.0;; medium) t=4.0;; low) t=0.1;;
+          *) echo "::error::fail-on must be low|medium|high|critical"; exit 1;;
+        esac
+        n=$(jq --argjson t "$t" '[.runs[] as $r | $r.results[]
+              | select(((.suppressions // []) | length) == 0)
+              | ($r.tool.driver.rules[.ruleIndex].properties["security-severity"] // "0" | tonumber)
+              | select(. >= $t)] | length' "$SARIF_FILE")
+        if [ "$n" -gt 0 ]; then
+          echo "::error::Paddock found $n unsuppressed result(s) at or above '$FAIL_ON'"
+          exit 1
+        fi
+        echo "No unsuppressed results at or above '$FAIL_ON'"

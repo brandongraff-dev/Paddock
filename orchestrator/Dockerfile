@@ -6,21 +6,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN groupadd --system app && useradd --system --gid app --home /app --shell /sbin/nologin app
 
+# Pango/HarfBuzz for WeasyPrint (report PDFs). Fonts are embedded by the app.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
+# Install from pyproject.toml (single source of truth for dependencies; a
+# hand-copied list here drifted and shipped images missing httpx/cryptography).
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir \
-      "fastapi>=0.115" \
-      "uvicorn[standard]>=0.30" \
-      "asyncpg>=0.30" \
-      "redis>=5" \
-      "pydantic>=2" \
-      "pydantic-settings>=2" \
-      "python-json-logger>=2.0" \
-      "PyJWT>=2.8" \
-      "bcrypt>=4.0"
-
 COPY app ./app
+RUN pip install --no-cache-dir ".[aws]"
 
 RUN chown -R app:app /app
 USER app

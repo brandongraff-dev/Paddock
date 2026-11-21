@@ -1,11 +1,12 @@
-# palantir-asm — DEV override
+# paddock — DEV override
 # =============================================================================
 # docker compose auto-merges this file on top of docker-compose.yml, so a plain
 # `docker compose up` (and `make up`) gives you the DEV experience:
 #
 #   * AUTH_MODE=dev + ALLOW_NO_AUTH=true  -> synthetic admin, existing tests and
 #     service-to-service calls keep working without credentials.
-#   * every service re-publishes its port to the host for debugging.
+#   * every service re-publishes its port to the host for debugging --
+#     bound to 127.0.0.1 only, since dev auth makes every caller an admin.
 #   * postgres/redis/neo4j reachable from the host again.
 #
 # It keeps the security_opt / cap_drop / read_only / healthcheck hardening from
@@ -18,44 +19,55 @@
 
 services:
   postgres:
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
 
   redis:
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
 
   neo4j:
-    ports: ["7474:7474", "7687:7687"]
+    ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
 
   orchestrator:
+    # dev auth means "anyone who can reach this port is admin", so in dev the
+    # API is bound to loopback only (requires Docker Compose >= 2.24.4).
+    ports: !override ["127.0.0.1:8080:8080"]
     environment:
       AUTH_MODE: dev
       ALLOW_NO_AUTH: "true"
+      # Dev keeps unverified scope usable; the hardened profile requires proof.
+      REQUIRE_SCOPE_PROOF: "false"
 
   mlrisk:
-    ports: ["8098:8098"]
+    ports: ["127.0.0.1:8098:8098"]
 
   changewatch:
-    ports: ["8092:8092"]
+    ports: ["127.0.0.1:8092:8092"]
 
   triage:
-    ports: ["8093:8093"]
+    ports: ["127.0.0.1:8093:8093"]
 
   brain:
-    ports: ["8095:8095"]
+    ports: ["127.0.0.1:8095:8095"]
 
   sca:
-    ports: ["8094:8094"]
+    ports: ["127.0.0.1:8094:8094"]
 
   codeanalysis:
-    ports: ["8097:8097"]
+    ports: ["127.0.0.1:8097:8097"]
 
   graphsync:
-    ports: ["8096:8096"]
+    ports: ["127.0.0.1:8096:8096"]
 
   # intel (8090) and correlation (8091) expose health/stats servers; publish
   # them in dev so `make status` can reach them.
   intel:
-    ports: ["8090:8090"]
+    ports: ["127.0.0.1:8090:8090"]
 
   correlation:
-    ports: ["8091:8091"]
+    ports: ["127.0.0.1:8091:8091"]
+
+  # Sentry ingest: open in dev (no token), and only on loopback.
+  otdiscovery:
+    ports: !override ["127.0.0.1:8101:8101"]
+    environment:
+      REQUIRE_SENTRY_TOKEN: "false"

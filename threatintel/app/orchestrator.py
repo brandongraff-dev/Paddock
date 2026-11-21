@@ -6,6 +6,8 @@ in db.py; the orchestrator owns finding upsert + event emission.
 """
 from __future__ import annotations
 
+import os
+
 import logging
 from typing import Any
 
@@ -20,7 +22,7 @@ class OrchestratorClient:
         base_url: str,
         *,
         timeout_s: int = 30,
-        user_agent: str = "palantir-asm-threatintel/0.1",
+        user_agent: str = "paddock-threatintel/0.1",
         session: aiohttp.ClientSession | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -40,7 +42,12 @@ class OrchestratorClient:
         if self._session is None:
             self._session = aiohttp.ClientSession(
                 timeout=self._timeout,
-                headers={"User-Agent": self._ua, "Accept": "application/json"},
+                headers={
+                    "User-Agent": self._ua,
+                    "Accept": "application/json",
+                    # Service credential for AUTH_MODE=enforce (hardened profile).
+                    **({"X-API-Key": k} if (k := os.environ.get("SERVICE_API_KEY")) else {}),
+                },
             )
 
     async def close(self) -> None:

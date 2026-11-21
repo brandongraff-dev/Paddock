@@ -5,6 +5,8 @@ We use it for everything we are not meant to write directly: listing
 """
 from __future__ import annotations
 
+import os
+
 import logging
 from typing import Any, AsyncIterator
 
@@ -19,7 +21,7 @@ class OrchestratorClient:
         base_url: str,
         *,
         timeout_s: int = 30,
-        user_agent: str = "palantir-asm-intel/0.1",
+        user_agent: str = "paddock-intel/0.1",
         session: aiohttp.ClientSession | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -41,7 +43,12 @@ class OrchestratorClient:
         if self._session is None:
             self._session = aiohttp.ClientSession(
                 timeout=self._timeout,
-                headers={"User-Agent": self._ua, "Accept": "application/json"},
+                headers={
+                    "User-Agent": self._ua,
+                    "Accept": "application/json",
+                    # Service credential for AUTH_MODE=enforce (hardened profile).
+                    **({"X-API-Key": k} if (k := os.environ.get("SERVICE_API_KEY")) else {}),
+                },
             )
 
     async def close(self) -> None:

@@ -1,4 +1,4 @@
-"""palantir-asm remediation service.
+"""paddock remediation service.
 
 An AUTO-REMEDIATION engine that PROPOSES pull requests fixing findings. Every
 fix is constrained to an allowlisted change class, the diff is generated

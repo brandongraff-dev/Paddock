@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "palantir-asm-ontology"
+name = "paddock-ontology"
 version = "0.1.0"
-description = "Ontology / semantic-layer projector: projects the raw ASM tables into a typed object + link model (Palantir-style Entities, not rows)."
+description = "Ontology / semantic-layer projector: projects the raw ASM tables into a typed object + link model (typed Entities, not rows)."
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9",

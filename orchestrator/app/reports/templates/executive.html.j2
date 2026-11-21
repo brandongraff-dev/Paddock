@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Executive security report · {{ r.org_name }} · {{ r.window.label }}</title>
+<style>
+{{ font_css | safe }}
+{% include "report.css" %}
+</style>
+</head>
+<body>
+{% set sheet_cls = "sheet letter" if page_size == "Letter" else "sheet" %}
+{% set ex = r.exposure %}
+{% set nf = r.new_findings %}
+{% set rs = r.resolutions %}
+{% set sla = r.sla %}
+{% set ap = r.attack_paths %}
+{% macro sevtag(s) %}<span class="sev"><i class="dot" style="background:{{ SEV[s] }}"></i>{{ s }}</span>{% endmacro %}
+{% macro masthead(kind) %}
+<header class="mast">
+  <div class="brand">{{ svg.horse_mark(24) }}<span class="word">Paddock</span></div>
+  <div class="kind">{{ kind }}<b>{{ r.org_name }} · {{ r.window.label }}</b></div>
+</header>
+{% endmacro %}
+
+<!-- ============================ Page 1: summary ============================ -->
+<section class="{{ sheet_cls }}">
+  {{ masthead("Executive security report") }}
+  <h1>Security posture, <em>{{ r.window.days }} days</em></h1>
+  <p class="dek">{{ r.org_name }} — what is exposed, what changed, and how fast it is being fixed.</p>
+
+  <ul class="lead">
+    {% for h in r.highlights %}<li>{{ h }}</li>{% endfor %}
+  </ul>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="l">Exposure index</div>
+      <div class="v">{{ ex.end_value | num }}</div>
+      <div class="s {{ 'good' if ex.delta < 0 else 'bad' if ex.delta > 0 else '' }}">
+        {{ ex.delta | signed }}{% if ex.delta_pct is not none %} ({{ ex.delta_pct | pct }}){% endif %} vs start
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="l">New critical · high</div>
+      <div class="v">{{ nf.critical }}<small> / </small>{{ nf.high }}</div>
+      <div class="s">previous period {{ nf.previous_critical_high }}</div>
+    </div>
+    <div class="kpi">
+      <div class="l">Fixed</div>
+      <div class="v">{{ rs.fixed | num }}</div>
+      <div class="s">{{ rs.verified }} verified{% if rs.regressed %} · <span class="bad">{{ rs.regressed }} returned</span>{% endif %}</div>
+    </div>
+    <div class="kpi">
+      <div class="l">Median time to fix</div>
+      <div class="v">{{ (r.mttr.overall.median_hours if r.mttr.overall else none) | hours }}</div>
+      <div class="s">{% for m in r.mttr.by_severity if m.key == 'critical' %}critical {{ m.median_hours | hours }}{% else %}no criticals fixed{% endfor %}</div>
+    </div>
+    <div class="kpi">
+      <div class="l">SLA compliance</div>
+      <div class="v">{{ sla.compliance_pct | pct }}</div>
+      <div class="s">{{ sla.met }} met · {{ sla.late + sla.breached_open }} breached</div>
+    </div>
+  </div>
+
+  <div class="trend-wrap">
+    <div class="trend-head">
+      <h2>Exposure index <small>Σ open findings × severity weight · daily · lower is better</small></h2>
+      <span class="legend-note">{{ r.window.label }}</span>
+    </div>
+    {{ svg.trend(trend_points, width=680, height=150) }}
+  </div>
+
+  <div class="row">
+    <div class="col panel">
+      <h2>Attack paths to crown jewels</h2>
+      <div class="big3">
+        <div><b>{{ ap.closed }}</b><span>closed</span></div>
+        <div><b>{{ ap.opened }}</b><span>opened</span></div>
+        <div><b>{{ ap.open_end }}</b><span>remaining</span></div>
+      </div>
+      {% if ap.top_closed %}
+      <h3>Closed this period</h3>
+      <ul class="list">
+        {% for p in ap.top_closed[:3] %}
+        <li>{{ sevtag(p.severity) }}<span class="t">{{ p.title }}</span><span class="m">{{ p.open_days }}d open</span></li>
+        {% endfor %}
+      </ul>
+      {% elif ap.top_opened %}
+      <h3>Newly opened</h3>
+      <ul class="list">
+        {% for p in ap.top_opened[:3] %}
+        <li>{{ sevtag(p.severity) }}<span class="t">{{ p.title }}</span><span class="m">{{ p.exploitability | num }}</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}<div class="empty">No attack paths opened or closed.</div>{% endif %}
+    </div>
+    <div class="col panel">
+      <h2>Time to fix, by team <small>median</small></h2>
+      {% if team_rows %}
+        {{ svg.hbars(team_rows, width=318, aria="Median time to fix by team") }}
+      {% else %}<div class="empty">Nothing was fixed in this period.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col panel">
+      <h2>Open now</h2>
+      {{ svg.sev_strip(ex.open_end, width=200) }}
+      <div class="legend">
+        {% for s in ["critical","high","medium","low","info"] %}<span><i style="background:{{ SEV[s] }}"></i>{{ s }} <span class="mono">{{ ex.open_end[s] }}</span></span>{% endfor %}
+      </div>
+    </div>
+    <div class="col panel">
+      <h2>Riskiest assets</h2>
+      {% if r.risky_assets %}
+      <ul class="list">
+        {% for a in r.risky_assets[:4] %}
+        <li><span class="t mono">{{ a.value }}</span><span class="m">{{ a.score }}</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}<div class="empty">No open findings on any asset.</div>{% endif %}
+    </div>
+    <div class="col panel">
+      <h2>Inside the network</h2>
+      {% set beh = r.devices.behaviour | selectattr("opened") | list %}
+      {% if beh %}
+      <ul class="list">
+        {% for b in (beh | sort(attribute="opened", reverse=True))[:4] %}
+        <li><span class="t">{{ b.label }}</span><span class="m">{{ b.opened }}</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}<div class="empty">{% if r.devices.iot_total + r.devices.ot_total %}No device behaviour findings this period.{% else %}No Sentry sensor data yet.{% endif %}</div>{% endif %}
+    </div>
+  </div>
+  <p class="coverage-line">
+    <b>Coverage</b>
+    <span>{{ r.coverage.assets_total | num }} assets</span>
+    <span>{{ fresh_pct | pct }} seen in the last 7 days</span>
+    <span>{{ r.devices.iot_total }} IoT · {{ r.devices.ot_total }} OT devices</span>
+    <span>{{ r.coverage.sbom_components | num }} SBOM components</span>
+    <span>last scan {{ r.coverage.last_completed_scan | date("%-d %b") }}</span>
+    <span>{{ r.changes.total | num }} surface changes</span>
+  </p>
+  <div class="foot"><span>Paddock · {{ footer_left }}</span><span>Summary</span></div>
+</section>
+
+<!-- ============================ Appendix ============================ -->
+<section class="{{ sheet_cls }} appendix">
+  {{ masthead("Appendix") }}
+  <h1>Appendix</h1>
+  <p class="dek">The detail behind the summary. Definitions are in section H.</p>
+
+  <div class="section">
+    <h2>A · New critical and high findings <small>{{ nf.critical + nf.high }} this period · {{ nf.previous_critical_high }} previous</small></h2>
+    {% if nf.top %}
+    <table>
+      <thead><tr><th>Severity</th><th>Finding</th><th>Asset</th><th>Owner</th><th>Status</th><th class="n">First seen</th></tr></thead>
+      <tbody>
+      {% for f in nf.top %}
+        <tr><td>{{ sevtag(f.severity) }}</td><td class="w">{{ f.title }}</td><td class="mono w">{{ f.asset_value }}</td>
+            <td>{{ f.team }}</td><td>{{ f.status | title_ }}</td><td class="n">{{ f.first_seen | date("%-d %b") }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No new critical or high findings.</div>{% endif %}
+    <table>
+      <thead><tr><th>Closed this period</th><th class="n">Fixed</th><th class="n">Verified</th><th class="n">Returned</th><th class="n">Awaiting rescan</th><th class="n">Risk accepted</th><th class="n">False positive</th><th class="n">Won't fix</th></tr></thead>
+      <tbody><tr><td>All severities</td><td class="n">{{ rs.fixed }}</td><td class="n">{{ rs.verified }}</td><td class="n">{{ rs.regressed }}</td><td class="n">{{ rs.pending_verification }}</td><td class="n">{{ rs.accepted_risk }}</td><td class="n">{{ rs.false_positive }}</td><td class="n">{{ rs.wontfix }}</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>B · Remediation and SLA</h2>
+    <div class="row">
+      <div class="col">
+        <h3>Time to fix by severity</h3>
+        {% if r.mttr.by_severity %}
+        <table>
+          <thead><tr><th>Severity</th><th class="n">Fixed</th><th class="n">Mean</th><th class="n">Median</th></tr></thead>
+          <tbody>{% for m in r.mttr.by_severity %}<tr><td>{{ sevtag(m.key) }}</td><td class="n">{{ m.count }}</td><td class="n">{{ m.mean_hours | hours }}</td><td class="n">{{ m.median_hours | hours }}</td></tr>{% endfor %}</tbody>
+        </table>
+        {% else %}<div class="empty">Nothing fixed.</div>{% endif %}
+      </div>
+      <div class="col">
+        <h3>Time to fix by team</h3>
+        {% if r.mttr.by_team %}
+        <table>
+          <thead><tr><th>Team</th><th class="n">Fixed</th><th class="n">Crit+high</th><th class="n">Median</th></tr></thead>
+          <tbody>{% for m in r.mttr.by_team[:8] %}<tr><td>{{ m.key }}</td><td class="n">{{ m.count }}</td><td class="n">{{ m.critical_high }}</td><td class="n">{{ m.median_hours | hours }}</td></tr>{% endfor %}</tbody>
+        </table>
+        {% else %}<div class="empty">Nothing fixed.</div>{% endif %}
+      </div>
+    </div>
+    <h3>SLA outcomes by severity</h3>
+    {% if sla.by_severity %}
+    <table>
+      <thead><tr><th>Severity</th><th class="n">Policy</th><th class="n">Met</th><th class="n">Fixed late</th><th class="n">Breached, open</th><th class="n">Overdue at end</th><th class="n">Compliance</th></tr></thead>
+      <tbody>{% for s in sla.by_severity %}<tr><td>{{ sevtag(s.severity) }}</td><td class="n">{{ (s.policy_hours | hours) if s.policy_hours else '—' }}</td><td class="n">{{ s.met }}</td><td class="n">{{ s.late }}</td><td class="n">{{ s.breached_open }}</td><td class="n">{{ s.overdue_end }}</td><td class="n">{{ s.compliance_pct | pct }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<div class="empty">No findings with an SLA clock in this period.</div>{% endif %}
+    {% if sla.breaches %}
+    <h3>Overdue at period end</h3>
+    <table>
+      <thead><tr><th>Severity</th><th>Finding</th><th>Asset</th><th>Team</th><th class="n">Overdue</th></tr></thead>
+      <tbody>{% for b in sla.breaches %}<tr><td>{{ sevtag(b.severity) }}</td><td class="w">{{ b.title }}</td><td class="mono w">{{ b.asset_value }}</td><td>{{ b.team }}</td><td class="n">{{ b.overdue_hours | hours }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>C · Attack paths <small>{{ ap.open_start }} at start · {{ ap.open_end }} at end</small></h2>
+    <div class="row">
+      <div class="col">
+        <h3>Closed ({{ ap.closed }})</h3>
+        {% if ap.top_closed %}
+        <table><thead><tr><th>Path</th><th>Sev</th><th class="n">Open for</th></tr></thead>
+        <tbody>{% for p in ap.top_closed %}<tr><td class="w">{{ p.title }}{% if p.kev_on_path %} · KEV{% endif %}</td><td>{{ sevtag(p.severity) }}</td><td class="n">{{ p.open_days }}d</td></tr>{% endfor %}</tbody></table>
+        {% else %}<div class="empty">None closed.</div>{% endif %}
+      </div>
+      <div class="col">
+        <h3>Opened ({{ ap.opened }})</h3>
+        {% if ap.top_opened %}
+        <table><thead><tr><th>Path</th><th>Sev</th><th class="n">Exploitability</th></tr></thead>
+        <tbody>{% for p in ap.top_opened %}<tr><td class="w">{{ p.title }}{% if p.kev_on_path %} · KEV{% endif %}</td><td>{{ sevtag(p.severity) }}</td><td class="n">{{ p.exploitability | num }}</td></tr>{% endfor %}</tbody></table>
+        {% else %}<div class="empty">None opened.</div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>D · Riskiest assets <small>by open exposure</small></h2>
+    {% if r.risky_assets %}
+    <table>
+      <thead><tr><th>#</th><th>Asset</th><th>Kind</th><th class="n">Open</th><th class="n">Critical</th><th class="n">High</th><th class="n">Exposure</th></tr></thead>
+      <tbody>{% for a in r.risky_assets %}<tr><td class="mono">{{ "%02d" | format(loop.index) }}</td><td class="mono w">{{ a.value }}</td><td>{{ a.kind | title_ }}</td><td class="n">{{ a.open_findings }}</td><td class="n">{{ a.critical }}</td><td class="n">{{ a.high }}</td><td class="n">{{ a.score }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<div class="empty">No open findings on any asset.</div>{% endif %}
+  </div>
+
+  <div class="section">
+    <h2>E · Surface changes <small>{{ r.changes.total }} detected</small></h2>
+    <div class="row">
+      <div class="col">
+        <h3>By type</h3>
+        {% if r.changes.by_type %}
+        <table><thead><tr><th>Change</th><th class="n">Count</th></tr></thead>
+        <tbody>{% for c in r.changes.by_type[:10] %}<tr><td>{{ c.change_type | title_ }}</td><td class="n">{{ c.count }}</td></tr>{% endfor %}</tbody></table>
+        {% else %}<div class="empty">No changes recorded.</div>{% endif %}
+      </div>
+      <div class="col">
+        <h3>New assets by kind</h3>
+        {% if r.changes.new_assets_by_kind %}
+        <table><thead><tr><th>Kind</th><th class="n">New</th></tr></thead>
+        <tbody>{% for k, v in r.changes.new_assets_by_kind.items() %}<tr><td>{{ k | title_ }}</td><td class="n">{{ v }}</td></tr>{% endfor %}</tbody></table>
+        {% else %}<div class="empty">No new assets.</div>{% endif %}
+      </div>
+    </div>
+    {% if r.changes.notable %}
+    <h3>Notable</h3>
+    <table><thead><tr><th>Severity</th><th>Change</th><th>Summary</th><th class="n">When</th></tr></thead>
+    <tbody>{% for c in r.changes.notable %}<tr><td>{{ sevtag(c.severity) }}</td><td>{{ c.change_type | title_ }}</td><td class="w">{{ c.summary }}</td><td class="n">{{ c.detected_at | date("%-d %b") }}</td></tr>{% endfor %}</tbody></table>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>F · Devices and OT <small>Paddock Sentry</small></h2>
+    <dl class="facts" style="margin-bottom:8pt">
+      <div><dt>IoT devices</dt><dd>{{ r.devices.iot_total }}</dd></div>
+      <div><dt>OT devices</dt><dd>{{ r.devices.ot_total }}</dd></div>
+      <div><dt>New this period</dt><dd>{{ r.devices.new_devices }}</dd></div>
+      <div><dt>Network segments</dt><dd>{{ r.devices.segments }}</dd></div>
+      <div><dt>Observed segment reachability</dt><dd>{{ r.devices.observed_reachability }}</dd></div>
+    </dl>
+    <table><thead><tr><th>Detector</th><th>Meaning</th><th class="n">Opened</th><th class="n">Open at end</th></tr></thead>
+    <tbody>{% for b in r.devices.behaviour %}<tr><td class="mono">{{ b.rule_id }}</td><td>{{ b.label }}</td><td class="n">{{ b.opened }}</td><td class="n">{{ b.open_end }}</td></tr>{% endfor %}</tbody></table>
+  </div>
+
+  <div class="section">
+    <h2>G · Coverage and freshness</h2>
+    {% if r.coverage.by_kind %}
+    <table>
+      <thead><tr><th>Asset kind</th><th class="n">Total</th><th class="n">Seen ≤ 24h</th><th class="n">≤ 7d</th><th class="n">≤ 30d</th><th class="n">Stale</th></tr></thead>
+      <tbody>{% for k in r.coverage.by_kind %}<tr><td>{{ k.kind | title_ }}</td><td class="n">{{ k.total }}</td><td class="n">{{ k.seen_24h }}</td><td class="n">{{ k.seen_7d }}</td><td class="n">{{ k.seen_30d }}</td><td class="n">{{ k.stale }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<div class="empty">No assets yet.</div>{% endif %}
+    <dl class="facts">
+      <div><dt>Scans queued this period</dt><dd>{{ r.coverage.scans_by_status.values() | sum }}</dd></div>
+      <div><dt>…completed / failed</dt><dd>{{ r.coverage.scans_by_status.get('completed', 0) }} / {{ r.coverage.scans_by_status.get('failed', 0) }}</dd></div>
+      <div><dt>SBOM projects</dt><dd>{{ r.coverage.sbom_projects }}</dd></div>
+      <div><dt>SBOM last scanned</dt><dd>{{ r.coverage.sbom_last_scanned | date("%-d %b") }}</dd></div>
+      <div><dt>TLS endpoints graded</dt><dd>{{ r.coverage.tls_graded }}</dd></div>
+      <div><dt>…graded below B</dt><dd>{{ r.coverage.tls_below_b }}</dd></div>
+      <div><dt>Fleet agents</dt><dd>{{ r.coverage.fleet_agents }}</dd></div>
+      <div><dt>…reporting ≤ 24h</dt><dd>{{ r.coverage.fleet_agents_recent }}</dd></div>
+    </dl>
+  </div>
+
+  <div class="section">
+    <h2>H · Definitions</h2>
+    <dl class="defs">
+      <dt>Exposure index</dt><dd>Sum over open findings of a severity weight: critical 10, high 5, medium 2, low 1, info 0. Plotted at the start of the period and at the end of each day.</dd>
+      <dt>Fixed, verified, returned</dt><dd>A fix is <em>verified</em> when a later scan re-observed the asset and not the finding; it <em>returned</em> when the finding was observed again after the fix.</dd>
+      <dt>Time to fix (MTTR)</dt><dd>From first detection to the fix, over findings fixed in this period. Teams come from the routed ticket, else the finding's assignee.</dd>
+      <dt>SLA</dt><dd>Due time is the ticket's SLA, else first detection plus the severity's SLA policy. Compliance = met ÷ (met + fixed late + still open past due).</dd>
+      <dt>Attack paths</dt><dd>Routes from an internet-facing foothold to a crown-jewel asset, recomputed from the graph; a path closes when it no longer exists.</dd>
+      <dt>Scope of this report</dt><dd>Data classified above <b>{{ r.clearance }}</b> is excluded. Generated {{ r.generated_at | date("%-d %b %Y %H:%M UTC") }} by Paddock from observed data only.</dd>
+    </dl>
+  </div>
+  <div class="foot"><span>Paddock · {{ footer_left }}</span><span>Appendix</span></div>
+</section>
+</body>
+</html>

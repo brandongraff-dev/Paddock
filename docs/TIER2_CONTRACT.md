@@ -30,7 +30,7 @@ Everything additive. Keep REFUSED_KINDS + scope + all existing tests green. No e
 
 ## 3. Triage service (NEW) — ownership + ticketing + SLA
 
-New service `/home/user/palantir-asm/triage/` mirroring `intel/` shape. HTTP port 8093 (`/healthz`,`/readyz`,`/stats`,`POST /run`,`POST /resolve-owners`). Add a `triage` block to `docker-compose.yml`.
+New service `/home/user/paddock/triage/` mirroring `intel/` shape. HTTP port 8093 (`/healthz`,`/readyz`,`/stats`,`POST /run`,`POST /resolve-owners`). Add a `triage` block to `docker-compose.yml`.
 
 - **Owner resolution**: for an asset, evaluate enabled `asset_owners` rules in `priority` ASC; first match wins. Match = AND of present keys: `kinds` (asset.kind ∈), `value_regex` (re.search on asset.value), `cidr` (asset ip ∈), `metadata_env` (asset.metadata.env ==), `tag` (in asset.metadata.tags). Returns {team, contact} or null.
 - **Ticket creation**: periodic pass (env `TRIAGE_INTERVAL_MIN`, default 10) + react to `finding_opened` events. For each open finding with severity ≥ `TRIAGE_MIN_SEVERITY` (default `medium`) and no existing ticket: resolve owner from the finding's asset, look up `sla_policies[severity].hours`, set `sla_due = opened_at + hours`, create a `tickets` row. `system` from the matched owner rule or default `internal`.

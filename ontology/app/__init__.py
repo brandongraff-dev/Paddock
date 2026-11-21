@@ -1,4 +1,4 @@
-"""palantir-asm ontology service.
+"""paddock ontology service.
 
 Projects the raw ASM tables (assets, asset_edges, findings, attack_paths,
 tickets, sbom_components, ...) into a typed object + link model so analysts

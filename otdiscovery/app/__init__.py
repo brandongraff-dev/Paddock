@@ -1,4 +1,4 @@
-"""palantir-asm passive IoT/OT device-discovery service.
+"""paddock passive IoT/OT device-discovery service.
 
 ======================================================================
 HARD SAFETY INVARIANT  --  PASSIVE ONLY, NEVER PROBE A DEVICE

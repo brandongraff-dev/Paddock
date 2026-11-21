@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "palantir-asm-agent"
+name = "paddock-agent"
 version = "0.1.0"
-description = "palantir-asm fleet host agent: enroll, inventory, and GATED host-local defensive enforcement (propose->approve->apply, dry-run by default, reversible, audited)."
+description = "paddock fleet host agent: enroll, inventory, and GATED host-local defensive enforcement (propose->approve->apply, dry-run by default, reversible, audited)."
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27",
@@ -19,11 +19,11 @@ test = [
 ]
 
 [project.scripts]
-pasm = "palantir_agent.cli:main"
+paddock = "paddock_agent.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["palantir_agent*"]
+include = ["paddock_agent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,15 +8,23 @@
 """
 from __future__ import annotations
 
+import functools
 import logging
+import secrets
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from starlette.concurrency import run_in_threadpool
 
 from .. import auth as auth_svc
+from .. import tenancy
 from ..auth import current_principal, require
+from ..config import settings
 from ..db import get_pool
+from ..identity import store as identity_store
 from ..models import (
     ApiKeyCreateIn,
     ApiKeyCreateOut,
@@ -30,25 +38,75 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
 
+# A real hash of a random secret: verifying against it costs exactly what a
+# real verify costs, so "no such user" and "wrong password" take equal time.
+@functools.cache
+def _dummy_hash() -> str:
+    return auth_svc.hash_password(secrets.token_urlsafe(32))
+
+# Sliding-window failure counters, keyed by username and by client ip.
+_failures: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _too_many(key: str, now: float) -> bool:
+    q = _failures[key]
+    while q and now - q[0] > settings.login_window_sec:
+        q.popleft()
+    return len(q) >= settings.login_max_failures
+
+
 @router.post("/login", response_model=LoginOut)
-async def login(body: LoginIn, pool=Depends(get_pool)):
-    async with pool.acquire() as con:
-        row = await con.fetchrow(
-            "SELECT id, username, role, clearance, pw_hash, active "
-            "FROM app_users WHERE username = $1",
-            body.username,
+async def login(body: LoginIn, request: Request, pool=Depends(get_pool)):
+    now = time.monotonic()
+    keys = (f"u:{body.username.lower()}", f"ip:{auth_svc.client_ip(request)}")
+    if any(_too_many(k, now) for k in keys):
+        raise HTTPException(
+            status_code=429,
+            detail="too many failed logins; try again later",
+            headers={"Retry-After": str(settings.login_window_sec)},
         )
-    # Constant-ish work regardless of user existence to blunt enumeration.
-    stored = row["pw_hash"] if row else None
-    if row is None or not row["active"] or not auth_svc.verify_password(body.password, stored):
+    # SSO-required (schema 020): password sign-in only for break-glass users.
+    # Decided from policy alone, so it reveals nothing about which users exist.
+    if not await identity_store.password_login_allowed(pool, body.username):
+        raise HTTPException(
+            status_code=403, detail="password sign-in is disabled; use single sign-on",
+        )
+    # Usernames are global; the user's tenant is only known after this read,
+    # so it runs in auth-lookup mode (see tenancy.auth_lookup).
+    with tenancy.auth_lookup():
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT u.id, u.username, u.role, u.clearance, u.pw_hash, u.active, u.tenant_id, "
+                "       t.status AS tenant_status "
+                "  FROM app_users u LEFT JOIN tenants t ON t.id = u.tenant_id "
+                " WHERE u.username = $1",
+                body.username,
+            )
+    stored = (row["pw_hash"] if row else None) or _dummy_hash()
+    # bcrypt is CPU-bound: run it off the event loop so a login flood can't
+    # stall every other request (incl. workers' scope checks).
+    ok = await run_in_threadpool(auth_svc.verify_password, body.password, stored)
+    if (
+        row is None
+        or not row["active"]
+        or not row["pw_hash"]
+        or not ok
+        or row["tenant_status"] != "active"
+    ):
+        for k in keys:
+            _failures[k].append(now)
         raise HTTPException(status_code=401, detail="invalid credentials")
-    async with pool.acquire() as con:
-        await con.execute("UPDATE app_users SET last_login = NOW() WHERE id = $1", row["id"])
+    for k in keys:
+        _failures.pop(k, None)
+    with tenancy.tenant_context(row["tenant_id"]):
+        async with pool.acquire() as con:
+            await con.execute("UPDATE app_users SET last_login = NOW() WHERE id = $1", row["id"])
     token, ttl = auth_svc.issue_jwt(
         user_id=str(row["id"]),
         username=row["username"],
         role=row["role"],
         clearance=row["clearance"],
+        tenant_id=str(row["tenant_id"]),
     )
     return LoginOut(
         access_token=token,
@@ -66,6 +124,7 @@ async def me(principal=Depends(current_principal)):
         clearance=principal.clearance,
         capabilities=sorted(principal.capabilities),
         kind=principal.kind,
+        tenant_id=principal.tenant_id or tenancy.current_tenant_id(),
     )
 
 

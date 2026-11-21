@@ -1,0 +1,18 @@
+{{- range $key, $component := dict "orchestrator" "orchestrator" "dashboard" "dashboard" "workerPassive" "worker-passive" "workerActive" "worker-active" "intel" "intel" "correlation" "correlation" "otdiscovery" "otdiscovery" "integrationsWorker" "integrations-worker" }}
+{{- $v := index $.Values $key }}
+{{- if and (ne (toString $v.enabled) "false") $v.pdb $v.pdb.enabled }}
+{{- $sel := dict "root" $ "component" $component }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "paddock.componentName" $sel }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+spec:
+  maxUnavailable: {{ $v.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "paddock.selectorLabels" $sel | nindent 6 }}
+{{- end }}
+{{- end }}

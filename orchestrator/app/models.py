@@ -270,7 +270,8 @@ class SurfaceGraphOut(BaseModel):
 
 Severity = Literal["info", "low", "medium", "high", "critical"]
 FindingStatus = Literal[
-    "open", "triaged", "false_positive", "accepted_risk", "fixed", "wontfix"
+    "open", "triaged", "false_positive", "accepted_risk", "fixed", "wontfix",
+    "accepted",  # schema 019: risk accepted (reason required, optional expiry)
 ]
 # Single-sourced from app.constants.RULE_SOURCES (which mirrors the DB CHECK
 # constraint on findings.rule_source). tests/test_rule_source_sync.py asserts
@@ -432,6 +433,10 @@ class TimelineDay(BaseModel):
     day: date
     asset_count: int
     finding_count: int
+    # Breakdown the dashboard's severity charts need (was never populated,
+    # so the Overview trend rendered all-zero).
+    new_findings_by_severity: dict[str, int] = Field(default_factory=dict)
+    scans_run: int = 0
     sample_assets: list[dict[str, Any]]
     sample_findings: list[dict[str, Any]]
 
@@ -1217,6 +1222,7 @@ class MeOut(BaseModel):
     clearance: str
     capabilities: list[str]
     kind: str
+    tenant_id: str | None = None
 
 
 class ApiKeyCreateIn(BaseModel):
@@ -1279,6 +1285,22 @@ class AuditVerifyOut(BaseModel):
     ok: bool
     checked: int
     first_broken_id: int | None = None
+    # Why verification failed: chain_link | row_hash | downgrade | unknown_key |
+    # unknown_alg | anchor_<status>. None when ok.
+    reason: str | None = None
+    tenant_id: str | None = None
+    head_id: int | None = None
+    head_hash: str | None = None
+    # {status: not_configured|none|ok|truncated|mismatch|bad_signature|
+    #  unknown_key|unsigned|unavailable|skipped, max_id?, head_hash?, ts?, sink?}
+    anchor: dict[str, Any] | None = None
+
+
+class AuditAnchorOut(BaseModel):
+    anchored: bool
+    reason: str | None = None
+    anchor: dict[str, Any] | None = None
+    receipt: dict[str, Any] | None = None
 
 
 class ProvenanceIn(BaseModel):

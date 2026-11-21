@@ -1,0 +1,183 @@
+# paddock — LITE single-node profile
+# =============================================================================
+# The minimum useful stack for evaluations and small teams, on one box:
+#
+#     postgres · redis · orchestrator · dashboard · worker-passive
+#     (+ worker-active with `make lite-active` / `--profile active`)
+#
+# No neo4j / graphsync / ML / LLM / compute services. The orchestrator runs in
+# DEPLOYMENT_MODE=lite and reports those features as "not enabled"
+# (GET /v1/system/services) instead of erroring on them.
+#
+# Same hardening as docker-compose.yml: AUTH_MODE=enforce, proof-of-control
+# required for scope (REQUIRE_SCOPE_PROOF=true), secrets from .env,
+# no-new-privileges / cap_drop / read_only where the image allows it, data
+# tier and workers on an internal network with no published ports.
+#
+# Standalone file — the dev override is NOT merged:
+#       make lite                    # = the command below + .env bootstrap
+#       docker compose -f docker-compose.lite.yml up -d --build
+#
+# Resources (see README "Lite mode"): ~150 MB RAM idle (measured), 1 GB
+# recommended, 1–2 vCPU, ~1.3 GB of images (+3.5 GB with worker-active).
+# =============================================================================
+
+name: paddock-lite
+
+x-hardened-py: &hardened-py
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  restart: unless-stopped
+
+x-worker-env: &worker-env
+  DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/asm
+  REDIS_URL: redis://redis:6379/0
+  ORCHESTRATOR_URL: http://orchestrator:8080
+  # Shared fleet credential: the orchestrator runs AUTH_MODE=enforce, so the
+  # workers authenticate with this key (make lite generates one into .env).
+  SERVICE_API_KEY: ${SERVICE_API_KEY:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: asm
+      POSTGRES_USER: asm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./schema:/docker-entrypoint-initdb.d:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asm -d asm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    restart: unless-stopped
+    tmpfs:
+      - /data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  orchestrator:
+    build: ./orchestrator
+    <<: *hardened-py
+    # The dashboard proxies /v1/*, so the API itself only needs loopback.
+    ports: ["${LITE_API_BIND:-127.0.0.1}:8080:8080"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      AUTH_MODE: ${AUTH_MODE:-enforce}
+      ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
+      REQUIRE_SCOPE_PROOF: ${REQUIRE_SCOPE_PROOF:-true}
+      DEPLOYMENT_MODE: lite
+    tmpfs:
+      - /tmp
+    # edge has a gateway, which is also the route for the scope-proof check
+    # (one TXT lookup / one HTTPS GET per check).
+    networks: [edge, internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  dashboard:
+    build: ./dashboard
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    restart: unless-stopped
+    ports: ["${LITE_UI_BIND:-0.0.0.0}:3000:3000"]
+    # nginx runs as the unprivileged `nginx` user (uid 101): its scratch
+    # tmpfs must be owned by it, or the master exits on mkdir(client_temp).
+    tmpfs:
+      - /var/cache/nginx:uid=101,gid=101
+      - /var/run
+      - /tmp
+    networks: [edge]
+    depends_on:
+      orchestrator: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker-passive:
+    build: ./workers/passive
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+    environment:
+      <<: *worker-env
+      WORKER_ID: passive-1
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on:
+      orchestrator: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Optional: polite active probing (HTTP/TLS/ports). `make lite-active`.
+  worker-active:
+    build: ./workers/active
+    profiles: ["active"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_RAW", "NET_ADMIN"]
+    restart: unless-stopped
+    environment:
+      <<: *worker-env
+      WORKER_ID: active-1
+      MAX_CONCURRENCY_PER_TARGET: "2"
+      POLITENESS_DELAY_MS: "250"
+    volumes:
+      - active_data:/data
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on:
+      orchestrator: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('redis', 6379), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  pg_data:
+  active_data:
+
+networks:
+  edge:
+    driver: bridge
+  internal:
+    internal: true
+  egress:
+    driver: bridge

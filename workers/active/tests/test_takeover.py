@@ -171,3 +171,13 @@ async def test_non_prod_stays_high(fake_orch, scope, politeness, monkeypatch):
         asset_metadata={"env": "staging"},
     )
     assert result["findings"][0]["severity"] == "high"
+
+
+def test_fingerprint_file_ships_and_is_well_formed():
+    # The file once went missing (a stray gitignore rule) and every takeover
+    # check crashed. Guard the data contract.
+    fps = takeover_check._load_fingerprints()
+    assert len(fps) >= 15
+    for name, spec in fps.items():
+        assert spec["cname_suffixes"], name
+        assert spec.get("fingerprint_text") or spec.get("http_status") is not None, name

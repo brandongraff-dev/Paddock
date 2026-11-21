@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # HTTP client
     http_timeout_s: float = Field(default=30.0)
-    http_user_agent: str = Field(default="palantir-asm/passive-discovery (+defensive-asm)")
+    http_user_agent: str = Field(default="paddock/passive-discovery (+defensive-asm)")
 
     # Optional source keys (all gracefully skipped when missing)
     github_token: Optional[str] = Field(default=None)

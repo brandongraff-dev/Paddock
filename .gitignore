@@ -29,7 +29,7 @@ htmlcov/
 !.env.example
 
 # data + runtime
-data/
+/data/
 *.sqlite
 *.db
 *.rdb
@@ -46,3 +46,13 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# local agent worktrees (tooling, never committed)
+/.claude/worktrees/
+
+# developer platform build outputs
+/site/
+/terraform-provider-paddock/terraform-provider-paddock
+.terraform/
+*.tfstate
+*.tfstate.*

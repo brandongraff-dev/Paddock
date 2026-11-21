@@ -25,6 +25,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from . import tenancy
 from .config import settings
 from .models import ScheduleOut, ScheduleRunOut
 from .routers import scans as scans_mod
@@ -264,13 +265,94 @@ async def run_due_schedules(pool, r, now: datetime | None = None) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Integrations: SOURCE connectors on their own interval (schema 025)
+# --------------------------------------------------------------------------- #
+
+def kick_integration_syncs(pool, r) -> bool:
+    """Start a background sweep of due SOURCE integrations (non-blocking).
+
+    Pulls are read-only against the customer's own systems and are written
+    through the orchestrator's bulk handlers; a slow cloud API never delays
+    the scan schedules above. See ``app/integrations/runtime.py``.
+    """
+    try:
+        from .integrations.runtime import kick_source_syncs
+
+        return kick_source_syncs(pool, r)
+    except Exception:  # noqa: BLE001 - never let integrations break scan scheduling
+        logger.exception("integration_sync_kick_failed")
+        return False
+
+
+# --------------------------------------------------------------------------- #
 # Background loop
 # --------------------------------------------------------------------------- #
 
-async def scheduler_loop(app) -> None:
-    """Forever: sleep one interval, then run the due schedules.
+# --------------------------------------------------------------------------- #
+# Data retention (app/retention.py), piggy-backed on the scheduler tick
+# --------------------------------------------------------------------------- #
 
-    Wrapped so neither a DB blip nor a bad schedule can stop the loop; only
+_retention_last_run: float | None = None
+
+
+async def maybe_run_retention(pool, now: float | None = None) -> dict | None:
+    """Run the retention purge if enabled and RETENTION_INTERVAL_SEC elapsed.
+
+    The first tick after startup runs it; later ticks wait for the interval.
+    Never raises (the scheduler loop must not die on a purge failure).
+    """
+    import time
+
+    from . import retention
+    from .opsconfig import ops_settings
+
+    global _retention_last_run
+    if not ops_settings.retention_enabled:
+        return None
+    now = time.monotonic() if now is None else now
+    if (
+        _retention_last_run is not None
+        and now - _retention_last_run < ops_settings.retention_interval_sec
+    ):
+        return None
+    _retention_last_run = now
+    try:
+        return await retention.run_retention(pool)
+    except Exception:  # noqa: BLE001
+        logger.exception("retention_run_failed")
+        return None
+
+
+async def _guarded(name: str, coro) -> None:
+    """Run one sweep; a failure is logged and never stops the loop."""
+    try:
+        await coro
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception(name)
+
+
+def _scope_proof_due() -> bool:
+    """Proof re-verification runs at most every 5 minutes (outbound checks)."""
+    import time
+
+    from . import scope_proof
+
+    if time.monotonic() - scope_proof._last_sweep < 300:
+        return False
+    scope_proof._last_sweep = time.monotonic()
+    return True
+
+
+async def scheduler_loop(app) -> None:
+    """Forever: sleep one interval, then run the due work.
+
+    Tenant-scoped work (schedules, integration syncs, finding-lifecycle
+    expiry, scope-proof re-verification) runs once per tenant inside that
+    tenant's context, because RLS hides other tenants' rows. Global work
+    (retention purge, report digests) runs once per tick. Every step is
+    guarded: neither a DB blip nor one bad sweep can stop the loop; only
     cancellation (shutdown) breaks out.
     """
     interval = int(settings.scheduler_interval_sec)
@@ -282,7 +364,21 @@ async def scheduler_loop(app) -> None:
             r = getattr(app.state, "redis", None)
             if pool is None or r is None:
                 continue
-            await run_due_schedules(pool, r)
+            from . import scope_proof
+            from .lifecycle import sweep_expired
+
+            proof_due = _scope_proof_due()
+            for tid in await tenancy.list_tenant_ids(pool):
+                with tenancy.tenant_context(tid):
+                    await _guarded("schedules_tick_failed", run_due_schedules(pool, r))
+                    kick_integration_syncs(pool, r)
+                    await _guarded("lifecycle_sweep_failed", sweep_expired(pool))
+                    if proof_due:
+                        await _guarded("scope_proof_sweep_failed", scope_proof.reverify_due(pool, r))
+            await maybe_run_retention(pool)
+            from .reports.digest import run_due_digests
+
+            await _guarded("digest_tick_failed", run_due_digests(pool))
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

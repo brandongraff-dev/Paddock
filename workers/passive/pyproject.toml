@@ -1,7 +1,7 @@
 [project]
-name = "palantir-asm-worker-passive"
+name = "paddock-worker-passive"
 version = "0.1.0"
-description = "Passive discovery worker for palantir-asm"
+description = "Passive discovery worker for paddock"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9,<3.12",

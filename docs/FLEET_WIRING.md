@@ -164,15 +164,15 @@ The agent runs **on target hosts**, opt-in — do **not** add it to
 
 ```bash
 cd agent
-pip install -e .            # provides the `pasm` console script
-# or: docker build -t palantir-asm/agent .
+pip install -e .            # provides the `paddock` console script
+# or: docker build -t paddock/agent .
 ```
 
 Enroll + run on a host (dry-run by default):
 
 ```bash
-pasm enroll --server https://orchestrator.internal:8080 --token "$FLEET_ENROLL_TOKEN"
-pasm run        # heartbeat + inventory loop; applies only approved, real work
+paddock enroll --server https://orchestrator.internal:8080 --token "$FLEET_ENROLL_TOKEN"
+paddock run        # heartbeat + inventory loop; applies only approved, real work
 ```
 
 Or as a container, opt-in, on a target **Linux** host:
@@ -180,11 +180,11 @@ Or as a container, opt-in, on a target **Linux** host:
 ```bash
 docker run --rm \
   --network host --cap-add NET_ADMIN \
-  -e PASM_SERVER=https://orchestrator.internal:8080 \
-  -e PASM_DRY_RUN=true \
-  -v pasm-agent-cred:/root/.config/palantir-agent \
-  -v pasm-quarantine:/var/lib/palantir-agent/quarantine \
-  palantir-asm/agent pasm enroll --token "$FLEET_ENROLL_TOKEN"
+  -e PADDOCK_SERVER=https://orchestrator.internal:8080 \
+  -e PADDOCK_DRY_RUN=true \
+  -v paddock-agent-cred:/root/.config/paddock-agent \
+  -v paddock-quarantine:/var/lib/paddock-agent/quarantine \
+  paddock/agent paddock enroll --token "$FLEET_ENROLL_TOKEN"
 ```
 
 ### Required capabilities (why it's opt-in)

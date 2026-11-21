@@ -130,8 +130,8 @@ async def test_post_assets_only_sends_allowed(settings) -> None:
 
             def assets_cb(url, **kw):
                 body = kw.get("json") or {}
-                posted.append(body.get("assets", []))
-                return CallbackResult(payload={"accepted": len(body.get("assets", []))})
+                posted.append(body.get("items", []))
+                return CallbackResult(payload={"accepted": len(body.get("items", []))})
             m.post(ASSETS_URL, callback=assets_cb, repeat=True)
 
             counts = await _push_result(ctx, result)

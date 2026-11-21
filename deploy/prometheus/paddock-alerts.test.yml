@@ -1,0 +1,73 @@
+# promtool test rules deploy/prometheus/paddock-alerts.test.yml
+rule_files: [paddock-alerts.yml]
+evaluation_interval: 1m
+tests:
+  - name: sentry silent after 15 minutes
+    interval: 1m
+    input_series:
+      # Sensor s1 last posted at t=0 (unix 0); s2 keeps posting.
+      - series: 'paddock_sentry_last_ingest_timestamp_seconds{sensor="s1",site="hq"}'
+        values: '0x30'
+      - series: 'paddock_sentry_last_ingest_timestamp_seconds{sensor="s2",site="hq"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PaddockSentrySilent
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: PaddockSentrySilent
+        exp_alerts:
+          - exp_labels: {severity: warning, sensor: s1, site: hq}
+            exp_annotations:
+              summary: "Sentry sensor s1 (hq) silent for >15 min"
+              description: "No batch from this sensor for 15 minutes. Sensor down, mirror port lost, or link/token problem. See docs/SENTRY.md."
+
+  - name: audit failures page immediately
+    interval: 1m
+    input_series:
+      - series: 'paddock_audit_append_failures_total{instance="o1"}'
+        values: '0 0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: PaddockAuditAppendFailures
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: PaddockAuditAppendFailures
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: o1}
+            exp_annotations:
+              summary: "Audit log appends are failing on o1"
+              description: "Requests are being served WITHOUT an audit record. Investigate the database immediately (disk full? permissions? lock timeouts?). Then GET /v1/audit/verify."
+
+  - name: api error rate
+    interval: 1m
+    input_series:
+      - series: 'paddock_http_requests_total{method="GET",route="/v1/findings",status="200"}'
+        values: '0+60x30'
+      - series: 'paddock_http_requests_total{method="GET",route="/v1/findings",status="500"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PaddockAPIErrorRateHigh
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Paddock API 5xx rate is 14.29%"
+              description: "More than 5% of API requests failed with 5xx for 10 minutes. Top routes: sum by (route) (rate(paddock_http_requests_total{status=~\"5..\"}[5m]))."
+
+  - name: scan backlog
+    interval: 1m
+    input_series:
+      - series: 'paddock_scan_oldest_queued_age_seconds{instance="o1"}'
+        values: '0+60x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: PaddockScanQueueBacklog
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: PaddockScanQueueBacklog
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Oldest queued scan has waited 50m 0s"
+              description: "Workers are not draining the queue. Check worker-passive / worker-active pods and paddock_queue_lag."

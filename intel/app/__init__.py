@@ -1,4 +1,4 @@
-"""palantir-asm intel service.
+"""paddock intel service.
 
 Pulls NVD / EPSS / KEV / OSV public feeds and matches CVEs against the
 asset inventory held by the orchestrator. Data in, matches out; this

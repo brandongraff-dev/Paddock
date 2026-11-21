@@ -304,7 +304,12 @@ async def run_loop() -> None:
                OrchestratorClient(s) as orc:
         ctx = ModuleContext(settings=s, orchestrator=orc, rate_limiter=rl, http=http)
 
-        r = redis_async.from_url(s.redis_url, decode_responses=True)
+        # The read timeout must outlast the XREADGROUP block, or every idle
+        # poll fails (redis-py >= 6 defaults socket_timeout to 5s).
+        r = redis_async.from_url(
+            s.redis_url, decode_responses=True,
+            socket_timeout=s.poll_block_ms / 1000 + 10,
+        )
         await _ensure_group(r, s.stream, s.consumer_group)
 
         consumer_name = f"{s.worker_id}-{os.getpid()}"

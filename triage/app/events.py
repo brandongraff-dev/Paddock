@@ -60,7 +60,10 @@ class EventSubscriber:
             log.warning("redis library not available; event stream disabled")
             return False
         try:
-            self._client = aioredis.from_url(self.redis_url, decode_responses=True)
+            # socket_timeout > XREADGROUP block (redis-py >= 6 defaults it to 5s).
+            self._client = aioredis.from_url(
+                self.redis_url, decode_responses=True, socket_timeout=30
+            )
             await self._client.ping()
         except Exception as exc:
             log.warning("redis connect failed: %s; event stream disabled", exc)

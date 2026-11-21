@@ -85,7 +85,7 @@
 .pmini-target {
   --node-color: var(--warn);
   box-shadow:
-    0 0 0 1px rgba(240, 180, 41, 0.18),
+    0 0 0 1px rgba(227, 178, 101, 0.18),
     0 6px 18px rgba(0, 0, 0, 0.35);
 }
 

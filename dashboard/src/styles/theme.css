@@ -1,0 +1,396 @@
+/* ------------------------------------------------------------------ *
+ * Theme layer — loaded after global.css. Re-skins the chrome and the  *
+ * shared primitives every page uses (panel, stat tile, table, chip,   *
+ * button, input) so all 22 pages inherit the new system at once.      *
+ * ------------------------------------------------------------------ */
+
+@import "@fontsource-variable/newsreader/opsz.css";
+
+html,
+body,
+#root {
+  background: var(--bg-0);
+  font-feature-settings: "cv11", "ss01", "ss03", "tnum";
+  letter-spacing: -0.003em;
+}
+
+::selection { background: rgba(159, 194, 216, 0.28); }
+:focus-visible { outline: 1.5px solid var(--border-focus); outline-offset: 2px; }
+
+* { scrollbar-width: thin; scrollbar-color: rgba(236, 226, 208, 0.12) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(236, 226, 208, 0.1);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+/* ---------------- Shell ---------------- */
+.shell {
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  grid-template-areas: "rail canvas";
+  background: var(--bg-0);
+}
+
+.rail {
+  grid-area: rail;
+  background: transparent;
+  border-right: 0;
+  align-items: stretch;
+  padding: 10px 8px 8px 10px;
+  gap: 0;
+  min-height: 0;
+}
+.rail .brand {
+  width: auto;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 0 8px;
+  margin: 0 0 8px;
+  border-radius: var(--radius-m);
+  background: none;
+  box-shadow: none;
+  color: var(--text-0);
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 450;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+}
+.rail .brand:hover { background: var(--bg-2); }
+.rail .brand .brand-sub { display: none; }
+.rail .brand svg { flex-shrink: 0; color: var(--text-0); }
+
+.rail .cmdk-trigger {
+  margin: 0 0 14px;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.rail-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  margin-right: -4px;
+  padding-right: 4px;
+}
+.rail-group { display: flex; flex-direction: column; gap: 1px; margin-bottom: 16px; }
+.rail-group-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  padding: 0 8px 5px;
+  letter-spacing: 0.01em;
+}
+.rail-item {
+  width: auto;
+  height: 30px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 8px;
+  border-radius: var(--radius-s);
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 450;
+  text-decoration: none;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.rail-item .rail-icon { display: inline-flex; color: var(--text-2); transition: color var(--fast); }
+.rail-item:hover { background: var(--bg-2); color: var(--text-0); }
+.rail-item:hover .rail-icon { color: var(--text-1); }
+.rail-item.active {
+  background: var(--bg-3);
+  color: var(--text-0);
+  box-shadow: var(--hl), 0 0 0 1px var(--border);
+}
+.rail-item.active .rail-icon { color: var(--text-0); }
+
+.usermenu {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-m);
+  border-top: 1px solid var(--border);
+}
+.usermenu-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--serif);
+  font-size: 14px;
+  background: radial-gradient(circle at 30% 25%, #4a4038, #221d19);
+  color: var(--text-0);
+  box-shadow: var(--hl), 0 0 0 1px var(--border-strong);
+  flex-shrink: 0;
+}
+.usermenu-id { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.usermenu-name { font-size: 12.5px; font-weight: 500; color: var(--text-0); overflow: hidden; text-overflow: ellipsis; }
+.usermenu-role { font-size: 11px; color: var(--text-2); text-transform: lowercase; }
+.usermenu-logout { padding: 5px; color: var(--text-2); }
+.usermenu-logout:hover { color: var(--text-0); }
+
+/* The main canvas is a raised sheet inset from the chrome: Linear-style depth. */
+.canvas {
+  grid-area: canvas;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 8px 8px 8px 0;
+  /* film grain baked into the sheet (painted once, never re-composited) */
+  background: var(--grain-faint) 0 0 / 160px 160px, var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  position: relative;
+}
+
+.topbar {
+  grid-area: unset;
+  height: var(--topbar-h);
+  flex-shrink: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px 0 20px;
+  gap: 12px;
+}
+.crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.crumb-group { color: var(--text-2); }
+.crumb-sep { color: var(--text-3); }
+.topbar .title { font-size: 11.5px; font-weight: 500; letter-spacing: 0.08em; color: var(--text-0); }
+.topbar .ticker {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 11px;
+  color: var(--text-2);
+}
+.topbar .ticker .dot { box-shadow: none !important; }
+
+.main { grid-area: unset; flex: 1; min-height: 0; }
+
+.cmdk-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  font-size: 12.5px;
+  box-shadow: var(--hl);
+}
+.cmdk-trigger:hover { color: var(--text-1); border-color: var(--border-strong); }
+.cmdk-trigger .keys {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-2);
+}
+
+@media (max-width: 860px) {
+  :root { --rail-w: 60px; }
+  .rail .brand-name,
+  .rail-label,
+  .rail-group-label,
+  .rail .cmdk-trigger span,
+  .usermenu-id { display: none; }
+  .rail-item, .rail .brand { justify-content: center; padding: 0; }
+  .usermenu { flex-direction: column; padding: 6px 0; }
+  .canvas { margin: 6px 6px 6px 0; }
+}
+
+/* ---------------- Page scaffold ---------------- */
+.page { padding: 28px 32px 40px; gap: 20px; max-width: 1480px; width: 100%; margin: 0 auto; }
+.page-header { align-items: flex-end; padding-bottom: 4px; }
+.page-header h1,
+.page h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 32px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--text-0);
+}
+.page-header .subtitle { color: var(--text-2); font-size: 13px; margin-top: 6px; }
+
+/* ---------------- Panels ---------------- */
+.panel {
+  background: var(--panel-fill);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-2);
+  padding: 16px 18px;
+}
+.panel-h {
+  border-bottom: 0;
+  padding-bottom: 0;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+.panel-h h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  text-transform: none;
+  color: var(--text-0);
+}
+.grid-2 { gap: 16px; }
+
+/* ---------------- Stat tiles ---------------- */
+.stat-row { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.stat-tile {
+  background: var(--panel-fill);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-2);
+  padding: 14px 16px 16px;
+  gap: 6px;
+}
+.stat-tile .label { font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--text-2); }
+.stat-tile .value {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+/* ---------------- Tables ---------------- */
+.table thead th {
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-weight: 500;
+  font-size: 11.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 1px solid var(--border);
+}
+.table tbody tr { border-bottom: 1px solid var(--border); }
+.table tbody tr:hover { background: rgba(236, 226, 208, 0.025); }
+
+/* ---------------- Controls ---------------- */
+button {
+  border-radius: var(--radius-m);
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+button.primary {
+  background: var(--text-0);
+  color: var(--bg-1);
+  border-color: transparent;
+  font-weight: 500;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+button.primary:hover:not(:disabled) { background: #fff8ec; }
+input,
+select,
+textarea {
+  border-radius: var(--radius-m) !important;
+}
+input:focus,
+select:focus,
+textarea:focus { border-color: var(--border-focus) !important; box-shadow: 0 0 0 3px rgba(236, 226, 208, 0.06); }
+
+.chip { border-radius: 5px; font-size: 10px; padding: 1px 6px; }
+.asset-chip { border-radius: var(--radius-s); }
+
+.empty { color: var(--text-2); }
+.empty .icon { font-family: var(--serif); }
+
+/* ---------------- Overlays ---------------- */
+.drawer {
+  background: var(--bg-1);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: -24px 0 64px -12px rgba(0, 0, 0, 0.7);
+}
+.drawer-backdrop, .modal-backdrop, .cmdk-backdrop { background: rgba(8, 6, 5, 0.62); backdrop-filter: blur(3px); }
+.modal, .cmdk {
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-3);
+}
+.toast {
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-2);
+}
+
+/* ---------------- Login ---------------- */
+.login-screen {
+  background:
+    radial-gradient(80% 50% at 50% 0%, rgba(214, 205, 190, 0.14), transparent 70%),
+    var(--bg-0);
+}
+.login-card {
+  background: var(--panel-fill);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+}
+.login-title { font-family: var(--serif); font-size: 22px; font-weight: 420; letter-spacing: -0.015em; }
+.login-mark { background: none !important; box-shadow: none !important; color: var(--text-0) !important; }
+
+/* ---------------- Classification marking ---------------- */
+/* Still unmissable (it is a governance control), but a hairline, not a fence. */
+.class-banner {
+  padding: 5px 20px;
+  gap: 14px;
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  box-shadow: none;
+}
+.class-banner-rule {
+  background: linear-gradient(90deg, transparent, currentColor);
+  opacity: 0.35;
+}
+.class-banner-rule:last-child { background: linear-gradient(90deg, currentColor, transparent); }
+.class-banner-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.class-banner-sub { font-size: 9.5px; letter-spacing: 0.08em; color: var(--text-3); }
+
+/* user menu sits left-aligned in the sidebar foot */
+.usermenu .usermenu-id { align-items: flex-start; }
+.usermenu .usermenu-role { text-transform: lowercase; letter-spacing: 0; }
+
+/* Overview KPI row: six across on desktop */
+.overview .stat-row { grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); }
+.overview .stat-tile .value { font-size: 32px; }
+
+/* Scope: proof-of-control inline panel */
+.proof-panel { display: flex; flex-direction: column; gap: 8px; padding: 6px 2px; font-size: 12.5px; }
+.proof-panel p { margin: 0; color: var(--text-1); }
+.proof-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center; }
+.proof-row .label { color: var(--text-2); font-size: 11.5px; }
+.proof-row code {
+  font-family: var(--mono); font-size: 11.5px; padding: 4px 7px; border-radius: 5px;
+  background: var(--bg-0); border: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.proof-row input { min-width: 0; }
+.proof-actions { display: flex; align-items: center; gap: 10px; }

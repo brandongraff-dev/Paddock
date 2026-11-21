@@ -9,6 +9,9 @@ import pytest
 
 from app.db import Database
 
+# Share the session loop with the session-scoped `db` pool fixture.
+pytestmark = pytest.mark.asyncio(loop_scope="session")
+
 
 async def _fresh_project(db: Database, name: str):
     return await db.upsert_project(name, "https://example/repo", ["npm"], asset_id=None)

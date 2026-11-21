@@ -1,0 +1,168 @@
+{{- /* Optional bundled Postgres + Redis for evaluation clusters. Production:
+       managed Postgres (or an operator) + managed Redis via secrets.*. */ -}}
+{{- if .Values.postgresql.enabled }}
+{{- $p := .Values.postgresql -}}
+{{- $sel := dict "root" $ "component" "postgresql" -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace (include "paddock.postgresHost" .) -}}
+{{- $pw := $p.password -}}
+{{- if and (not $pw) $existing $existing.data -}}
+{{- $pw = index $existing.data "POSTGRES_PASSWORD" | b64dec -}}
+{{- end -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "paddock.postgresHost" . }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ $pw | default (randAlphaNum 32) | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "paddock.postgresHost" . }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+spec:
+  selector:
+    {{- include "paddock.selectorLabels" $sel | nindent 4 }}
+  ports:
+    - {name: postgres, port: 5432, targetPort: postgres}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "paddock.postgresHost" . }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+spec:
+  serviceName: {{ include "paddock.postgresHost" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "paddock.selectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "paddock.componentLabels" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70        # `postgres` in the alpine image
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: {{ $p.image }}
+          env:
+            - {name: POSTGRES_DB, value: {{ $p.database | quote }}}
+            - {name: POSTGRES_USER, value: {{ $p.username | quote }}}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "paddock.postgresHost" . }}, key: POSTGRES_PASSWORD}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - {name: postgres, containerPort: 5432}
+          securityContext:
+            {{- include "paddock.containerSecurityContext" (dict "root" $) | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ $p.username | quote }}, "-d", {{ $p.database | quote }}, "-h", "127.0.0.1"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ $p.username | quote }}, "-h", "127.0.0.1"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            {{- toYaml $p.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: run, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+      {{- include "paddock.scheduling" . | nindent 6 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $p.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $p.persistence.size }}
+{{- end }}
+{{- if .Values.redis.enabled }}
+{{- $r := .Values.redis -}}
+{{- $sel := dict "root" $ "component" "redis" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "paddock.redisHost" . }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+spec:
+  selector:
+    {{- include "paddock.selectorLabels" $sel | nindent 4 }}
+  ports:
+    - {name: redis, port: 6379, targetPort: redis}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "paddock.redisHost" . }}
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "paddock.selectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "paddock.componentLabels" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999       # `redis` in the alpine image
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: redis
+          image: {{ $r.image }}
+          # Ephemeral queue/cache, as in docker-compose (no persistence).
+          command: ["redis-server", "--save", "", "--appendonly", "no", "--protected-mode", "no"]
+          ports:
+            - {name: redis, containerPort: 6379}
+          securityContext:
+            {{- include "paddock.containerSecurityContext" (dict "root" $) | nindent 12 }}
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: redis}
+            periodSeconds: 15
+          resources:
+            {{- toYaml $r.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - {name: data, emptyDir: {}}
+      {{- include "paddock.scheduling" . | nindent 6 }}
+{{- end }}

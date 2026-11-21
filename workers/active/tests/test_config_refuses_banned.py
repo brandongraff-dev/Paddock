@@ -22,4 +22,4 @@ def test_clean_env_imports_fine(monkeypatch):
             monkeypatch.delenv(key, raising=False)
     sys.modules.pop("app.config", None)
     cfg = importlib.import_module("app.config")
-    assert cfg.settings.user_agent.startswith("palantir-asm-scanner/")
+    assert cfg.settings.user_agent.startswith("paddock-scanner/")

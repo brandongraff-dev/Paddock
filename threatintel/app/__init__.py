@@ -1,4 +1,4 @@
-"""palantir-asm threat-intel fusion service.
+"""paddock threat-intel fusion service.
 
 Ingests threat indicators (IOCs) from STIX 2.1 bundles and TAXII 2.1
 collections, then matches them DEFENSIVELY against the owner's OWN assets

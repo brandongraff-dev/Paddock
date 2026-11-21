@@ -1,4 +1,4 @@
-import { Area, AreaChart, ResponsiveContainer } from "recharts";
+import Spark from "./charts/Spark";
 import { blastColor, blastPct } from "../lib/color";
 
 /**
@@ -37,44 +37,37 @@ interface Props {
   label: string;
   value: number | string;
   delta?: { value: string; dir?: "up" | "down" };
-  spark?: number[]; // optional array for sparkline
+  spark?: number[]; // optional series for the trend line
+  /** Identity colour: shown as a small marker beside the label, never on text. */
   accent?: string;
+  /** Optional footnote under the value. */
+  hint?: string;
 }
 
-export default function StatTile({ label, value, delta, spark, accent }: Props) {
-  const data = spark?.map((v, i) => ({ i, v })) ?? [];
-  const stroke = accent ?? "var(--accent)";
+export default function StatTile({ label, value, delta, spark, accent, hint }: Props) {
   return (
     <div className="stat-tile">
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {delta && (
-        <div className={`delta ${delta.dir ?? ""}`}>
-          {delta.dir === "up" ? "+" : delta.dir === "down" ? "−" : ""}
-          {delta.value}
-        </div>
-      )}
-      {data.length > 1 && (
-        <div className="spark">
-          <ResponsiveContainer>
-            <AreaChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`sparkfill-${label}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={stroke} stopOpacity={0.5} />
-                  <stop offset="100%" stopColor={stroke} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <Area
-                type="monotone"
-                dataKey="v"
-                stroke={stroke}
-                strokeWidth={1.2}
-                fill={`url(#sparkfill-${label})`}
-                isAnimationActive={false}
-                dot={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+      <div className="label">
+        {accent && <i className="stat-dot" style={{ background: accent }} aria-hidden="true" />}
+        {label}
+      </div>
+      <div className="stat-body">
+        <div className="value">{value}</div>
+        {spark && spark.length > 1 && (
+          <div className="spark">
+            <Spark values={spark} />
+          </div>
+        )}
+      </div>
+      {(delta || hint) && (
+        <div className={`delta ${delta?.dir ?? ""}`}>
+          {delta && (
+            <>
+              {delta.dir === "up" ? "▲ " : delta.dir === "down" ? "▼ " : ""}
+              {delta.value}
+            </>
+          )}
+          {hint && <span className="stat-hint">{hint}</span>}
         </div>
       )}
     </div>

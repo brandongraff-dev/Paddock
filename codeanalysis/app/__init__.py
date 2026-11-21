@@ -1,4 +1,4 @@
-"""palantir-asm codeanalysis service.
+"""paddock codeanalysis service.
 
 Two static-analysis capabilities over the owner's own first-party source:
 

@@ -1,4 +1,4 @@
-# palantir-asm fleet host agent
+# Paddock fleet host agent
 
 A small, **opt-in** agent that runs **on a host**. It enrolls with the
 orchestrator, reports inventory, and can apply **host-local** defensive blocks —
@@ -14,20 +14,20 @@ on.
 
 ```bash
 cd agent
-pip install -e .            # provides the `pasm` console script
+pip install -e .            # provides the `paddock` console script
 pip install -e .[test]      # + test deps
 ```
 
 ## Operator CLI
 
 ```bash
-pasm enroll  --server https://orchestrator:8080 --token "$FLEET_ENROLL_TOKEN"
-pasm status                 # agent + server view
-pasm inventory              # collect inventory (add --send to upload)
-pasm actions                # list this host's proposed/approved/applied actions
-pasm simulate block_ip 203.0.113.10     # DRY-RUN preview — touches nothing
-pasm apply <action-id>      # apply a SERVER-APPROVED action, after confirmation
-pasm run                    # heartbeat + inventory loop; applies approved work
+paddock enroll  --server https://orchestrator:8080 --token "$FLEET_ENROLL_TOKEN"
+paddock status                 # agent + server view
+paddock inventory              # collect inventory (add --send to upload)
+paddock actions                # list this host's proposed/approved/applied actions
+paddock simulate block_ip 203.0.113.10     # DRY-RUN preview — touches nothing
+paddock apply <action-id>      # apply a SERVER-APPROVED action, after confirmation
+paddock run                    # heartbeat + inventory loop; applies approved work
 ```
 
 - `simulate` never mutates — it prints the exact plan the enforcer *would* run.
@@ -43,7 +43,7 @@ pasm run                    # heartbeat + inventory loop; applies approved work
    thing to block/quarantine on *this* host; there is no remote-host parameter.
 2. **Propose → approve → apply.** The agent refuses to apply anything whose
    server status is not `approved`.
-3. **Dry-run by default** (`PASM_DRY_RUN=true`). A real apply requires the
+3. **Dry-run by default** (`PADDOCK_DRY_RUN=true`). A real apply requires the
    server's `dry_run=false` **and** the agent not running dry.
 4. **Audited.** Every transition is recorded server-side in the tamper-evident
    audit log (the agent reports results; the orchestrator writes the chain).
@@ -72,11 +72,11 @@ stubs): they can simulate a plan but never apply.
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `PASM_SERVER` | `http://localhost:8080` | orchestrator base URL |
-| `PASM_DRY_RUN` | `true` | force simulate-only; a real apply needs this off |
-| `PASM_AGENT_CRED` | `~/.config/palantir-agent/credentials.json` | credential file (chmod 600) |
-| `PASM_QUARANTINE_DIR` | `/var/lib/palantir-agent/quarantine` | where quarantined files are moved |
-| `PASM_HEARTBEAT_SEC` | `30` | heartbeat interval |
-| `PASM_INVENTORY_SEC` | `300` | inventory interval |
-| `PASM_OPERATOR_TOKEN` | — | operator bearer token for read/propose CLI calls |
+| `PADDOCK_SERVER` | `http://localhost:8080` | orchestrator base URL |
+| `PADDOCK_DRY_RUN` | `true` | force simulate-only; a real apply needs this off |
+| `PADDOCK_AGENT_CRED` | `~/.config/paddock-agent/credentials.json` | credential file (chmod 600) |
+| `PADDOCK_QUARANTINE_DIR` | `/var/lib/paddock-agent/quarantine` | where quarantined files are moved |
+| `PADDOCK_HEARTBEAT_SEC` | `30` | heartbeat interval |
+| `PADDOCK_INVENTORY_SEC` | `300` | inventory interval |
+| `PADDOCK_OPERATOR_TOKEN` | — | operator bearer token for read/propose CLI calls |
 | `FLEET_ENROLL_TOKEN` | — | enrollment bootstrap secret (set server-side too) |

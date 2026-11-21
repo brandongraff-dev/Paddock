@@ -192,7 +192,7 @@ export default function ChainMiniGraph({ chain }: Props) {
         zoomOnDoubleClick={false}
         preventScrolling={false}
       >
-        <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#1d2430" />
+        <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="rgba(236,226,208,0.07)" />
       </ReactFlow>
     </div>
   );

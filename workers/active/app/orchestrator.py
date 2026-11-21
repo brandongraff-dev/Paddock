@@ -7,6 +7,7 @@ owns the canonicalization rules.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any
 
@@ -41,6 +42,9 @@ class OrchestratorClient:
             headers={
                 "User-Agent": USER_AGENT,
                 "X-Worker-Id": self._worker_id,
+                # Orchestrator in AUTH_MODE=enforce (hardened / lite) only
+                # accepts the fleet's shared service key.
+                **({"X-API-Key": _svc_key} if (_svc_key := os.environ.get("SERVICE_API_KEY")) else {}),
             },
         )
 

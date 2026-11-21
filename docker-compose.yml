@@ -1,4 +1,4 @@
-# palantir-asm — HARDENED (prod) compose profile
+# paddock — HARDENED (prod) compose profile
 # =============================================================================
 # This is the hardened baseline. For local development (open ports + dev auth)
 # docker compose auto-merges docker-compose.override.yml on top of this file,
@@ -48,15 +48,37 @@ services:
       POSTGRES_DB: asm
       POSTGRES_USER: asm
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Password for the non-superuser app role `paddock_app` (set by
+      # schema/100_app_role.sh on first init). Falls back to POSTGRES_PASSWORD.
+      PADDOCK_APP_DB_PASSWORD: ${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./schema:/docker-entrypoint-initdb.d:ro
+      # Schema is NOT applied by initdb any more: the `migrate` one-shot below
+      # owns it (versioned, checksummed, advisory-locked; docs/OPERATIONS.md).
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U asm -d asm"]
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # One-shot: apply pending schema/NNN_*.sql via the versioned runner
+  # (orchestrator/app/migrate.py), then exit 0. Services that read Postgres
+  # wait for it with `condition: service_completed_successfully`. It baselines
+  # databases created by the old initdb path on first run.
+  migrate:
+    build: ./orchestrator
+    <<: *hardened-py
+    restart: "no"
+    command: ["python", "-m", "app.migrate", "up"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      SCHEMA_DIR: /schema
+    volumes:
+      - ./schema:/schema:ro
+    networks: [internal]
+    depends_on:
+      postgres: {condition: service_healthy}
 
   redis:
     image: redis:7-alpine
@@ -101,20 +123,52 @@ services:
     <<: *hardened-py
     ports: ["8080:8080"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      # Non-superuser role so Postgres row-level security (tenant isolation)
+      # applies; see schema/099_tenancy.sql + docs/trust/TENANCY.md. Existing
+      # volumes must apply 098/099 + 100_app_role.sh once (TENANCY.md).
+      DATABASE_URL: postgresql+asyncpg://paddock_app:${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: INFO
+      # Keyed + anchored audit chain (docs/trust/SECURITY_WHITEPAPER.md §8).
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:-}
+      AUDIT_ANCHOR_SINKS: ${AUDIT_ANCHOR_SINKS:-}
+      AUDIT_ANCHOR_S3_BUCKET: ${AUDIT_ANCHOR_S3_BUCKET:-}
+      AUDIT_ANCHOR_WEBHOOK_URL: ${AUDIT_ANCHOR_WEBHOOK_URL:-}
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
       # Governance Stream A auth switch. Hardened default = enforce.
       AUTH_MODE: ${AUTH_MODE:-enforce}
       # Legacy MVP stub, kept coherent with AUTH_MODE: deny-closed in prod.
       ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
       # First-boot admin password (set once; see .env.example). Never shipped.
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      # Encrypts integration credentials at rest (see .env.example).
+      PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:-}
+      PADDOCK_SECRET_KEY_OLD: ${PADDOCK_SECRET_KEY_OLD:-}
+      PADDOCK_DASHBOARD_URL: ${PADDOCK_DASHBOARD_URL:-http://localhost:3000}
+      # Optional commercial license (unset = Community; see docs/EDITIONS.md).
+      PADDOCK_LICENSE_KEY: ${PADDOCK_LICENSE_KEY:-}
+      PADDOCK_LICENSE_PUBLIC_KEYS: ${PADDOCK_LICENSE_PUBLIC_KEYS:-}
+      # Startup migration is a no-op after the `migrate` one-shot (same lock).
+      SCHEMA_DIR: /schema
+      # Prometheus scrape token for GET /metrics (unset = 404 under enforce).
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      # Enterprise identity (SSO + SCIM, docs/SSO.md). Public URLs + the key
+      # that encrypts IdP client secrets at rest.
+      SSO_BASE_URL: ${SSO_BASE_URL:-http://localhost:8080}
+      SSO_DASHBOARD_URL: ${SSO_DASHBOARD_URL:-http://localhost:3000}
+      # Proof-of-control: scope entries authorise nothing until ownership is
+      # verified (DNS TXT / HTTPS file) or attested (IP ranges). Schema 021.
+      REQUIRE_SCOPE_PROOF: ${REQUIRE_SCOPE_PROOF:-true}
+      # Shared credential for the worker fleet under AUTH_MODE=enforce.
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
+    volumes:
+      - ./schema:/schema:ro
     tmpfs:
       - /tmp
     networks: [edge, internal]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate:  {condition: service_completed_successfully}
       redis:    {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 3).close()"]
@@ -134,7 +188,7 @@ services:
     environment:
       VITE_API_URL: http://localhost:8080
     tmpfs:
-      - /var/cache/nginx
+      - /var/cache/nginx:uid=101,gid=101  # nginx runs as uid 101; a root-owned tmpfs crash-loops it
       - /var/run
       - /tmp
     networks: [edge, internal]
@@ -147,6 +201,32 @@ services:
       start_period: 20s
 
   # ======================= workers (egress, no inbound) =====================
+  # Integrations dispatcher + delivery worker (Slack/Teams/PagerDuty/webhooks/
+  # email). Same image as the orchestrator; egress only, nothing published.
+  integrations:
+    build: ./orchestrator
+    <<: *hardened-py
+    command: ["python", "-m", "app.integrations.worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:-}
+      PADDOCK_SECRET_KEY_OLD: ${PADDOCK_SECRET_KEY_OLD:-}
+      PADDOCK_DASHBOARD_URL: ${PADDOCK_DASHBOARD_URL:-http://localhost:3000}
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(0 if time.time() - os.path.getmtime('/tmp/integrations-heartbeat') < 120 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   worker-passive:
     build: ./workers/passive
     # read_only omitted: subfinder writes a config/cache under $HOME. caps
@@ -159,6 +239,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       WORKER_ID: passive-1
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
     tmpfs:
       - /tmp
     networks: [internal, egress]
@@ -185,6 +266,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
       WORKER_ID: active-1
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
       MAX_CONCURRENCY_PER_TARGET: "2"
       POLITENESS_DELAY_MS: "250"
     volumes:
@@ -205,6 +287,7 @@ services:
     build: ./intel
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       SYNC_INTERVAL_MIN: "60"
     tmpfs:
@@ -212,6 +295,7 @@ services:
     networks: [internal, egress]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 3).close()"]
       interval: 15s
@@ -299,6 +383,7 @@ services:
     build: ./correlation
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       POLICIES_DIR: /policies
@@ -319,6 +404,7 @@ services:
     build: ./sca
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
@@ -338,6 +424,7 @@ services:
     build: ./codeanalysis
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       ORCHESTRATOR_URL: http://orchestrator:8080
       LOG_LEVEL: INFO
@@ -385,6 +472,7 @@ services:
     networks: [internal]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8099), 3).close()"]
       interval: 15s
@@ -396,6 +484,7 @@ services:
     build: ./threatintel
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
@@ -405,6 +494,7 @@ services:
     networks: [internal, egress]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8100), 3).close()"]
       interval: 15s
@@ -416,14 +506,24 @@ services:
     build: ./otdiscovery
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       ORCHESTRATOR_URL: http://orchestrator:8080
       OTDISCOVERY_HTTP_PORT: "8101"
+      # Paddock Sentry sensors post here. Fail closed until tokens are set.
+      SENTRY_TOKENS: ${SENTRY_TOKENS:-}
+      REQUIRE_SENTRY_TOKEN: "true"
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      BASELINE_PATH: /var/lib/otdiscovery/baselines.json
+    ports: ["8101:8101"]
+    volumes:
+      - otdiscovery_data:/var/lib/otdiscovery
     tmpfs:
       - /tmp
-    networks: [internal]
+    networks: [internal, edge]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8101), 3).close()"]
       interval: 15s
@@ -443,6 +543,7 @@ services:
     networks: [internal]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8102), 3).close()"]
       interval: 15s
@@ -451,6 +552,7 @@ services:
       start_period: 30s
 
 volumes:
+  otdiscovery_data:
   pg_data:
   neo4j_data:
   neo4j_logs:

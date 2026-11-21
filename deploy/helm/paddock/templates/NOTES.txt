@@ -1,0 +1,25 @@
+Paddock {{ .Chart.AppVersion }} is deployed as release "{{ .Release.Name }}".
+
+{{- if .Values.ingress.enabled }}
+  Dashboard + API:  https://{{ .Values.ingress.host }}   (API under /v1)
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "paddock.componentName" (dict "root" $ "component" "dashboard") }} 3000
+{{- end }}
+{{- if and .Values.otdiscovery.enabled .Values.otdiscovery.ingress.enabled }}
+  Sentry ingest:    https://{{ .Values.otdiscovery.ingress.host }}/ingest
+{{- end }}
+
+Schema migrations ran in the Job "{{ include "paddock.componentName" (dict "root" $ "component" "migrate") }}":
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "paddock.componentName" (dict "root" $ "component" "migrate") }}
+
+First admin login: user "admin", password = ADMIN_BOOTSTRAP_PASSWORD from the
+secret (or, if unset, printed ONCE in the orchestrator log):
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "paddock.componentName" (dict "root" $ "component" "orchestrator") }} | grep -i bootstrap
+
+Prometheus scrapes /metrics with the METRICS_TOKEN bearer token from secret
+"{{ include "paddock.secretName" . }}". Backups, upgrades and the restore drill:
+docs/OPERATIONS.md.
+{{- if eq .Values.config.authMode "dev" }}
+
+WARNING: config.authMode=dev -- every unauthenticated request is an ADMIN.
+{{- end }}

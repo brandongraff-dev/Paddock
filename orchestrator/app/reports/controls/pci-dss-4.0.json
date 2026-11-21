@@ -1,0 +1,206 @@
+{
+  "framework": "pci-dss-4.0",
+  "name": "PCI DSS",
+  "version": "4.0",
+  "publisher": "PCI Security Standards Council",
+  "url": "https://www.pcisecuritystandards.org/document_library/",
+  "description": "Payment Card Industry Data Security Standard. Paddock evidences network segmentation (Sentry), vulnerability identification and remediation, and inventories. It is not an Approved Scanning Vendor (ASV) and does not perform penetration tests.",
+  "controls": [
+    {
+      "id": "1.2.3", "family": "1 · Network security controls",
+      "title": "Accurate network diagram(s) maintained",
+      "summary": "Diagrams show all connections between the CDE and other networks, including wireless.",
+      "evidence": ["segmentation_map", "asset_inventory"], "max_status": "partial",
+      "rationale": "Sentry's observed segmentation map shows which segments actually reach which. It corroborates, but is not, the documented network diagram.",
+      "attestation": "Provide the maintained network diagram and evidence of its review."
+    },
+    {
+      "id": "1.2.5", "family": "1 · Network security controls",
+      "title": "Allowed services, protocols and ports are identified and approved",
+      "summary": "Every allowed service, protocol and port has a defined business need.",
+      "evidence": ["asset_inventory", "exposure_hygiene"], "max_status": "partial",
+      "rationale": "Paddock inventories exposed ports/services and flags unnecessary exposure; business-need approval is organisational.",
+      "attestation": "Provide the approved ports/services list with business justification."
+    },
+    {
+      "id": "1.2.6", "family": "1 · Network security controls",
+      "title": "Security features defined for insecure services and protocols",
+      "summary": "Insecure services, protocols and ports in use have defined, implemented security features.",
+      "evidence": ["cleartext_protocols"], "max_status": "partial",
+      "rationale": "Sentry and TLS checks detect cleartext management and weak transport in use.",
+      "attestation": "Document the compensating security features for any insecure protocol that remains."
+    },
+    {
+      "id": "1.3.1", "family": "1 · Network security controls",
+      "title": "Inbound traffic to the CDE is restricted",
+      "summary": "Only necessary inbound traffic to the cardholder data environment is allowed.",
+      "evidence": ["segmentation_map", "segmentation_violations"], "max_status": "partial",
+      "rationale": "Observed reachability between segments and segment-crossing detections show whether restrictions hold in practice. Firewall rulesets themselves are not read.",
+      "attestation": "Provide NSC rulesets for the CDE boundary."
+    },
+    {
+      "id": "1.3.2", "family": "1 · Network security controls",
+      "title": "Outbound traffic from the CDE is restricted",
+      "summary": "Only necessary outbound traffic from the CDE is allowed.",
+      "evidence": ["segmentation_violations", "behaviour_detection"], "max_status": "partial",
+      "rationale": "Sentry flags unexpected internet egress and cross-segment initiation by devices.",
+      "attestation": "Provide outbound NSC rules for the CDE."
+    },
+    {
+      "id": "1.4.1", "family": "1 · Network security controls",
+      "title": "NSCs between trusted and untrusted networks",
+      "summary": "Network security controls are implemented between trusted and untrusted networks.",
+      "evidence": ["exposure_hygiene", "segmentation_violations"], "max_status": "partial",
+      "rationale": "External scanning shows what is reachable from the internet; Sentry shows OT/IoT on public addresses.",
+      "attestation": "Provide NSC configuration standards and rulesets."
+    },
+    {
+      "id": "2.2.4", "family": "2 · Secure configurations",
+      "title": "Only necessary services and functions are enabled",
+      "summary": "Unnecessary services, protocols, daemons and functions are removed or disabled.",
+      "evidence": ["exposure_hygiene", "secure_configuration"],
+      "rationale": "Exposed files, development hosts on the internet, and unnecessary services surface as findings."
+    },
+    {
+      "id": "2.2.7", "family": "2 · Secure configurations",
+      "title": "Non-console administrative access is encrypted",
+      "summary": "All non-console administrative access uses strong cryptography.",
+      "evidence": ["cleartext_protocols", "tls_posture"], "max_status": "partial",
+      "rationale": "Telnet/FTP/SNMPv1-2c management and weak TLS are detected where observed; access paths Paddock cannot see are not covered.",
+      "attestation": "Confirm administrative access methods for all CDE components."
+    },
+    {
+      "id": "4.2.1", "family": "4 · Protect data in transit",
+      "title": "Strong cryptography and valid certificates on open networks",
+      "summary": "PAN transmitted over open, public networks uses strong cryptography with valid, unexpired certificates.",
+      "evidence": ["tls_posture", "certificate_inventory"], "max_status": "partial",
+      "rationale": "TLS grades and certificate expiry tracking evidence the transport configuration of observed endpoints; which endpoints carry PAN is organisational.",
+      "attestation": "Identify the endpoints that transmit PAN."
+    },
+    {
+      "id": "4.2.1.1", "family": "4 · Protect data in transit",
+      "title": "Inventory of trusted keys and certificates",
+      "summary": "An inventory of trusted keys and certificates used to protect PAN in transit is maintained.",
+      "evidence": ["certificate_inventory"], "max_status": "partial",
+      "rationale": "Paddock inventories public certificates (CT logs, TLS handshakes). Private keys and internal PKI are out of view.",
+      "attestation": "Provide the key and certificate inventory for internal PKI."
+    },
+    {
+      "id": "6.2.4", "family": "6 · Secure systems and software",
+      "title": "Software engineering techniques prevent common attacks",
+      "summary": "Bespoke software is developed with techniques that prevent common software attacks.",
+      "evidence": ["code_analysis", "secrets_exposure"], "max_status": "partial",
+      "rationale": "SAST taint analysis and secret scanning evidence some techniques; secure-design and review practices are organisational.",
+      "attestation": "Provide secure-development procedures and code-review records."
+    },
+    {
+      "id": "6.3.1", "family": "6 · Secure systems and software",
+      "title": "Vulnerabilities are identified and risk-ranked",
+      "summary": "New vulnerabilities are identified from industry sources and assigned a risk ranking.",
+      "evidence": ["vuln_management", "threat_intel"],
+      "rationale": "Findings are matched to NVD/OSV, ranked by severity with EPSS and CISA KEV, and enriched with threat intelligence."
+    },
+    {
+      "id": "6.3.2", "family": "6 · Secure systems and software",
+      "title": "Inventory of bespoke and third-party software components",
+      "summary": "An inventory of bespoke and custom software and third-party components is maintained.",
+      "evidence": ["software_inventory"],
+      "rationale": "Paddock builds an SBOM from lockfiles and keeps it current per project."
+    },
+    {
+      "id": "6.3.3", "family": "6 · Secure systems and software",
+      "title": "Known vulnerabilities are patched in time",
+      "summary": "Critical security patches are installed within one month of release; others within defined periods.",
+      "evidence": ["remediation_sla", "critical_overdue", "kev_open"],
+      "rationale": "Remediation SLAs (critical 24h by default) are measured per finding; open criticals past SLA and open KEV vulnerabilities are gaps."
+    },
+    {
+      "id": "10.2.1", "family": "10 · Logging and monitoring",
+      "title": "Audit logs are enabled and active",
+      "summary": "Audit logs are enabled and active for all system components and cardholder data.",
+      "evidence": ["audit_log"], "max_status": "partial",
+      "rationale": "Paddock's own hash-chained audit log covers actions in Paddock only, not CDE system components.",
+      "attestation": "Provide audit-log configuration for CDE system components."
+    },
+    {
+      "id": "11.2.1", "family": "11 · Test security regularly",
+      "title": "Authorized and unauthorized wireless access points are managed",
+      "summary": "Wireless access points are identified and unauthorized ones detected at least quarterly.",
+      "evidence": ["device_inventory"], "max_status": "partial",
+      "rationale": "Sentry identifies devices on mirrored segments, including access points it can fingerprint; it is not an RF wireless scan.",
+      "attestation": "Provide quarterly wireless scan results or WIDS/WIPS records."
+    },
+    {
+      "id": "11.3.1", "family": "11 · Test security regularly",
+      "title": "Internal vulnerability scans at least quarterly",
+      "summary": "Internal scans run at least every three months; high-risk and critical vulnerabilities are resolved and rescanned.",
+      "evidence": ["internal_visibility", "remediation_sla"], "max_status": "partial",
+      "rationale": "Paddock's internal view is passive (Sentry) and agent inventory based; it supplements but does not replace authenticated internal scanning.",
+      "attestation": "Provide quarterly internal scan reports and rescan evidence."
+    },
+    {
+      "id": "11.3.2", "family": "11 · Test security regularly",
+      "title": "External vulnerability scans at least quarterly",
+      "summary": "External scans run at least every three months by a PCI SSC Approved Scanning Vendor, with passing results.",
+      "evidence": ["external_scanning", "critical_overdue"], "max_status": "partial",
+      "rationale": "Paddock scans the external surface continuously and shows remediation, but it is not an ASV; ASV scan reports are still required.",
+      "attestation": "Provide four quarters of passing ASV scan reports."
+    },
+    {
+      "id": "11.3.2.1", "family": "11 · Test security regularly",
+      "title": "External scans after any significant change",
+      "summary": "External scans are performed after significant changes and high-risk findings resolved.",
+      "evidence": ["continuous_monitoring", "external_scanning"], "max_status": "partial",
+      "rationale": "Surface-change detection and scheduled rescans show the surface is rescanned as it changes.",
+      "attestation": "Map significant changes to the post-change scans."
+    },
+    {
+      "id": "11.4.1", "family": "11 · Test security regularly",
+      "title": "Penetration testing methodology defined and followed",
+      "summary": "A penetration testing methodology is defined, documented and implemented.",
+      "mode": "manual", "evidence": [],
+      "rationale": "Paddock is a defensive tool and does not perform penetration tests.",
+      "attestation": "Provide the penetration-testing methodology and most recent reports."
+    },
+    {
+      "id": "11.4.5", "family": "11 · Test security regularly",
+      "title": "Segmentation controls are tested",
+      "summary": "If segmentation reduces scope, its effectiveness is confirmed by penetration testing at least every 12 months and after changes.",
+      "evidence": ["segmentation_map", "segmentation_violations"], "max_status": "partial",
+      "rationale": "Sentry continuously observes which segments actually reach each other and flags crossings. That is strong supporting evidence between tests, but the requirement calls for a penetration test.",
+      "attestation": "Provide the segmentation penetration-test report (annual and after changes)."
+    },
+    {
+      "id": "11.5.1", "family": "11 · Test security regularly",
+      "title": "Intrusion detection at the CDE perimeter and critical points",
+      "summary": "Intrusion-detection and/or -prevention techniques detect and alert on intrusions.",
+      "evidence": ["behaviour_detection"], "max_status": "partial",
+      "rationale": "Sentry's passive behaviour detectors alert on lateral scanning and anomalous device traffic; they are not a full signature-based IDS.",
+      "attestation": "Provide IDS/IPS deployment and alerting evidence."
+    },
+    {
+      "id": "12.5.1", "family": "12 · Policies and programs",
+      "title": "Inventory of in-scope system components",
+      "summary": "An inventory of system components in scope for PCI DSS is maintained and kept current.",
+      "evidence": ["asset_inventory", "device_inventory"], "max_status": "partial",
+      "rationale": "Paddock's discovered and observed inventory is current; which components are in PCI scope is decided by the organisation.",
+      "attestation": "Mark the in-scope components and confirm the inventory."
+    },
+    {
+      "id": "12.5.2", "family": "12 · Policies and programs",
+      "title": "PCI DSS scope documented and confirmed annually",
+      "summary": "Scope is documented and confirmed at least every 12 months and after significant change.",
+      "mode": "manual", "evidence": [],
+      "rationale": "Scope confirmation is an organisational activity; Paddock's inventory and segmentation map are inputs.",
+      "attestation": "Provide the annual scope confirmation."
+    },
+    {
+      "id": "12.10.1", "family": "12 · Policies and programs",
+      "title": "Incident response plan exists",
+      "summary": "An incident response plan is in place and ready to be activated.",
+      "mode": "manual", "evidence": [],
+      "rationale": "Organisational.",
+      "attestation": "Provide the incident response plan and last test."
+    }
+  ]
+}
