@@ -25,35 +25,3 @@ export function useInView<T extends HTMLElement>(threshold = 0.25) {
   }, [threshold]);
   return [ref, seen] as const;
 }
-
-/** Scale a fixed-size design to the width of its container. */
-export function useFit<T extends HTMLElement>(designW: number) {
-  const ref = useRef<T>(null);
-  const [scale, setScale] = useState(1);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const fit = () => setScale(Math.min(1, el.clientWidth / designW) || 1);
-    fit();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [designW]);
-  return [ref, scale] as const;
-}
-
-/** True on phone-width screens (updates on rotate/resize). */
-export function usePhone(max = 720) {
-  const q = `(max-width: ${max}px)`;
-  const [phone, setPhone] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(q).matches);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const m = window.matchMedia(q);
-    const on = () => setPhone(m.matches);
-    on();
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, [q]);
-  return phone;
-}
