@@ -19,13 +19,14 @@ from typing import Protocol
 
 from fastapi import HTTPException
 
+from ..netkey import client_key
 from .config import growth_settings
 
 logger = logging.getLogger(__name__)
 
 
 def ip_hash(ip: str | None) -> str:
-    raw = f"{growth_settings.ip_hash_salt}|{ip or 'unknown'}".encode()
+    raw = f"{growth_settings.ip_hash_salt}|{client_key(ip)}".encode()
     return hashlib.sha256(raw).hexdigest()[:32]
 
 

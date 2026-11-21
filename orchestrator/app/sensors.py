@@ -35,6 +35,7 @@ from fastapi import HTTPException
 
 from . import audit, tenancy
 from . import auth as auth_svc
+from .netkey import SlidingWindowLimiter  # noqa: F401 (re-exported)
 
 logger = logging.getLogger(__name__)
 
@@ -107,43 +108,6 @@ def _hash_matches(stored: str | None, presented: str) -> bool:
 # --------------------------------------------------------------------------- #
 # rate limiting (in-process; see docs/SENTRY.md for the multi-replica note)
 # --------------------------------------------------------------------------- #
-
-class SlidingWindowLimiter:
-    """At most ``limit`` hits per ``window_s`` per key."""
-
-    def __init__(self, limit: int, window_s: float, *, max_keys: int = 10_000) -> None:
-        self.limit = limit
-        self.window_s = window_s
-        self.max_keys = max_keys
-        self._hits: dict[str, deque[float]] = {}
-
-    def _trim(self, key: str, now: float) -> deque[float]:
-        q = self._hits.setdefault(key, deque())
-        while q and now - q[0] > self.window_s:
-            q.popleft()
-        if not q:
-            self._hits.pop(key, None)
-            q = self._hits.setdefault(key, deque())
-        return q
-
-    def blocked(self, key: str, now: float | None = None) -> bool:
-        return len(self._trim(key, now or time.monotonic())) >= self.limit
-
-    def hit(self, key: str, now: float | None = None) -> bool:
-        """Record a hit. Returns False when the key is over its limit."""
-        now = now or time.monotonic()
-        q = self._trim(key, now)
-        if len(q) >= self.limit:
-            return False
-        q.append(now)
-        if len(self._hits) > self.max_keys:  # bound memory under a spray of keys
-            for k in list(self._hits)[: self.max_keys // 10]:
-                self._hits.pop(k, None)
-        return True
-
-    def reset(self) -> None:
-        self._hits.clear()
-
 
 # enroll attempts per client address, and *failed* redemptions (lockout).
 enroll_limiter = SlidingWindowLimiter(limit=_env_int("SENSOR_ENROLL_PER_MIN", 20), window_s=60)

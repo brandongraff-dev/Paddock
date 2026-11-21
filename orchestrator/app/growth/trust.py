@@ -84,7 +84,10 @@ def token_well_formed(token: str) -> bool:
     parts = token.split(".")
     if len(parts) != 3 or parts[0] != TOKEN_PREFIX or len(parts[1]) != 43:
         return False
-    return any(hmac.compare_digest(parts[2], _sig(parts[1], k)) for k in _signing_keys())
+    if not (parts[1].isascii() and parts[2].isascii()):  # compare_digest(str) raises on non-ASCII
+        return False
+    return any(hmac.compare_digest(parts[2].encode("ascii"), _sig(parts[1], k).encode("ascii"))
+               for k in _signing_keys())
 
 
 def hash_token(token: str) -> str:
@@ -310,7 +313,14 @@ async def view(pool, redis, token: str, password: str | None, ip: str | None) ->
             redis, f"growth:trustpw:{link['id']}:{abuse.ip_hash(ip)}",
             growth_settings.trust_max_password_attempts, 900, what="password attempts",
         )
+        # A per-link ceiling on WRONG guesses from anywhere: rotating source
+        # addresses (an IPv6 /64, a botnet) must not turn the per-address limit
+        # above into unlimited online guessing.
+        link_key = f"growth:trustpw:{link['id']}:fails"
+        if await abuse.peek(redis, link_key) >= growth_settings.trust_max_password_attempts * 10:
+            raise abuse.RateLimited("password attempts for this link", 900)
         if not auth_svc.verify_password(password, link["password_hash"]):
+            await abuse.hit(redis, link_key, 10**9, 900, what="password attempts")
             with tenancy.tenant_context(tenant_id):
                 await audit.record(
                     pool, action="deny", actor=f"trust-link:{link['id']}", resource_type="trust_link",

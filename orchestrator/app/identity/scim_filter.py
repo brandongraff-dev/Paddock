@@ -25,6 +25,7 @@ MAX_TERMS = 20
 
 _OPS = {"eq", "ne", "co", "sw", "ew", "gt", "ge", "lt", "le"}
 _TOKEN = re.compile(r'\s*(?:(?P<lp>\()|(?P<rp>\))|(?P<lb>\[)|(?P<rb>\])|(?P<str>"(?:[^"\\]|\\.)*")|(?P<word>[^\s()\[\]"]+))')
+_UNSTORABLE = re.compile(r"[\x00\ud800-\udfff]")
 _URNS = (
     "urn:ietf:params:scim:schemas:core:2.0:user:",
     "urn:ietf:params:scim:schemas:core:2.0:group:",
@@ -164,6 +165,9 @@ class _Parser:
                 value: Any = json.loads(vv)
             except ValueError as exc:
                 raise FilterError("bad string literal") from exc
+            if isinstance(value, str) and _UNSTORABLE.search(value):
+                # NUL and lone surrogates cannot be sent to Postgres (they would be a 500)
+                raise FilterError("string literal contains an unsupported character")
         elif vk == "word" and vv.lower() in ("true", "false"):
             value = vv.lower() == "true"
         elif vk == "word" and vv.lower() == "null":
@@ -294,7 +298,14 @@ def _parse_dt(value: Any) -> datetime:
         dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00").replace("z", "+00:00"))
     except ValueError as exc:
         raise FilterError(f"not an ISO 8601 date: {value[:40]!r}") from exc
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    try:
+        dt.astimezone(timezone.utc)  # year 0001 / 9999 with an offset overflows on normalisation
+    except (OverflowError, ValueError) as exc:
+        raise FilterError(f"date out of range: {value[:40]!r}") from exc
+    if not (1900 <= dt.year <= 2200):
+        raise FilterError(f"date out of range: {value[:40]!r}")
+    return dt
 
 
 def compile_filter(expr: str | None, spec: Spec, args: list[Any]) -> str | None:

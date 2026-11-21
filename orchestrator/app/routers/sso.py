@@ -536,9 +536,14 @@ async def saml_acs(slug: str, request: Request, pool=Depends(get_pool)):
         return await _login_failed(request, None, "unknown_provider", f"no enabled SAML provider {slug!r}")
     if not saml.SAML_AVAILABLE:
         raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
-    raw = await request.body()
-    if len(raw) > _MAX_SAML_RESPONSE * 2:
-        return await _login_failed(request, provider, "invalid_assertion", "SAMLResponse too large")
+    # Public and unauthenticated: stop reading at the cap instead of buffering an
+    # arbitrarily large body first and measuring it afterwards.
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > _MAX_SAML_RESPONSE * 2:
+            return await _login_failed(request, provider, "invalid_assertion", "SAMLResponse too large")
+    raw = bytes(buf)
     form = parse_qs(raw.decode("latin-1"), max_num_fields=8)
     saml_response = (form.get("SAMLResponse") or [""])[0]
     relay_state = (form.get("RelayState") or [""])[0]

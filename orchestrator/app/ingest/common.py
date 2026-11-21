@@ -9,6 +9,7 @@ counted and reported (``ParseResult.errors``).
 from __future__ import annotations
 
 import ipaddress
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -17,7 +18,7 @@ from urllib.parse import urlsplit
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 MAX_ERRORS = 50
 
-_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]")  # incl. lone surrogates (unencodable)
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
 _HOST_RE = re.compile(
     r"^(?=.{1,253}$)([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)(\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)*$"
@@ -78,6 +79,23 @@ def clean(value: Any, limit: int = 2000) -> str:
     return s[:limit]
 
 
+def scrub_json(value: Any, _depth: int = 0) -> Any:
+    """A JSON-safe copy for Postgres ``jsonb``: no NUL, no lone surrogates, no
+    NaN/Infinity (none of which jsonb can store), bounded depth."""
+    if _depth > 40:
+        return None
+    if isinstance(value, str):
+        return _CTRL_RE.sub("", value) if value else value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {(_CTRL_RE.sub("", k) if isinstance(k, str) else str(k)): scrub_json(v, _depth + 1)
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [scrub_json(v, _depth + 1) for v in value]
+    return value
+
+
 def as_list(v: Any) -> list[Any]:
     if v is None:
         return []
@@ -110,6 +128,8 @@ def norm_severity(value: Any, default: str = "medium") -> str:
     if isinstance(value, bool):
         return default
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return default if value != value else ("critical" if value > 0 else "info")
         if value > 5:
             return cvss_severity(float(value))
         return {0: "info", 1: "low", 2: "medium", 3: "high", 4: "critical", 5: "critical"}.get(

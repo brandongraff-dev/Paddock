@@ -185,6 +185,15 @@ async def redeem_invite(
 ) -> dict[str, Any]:
     """Public: turn a valid invite into the customer's first admin user."""
     bad = HTTPException(status_code=400, detail="invalid or expired invitation")
+    return await _redeem_invite(
+        pool, bad, token=token, username=username, password=password, email=email,
+        display_name=display_name, request_id=request_id, ip=ip)
+
+
+async def _redeem_invite(
+    pool, bad: HTTPException, *, token: str, username: str, password: str, email: str | None,
+    display_name: str | None, request_id: str | None, ip: str | None,
+) -> dict[str, Any]:
     child_id, _, secret = (token or "").partition(".")
     try:
         child_id = tenancy._norm(child_id) or ""
@@ -194,6 +203,17 @@ async def redeem_invite(
         raise bad
     status = await core.tenant_status(pool, child_id)
     if status != "active":
+        raise bad
+    # Cheap existence check BEFORE the expensive password hash: a wrong or spent
+    # token must cost one indexed SELECT, not a PBKDF2 round on the thread pool.
+    with tenancy.tenant_context(child_id):
+        async with pool.acquire() as con:
+            live = await con.fetchval(
+                "SELECT 1 FROM msp_invites WHERE token_hash = $1 AND tenant_id = $2 "
+                "AND used_at IS NULL AND expires_at > NOW()",
+                _hash_token(token), child_id,
+            )
+    if not live:
         raise bad
     pw_hash = await asyncio.get_running_loop().run_in_executor(None, auth_svc.hash_password, password)
     try:
