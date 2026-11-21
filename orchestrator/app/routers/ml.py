@@ -41,6 +41,7 @@ from ..models import (
     MlRiskRow,
     Severity,
 )
+from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/ml", tags=["ml"])
@@ -176,7 +177,7 @@ async def retrain(body: dict[str, Any] | None = None) -> dict[str, Any]:
         import httpx
 
         async with httpx.AsyncClient(timeout=_PROXY_TIMEOUT) as http:
-            resp = await http.post(url, json=payload)
+            resp = await http.post(url, json=payload, headers=service_headers())
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):

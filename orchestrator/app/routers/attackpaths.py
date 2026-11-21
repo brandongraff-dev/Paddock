@@ -39,6 +39,8 @@ from ..models import (
     Severity,
 )
 from ..queue import get_redis
+from .. import tenancy
+from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/attack-paths", tags=["attack-paths"])
@@ -296,7 +298,7 @@ async def recompute_attack_paths(r=Depends(get_redis)):
         import httpx
 
         async with httpx.AsyncClient(timeout=5.0) as http:
-            resp = await http.post(url, json={})
+            resp = await http.post(url, json={}, headers=service_headers())
         if resp.status_code < 400:
             computed = None
             try:
@@ -322,7 +324,12 @@ async def recompute_attack_paths(r=Depends(get_redis)):
             settings.queue_correlate,
             {
                 "job": json.dumps(
-                    {"kind": "correlate_recompute_paths", "op": "recompute_paths"}
+                    {
+                        "kind": "correlate_recompute_paths",
+                        "op": "recompute_paths",
+                        # every queued unit of work names its tenant
+                        "tenant_id": tenancy.current_tenant_id(),
+                    }
                 )
             },
         )

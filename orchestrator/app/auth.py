@@ -41,7 +41,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from . import audit, tenancy
+from . import audit, job_binding, tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -450,6 +450,10 @@ async def resolve_principal(request: Request) -> Principal | None:
         if svc and hmac.compare_digest(api_key.encode("utf-8"), svc.encode("utf-8")):
             ref = request.headers.get(tenancy.TENANT_HEADER)
             if not ref:
+                if settings.tenancy_strict:
+                    # The service key is a fleet credential, not a tenant: in a
+                    # multi-tenant deployment every call must say whose it is.
+                    raise AuthError("service key requires X-Paddock-Tenant (TENANCY_STRICT)")
                 return service_principal()
             pool = getattr(request.app.state, "pool", None)
             tid = await tenancy.resolve_tenant_ref(pool, ref) if pool is not None else None
@@ -672,6 +676,8 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
                 )
 
         # 2. Bind the principal's tenant for everything below (RLS scoping).
+        #    (Only a service principal can pick its tenant, via X-Paddock-Tenant;
+        #    resolve_principal already validated that it exists and is active.)
         tenant_token = tenancy.set_tenant(principal.tenant_id if principal else None)
         try:
             return await self._handle(request, call_next, principal, required)
@@ -696,6 +702,18 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
 
         if principal is not None:
             request.state.principal = principal
+
+        # 3b. A worker callback must belong to the tenant of the job it answers.
+        if principal is not None and principal.kind == "service":
+            pool = getattr(request.app.state, "pool", None)
+            if pool is not None:
+                try:
+                    mismatch = await job_binding.verify(request, pool, tenancy.current_tenant_id())
+                except Exception:  # noqa: BLE001 -- fail closed
+                    logger.exception("job_binding_check_failed")
+                    mismatch = "job/tenant check unavailable"
+                if mismatch:
+                    return await self._deny(request, 409, f"job_tenant_mismatch: {mismatch}", principal)
 
         # 4. Write-ahead audit for mutations (fail-closed).
         intent_id: int | None = None
@@ -800,6 +818,11 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         ip = client_ip(request)
         if details is None:
             details = {"denied": True} if denied else {}
+        if principal is not None and principal.kind == "service":
+            # A shared service key acting in a tenant it named: record WHICH.
+            details = {**details, "via": "service_key",
+                       "acting_tenant": principal.tenant_id or tenancy.current_tenant_id(),
+                       "job": request.headers.get(job_binding.SCAN_HEADER)}
         # Anonymous / tenant-less events go to the default (platform) chain.
         tenant = (principal.tenant_id if principal else None) or tenancy.current_tenant_id()
         with tenancy.tenant_context(tenant or tenancy.DEFAULT_TENANT_ID):
