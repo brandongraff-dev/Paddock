@@ -75,6 +75,21 @@ def current_tenant_key() -> str:
     return current_tenant_id() or "-"
 
 
+def event_visible_to(payload: dict, caller_tenant: str | None) -> bool:
+    """May ``caller_tenant`` see this stream event? Events are stamped with a
+    ``tenant_id`` by ``queue.publish_event``; an unstamped (legacy) event
+    belongs to the default tenant, and in strict mode to nobody."""
+    if caller_tenant is None:
+        return False
+    ev = payload.get("tenant_id")
+    if ev in (None, ""):
+        return not settings.tenancy_strict and caller_tenant == DEFAULT_TENANT_ID
+    try:
+        return _norm(ev) == caller_tenant
+    except ValueError:
+        return False
+
+
 def set_tenant(tenant_id: Any) -> contextvars.Token:
     """Bind ``tenant_id`` to the current context. Pair with :func:`reset_tenant`."""
     return _tenant.set(_norm(tenant_id))

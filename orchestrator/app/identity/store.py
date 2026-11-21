@@ -55,7 +55,7 @@ async def get_settings(con) -> dict[str, Any]:
     if row is None:  # the migration seeds it; recreate defensively
         row = await con.fetchrow(
             "INSERT INTO identity_settings (id) VALUES (TRUE) "
-            "ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id RETURNING *"
+            "ON CONFLICT (tenant_id, id) DO UPDATE SET id = EXCLUDED.id RETURNING *"
         )
     d = dict(row)
     d["scim_role_mappings"] = _jsonb(d["scim_role_mappings"]) or []

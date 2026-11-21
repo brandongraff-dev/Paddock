@@ -74,6 +74,7 @@ from .growth import trust as growth_trust
 from .growth.config import growth_settings
 from .growth.runner import growth_loop
 from . import sensors as sensors_svc
+from . import tenancy
 from .routers import sensors as sensors_router
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,9 @@ def create_app() -> FastAPI:
         are sent every ~15s so intermediaries don't drop idle streams.
         """
         r = request.app.state.redis
+        # The stream is shared by every tenant; a caller only ever sees events
+        # stamped with its own tenant (queue.publish_event stamps them).
+        caller_tenant = tenancy.current_tenant_id()
 
         async def gen() -> AsyncIterator[bytes]:
             async for sid, payload in read_events(r, since=since, block_ms=15000):
@@ -240,6 +244,8 @@ def create_app() -> FastAPI:
                     return
                 if payload.get("event") == "keepalive":
                     yield b": keepalive\n\n"
+                    continue
+                if not tenancy.event_visible_to(payload, caller_tenant):
                     continue
                 body = json.dumps({"id": sid, **payload}, default=str)
                 yield f"id: {sid}\ndata: {body}\n\n".encode("utf-8")
