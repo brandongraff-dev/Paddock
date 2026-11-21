@@ -80,3 +80,13 @@ REVOKE ALL ON FUNCTION msp_create_child_tenant(text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION msp_set_child_status(uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION msp_create_child_tenant(text, text, text) TO paddock_app;
 GRANT EXECUTE ON FUNCTION msp_set_child_status(uuid, text) TO paddock_app;
+
+-- ---------------------------------------------------------------------------
+-- SCIM bearer tokens are resolved before the tenant is known (the token IS the
+-- tenant selector), exactly like api_keys/sensors: allow a SELECT-only lookup
+-- across tenants while `app.auth_lookup` is on. Writes stay tenant-scoped (the
+-- tenant_isolation policy 099 applies); this policy is permissive-OR for reads.
+-- ---------------------------------------------------------------------------
+DROP POLICY IF EXISTS scim_token_auth_lookup ON scim_tokens;
+CREATE POLICY scim_token_auth_lookup ON scim_tokens FOR SELECT
+  USING (current_setting('app.auth_lookup', true) = 'on');

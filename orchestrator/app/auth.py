@@ -421,16 +421,26 @@ async def _principal_from_scim_token(request: Request, token: str) -> Principal:
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
         raise AuthError("auth backend unavailable")
-    async with pool.acquire() as con:
-        row = await con.fetchrow(
-            "SELECT id, name, expires_at, revoked FROM scim_tokens WHERE token_hash = $1",
-            hash_api_key(token),
-        )
-        if row is None or row["revoked"]:
-            raise AuthError("invalid SCIM token")
-        if row["expires_at"] is not None and row["expires_at"] <= datetime.now(timezone.utc):
-            raise AuthError("SCIM token expired")
-        await con.execute("UPDATE scim_tokens SET last_used = NOW() WHERE id = $1", row["id"])
+    # The token IS the tenant selector: find it across tenants (auth-lookup
+    # mode, SELECT only), then do everything else inside ITS tenant.
+    with tenancy.auth_lookup():
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT s.id, s.name, s.expires_at, s.revoked, s.tenant_id, t.status AS tenant_status "
+                "  FROM scim_tokens s LEFT JOIN tenants t ON t.id = s.tenant_id "
+                " WHERE s.token_hash = $1",
+                hash_api_key(token),
+            )
+    if row is None or row["revoked"]:
+        raise AuthError("invalid SCIM token")
+    if row["tenant_status"] != "active":
+        raise AuthError("tenant suspended")
+    if row["expires_at"] is not None and row["expires_at"] <= datetime.now(timezone.utc):
+        raise AuthError("SCIM token expired")
+    tid = str(row["tenant_id"])
+    with tenancy.tenant_context(tid):
+        async with pool.acquire() as con:
+            await con.execute("UPDATE scim_tokens SET last_used = NOW() WHERE id = $1", row["id"])
     return Principal(
         actor=f"scim:{row['name']}",
         role="scim",
@@ -438,6 +448,7 @@ async def _principal_from_scim_token(request: Request, token: str) -> Principal:
         capabilities=frozenset({"scim"}),  # SCIM only -- never capabilities_for()
         kind="scim",
         api_key_id=str(row["id"]),
+        tenant_id=tid,
     )
 
 
