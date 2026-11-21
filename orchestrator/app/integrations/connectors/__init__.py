@@ -11,6 +11,11 @@ import logging
 log = logging.getLogger(__name__)
 
 _MODULES: tuple[str, ...] = (
+    "webhook",
+    "slack",
+    "teams",
+    "pagerduty",
+    "email",
     "jira",
     "servicenow",
     "linear",

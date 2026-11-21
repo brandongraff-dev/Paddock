@@ -419,6 +419,14 @@ _rule("POST DELETE PATCH PUT", rf"/v1/alert-rules(/{_ANY})?", "admin")
 _rule("POST DELETE PATCH PUT", rf"/v1/schedules(/{_ANY}(/run-now)?)?", "admin")
 _rule("PATCH", rf"/v1/sla-policies/{_ANY}", "admin")
 
+# --- integrations (reads: read; every write: admin) ------------------------ #
+_rule("GET", r"/v1/integrations(/catalog|/health)?", "read")
+_rule("GET", rf"/v1/integrations/{_ANY}(/deliveries)?", "read")
+_rule("POST", r"/v1/integrations", "admin")
+_rule("PATCH PUT DELETE", rf"/v1/integrations/{_ANY}", "admin")
+_rule("POST", rf"/v1/integrations/{_ANY}/(test|enable|disable)", "admin")
+_rule("POST", rf"/v1/integrations/{_ANY}/deliveries/{_ANY}/retry", "admin")
+
 # --- triage (analyst + admin) ---------------------------------------------- #
 _rule("PATCH", rf"/v1/findings/{_ANY}", "triage")
 _rule("PATCH", rf"/v1/tickets/{_ANY}", "triage")

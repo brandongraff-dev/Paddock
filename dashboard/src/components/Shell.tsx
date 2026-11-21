@@ -172,6 +172,7 @@ const Icon = {
       <circle cx="7" cy="7" r="0.8" /><circle cx="7" cy="17" r="0.8" />
     </svg>
   ),
+  Integrations: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5" /></svg>),
   Remediation: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 6 a3 3 0 1 0 4 4 L21 13 L13 21 L3 11 L11 3 Z" /><path d="M9 11 L13 15" />
@@ -228,7 +229,7 @@ const navGroups: NavGroup[] = [
   },
   {
     label: "Govern",
-    items: [{ to: "/scope", label: "Scope", icon: Icon.Scope }],
+    items: [{ to: "/scope", label: "Scope", icon: Icon.Scope }, { to: "/integrations", label: "Integrations", icon: Icon.Integrations }],
   },
 ];
 

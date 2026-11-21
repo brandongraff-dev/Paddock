@@ -37,6 +37,7 @@ from .routers import ml as ml_router
 from .routers import monitoring as monitoring_router
 from .routers import devices as devices_router
 from .routers import fleet as fleet_router
+from .routers import integrations as integrations_router
 from .routers import ontology as ontology_router
 from .routers import remediation as remediation_router
 from .routers import posture as posture_router
@@ -230,6 +231,8 @@ def create_app() -> FastAPI:
     app.include_router(remediation_router.router)
     # Two-way ticketing: inbound callbacks from Jira / ServiceNow / Linear.
     app.include_router(integrations_inbound_router.router)
+    # Integrations: connector catalogue, CRUD, test, delivery log
+    app.include_router(integrations_router.router)
 
     return app
 
