@@ -124,6 +124,9 @@ class Principal:
     # The tenant every query of this principal is scoped to (Postgres RLS).
     # None = the context default (the default tenant unless TENANCY_STRICT).
     tenant_id: str | None = None
+    # Set only for an MSP user acting inside a customer tenant (app/msp): who
+    # is really acting and for which MSP. ``tenant_id`` is then the customer.
+    msp_delegation: dict[str, Any] | None = None
 
     @property
     def clearance_rank(self) -> int:
@@ -458,6 +461,10 @@ async def resolve_principal(request: Request) -> Principal | None:
             return service_principal(tid)
         return await _principal_from_api_key(request, api_key)
     if token:
+        from . import msp as msp_svc
+
+        if msp_svc.is_switch_token(token):  # MSP user acting in a customer (app/msp)
+            return await msp_svc.principal_from_switch_token(request, token)
         return await _principal_from_jwt(request, token)
     return None
 
@@ -574,6 +581,11 @@ _rule("POST", rf"/v1/findings/{_ANY}/verify", "scan")
 _rule("POST", r"/v1/findings/verify/bulk", "scan")
 _rule("POST", rf"/v1/verifications/{_ANY}/result", "write")
 _rule("POST", rf"/v1/remediation/{_ANY}/merged", "triage")
+# --- MSP console (app/msp): switching needs only read (the grant decides the
+# role inside the customer); invite redemption is public (the token is the
+# credential); every other mutating /v1/msp route falls through to admin. ---- #
+_rule("POST", rf"/v1/msp/customers/{_ANY}/switch", "read")
+_rule("POST", r"/v1/msp/invites/redeem", None)
 
 
 def required_capability(method: str, path: str) -> str | None:
@@ -699,6 +711,15 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         principal: Principal | None,
         required: str | None,
     ) -> Response:
+        # 3a. An MSP user acting inside a customer has a narrower surface
+        #     (no key minting / SSO / SCIM / nested MSP routes): app/msp.
+        if principal is not None and principal.msp_delegation:
+            from . import msp as msp_svc
+
+            why = msp_svc.delegated_route_denied(principal, request.url.path, request.method)
+            if why:
+                return await self._deny(request, 403, why, principal)
+
         # 3. Authorize (RBAC, deny-closed) for non-public routes.
         if required is not None:
             if principal is None:
@@ -744,7 +765,10 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
     def _needs_write_ahead(request: Request) -> bool:
         if not settings.audit_fail_closed:
             return False
-        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        # An MSP user inside a customer is audited write-ahead on EVERY request,
+        # reads included (the customer can see what its provider looked at).
+        delegated = bool(getattr(getattr(request.state, "principal", None), "msp_delegation", None))
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE") and not delegated:
             return False
         if (request.url.path.rstrip("/") or "/") in _NO_WRITE_AHEAD:
             return False
@@ -789,7 +813,8 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         method = request.method
         mutating = method in ("POST", "PUT", "PATCH", "DELETE")
         restricted_read = bool(getattr(request.state, "audit_restricted", False))
-        if not (denied or mutating or restricted_read):
+        delegated = bool(principal is not None and principal.msp_delegation)
+        if not (denied or mutating or restricted_read or delegated):
             return
         try:
             await self._record(request, principal, status_code, denied=denied, details=details)
@@ -816,6 +841,24 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
             details = {"denied": True} if denied else {}
         # Anonymous / tenant-less events go to the default (platform) chain.
         tenant = (principal.tenant_id if principal else None) or tenancy.current_tenant_id()
+        if principal is not None and principal.msp_delegation:
+            # MSP user inside a customer: the MSP's own trail gets its record
+            # first (a failure here refuses a write-ahead request, fail-closed),
+            # then the customer's row below names the acting MSP user.
+            from . import msp as msp_svc
+
+            await msp_svc.mirror_to_msp_trail(
+                pool,
+                principal,
+                action=_action_for(request.method, denied),
+                method=request.method,
+                path=request.url.path,
+                status=status_code,
+                request_id=getattr(request.state, "request_id", None),
+                ip=ip,
+                details=details,
+            )
+            details = {**details, "msp": msp_svc.delegation_details(principal)}
         with tenancy.tenant_context(tenant or tenancy.DEFAULT_TENANT_ID):
             return await audit.record(
                 pool,

@@ -6,6 +6,7 @@
 
 import type { LiveEvent } from "./types";
 import { useAuth } from "../state/auth";
+import { actingToken, useMsp } from "../state/msp";
 
 /** VITE_API_URL is set in the Vite env; in prod nginx proxies /v1/* so "" works. */
 const RAW_BASE = (import.meta as any).env?.VITE_API_URL ?? "";
@@ -19,8 +20,12 @@ export const API_BASE: string = String(RAW_BASE).replace(/\/+$/, "");
  * read via getState() so this stays usable outside React.
  */
 export function authHeaders(): Record<string, string> {
+  // Inside an MSP customer the short-lived customer-scoped token replaces the
+  // MSP session token (state/msp.ts); "Back to MSP" drops it again.
   const token =
-    useAuth.getState().token ?? ((import.meta as any).env?.VITE_API_TOKEN as string | undefined);
+    actingToken() ??
+    useAuth.getState().token ??
+    ((import.meta as any).env?.VITE_API_TOKEN as string | undefined);
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -97,7 +102,11 @@ export async function apiFetch<T = unknown>(path: string, opts: FetchOpts = {}):
     // top-level gate in App.tsx re-render to the Login screen. We only clear
     // when a token was actually in play, so a 401 from the login call itself
     // (bad credentials, handled by the Login screen) doesn't loop.
-    if (res.status === 401 && useAuth.getState().token) {
+    if (res.status === 401 && useMsp.getState().acting) {
+      // The customer token expired / the grant was revoked / the customer was
+      // suspended: leave the customer, keep the MSP session.
+      useMsp.getState().exit();
+    } else if (res.status === 401 && useAuth.getState().token) {
       useAuth.getState().logout();
     }
     throw new ApiError(

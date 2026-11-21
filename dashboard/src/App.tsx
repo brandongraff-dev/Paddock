@@ -26,6 +26,7 @@ import RemediationPage from "./pages/Remediation";
 import IntegrationsPage from "./pages/Integrations";
 import SuppressionsPage from "./pages/Suppressions";
 import ReportsPage from "./pages/Reports";
+import MspConsolePage from "./pages/MspConsole";
 import Login from "./pages/Login";
 import SsoCallback from "./pages/SsoCallback";
 import ContextSyncPage from "./pages/ContextSync";
@@ -105,6 +106,7 @@ function AuthedApp() {
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
         <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
         <Route path="/settings/billing" element={<Shell><RequireAdmin><BillingPage /></RequireAdmin></Shell>} />
+        <Route path="/msp" element={<Shell><MspConsolePage /></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

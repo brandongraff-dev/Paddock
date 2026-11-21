@@ -16,6 +16,9 @@ import { ClassificationBanner } from "./Classification";
 import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
+import MspIndicator from "./MspIndicator";
+import { useMspMe } from "../hooks/useMsp";
+import { useMsp } from "../state/msp";
 
 interface NavEntry {
   to: string;
@@ -283,6 +286,17 @@ const identityEntry: NavEntry = { to: "/settings/identity", label: "Identity", i
 
 /** Settings → Billing (hosted plan, usage, Stripe) — admins only, next to Identity. */
 const billingEntry: NavEntry = { to: "/settings/billing", label: "Billing", icon: Icon.Billing };
+/** MSP console — appended to Govern only for MSP users (and not while inside a customer). */
+const mspEntry: NavEntry = {
+  to: "/msp",
+  label: "Customers",
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="7" height="7" rx="1.5" /><rect x="14" y="4" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="6" rx="1.5" /><path d="M14 17 L21 17 M14 14 L21 14" />
+    </svg>
+  ),
+};
 
 function ToastStack() {
   const toasts = useStore((s) => s.toasts);
@@ -392,9 +406,12 @@ export default function Shell({ children, noScroll }: Props) {
   const resetClassification = useStore((s) => s.resetClassification);
 
   // Audit is appended to the rail only for roles that may open it.
+  const isMsp = useMspMe().data?.is_msp === true;
+  const acting = useMsp((s) => s.acting);
   const govExtra = [
     ...(canViewAudit(role) ? [auditEntry] : []),
     ...(role === "admin" ? [identityEntry, billingEntry] : []),
+    ...(isMsp && !acting ? [mspEntry] : []),
   ];
   const entries = [...navEntries, ...govExtra];
 
@@ -453,6 +470,7 @@ export default function Shell({ children, noScroll }: Props) {
           </div>
           <div className="spacer" />
           <ClassificationBanner />
+          <MspIndicator />
           <Ticker />
         </header>
 

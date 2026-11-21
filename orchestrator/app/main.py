@@ -304,6 +304,10 @@ def create_app() -> FastAPI:
     app.include_router(billing_status.router)
     app.add_exception_handler(billing_gate.PaymentRequired, billing_gate.payment_required_handler)
     app.include_router(verification_router.router)
+    # MSP console (schema 033): customers, switching, rollup, templates, usage
+    from .routers import msp as msp_router
+
+    app.include_router(msp_router.router)
 
     return app
 
