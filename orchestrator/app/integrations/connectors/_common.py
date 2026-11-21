@@ -302,6 +302,36 @@ def finding(asset_kind: str, asset_value: str, rule_id: str, severity: str, titl
     return item
 
 
+def scope_suggestion(kind: str, value: str, evidence: Mapping[str, Any] | None = None
+                     ) -> dict[str, Any]:
+    """A PENDING scope suggestion (schema 031). Never adds scope by itself."""
+    return {"kind": kind, "value": value, "evidence": dict(evidence or {})}
+
+
+def public_ip_suggestion(ip: Any, evidence: Mapping[str, Any] | None = None
+                         ) -> Optional[dict[str, Any]]:
+    """/32 (/128) suggestion for a PUBLIC address; None for anything else."""
+    cleaned = clean_ip(ip)
+    if not cleaned or not is_public_ip(cleaned):
+        return None
+    return scope_suggestion("ipv6_cidr" if ":" in cleaned else "ipv4_cidr",
+                            f"{cleaned}/{128 if ':' in cleaned else 32}", evidence)
+
+
+def hostname_suggestion(host: Any, evidence: Mapping[str, Any] | None = None
+                        ) -> Optional[dict[str, Any]]:
+    """Domain suggestion for a public FQDN (no IPs, no *.local/.internal)."""
+    h = clean_hostname(host)
+    if not h or "." not in h or h.endswith((".local", ".internal", ".localdomain")):
+        return None
+    try:
+        ipaddress.ip_address(h)
+        return None
+    except ValueError:
+        pass
+    return scope_suggestion("domain", h, evidence)
+
+
 def device_asset(hint: Mapping[str, list[str]], source: str, metadata: Mapping[str, Any], *,
                  create_unmatched: bool = True, confidence: int = 80) -> Optional[dict[str, Any]]:
     """Asset item for an EDR/MDM/CMDB machine record.

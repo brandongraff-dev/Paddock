@@ -203,6 +203,18 @@ const Icon = {
       <path d="M6 3 L15 3 L19 7 L19 21 L6 21 Z" /><path d="M15 3 L15 7 L19 7" /><path d="M9 17 L9 14 M12 17 L12 11 M15 17 L15 13" />
     </svg>
   ),
+  ContextSync: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 8 A8 8 0 0 0 5.5 6.5 M4 4 L4 8 L8 8" /><path d="M4 16 A8 8 0 0 0 18.5 17.5 M20 20 L20 16 L16 16" />
+      <circle cx="12" cy="12" r="1.6" />
+    </svg>
+  ),
+  NetworkActions: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="5" rx="1" /><rect x="3" y="16" width="6" height="5" rx="1" /><rect x="15" y="16" width="6" height="5" rx="1" />
+      <path d="M12 8 L12 12 M6 16 L6 12 L18 12 L18 16" /><path d="M13.5 19 L16.5 19" strokeDasharray="1.5 2" />
+    </svg>
+  ),
 };
 
 interface NavGroup {
@@ -252,11 +264,12 @@ const navGroups: NavGroup[] = [
       { to: "/tickets", label: "Tickets", icon: Icon.Tickets },
       { to: "/remediation", label: "Remediation", icon: Icon.Remediation },
       { to: "/reports", label: "Reports", icon: Icon.Reports },
+      { to: "/network-actions", label: "Network actions", icon: Icon.NetworkActions },
     ],
   },
   {
     label: "Govern",
-    items: [{ to: "/scope", label: "Scope", icon: Icon.Scope }, { to: "/integrations", label: "Integrations", icon: Icon.Integrations }],
+    items: [{ to: "/scope", label: "Scope", icon: Icon.Scope }, { to: "/integrations", label: "Integrations", icon: Icon.Integrations }, { to: "/context", label: "Context sync", icon: Icon.ContextSync }],
   },
 ];
 

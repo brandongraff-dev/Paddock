@@ -126,6 +126,10 @@ class SourceBatch:
     edges: list[dict[str, Any]] = field(default_factory=list)
     findings: list[dict[str, Any]] = field(default_factory=list)
     owners: list[dict[str, Any]] = field(default_factory=list)
+    # Additive (schema 031): internet-facing names/addresses the source saw that
+    # the customer may want in scope: {"kind", "value", "evidence"}. They are
+    # stored as PENDING suggestions; a source never adds scope itself.
+    scope_suggestions: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Connector(ABC):

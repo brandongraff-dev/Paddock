@@ -24,11 +24,14 @@ _MODULES: tuple[str, ...] = (
     "sentinel",
     "elastic",
     "syslog",
+    "google_secops",
     # context SOURCE connectors (read-only)
     "aws",
     "microsoft_defender",
     "crowdstrike",
     "servicenow_cmdb",
+    "gcp",
+    "azure",
     # network ACTION connectors (Sentry quarantine; approve gate only)
     "unifi",
     "meraki",

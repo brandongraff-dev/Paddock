@@ -77,7 +77,40 @@ async def _match(con, hint: Mapping[str, Any]) -> list[UUID]:
     return [r["id"] for r in rows]
 
 
-async def apply_source_batch(pool, redis, batch: SourceBatch, *, source: str) -> dict[str, int]:
+_SUGGESTION_KINDS = ("domain", "subdomain_wildcard", "ipv4_cidr", "ipv6_cidr", "asn")
+_MAX_SUGGESTIONS = 2000
+
+
+async def _store_suggestions(pool, items: list[dict[str, Any]], *, source: str,
+                             integration_id: UUID | str | None) -> int:
+    """Upsert suggestions as ``pending``. A dismissed/accepted one keeps its status
+    (only ``last_seen`` moves) and anything already in active scope is skipped."""
+    if integration_id is None:
+        return 0
+    iid = integration_id if isinstance(integration_id, UUID) else UUID(str(integration_id))
+    stored = 0
+    async with pool.acquire() as con:
+        async with con.transaction():
+            for it in items[:_MAX_SUGGESTIONS]:
+                kind, value = it.get("kind"), str(it.get("value") or "").strip()
+                if kind not in _SUGGESTION_KINDS or not value or len(value) > 512:
+                    continue
+                if await con.fetchval(
+                        "SELECT 1 FROM scope_entries WHERE kind = $1 AND value = $2 AND active",
+                        kind, value):
+                    continue
+                await con.execute(
+                    "INSERT INTO scope_suggestions (integration_id, source, kind, value, evidence) "
+                    "VALUES ($1, $2, $3, $4, $5::jsonb) "
+                    "ON CONFLICT (integration_id, kind, value) DO UPDATE "
+                    "SET last_seen = NOW(), evidence = EXCLUDED.evidence",
+                    iid, source, kind, value, json.dumps(it.get("evidence") or {}, default=str))
+                stored += 1
+    return stored
+
+
+async def apply_source_batch(pool, redis, batch: SourceBatch, *, source: str,
+                             integration_id: UUID | str | None = None) -> dict[str, int]:
     """Write a batch; return counters for the sync-run record."""
     from ..models import AssetBulkIn, EdgeBulkIn, FindingBulkIn
     from ..routers import assets as assets_router
@@ -180,6 +213,11 @@ async def apply_source_batch(pool, redis, batch: SourceBatch, *, source: str) ->
                             name, match, team, o.get("contact"), prio,
                         )
                     counts["owners_upserted"] += 1
+
+    # 6) scope suggestions: PENDING rows only, never scope itself ---------------- #
+    if batch.scope_suggestions:
+        counts["scope_suggestions"] = await _store_suggestions(
+            pool, batch.scope_suggestions, source=source, integration_id=integration_id)
 
     log.info("source_batch_applied", extra={"source": source, **counts})
     return counts
