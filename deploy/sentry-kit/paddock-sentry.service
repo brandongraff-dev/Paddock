@@ -1,0 +1,38 @@
+# /etc/systemd/system/paddock-sentry.service  (installed by install.sh)
+#   Settings you may change live in /etc/paddock-sentry/sentry.env
+#   (PADDOCK_SENTRY_IFACE, PADDOCK_SERVER). The per-sensor credential is
+#   /var/lib/paddock-sentry/credentials.json (mode 600, written by `enroll`).
+[Unit]
+Description=Paddock Sentry passive network sensor
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/paddock-sentry/credentials.json
+
+[Service]
+User=paddock-sentry
+Group=paddock-sentry
+EnvironmentFile=/etc/paddock-sentry/sentry.env
+Environment=PADDOCK_SENTRY_CRED=/var/lib/paddock-sentry/credentials.json
+Environment=PADDOCK_SENTRY_OUTBOX=/var/lib/paddock-sentry/outbox
+# "+" = run as root: bring the capture port up silent (no IP, no IPv6, promiscuous)
+ExecStartPre=+/usr/local/lib/paddock-sentry/prepare-iface ${PADDOCK_SENTRY_IFACE}
+ExecStart=/usr/local/bin/paddock-sentry run --iface ${PADDOCK_SENTRY_IFACE}
+Restart=always
+RestartSec=5
+# Least privilege: capture only, nothing else.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_PACKET
+ReadWritePaths=/var/lib/paddock-sentry
+
+[Install]
+WantedBy=multi-user.target

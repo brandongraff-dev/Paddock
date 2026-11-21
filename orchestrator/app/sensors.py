@@ -146,9 +146,9 @@ class SlidingWindowLimiter:
 
 
 # enroll attempts per client address, and *failed* redemptions (lockout).
-enroll_limiter = SlidingWindowLimiter(limit=20, window_s=60)
-enroll_fail_limiter = SlidingWindowLimiter(limit=5, window_s=600)
-heartbeat_limiter = SlidingWindowLimiter(limit=30, window_s=60)
+enroll_limiter = SlidingWindowLimiter(limit=_env_int("SENSOR_ENROLL_PER_MIN", 20), window_s=60)
+enroll_fail_limiter = SlidingWindowLimiter(limit=_env_int("SENSOR_ENROLL_FAILS", 5), window_s=600)
+heartbeat_limiter = SlidingWindowLimiter(limit=_env_int("SENSOR_HEARTBEAT_PER_MIN", 30), window_s=60)
 
 
 # --------------------------------------------------------------------------- #

@@ -22,6 +22,7 @@ import ExplorePage from "./pages/Explore";
 import ThreatIntelPage from "./pages/ThreatIntel";
 import DevicesPage from "./pages/Devices";
 import FleetPage from "./pages/Fleet";
+import SensorsPage from "./pages/Sensors";
 import RemediationPage from "./pages/Remediation";
 import IntegrationsPage from "./pages/Integrations";
 import SuppressionsPage from "./pages/Suppressions";
@@ -93,6 +94,7 @@ function AuthedApp() {
         <Route path="/threat-intel" element={<Shell><ThreatIntelPage /></Shell>} />
         <Route path="/devices" element={<Shell><DevicesPage /></Shell>} />
         <Route path="/fleet" element={<Shell><FleetPage /></Shell>} />
+        <Route path="/sensors" element={<Shell><SensorsPage /></Shell>} />
         <Route path="/remediation" element={<Shell><RemediationPage /></Shell>} />
         <Route path="/integrations" element={<Shell><IntegrationsPage /></Shell>} />
         <Route path="/suppressions" element={<Shell><SuppressionsPage /></Shell>} />
