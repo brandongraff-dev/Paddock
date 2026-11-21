@@ -312,6 +312,64 @@
 .lp-run span { font-size: 17px; transition: transform 300ms var(--ease); }
 .lp-run:hover span { transform: translateX(4px); }
 
+.lp-principles {
+  padding: clamp(64px, 12vh, 120px) 0;
+  background: linear-gradient(180deg, #110f0d, #0c0a09);
+}
+.lp-rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  border-top: 1px solid rgba(236, 230, 218, 0.1);
+  margin: 0 clamp(16px, 4vw, 44px);
+}
+.lp-rule {
+  padding: 28px 24px 28px 0;
+  border-bottom: 1px solid rgba(236, 230, 218, 0.1);
+}
+.lp-rule h4 {
+  margin: 0 0 8px;
+  text-transform: none;
+  letter-spacing: -0.015em;
+  font-family: var(--serif);
+  font-weight: 420;
+  font-size: 26px;
+  letter-spacing: -0.015em;
+}
+.lp-rule p { margin: 0; color: var(--lp-ink-2); font-size: 13.5px; line-height: 1.55; max-width: 34ch; }
+.lp-proof {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 28px;
+  margin: 48px clamp(16px, 4vw, 44px) 0;
+}
+.lp-proof div { display: flex; flex-direction: column; gap: 8px; }
+.lp-proof b { font-family: var(--serif); font-size: clamp(34px, 4vw, 54px); font-weight: 380; letter-spacing: -0.02em; }
+.lp-proof span { color: var(--lp-ink-2); font-size: 13px; max-width: 32ch; line-height: 1.5; }
+
+.lp-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 28px clamp(16px, 4vw, 44px);
+  border-top: 1px solid rgba(236, 230, 218, 0.08);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .lp-links a:not(.lp-cta) { display: none; }
+  .lp-headline .l1 { margin-left: 18%; }
+  .lp-headline .l2 { margin-left: 0; }
+  .lp-headline .l3 { margin-left: 22%; }
+  .lp-seal { width: 44px; height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-headline span { animation: none; opacity: 1; }
+  .lp-card { transition: none; }
+}
+
 /* ---- giant cropped wordmark ---- */
 .lp-mega { position: relative; overflow: hidden; background: #0e0c0a; padding-top: clamp(64px, 10vh, 110px); isolation: isolate; }
 .lp-mega::before {
