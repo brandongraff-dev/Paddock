@@ -49,3 +49,10 @@ Thumbs.db
 
 # local agent worktrees (tooling, never committed)
 /.claude/worktrees/
+
+# developer platform build outputs
+/site/
+/terraform-provider-paddock/terraform-provider-paddock
+.terraform/
+*.tfstate
+*.tfstate.*

@@ -1,0 +1,117 @@
+# Paddock documentation site (MkDocs + Material).
+#
+#   pip install -r docs/requirements.txt
+#   mkdocs serve            # http://127.0.0.1:8000
+#   mkdocs build --strict   # what CI runs
+#
+# Nav entries for pages that don't exist yet in a checkout (written by other
+# contributors in parallel) are skipped by scripts/mkdocs_hooks.py, so the
+# strict build stays meaningful for the pages that do exist.
+
+site_name: Paddock
+site_description: Defensive attack-surface management — attack paths, SCA, threat intel and IoT/OT discovery.
+site_url: https://brandongraff-dev.github.io/cybersec/
+repo_url: https://github.com/brandongraff-dev/cybersec
+repo_name: brandongraff-dev/cybersec
+edit_uri: edit/main/docs/
+copyright: Paddock is free software under the GNU AGPL-3.0.
+
+docs_dir: docs
+site_dir: site
+
+hooks:
+  - scripts/mkdocs_hooks.py
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+# Links that leave docs/ (../SECURITY.md, ../sentry/...) are rewritten to GitHub
+# URLs by scripts/mkdocs_hooks.py; broken links between site pages still fail
+# the strict build. Anchor/absolute-link checks are informational only.
+validation:
+  omitted_files: info
+  absolute_links: info
+  unrecognized_links: info
+  anchors: info
+
+exclude_docs: |
+  requirements.txt
+
+not_in_nav: |
+  /api/**
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Product:
+      - Vision: VISION.md
+      - Sentry sensors: SENTRY.md
+      - Integrations: INTEGRATIONS.md
+      - Single sign-on (SSO): SSO.md
+      - Reports: REPORTS.md
+      - Editions & licensing: EDITIONS.md
+  - Developers:
+      - API: API.md
+      - SDKs, CLI & Terraform: SDK.md
+      - Service contracts: CONTRACTS.md
+  - Operations:
+      - Operations guide: OPERATIONS.md
+      - Readiness: READINESS.md
+      - Cloud roadmap: CLOUD_ROADMAP.md
+  - Trust: trust/
+  - Architecture:
+      - Overview: ARCHITECTURE.md
+      - Orchestrator: ORCHESTRATOR_NOTES.md
+      - Governance: GOVERNANCE_CONTRACT.md
+      - Passive discovery: PASSIVE_NOTES.md
+      - Active probing: ACTIVE_NOTES.md
+      - Intel: INTEL_NOTES.md
+      - Correlation: CORRELATION_NOTES.md
+      - Dashboard: DASHBOARD_NOTES.md
+      - Ontology: ONTOLOGY_WIRING.md
+      - Threat intel: THREATINTEL_WIRING.md
+      - Fleet: FLEET_WIRING.md
+      - Devices (IoT/OT): DEVICES_WIRING.md
+      - Remediation: REMEDIATION_WIRING.md
+      - Tier 1 contract: TIER1_CONTRACT.md
+      - Tier 2 contract: TIER2_CONTRACT.md
+      - Tier 3 contract: TIER3_CONTRACT.md
+      - Tier 4 contract: TIER4_CONTRACT.md

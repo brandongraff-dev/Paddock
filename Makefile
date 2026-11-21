@@ -142,6 +142,24 @@ integration: ## end-to-end pipeline harness (drives all services, asserts cross-
 realrun: ## authorized real-target run + crude FP measurement (default scanme.nmap.org)
 	python3 hardening/realrun.py $(TARGET)
 
+# ---------- developer platform (API contract, SDKs, docs) ----------
+
+.PHONY: api-regen
+api-regen: ## regenerate docs/api/openapi.json + the Python and TypeScript SDKs from code
+	python3 scripts/export_openapi.py
+	python3 sdk/python/codegen.py
+	node sdk/typescript/scripts/codegen.mjs
+
+.PHONY: api-check
+api-check: ## fail if the committed spec/SDKs are stale (what CI runs)
+	python3 scripts/export_openapi.py --check
+	python3 sdk/python/codegen.py --check
+	node sdk/typescript/scripts/codegen.mjs --check
+
+.PHONY: docs-serve
+docs-serve: ## serve the MkDocs site locally (pip install -r docs/requirements.txt)
+	mkdocs serve
+
 # ---------- housekeeping ----------
 
 .PHONY: fmt

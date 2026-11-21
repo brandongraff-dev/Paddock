@@ -114,6 +114,9 @@ services:
       PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:-}
       PADDOCK_SECRET_KEY_OLD: ${PADDOCK_SECRET_KEY_OLD:-}
       PADDOCK_DASHBOARD_URL: ${PADDOCK_DASHBOARD_URL:-http://localhost:3000}
+      # Optional commercial license (unset = Community; see docs/EDITIONS.md).
+      PADDOCK_LICENSE_KEY: ${PADDOCK_LICENSE_KEY:-}
+      PADDOCK_LICENSE_PUBLIC_KEYS: ${PADDOCK_LICENSE_PUBLIC_KEYS:-}
     tmpfs:
       - /tmp
     networks: [edge, internal]
