@@ -1,0 +1,132 @@
+/* ------------------------------------------------------------------ *
+ * MSP console + the "acting in <customer>" topbar indicator.          *
+ * New component styles only; built on the tokens and the existing     *
+ * .panel / .stat-tile / .table surfaces (no new glass rules).         *
+ * ------------------------------------------------------------------ */
+
+/* Topbar: sits beside .class-pill in the same quiet style. */
+.msp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--accent);
+  user-select: none;
+  white-space: nowrap;
+  min-width: 0;
+}
+.msp-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.msp-pill .msp-pill-name {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-0);
+}
+.msp-pill .msp-pill-role { color: var(--text-2); }
+.msp-pill button {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-1);
+  border-radius: var(--radius-s, 6px);
+}
+.msp-pill button:hover { color: var(--text-0); border-color: var(--border-focus); background: transparent; }
+.msp-pill::after {
+  content: "";
+  width: 1px;
+  height: 12px;
+  margin-left: 5px;
+  background: var(--border-strong);
+}
+
+/* Console */
+.msp-page .stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.msp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.msp-toolbar input[type="search"] { flex: 1 1 220px; min-width: 160px; }
+.msp-toolbar select { min-width: 150px; }
+.msp-toolbar .spacer { flex: 1 1 auto; }
+
+.msp-grade {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: var(--radius-s, 6px);
+  border: 1px solid var(--border-strong);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+.msp-grade[data-grade="A"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.msp-grade[data-grade="B"] { color: var(--ok); }
+.msp-grade[data-grade="C"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.msp-grade[data-grade="D"] { color: var(--sev-high); border-color: color-mix(in srgb, var(--sev-high) 40%, transparent); }
+.msp-grade[data-grade="F"] { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.msp-grade[data-grade="none"] { color: var(--text-3); }
+
+.msp-table td.num, .msp-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.msp-table .name { display: flex; flex-direction: column; gap: 2px; }
+.msp-table .name small { color: var(--text-2); font-size: 11px; }
+.msp-table .bad { color: var(--bad); }
+.msp-table tr.suspended { opacity: 0.6; }
+.msp-actions { display: inline-flex; gap: 6px; justify-content: flex-end; }
+.msp-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.msp-pager .btns { display: inline-flex; gap: 6px; }
+
+.msp-new {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+.msp-invite {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-s, 6px);
+  font-size: 12px;
+  color: var(--text-1);
+}
+.msp-invite code {
+  display: block;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-0);
+}
+
+@media (max-width: 720px) {
+  .msp-pill .msp-pill-role { display: none; }
+  .msp-pill .msp-pill-name { max-width: 12ch; }
+  .msp-table th:nth-child(n+6), .msp-table td:nth-child(n+6) { display: none; }
+}

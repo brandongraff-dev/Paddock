@@ -294,6 +294,10 @@ def create_app() -> FastAPI:
     app.include_router(onboarding_router.system_router)
     # Reporting: executive report, weekly digest, compliance evidence packs
     app.include_router(reports_router.router)
+    # MSP console (schema 033): customers, switching, rollup, templates, usage
+    from .routers import msp as msp_router
+
+    app.include_router(msp_router.router)
 
     return app
 
