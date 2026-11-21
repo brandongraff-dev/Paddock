@@ -4,9 +4,7 @@ import HorseMark from "../brand/HorseMark";
 import Wordmark, { WORDMARK_ASPECT } from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 import GallopTrail from "../brand/GallopTrail";
-import PlateStrip from "../brand/PlateStrip";
 import DitherRule from "../brand/DitherRule";
-import ShockRipple from "../brand/ShockRipple";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
 import { useInView } from "./landing/hooks";
@@ -72,12 +70,6 @@ const AGENTS: Agent[] = [
   },
 ];
 
-const WORKS_WITH = [
-  "Jira", "ServiceNow", "Linear", "Slack", "Microsoft Teams", "PagerDuty", "Splunk", "Microsoft Sentinel",
-  "Elastic", "CrowdStrike", "Microsoft Defender", "AWS", "UniFi", "Meraki", "SARIF", "OCSF 1.3",
-  "STIX 2.1 / TAXII", "CycloneDX", "SPDX", "OIDC · SAML · SCIM", "Terraform",
-];
-
 const RULES = [
   ["No exploitation", "Findings describe impact. They never carry a working payload."],
   ["No credential attacks", "Default-credential risk is fingerprinted, never tried."],
@@ -95,7 +87,7 @@ export default function Landing() {
     <div className="lp">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <PixelField className="lp-pixels" cell={6} interactive wake={{ x: 0.43, y: 0.64 }} />
+          <PixelField className="lp-pixels" cell={6} wake={{ x: 0.43, y: 0.64 }} />
         </div>
         <div className="lp-grain" aria-hidden="true" />
 
@@ -143,10 +135,6 @@ export default function Landing() {
         </footer>
       </section>
 
-      <div className="lp-film" aria-hidden="true">
-        <PlateStrip className="lp-film-track" />
-      </div>
-
       <section className="lp-agents" id="agents">
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Defensive agents</span>
@@ -185,13 +173,6 @@ export default function Landing() {
       <DitherRule className="lp-rule-dither" />
       <Showcase />
 
-      <div className="lp-ticker" aria-label="Integrations and standards">
-        <div className="lp-ticker-track">
-          {[...WORKS_WITH, ...WORKS_WITH].map((w, i) => (
-            <span key={i}><b aria-hidden="true" />{w}</span>
-          ))}
-        </div>
-      </div>
 
       <section className="lp-principles" id="principles">
         <div className="lp-section-head">
@@ -210,7 +191,6 @@ export default function Landing() {
 
 
       <section className="lp-mega">
-        <ShockRipple fire={megaIn} anchor={megaRef} className="lp-mega-ripple" />
         <div className="lp-mega-cta">
           <h2>Close the paths before they&apos;re walked.</h2>
           <div>
