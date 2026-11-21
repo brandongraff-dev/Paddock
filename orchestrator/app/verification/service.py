@@ -393,9 +393,21 @@ class AlreadyDecided(Exception):
         self.status = status
 
 
-async def apply_result(pool, r, vid: UUID, body, *, actor: str) -> VerificationOut:
+class ResultRejected(Exception):
+    """The caller is not the worker job this verification was dispatched to."""
+
+
+
+
+async def apply_result(pool, r, vid: UUID, body, *, actor: str,
+                       job_scan_id: str | None = None) -> VerificationOut:
     """Record the worker's result and apply its consequences. Idempotent: a result for
-    a row that already finished is rejected (:class:`AlreadyDecided`)."""
+    a row that already finished is rejected (:class:`AlreadyDecided`).
+
+    Only the dispatched job may answer: the row must be ``queued`` (a gated,
+    dispatched check; never ``scheduled``, which the proof gate has not run for)
+    and ``job_scan_id`` (the worker's ``X-Paddock-Scan``) must equal the scan the
+    row was dispatched as, else :class:`ResultRejected`."""
     checked_at = _aware(body.checked_at) or _now()
     fix_event: str | None = None
     reopened = False
@@ -408,6 +420,11 @@ async def apply_result(pool, r, vid: UUID, body, *, actor: str) -> VerificationO
                 raise FindingNotFound(str(vid))
             if row["status"] not in ("queued", "scheduled"):
                 raise AlreadyDecided(row["status"])
+            if row["status"] != "queued":
+                raise ResultRejected("verification has not been dispatched")
+            if (row["scan_id"] is None or not job_scan_id
+                    or str(row["scan_id"]).lower() != str(job_scan_id).lower()):
+                raise ResultRejected("result does not come from the job this verification was dispatched as")
             done = body.status == "done"
             updated = await con.fetchrow(
                 f"""

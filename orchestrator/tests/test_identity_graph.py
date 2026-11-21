@@ -356,3 +356,34 @@ async def test_oidc_config_rejects_non_https_graph_urls(client, idp):
     body = oidc_provider_body(slug="bad", preset="entra")
     body["oidc"]["graph_base_url"] = "http://graph.example"
     assert (await client.post("/v1/auth/sso/admin/providers", json=body)).status_code == 422
+
+
+async def test_app_token_cache_is_not_shared_across_providers_or_secrets():
+    """Another provider with the public ids and a bogus secret must not ride a cached token."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = urlsplit(str(request.url))
+        if url.netloc == "login.microsoftonline.com":
+            form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+            seen.append(form["client_secret"])
+            if form["client_secret"] != "good-secret":
+                return httpx.Response(401, json={"error": "invalid_client"})
+            return httpx.Response(200, json={"access_token": "tok-A", "expires_in": 3600})
+        return httpx.Response(200, json={"value": []})
+
+    graph.set_transport(httpx.MockTransport(handler))
+    a = graph.GraphConfig(mode="app", tenant_id=TID, client_id="client-1", client_secret="good-secret")
+    await graph.resolve_groups(a, cache_scope="provider-a", subject="u1", oid=OID)
+    # same provider + same creds: the cached token is reused (no second token request)
+    await graph.resolve_groups(a, cache_scope="provider-a", subject="u2", oid=OID)
+    assert seen == ["good-secret"]
+    # another Paddock provider with the same public ids and a bogus secret
+    b = graph.GraphConfig(mode="app", tenant_id=TID, client_id="client-1", client_secret="bogus")
+    with pytest.raises(graph.GraphError) as ei:
+        await graph.resolve_groups(b, cache_scope="provider-b", subject="u3", oid=OID)
+    assert ei.value.code == "graph_auth_failed"
+    # even the SAME provider with a changed (wrong) secret does not reuse the old token
+    with pytest.raises(graph.GraphError):
+        await graph.resolve_groups(b, cache_scope="provider-a", subject="u4", oid=OID)
+    assert seen == ["good-secret", "bogus", "bogus"]

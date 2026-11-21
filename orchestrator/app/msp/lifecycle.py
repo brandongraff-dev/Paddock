@@ -159,7 +159,23 @@ async def create_invite(
     label: str | None, request_id: str | None, ip: str | None,
 ) -> dict[str, Any]:
     """One-time invite for the customer's first admin. The raw token is
-    returned once and never stored (only its sha256)."""
+    returned once and never stored (only its sha256).
+
+    Onboarding only: an invite redeems into a PERMANENT customer admin account
+    that survives revocation of the MSP's grant, so it is refused (409) once the
+    customer has an active admin of its own."""
+    with tenancy.tenant_context(child_id):
+        async with pool.acquire() as con:
+            has_admin = await con.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM app_users WHERE tenant_id = $1 AND role = 'admin' AND active)",
+                child_id,
+            )
+    if has_admin:
+        raise HTTPException(
+            status_code=409,
+            detail="this customer already has an active admin; onboarding invites are only for a "
+                   "customer's first admin. Use an MSP grant (revocable) to act inside it.",
+        )
     token = f"{child_id}.{secrets.token_urlsafe(32)}"
     expires = datetime.now(timezone.utc) + timedelta(hours=max(1, msp_settings.invite_ttl_hours))
     with tenancy.tenant_context(child_id):

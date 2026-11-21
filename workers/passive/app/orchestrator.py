@@ -56,7 +56,8 @@ class OrchestratorClient:
     async def start(self) -> None:
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=self.settings.http_timeout_s)
-            headers = {"User-Agent": self.settings.http_user_agent}
+            headers = {"User-Agent": self.settings.http_user_agent,
+                       "X-Worker-Id": self.settings.worker_id}
             # Orchestrator in AUTH_MODE=enforce (hardened / lite) only accepts
             # the fleet's shared service key.
             svc_key = os.environ.get("SERVICE_API_KEY")

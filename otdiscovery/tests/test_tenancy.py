@@ -118,3 +118,25 @@ async def test_cve_catalogue_read_as_the_service_role():
     finally:
         await db.close()
         await tdb.drop()
+
+
+async def test_service_key_guards_service_routes_but_not_sensor_or_probe_routes(http, monkeypatch):
+    """With a service key configured every service route needs it, with or
+    without a tenant header; sensor routes (own token) and probes stay open."""
+    svc, client = http
+    monkeypatch.setenv("SERVICE_API_KEY", "svc-key")
+    assert (await client.get("/stats")).status == 403                      # no header, no key
+    assert (await client.post("/analyze")).status == 403
+    assert (await client.get("/stats", headers={"X-API-Key": "nope"})).status == 403
+    assert (await client.get("/stats", headers={"X-API-Key": "svc-key"})).status == 200
+    assert (await client.get("/healthz")).status == 200
+    # sensors authenticate with their own bearer token, never the service key
+    assert (await _ingest(client, "tok-a", "10.1.1.1", "sensor-a")).status == 200
+    assert (await _ingest(client, "nope", "10.1.1.2", "x")).status == 401   # still rejected by ITS auth
+    # a sensor cannot pick a tenant by header
+    r = await client.post("/ingest", headers={"Authorization": "Bearer tok-a", tenancy.TENANT_HEADER: B},
+                          json={"observations": [_obs("10.1.1.3")], "sensor": {"id": "s", "site": "s"}})
+    assert r.status == 403
+    # no key configured: a tenant header is refused outright
+    monkeypatch.delenv("SERVICE_API_KEY")
+    assert (await client.get("/stats", headers={tenancy.TENANT_HEADER: A})).status == 403

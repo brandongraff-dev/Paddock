@@ -10,8 +10,10 @@ inside the claimed tenant and only finds a job that tenant owns. A job that is
 not visible there (issued to another tenant, or never issued) is a mismatch and
 the callback is rejected before any handler runs.
 
-Under ``TENANCY_STRICT`` a service callback on a scan lifecycle route MUST name
-its job.
+Under ``TENANCY_STRICT`` a service callback on a scan lifecycle route, and on
+every worker-only route (``service_routes.JOB_ROUTES``: verification results,
+child scans, tls-grades, outbound audit, scope check) or bulk write sent by a
+worker (``X-Worker-Id``), MUST name its job.
 """
 from __future__ import annotations
 
@@ -20,10 +22,11 @@ import time
 import uuid
 from typing import Any
 
+from . import service_routes
 from .config import settings
 
 SCAN_HEADER = "x-paddock-scan"
-_SCAN_PATH = re.compile(r"^/v1/scans/([0-9a-fA-F-]{36})(?:/(?:start|complete|fail))?/?$")
+_SCAN_PATH = re.compile(r"^/v1/scans/([0-9a-fA-F-]{36})(?:/(?:start|complete|fail|status))?/?$")
 _TTL_S = 300.0
 _MAX = 10_000
 _seen: dict[tuple[str, str], float] = {}
@@ -53,7 +56,9 @@ async def verify(request: Any, pool: Any, tenant: str | None) -> str | None:
     m = _SCAN_PATH.match(request.url.path) if request.method in ("PATCH", "POST") else None
     path_id = m.group(1).lower() if m else None
     if not claimed:
-        if path_id is not None and settings.tenancy_strict:
+        if settings.tenancy_strict and (
+            path_id is not None or service_routes.requires_job(request.method, request.url.path, request.headers)
+        ):
             return "worker callbacks must echo their job (X-Paddock-Scan) under TENANCY_STRICT"
         return None
     try:

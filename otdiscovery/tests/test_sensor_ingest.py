@@ -118,7 +118,8 @@ def _env(obs=None, **kw):
             "sensor": {"id": "pi-1", "version": "0.2.0", "window": {"packets": 9}}, **kw}
 
 
-async def test_managed_credential_ingests_without_any_shared_token(env):
+async def test_managed_credential_ingests_without_any_shared_token(env, monkeypatch):
+    monkeypatch.setenv("SERVICE_API_KEY", "svc-key")
     svc, fake, client = env
     r = await client.post("/ingest", json=_env(), headers=_h())
     assert r.status == 200, await r.text()
@@ -130,9 +131,9 @@ async def test_managed_credential_ingests_without_any_shared_token(env):
     assert len(svc.engines[TENANT_A].observations) == 5
     assert set(fake.tenants_seen) == {TENANT_A}
     # /stats is per tenant: the default view doesn't show A's sensor; A's view does
-    stats = await (await client.get("/stats")).json()
+    stats = await (await client.get("/stats", headers={"X-API-Key": "svc-key"})).json()
     assert "pi-1@5e5e5e5e" not in stats["sensors"]
-    stats = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_A})).json()
+    stats = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_A, "X-API-Key": "svc-key"})).json()
     assert stats["sensors"]["pi-1@5e5e5e5e"]["site"] == "store-42"
 
 
@@ -207,7 +208,8 @@ async def test_gzip_compressed_upload_is_accepted(env):
     assert fake.done_calls[-1][2] == 50
 
 
-async def test_tenants_never_mix(env):
+async def test_tenants_never_mix(env, monkeypatch):
+    monkeypatch.setenv("SERVICE_API_KEY", "svc-key")
     svc, fake, client = env
     await client.post("/ingest", json=_env(), headers=_h("batch-a-00001"))
     fake.sensor = {**fake.sensor, "tenant_id": TENANT_B, "name": "pi-2",
@@ -217,8 +219,8 @@ async def test_tenants_never_mix(env):
     assert len(svc.engines[TENANT_B].observations) == 2
     assert svc.engine.observations == []
     assert set(fake.tenants_seen) == {TENANT_A, TENANT_B}
-    a = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_A})).text()
-    b = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_B})).text()
+    a = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_A, "X-API-Key": "svc-key"})).text()
+    b = await (await client.get("/stats", headers={tenancy.TENANT_HEADER: TENANT_B, "X-API-Key": "svc-key"})).text()
     assert "pi-1@" in a and "pi-2@" not in a
     assert "pi-2@" in b and "pi-1@" not in b
 

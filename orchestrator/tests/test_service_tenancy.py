@@ -214,3 +214,101 @@ async def test_provision_roles_sets_login_and_passwords(db_pool):
     assert tenancy.role_password("paddock_svc_brain", env) == "brain-pw"
     assert tenancy.role_password("paddock_svc_sca", env) == "svc-pw"
     assert tenancy.role_password("paddock_app", env) == "app-pw"
+
+
+# --------------------------------------------------------------------------- #
+# Strict mode: the fleet-wide service key is narrowed to the routes the fleet
+# really calls (app/service_routes.py)
+# --------------------------------------------------------------------------- #
+
+def _finding(asset="bravo-only.example"):
+    return {"asset_value": asset, "asset_kind": "domain", "rule_id": "svc-narrow", "rule_source": "policy",
+            "severity": "low", "title": "t", "description": "d", "evidence": {}}
+
+
+async def test_strict_service_key_is_refused_on_routes_the_fleet_never_calls(
+        tenants, client, svc_key, monkeypatch, db_pool):  # noqa: F811
+    monkeypatch.setattr(settings, "tenancy_strict", True)
+    hdr = {**svc_key, "X-Paddock-Tenant": TENANT_B}
+    for method, path in (("GET", "/v1/scope"), ("GET", "/v1/findings"), ("GET", "/v1/reports/summary"),
+                         ("GET", "/v1/auth/users"), ("GET", "/v1/integrations")):
+        r = await client.request(method, path, headers=hdr)
+        assert r.status_code == 403 and "service key" in r.text, (method, path, r.status_code)
+    # a write on an unlisted route changes nothing
+    r = await client.post("/v1/scope", headers=hdr, json={"kind": "domain", "value": "evil.example"})
+    assert r.status_code == 403
+    async with db_pool.acquire() as con:
+        assert not await con.fetchval("SELECT 1 FROM scope_entries WHERE value = 'evil.example'")
+    # the listed compute-service routes still work
+    assert (await client.get("/v1/assets", headers=hdr)).status_code == 200
+    assert (await client.post("/v1/findings/bulk", headers=hdr, json={"items": [_finding()]})).status_code == 200
+    # a real user's key is untouched by the narrowing
+    key_b, _ = tenants["b"]
+    assert (await client.get("/v1/scope", headers=_h(key_b))).status_code == 200
+
+
+async def test_strict_worker_routes_need_a_job_of_the_claimed_tenant(
+        tenants, client, svc_key, monkeypatch, db_pool):  # noqa: F811
+    key_a, _ = tenants["a"]
+    key_b, _ = tenants["b"]
+    sid_a = await _scan_as(client, key_a, "alpha-only.example")
+    sid_b = await _scan_as(client, key_b, "bravo-only.example")
+    monkeypatch.setattr(settings, "tenancy_strict", True)
+    job_binding.reset_cache()
+    vid = str(uuid.uuid4())
+    worker_routes = (
+        ("POST", f"/v1/verifications/{vid}/result", {"status": "error", "reason": "x"}),
+        ("POST", "/v1/outbound/bulk", {"entries": []}),
+        ("POST", "/v1/tls-grades/bulk", {"items": []}),
+        ("POST", "/v1/scope/check", {"target": "bravo-only.example"}),
+        ("POST", "/v1/scans", {"kind": "passive_subdomains", "target": "bravo-only.example"}),
+    )
+    for method, path, body in worker_routes:
+        no_job = {**svc_key, "X-Paddock-Tenant": TENANT_B}
+        r = await client.request(method, path, headers=no_job, json=body)
+        assert r.status_code == 409 and "X-Paddock-Scan" in r.text, (path, r.status_code, r.text)
+        # a job that belongs to ANOTHER tenant does not satisfy the binding
+        foreign = {**no_job, job_binding.SCAN_HEADER: sid_a}
+        r = await client.request(method, path, headers=foreign, json=body)
+        assert r.status_code == 409 and "job_tenant_mismatch" in r.text, (path, r.status_code, r.text)
+        # its own tenant's job passes the binding (the handler then answers on its merits)
+        own = {**no_job, job_binding.SCAN_HEADER: sid_b}
+        r = await client.request(method, path, headers=own, json=body)
+        assert r.status_code != 409, (path, r.status_code, r.text)
+    # scan lifecycle routes were already bound
+    r = await client.patch(f"/v1/scans/{sid_b}", headers={**svc_key, "X-Paddock-Tenant": TENANT_B},
+                           json={"status": "running"})
+    assert r.status_code == 409
+
+
+async def test_strict_bulk_writes_from_a_worker_must_carry_its_job(
+        tenants, client, svc_key, monkeypatch, db_pool):  # noqa: F811
+    key_b, _ = tenants["b"]
+    sid_b = await _scan_as(client, key_b, "bravo-only.example")
+    monkeypatch.setattr(settings, "tenancy_strict", True)
+    job_binding.reset_cache()
+    base = {**svc_key, "X-Paddock-Tenant": TENANT_B}
+    bodies = {
+        "/v1/findings/bulk": {"items": [_finding()]},
+        "/v1/assets/bulk": {"items": [{"kind": "domain", "value": "svc-added.example", "source": "worker"}]},
+        "/v1/edges/bulk": {"edges": []},
+    }
+    for path, body in bodies.items():
+        # a worker (X-Worker-Id) without a job: refused
+        r = await client.post(path, headers={**base, "X-Worker-Id": "active-1"}, json=body)
+        assert r.status_code == 409, (path, r.text)
+        # a worker with its tenant's job: accepted
+        r = await client.post(path, headers={**base, "X-Worker-Id": "active-1", job_binding.SCAN_HEADER: sid_b},
+                              json=body)
+        assert r.status_code in (200, 422), (path, r.text)       # past the binding (422: edge body shape)
+        # a compute service (no worker id, no job) keeps working
+        r = await client.post(path, headers=base, json=body)
+        assert r.status_code in (200, 422), (path, r.text)
+        # but any job it names is still verified against the tenant
+        r = await client.post(path, headers={**base, job_binding.SCAN_HEADER: str(uuid.uuid4())}, json=body)
+        assert r.status_code == 409, (path, r.text)
+
+
+async def test_non_strict_service_key_is_unchanged(tenants, client, svc_key):  # noqa: F811
+    """Single-tenant installs / dev keep the old, broad behaviour."""
+    assert (await client.get("/v1/scope", headers={**svc_key, "X-Paddock-Tenant": TENANT_B})).status_code == 200

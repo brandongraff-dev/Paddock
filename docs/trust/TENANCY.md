@@ -171,7 +171,7 @@ tenant it claims** -- `scans` is RLS'd, so the lookup runs inside the claimed
 tenant and only finds a job that tenant owns. A mismatch (job from another
 tenant, unknown job, or an echoed scan id that differs from the URL's) is
 rejected with `409 job_tenant_mismatch` and audited. Under `TENANCY_STRICT`,
-scan-lifecycle callbacks must echo their job.
+every worker-only callback must echo its job (see "The service key").
 
 ## The service key
 
@@ -180,10 +180,48 @@ a service-key request without `X-Paddock-Tenant` is refused (401). The header is
 honoured **only** for service principals, the tenant must exist and be active
 (unknown / suspended -> 401), and every service-key request is audited in the
 acting tenant's chain with `via=service_key`, `acting_tenant` and the job id.
-The compute services apply the same rule to their own HTTP surface: naming a
-tenant requires the service key (403 otherwise, and always in strict mode).
-*Remaining limit:* the key itself is still shared, so a compromised holder can
-name any tenant; per-job bound tokens are the next step.
+The compute services apply the same rule to their own HTTP surface
+(`request_tenant` in the shared helper): with `SERVICE_API_KEY` configured,
+**every** route except `/healthz`, `/readyz`, `/metrics` needs the key (with or
+without `X-Paddock-Tenant`); naming a tenant is refused outright when no key is
+configured, strict mode or not. otdiscovery's sensor-facing `/ingest`, `/enroll`
+and `/heartbeat` authenticate the sensor by its own credential instead, and can
+never pick a tenant by header.
+
+### What the service key may do under `TENANCY_STRICT`
+
+Short-term mitigation (`orchestrator/app/service_routes.py`, enforced in the
+governance middleware and `job_binding.py`). A service principal is limited to
+three explicit route lists; **any other route is refused with 403** (users, API
+keys, scope writes, integrations, audit, MSP, billing, reports, admin, ...):
+
+| List | Routes | Extra requirement |
+|---|---|---|
+| Worker-only (`JOB_ROUTES`) | `POST /v1/scope/check`, `POST /v1/scans` (child scan), `PATCH /v1/scans/{id}`, `POST /v1/scans/{id}/start\|complete\|fail\|status`, `POST /v1/verifications/{id}/result`, `POST /v1/tls-grades/bulk`, `POST /v1/outbound/bulk` | `X-Paddock-Scan` is **mandatory** and must be a scan of the claimed tenant (409 otherwise). Verification results additionally require the verification's own scan id. |
+| Shared writes (`SHARED_WRITE_ROUTES`) | `POST /v1/findings/bulk`, `/v1/assets/bulk`, `/v1/edges/bulk` | A caller that identifies as a worker (`X-Worker-Id`) must carry its job; a compute service has no job, so it may omit it. Any `X-Paddock-Scan` that is sent is verified. |
+| Compute services (`COMPUTE_ROUTES`) | `GET /v1/assets`, `GET /v1/assets/{id}`, `PATCH /v1/findings/{id}`, `POST /v1/chains`, `POST /v1/sensors/enroll\|heartbeat\|ingest/claim\|ingest/done` | none (the sensor routes authenticate the sensor itself) |
+
+Outside strict mode nothing changes (single-tenant installs, dev).
+
+**What remains (do not read this as "fixed"):**
+
+* The key is still **one shared secret**. Anyone holding it can still name any
+  active tenant and call every route above. In particular the shared-write and
+  compute-service routes need no job, so a stolen key can still upsert
+  findings/assets/edges/chains into any tenant and read any tenant's assets,
+  and `X-Worker-Id` is a self-declared label, not a credential. What strict mode
+  removes is the rest of the API: it can no longer administer users, keys,
+  scope, integrations or audit, and worker-only callbacks need a live job id of
+  the tenant (an id an attacker would have to learn from that tenant).
+* `X-Paddock-Scan` proves the job exists in the claimed tenant, not that the
+  caller is the worker that was handed it.
+* The real fix is **per-service keys** (a worker key cannot call compute routes
+  and vice versa; a compute key cannot call worker routes) and **per-job
+  tokens** (a signed, short-lived token minted at enqueue time that names
+  tenant + scan + the routes the job may call, which makes tenant selection by
+  header unnecessary). Not implemented here.
+* Operator scripts that used the service key against admin routes
+  (`scripts/seed_*.py`) must use a real admin API key in strict mode.
 
 ## Deploying
 
