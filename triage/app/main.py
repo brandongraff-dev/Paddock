@@ -24,6 +24,7 @@ from typing import Any, Optional
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from .db import Database
 from .dispatch import TicketDispatcher
 from .events import EventSubscriber
@@ -92,8 +93,8 @@ class TriageService:
     # ------------------------------------------------------------------
     # passes
     # ------------------------------------------------------------------
-    async def run_pass(self) -> dict[str, Any]:
-        """One triage + SLA-sweep pass."""
+    async def run_tenant_pass(self) -> dict[str, Any]:
+        """One triage + SLA-sweep pass for the CURRENT tenant."""
         async with self._run_lock:
             run_start = datetime.now(timezone.utc)
             counts = await self.manager.run_pass()
@@ -101,14 +102,27 @@ class TriageService:
             self.stats["runs"] += 1
             self.stats["last_run"] = run_start.isoformat()
             self.stats["last_counts"] = counts
-            log.info(json.dumps({"event": "triage_pass", **counts}, default=str))
+            log.info(json.dumps(
+                {"event": "triage_pass", "tenant": tenancy.current_tenant_id(), **counts}, default=str))
             return counts
 
+    async def run_pass(self) -> dict[str, Any]:
+        """The tenant a trigger named, else every active tenant (each pass runs
+        inside its own tenant context, so tickets/owners never mix)."""
+        res = tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self.run_tenant_pass))
+        return res
+
     async def resolve_owners_pass(self) -> dict[str, Any]:
-        async with self._run_lock:
-            result = await self.manager.resolve_owners()
-            log.info(json.dumps({"event": "resolve_owners", **result}, default=str))
-            return result
+        async def _one() -> dict[str, Any]:
+            async with self._run_lock:
+                result = await self.manager.resolve_owners()
+                log.info(json.dumps(
+                    {"event": "resolve_owners", "tenant": tenancy.current_tenant_id(), **result},
+                    default=str))
+                return result
+
+        return tenancy.merge_counts(await tenancy.run_for_request_or_all(self.db.pool, _one))
 
     # ------------------------------------------------------------------
     # schedulers
@@ -131,7 +145,11 @@ class TriageService:
     async def _on_event(self, payload: dict[str, Any]) -> None:
         if payload.get("event") in _TRIGGER_EVENTS:
             try:
-                await self.run_pass()
+                # Only the tenant that opened the finding is re-triaged.
+                with tenancy.bind_event(payload):
+                    await self.run_tenant_pass()
+            except tenancy.TenantError as exc:
+                log.warning("dropping %s event without a usable tenant: %s", payload.get("event"), exc)
             except Exception:
                 log.exception("event-driven triage pass failed")
 
@@ -181,7 +199,7 @@ class TriageService:
         return web.json_response(result)
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),

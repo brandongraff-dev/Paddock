@@ -105,7 +105,7 @@ class Database:
     # Type-system seed (idempotent)
     # ------------------------------------------------------------------ #
     async def seed_types(self) -> dict[str, int]:
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:  # global catalogue: platform tenant only
             async with conn.transaction():
                 for name, spec in T.OBJECT_TYPES.items():
                     await conn.execute(

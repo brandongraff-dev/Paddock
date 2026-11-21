@@ -25,6 +25,7 @@ import aiohttp
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from . import match as match_module
 from . import stix
 from . import taxii as taxii_module
@@ -132,6 +133,8 @@ class ThreatIntelService:
             )
 
     async def run_match(self) -> dict[str, Any]:
+        """Match the (global) indicators against the CURRENT tenant's assets and
+        findings; matches are tenant rows."""
         assert self.orch is not None
         async with self._match_lock:
             res = await match_module.run_match(
@@ -139,6 +142,27 @@ class ThreatIntelService:
             )
         self.last_run["match"] = {"at": datetime.now(timezone.utc).isoformat(), **res}
         return res
+
+    async def run_match_scoped(self) -> dict[str, Any]:
+        return tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self.run_match))
+
+    @staticmethod
+    def _platform_only(req: web.Request) -> web.Response | None:
+        """Feeds and indicators are a GLOBAL catalogue (schema 099: written only
+        by the platform tenant). A non-platform tenant cannot register feeds or
+        ingest indicators -- there is no tenant-scoped IOC store -- so refuse
+        instead of silently publishing one tenant's IOCs to everyone."""
+        t = tenancy.requested_tenant()
+        if t is not None and t != tenancy.DEFAULT_TENANT_ID:
+            return web.json_response({
+                "error": "tenant_ti_unsupported",
+                "detail": "threat-intel feeds/indicators are platform-wide; only the "
+                          "platform tenant may register feeds or ingest indicators",
+            }, status=403)
+        if t is None and tenancy.strict():
+            return web.json_response({"error": "tenant_required"}, status=403)
+        return None
 
     # ------------------------------------------------------------------
     # scheduler
@@ -148,8 +172,9 @@ class ThreatIntelService:
         interval_s = self.cfg.poll_interval_min * 60
         while not self._stop.is_set():
             try:
-                await self.poll_all()
-                await self.run_match()
+                with tenancy.platform_context():  # global feed polling
+                    await self.poll_all()
+                await self.run_match_scoped()
             except asyncio.CancelledError:  # pragma: no cover
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -174,6 +199,8 @@ class ThreatIntelService:
         return web.json_response({"stats": stats, "last_run": self.last_run})
 
     async def _ingest_stix(self, req: web.Request) -> web.Response:
+        if (denied := self._platform_only(req)) is not None:
+            return denied
         try:
             body = await req.json()
         except Exception:  # noqa: BLE001
@@ -201,6 +228,8 @@ class ThreatIntelService:
         return web.json_response(res)
 
     async def _register_feed(self, req: web.Request) -> web.Response:
+        if (denied := self._platform_only(req)) is not None:
+            return denied
         try:
             body = await req.json()
         except Exception:  # noqa: BLE001
@@ -225,17 +254,19 @@ class ThreatIntelService:
         return web.json_response({"items": feeds})
 
     async def _poll(self, req: web.Request) -> web.Response:
+        if (denied := self._platform_only(req)) is not None:
+            return denied
         feed_id = req.match_info["feed_id"]
         res = await self.poll_one(feed_id)
         status = 404 if res.get("error") == "feed not found" else 200
         return web.json_response(res, status=status)
 
     async def _match(self, _req: web.Request) -> web.Response:
-        res = await self.run_match()
+        res = await self.run_match_scoped()
         return web.json_response(res)
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._healthz),
             web.get("/readyz", self._readyz),

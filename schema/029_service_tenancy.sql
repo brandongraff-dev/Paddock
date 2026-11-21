@@ -182,7 +182,7 @@ BEGIN
       ('correlation', ARRAY['assets','asset_edges','findings','sbom_components','sbom_component_vulns','sca_projects','scope_entries'],
                       ARRAY['attack_paths','attack_path_ledger','finding_chains','finding_techniques'],  -- ledger: trigger on attack_paths
                       ARRAY['attack_technique_map']),
-      ('mlrisk',      ARRAY['asset_edges','assets','attack_paths','cves','findings','ml_training_labels','sbom_component_vulns','surface_changes'],
+      ('mlrisk',      ARRAY['asset_edges','assets','attack_paths','cves','findings','ml_training_labels','sbom_component_vulns','surface_changes','tickets'],
                       ARRAY['anomalies','ml_models','ml_risk_scores'],
                       ARRAY[]::text[]),
       ('triage',      ARRAY['asset_owners','assets','findings','sla_policies'],

@@ -19,6 +19,7 @@ from typing import Any
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from .db import Database
 
 log = logging.getLogger("ontology")
@@ -75,11 +76,17 @@ class OntologyService:
         log.info("projection complete: %s", res)
         return res
 
+    async def project_scoped(self) -> dict[str, Any]:
+        """Project the tenant a trigger named, else every active tenant: each
+        tenant's graph is built from, and written to, only its own rows."""
+        return tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self.project))
+
     async def _loop(self) -> None:
         interval_s = self.cfg.interval_min * 60
         if self.cfg.project_on_start:
             try:
-                await self.project()
+                await self.project_scoped()
             except Exception as exc:
                 log.exception("initial projection failed: %s", exc)
         while not self._stop.is_set():
@@ -90,7 +97,7 @@ class OntologyService:
             if self._stop.is_set():
                 break
             try:
-                await self.project()
+                await self.project_scoped()
             except asyncio.CancelledError:  # pragma: no cover
                 raise
             except Exception as exc:
@@ -108,7 +115,7 @@ class OntologyService:
 
     async def _handle_project(self, _req: web.Request) -> web.Response:
         try:
-            res = await self.project()
+            res = await self.project_scoped()
         except Exception as exc:
             log.exception("manual projection failed")
             return web.json_response({"error": str(exc)}, status=500)
@@ -119,7 +126,7 @@ class OntologyService:
         return web.json_response({"stats": self.last_run, "db": stats})
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),

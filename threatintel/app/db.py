@@ -141,9 +141,12 @@ class Database:
                 record.get("source"),
             )
 
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:  # ti_indicators is a global catalogue
             try:
-                row = await _run(conn, record.get("stix_id"))
+                # savepoint: the connection sits in the tenant-scoped transaction
+                # and a bare failed statement would poison all that follows.
+                async with conn.transaction():
+                    row = await _run(conn, record.get("stix_id"))
             except asyncpg.UniqueViolationError:
                 row = await _run(conn, None)
         return {"id": str(row["id"]), "inserted": bool(row["inserted"])}
@@ -342,7 +345,7 @@ class Database:
         collection: str | None = None,
         enabled: bool = True,
     ) -> dict[str, Any]:
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:
             row = await conn.fetchrow(
                 """
                 INSERT INTO ti_feeds (name, kind, url, collection, enabled)
@@ -385,7 +388,7 @@ class Database:
         return [self._feed_row(r) for r in rows]
 
     async def delete_feed(self, feed_id: str) -> bool:
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:
             result = await conn.execute("DELETE FROM ti_feeds WHERE id = $1", feed_id)
         return result.endswith(" 1")
 
@@ -393,7 +396,7 @@ class Database:
         self, feed_id: str, *, status: str, ingested: int = 0,
         last_poll: datetime | None = None,
     ) -> None:
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:
             await conn.execute(
                 """
                 UPDATE ti_feeds

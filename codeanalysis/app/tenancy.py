@@ -294,7 +294,7 @@ def aiohttp_trace_config():
 
 
 async def httpx_request_hook(request) -> None:
-    """``httpx.AsyncClient(event_hooks={"request": [httpx_request_hook]})``."""
+    """Request event hook for an httpx async client (``event_hooks={"request": [...]}``)."""
     for k, v in outbound_headers().items():
         request.headers[k] = v
 
