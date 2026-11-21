@@ -27,7 +27,9 @@ def _test_dsn() -> Optional[str]:
     return _normalize_dsn(raw)
 
 
-@pytest_asyncio.fixture(scope="session")
+# Session-scoped pool => session-scoped event loop (pytest-asyncio >= 0.24),
+# otherwise asyncpg raises "attached to a different loop".
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def db() -> AsyncIterator[Database]:
     dsn = _test_dsn()
     if dsn is None:
@@ -90,7 +92,9 @@ async def mk_asset(
         VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8)
         """,
         aid, kind, value, value.lower(), source,
-        json.dumps(metadata or {}),
+        # app/db.py registers a jsonb codec: pass the dict, not json.dumps()
+        # (which would double-encode it into a JSON *string*).
+        metadata or {},
         first_seen or now,
         last_seen or now,
     )
@@ -111,7 +115,7 @@ async def mk_edge(
         INSERT INTO asset_edges (src_id, dst_id, kind, first_seen, last_seen, metadata)
         VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
         """,
-        src, dst, kind, first_seen or now, now, json.dumps(metadata or {}),
+        src, dst, kind, first_seen or now, now, metadata or {},  # jsonb codec encodes (see mk_asset)
     )
 
 

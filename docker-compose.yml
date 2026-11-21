@@ -287,6 +287,7 @@ services:
     build: ./intel
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       SYNC_INTERVAL_MIN: "60"
     tmpfs:
@@ -382,6 +383,7 @@ services:
     build: ./correlation
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       POLICIES_DIR: /policies
@@ -402,6 +404,7 @@ services:
     build: ./sca
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
@@ -421,6 +424,7 @@ services:
     build: ./codeanalysis
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       ORCHESTRATOR_URL: http://orchestrator:8080
       LOG_LEVEL: INFO
@@ -480,6 +484,7 @@ services:
     build: ./threatintel
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       REDIS_URL: redis://redis:6379/0
       ORCHESTRATOR_URL: http://orchestrator:8080
@@ -501,6 +506,7 @@ services:
     build: ./otdiscovery
     <<: *hardened-py
     environment:
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # orchestrator auth (AUTH_MODE=enforce)
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       ORCHESTRATOR_URL: http://orchestrator:8080
       OTDISCOVERY_HTTP_PORT: "8101"

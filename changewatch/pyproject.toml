@@ -18,7 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=7.4",
-    "pytest-asyncio>=0.23",
+    "pytest-asyncio>=0.24",
 ]
 
 [tool.setuptools.packages.find]
@@ -27,5 +27,8 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# DB tests share the session-scoped pool, so they share its event loop.
+asyncio_default_test_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
