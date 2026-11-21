@@ -387,3 +387,23 @@ async def test_sensors_are_tenant_scoped_and_credential_lookup_crosses_tenants(a
     with tenancy.tenant_context(other):
         async with app_pool.acquire() as con:
             assert await con.fetchval("SELECT COUNT(*) FROM sensors") == 1
+
+
+async def test_routine_sensor_traffic_is_not_audited_but_failures_are(client, db_pool):
+    e = await _enrolled(client)
+    h = _sh(e["credential"])
+
+    async def n_audit():
+        async with db_pool.acquire() as con:
+            return await con.fetchval("SELECT COUNT(*) FROM audit_log")
+
+    before = await n_audit()
+    await client.post("/v1/sensors/heartbeat", headers=h, json={})
+    await client.post("/v1/sensors/ingest/claim", headers=h, json={"batch_id": "b-audit-001"})
+    await client.post("/v1/sensors/ingest/done", headers=h, json={"batch_id": "b-audit-001", "flows": 1})
+    assert await n_audit() == before  # nothing per successful heartbeat / upload
+    await client.post("/v1/sensors/heartbeat", headers=_sh("pst_00000000_" + "a" * 40), json={})
+    assert await n_audit() > before  # a rejected credential is audited
+    mid = await n_audit()
+    await client.post(f"/v1/sensors/{e['sensor_id']}/revoke")
+    assert await n_audit() > mid  # lifecycle changes always are

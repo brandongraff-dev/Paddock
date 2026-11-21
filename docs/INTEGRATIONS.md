@@ -83,6 +83,8 @@ The **Test** button is the one synchronous path: the API sends an
 | `change.detected` | the attack surface changed | change's | `change_type`, `asset` |
 | `asset.discovered` | a new asset | none | `asset_id`, `asset`, `asset_kind`, `source` |
 | `device.behavior` | a Sentry behaviour detector fired | detector's | `device`, `detector` |
+| `sensor.offline` | a Sentry sensor stopped reporting (see [Sentry](SENTRY.md)) | `high` | `sensor_id`, `sensor`, `site`, `last_seen`, `silent_for_s` |
+| `sensor.online` | a silent sensor is reporting again | `info` | `sensor_id`, `sensor`, `site` |
 | `scan.completed` / `scan.failed` | a scan finished / failed | none | `scan_id`, `scan_kind`, `target`, `error` |
 | `report.digest` | the scheduled digest is ready | none | |
 | `integration.test` | the Test button | `info` | `integration_id`, `integration_name` |

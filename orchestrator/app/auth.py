@@ -631,6 +631,14 @@ def _resource_from_path(path: str) -> tuple[str | None, str | None]:
 # are still audited after the fact, exactly as before).
 _NO_WRITE_AHEAD = frozenset({"/v1/scope/check"})
 
+# Sentry data-plane calls: a heartbeat per sensor per minute and a claim/done
+# pair per upload (hundreds of thousands a day at fleet scale; measured with
+# hardening/sentry_scale.py, they were ~90% of audit_log growth). Successful
+# ones are not audited per request; rejected/denied ones still are, and the
+# lifecycle actions (token create/revoke, enroll, sensor revoke/update) are
+# audited by their handlers.
+_SENSOR_DATA_PLANE = re.compile(r"^/v1/sensors/(heartbeat|ingest/(claim|done))/?$")
+
 
 class GovernanceMiddleware(BaseHTTPMiddleware):
     """Authenticate, enforce RBAC deny-closed, scope to a tenant, and audit.
@@ -744,6 +752,8 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
             return False
         if (request.url.path.rstrip("/") or "/") in _NO_WRITE_AHEAD:
             return False
+        if _SENSOR_DATA_PLANE.match(request.url.path):
+            return False
         # No database -> the handler cannot mutate persistent state either.
         return getattr(request.app.state, "pool", None) is not None
 
@@ -786,6 +796,8 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         mutating = method in ("POST", "PUT", "PATCH", "DELETE")
         restricted_read = bool(getattr(request.state, "audit_restricted", False))
         if not (denied or mutating or restricted_read):
+            return
+        if not denied and status_code < 400 and _SENSOR_DATA_PLANE.match(request.url.path):
             return
         try:
             await self._record(request, principal, status_code, denied=denied, details=details)

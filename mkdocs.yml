@@ -84,6 +84,7 @@ nav:
   - Product:
       - Vision: VISION.md
       - Sentry sensors: SENTRY.md
+      - Sentry kit (setup guide): SENTRY_KIT.md
       - Integrations: INTEGRATIONS.md
       - Single sign-on (SSO): SSO.md
       - Reports: REPORTS.md
