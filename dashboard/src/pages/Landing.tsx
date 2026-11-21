@@ -3,6 +3,7 @@ import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
+import GitHubStars from "./landing/GitHubStars";
 import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
@@ -107,9 +108,10 @@ export default function Landing() {
             <a href="#agents">Agents</a>
             <a href="#product">Product</a>
             <a href="#principles">Principles</a>
-            <a href="https://github.com/brandongraff-dev/cybersec" target="_blank" rel="noreferrer">
-              Source
+            <a href="https://github.com/brandongraff-dev/cybersec/tree/main/docs" target="_blank" rel="noreferrer">
+              Docs
             </a>
+            <GitHubStars />
             <Link to={enter} className="lp-cta">
               {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
             </Link>
@@ -200,7 +202,7 @@ export default function Landing() {
       </div>
 
       <footer className="lp-footer">
-        <DitherRule className="lp-footer-dither" rows={10} deep />
+        <PixelField className="lp-footer-px" cell={6} maxDpr={1} animate={false} wake={{ x: 1.08, y: 1.02 }} />
         <div className="lp-footer-in">
           <div className="lp-footer-cta">
             <h2>Close the paths before they&apos;re walked.</h2>
@@ -214,7 +216,7 @@ export default function Landing() {
             <div className="lp-footer-brand" ref={megaRef}>
               <div className={`lp-footer-logo${megaIn ? " in" : ""}`}>
                 <HorseMark size={34} />
-                <Wordmark height={30} shimmer deep />
+                <Wordmark height={30} shimmer />
               </div>
               <p>Map the paths attackers would take, and close them before they do.</p>
             </div>

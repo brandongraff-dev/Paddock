@@ -282,7 +282,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       window.addEventListener("pointermove", onMove, { passive: true });
       document.addEventListener("pointerleave", onLeave);
     }
-    const animated = (animate || interactive || wake) && !reduce;
+    const animated = (animate || interactive) && !reduce;
     const wakeUp = () => { if (animated && visible && !document.hidden && !raf) raf = requestAnimationFrame(loop); };
     const io = typeof IntersectionObserver !== "undefined" && animated
       ? new IntersectionObserver(([e]) => { visible = e.isIntersecting; wakeUp(); })
