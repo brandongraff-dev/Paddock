@@ -1222,6 +1222,7 @@ class MeOut(BaseModel):
     clearance: str
     capabilities: list[str]
     kind: str
+    tenant_id: str | None = None
 
 
 class ApiKeyCreateIn(BaseModel):
@@ -1284,6 +1285,22 @@ class AuditVerifyOut(BaseModel):
     ok: bool
     checked: int
     first_broken_id: int | None = None
+    # Why verification failed: chain_link | row_hash | downgrade | unknown_key |
+    # unknown_alg | anchor_<status>. None when ok.
+    reason: str | None = None
+    tenant_id: str | None = None
+    head_id: int | None = None
+    head_hash: str | None = None
+    # {status: not_configured|none|ok|truncated|mismatch|bad_signature|
+    #  unknown_key|unsigned|unavailable|skipped, max_id?, head_hash?, ts?, sink?}
+    anchor: dict[str, Any] | None = None
+
+
+class AuditAnchorOut(BaseModel):
+    anchored: bool
+    reason: str | None = None
+    anchor: dict[str, Any] | None = None
+    receipt: dict[str, Any] | None = None
 
 
 class ProvenanceIn(BaseModel):

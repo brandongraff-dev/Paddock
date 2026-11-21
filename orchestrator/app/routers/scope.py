@@ -221,7 +221,7 @@ async def add_scope(
         INSERT INTO scope_entries
             (kind, value, added_by, auth_doc_ref, expires_at, notes, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-        ON CONFLICT (kind, value)
+        ON CONFLICT (tenant_id, kind, value)
             DO UPDATE SET active = TRUE,
                           added_by = EXCLUDED.added_by,
                           auth_doc_ref = EXCLUDED.auth_doc_ref,

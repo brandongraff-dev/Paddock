@@ -98,7 +98,7 @@ def _canonical(kind: str, value: str, explicit: str | None) -> str:
 _BULK_SQL = """
 INSERT INTO assets (kind, value, canonical, source, confidence, metadata)
 VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-ON CONFLICT (kind, canonical) DO UPDATE SET
+ON CONFLICT (tenant_id, kind, canonical) DO UPDATE SET
     last_seen = NOW(),
     metadata  = assets.metadata || EXCLUDED.metadata,
     confidence = GREATEST(assets.confidence, EXCLUDED.confidence),

@@ -1,0 +1,204 @@
+name: Release
+
+# Supply-chain trust for Paddock itself (docs/trust/VERIFY.md has the
+# consumer-side verification commands).
+#
+# On a version tag (vX.Y.Z) this workflow, for every service image:
+#   1. builds it with Buildx (linux/amd64 + linux/arm64 where sensible),
+#   2. pushes it to GHCR by digest,
+#   3. generates SBOMs with syft (SPDX JSON + CycloneDX JSON),
+#   4. signs the image with cosign KEYLESS (GitHub OIDC -> Fulcio cert,
+#      recorded in the Rekor transparency log -- no long-lived signing key),
+#   5. attaches both SBOMs as signed in-toto attestations (cosign attest),
+#   6. emits SLSA build provenance (actions/attest-build-provenance), pushed
+#      to the registry and to GitHub's attestation store,
+# then creates the GitHub release with the SBOMs, a SHA256SUMS manifest of the
+# image digests, and a keyless signature bundle for that manifest.
+#
+# Hardening notes: least-privilege `permissions` per job; no secrets other than
+# the ephemeral GITHUB_TOKEN / OIDC token; third-party actions are pinned to a
+# major version tag -- pin them to full commit SHAs (e.g. with Dependabot or
+# `pinact`) before relying on this for a regulated release.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/paddock
+
+jobs:
+  images:
+    name: image ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write        # push to GHCR
+      id-token: write        # keyless signing (Fulcio) + provenance
+      attestations: write    # GitHub attestation store
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { service: orchestrator,   context: orchestrator,    platforms: "linux/amd64,linux/arm64" }
+          - { service: dashboard,      context: dashboard,       platforms: "linux/amd64,linux/arm64" }
+          - { service: worker-passive, context: workers/passive, platforms: "linux/amd64,linux/arm64" }
+          # Playwright/Chromium + ProjectDiscovery binaries under QEMU are slow
+          # and flaky; the active worker ships amd64 only.
+          - { service: worker-active,  context: workers/active,  platforms: "linux/amd64" }
+          - { service: intel,          context: intel,           platforms: "linux/amd64,linux/arm64" }
+          - { service: brain,          context: brain,           platforms: "linux/amd64,linux/arm64" }
+          - { service: mlrisk,         context: mlrisk,          platforms: "linux/amd64,linux/arm64" }
+          - { service: changewatch,    context: changewatch,     platforms: "linux/amd64,linux/arm64" }
+          - { service: triage,         context: triage,          platforms: "linux/amd64,linux/arm64" }
+          - { service: correlation,    context: correlation,     platforms: "linux/amd64,linux/arm64" }
+          - { service: sca,            context: sca,             platforms: "linux/amd64,linux/arm64" }
+          - { service: codeanalysis,   context: codeanalysis,    platforms: "linux/amd64,linux/arm64" }
+          - { service: graphsync,      context: graphsync,       platforms: "linux/amd64,linux/arm64" }
+          - { service: ontology,       context: ontology,        platforms: "linux/amd64,linux/arm64" }
+          - { service: threatintel,    context: threatintel,     platforms: "linux/amd64,linux/arm64" }
+          - { service: otdiscovery,    context: otdiscovery,     platforms: "linux/amd64,linux/arm64" }
+          - { service: remediation,    context: remediation,     platforms: "linux/amd64,linux/arm64" }
+          - { service: agent,          context: agent,           platforms: "linux/amd64,linux/arm64" }
+          - { service: sentry,         context: sentry,          platforms: "linux/amd64,linux/arm64" }
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/paddock-${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.title=paddock-${{ matrix.service }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: ${{ matrix.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # BuildKit's own provenance as well; the signed SLSA statement below
+          # is the one consumers verify.
+          provenance: mode=max
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom/paddock-${{ matrix.service }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: SBOM (CycloneDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom/paddock-${{ matrix.service }}.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign image + attest SBOMs (cosign keyless)
+        env:
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$REF"
+          cosign attest --yes --type spdxjson \
+            --predicate "sbom/paddock-${{ matrix.service }}.spdx.json" "$REF"
+          cosign attest --yes --type cyclonedx \
+            --predicate "sbom/paddock-${{ matrix.service }}.cdx.json" "$REF"
+
+      - name: SLSA build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record digest
+        run: |
+          mkdir -p digests
+          echo "${{ steps.build.outputs.digest }}  ${{ env.IMAGE }}" > "digests/${{ matrix.service }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.service }}
+          path: |
+            sbom/
+            digests/
+          retention-days: 7
+
+  release:
+    name: GitHub release
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release
+      id-token: write        # keyless-sign the manifest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: out
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Digest manifest + keyless signature
+        working-directory: out
+        run: |
+          set -euo pipefail
+          sort digests/*.txt > IMAGE_DIGESTS.txt
+          (cd sbom && sha256sum *.json) > SBOM_SHA256SUMS.txt
+          cosign sign-blob --yes --bundle IMAGE_DIGESTS.txt.sigstore.json IMAGE_DIGESTS.txt
+          cosign sign-blob --yes --bundle SBOM_SHA256SUMS.txt.sigstore.json SBOM_SHA256SUMS.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            out/sbom/*.json
+            out/IMAGE_DIGESTS.txt
+            out/IMAGE_DIGESTS.txt.sigstore.json
+            out/SBOM_SHA256SUMS.txt
+            out/SBOM_SHA256SUMS.txt.sigstore.json

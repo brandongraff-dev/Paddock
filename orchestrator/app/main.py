@@ -17,11 +17,13 @@ from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from . import audit as audit_svc
 from . import auth as auth_svc
 from . import metrics as metrics_svc
 from .auth import GovernanceMiddleware
 from .config import settings
-from .db import create_pool
+from .audit_anchor import sink_from_settings
+from .db import create_pool, warn_if_privileged
 from .middleware import RequestContextMiddleware, configure_logging
 from .migrate import run_startup_migrations
 from .opsconfig import ops_settings
@@ -77,6 +79,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pool = await create_pool()
     app.state.redis = await create_redis()
 
+    # Enterprise trust: shout if RLS is bypassed (superuser), note an unkeyed
+    # audit chain, and start anchoring the chain head if a sink is configured.
+    try:
+        await warn_if_privileged(app.state.pool)
+    except Exception:  # noqa: BLE001
+        logger.exception("db_role_check_failed")
+    if audit_svc.keyring()[0] is None:
+        logger.warning(
+            "AUDIT_HMAC_KEY unset: the audit chain is unkeyed sha256 (tamper-evident "
+            "only against non-owners). Set AUDIT_HMAC_KEY for a keyed chain."
+        )
+    app.state.audit_anchor_sink = sink_from_settings()
+    anchor_task: asyncio.Task | None = None
+    if app.state.audit_anchor_sink is not None:
+        anchor_task = asyncio.create_task(audit_svc.anchor_loop(app))
+    else:
+        logger.warning("AUDIT_ANCHOR_SINKS unset: audit chain head is not anchored externally")
+
     # Governance bootstrap: set the admin password on first boot, and try to
     # revoke UPDATE/DELETE on the audit log at the DB layer (best-effort).
     try:
@@ -103,10 +123,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        if scheduler_task is not None:
-            scheduler_task.cancel()
+        for task in (scheduler_task, anchor_task):
+            if task is None:
+                continue
+            task.cancel()
             try:
-                await scheduler_task
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
         try:
