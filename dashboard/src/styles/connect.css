@@ -1,0 +1,42 @@
+/* "Connect anything" panel (Integrations page). Layout only: the glass panel,
+   table, chip and button looks come from theme.css. No shadows, no hover glow. */
+
+.cn-body { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px 18px; }
+.cn-lead { margin: 0; max-width: 78ch; }
+
+.cn-create { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.cn-create .ig-field { min-width: 200px; flex: 1 1 200px; }
+.mutate-gate:has(> .cn-create) { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.cn-reveal {
+  display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-m);
+  padding: 10px 12px;
+}
+.cn-reveal-h { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.cn-token { display: flex; gap: 10px; align-items: center; justify-content: space-between; min-width: 0; }
+.cn-token code { overflow-wrap: anywhere; font-size: 12px; color: var(--text-0); }
+
+.cn-table td, .cn-table th { white-space: nowrap; }
+
+.cn-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); }
+.cn-tab {
+  background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  padding: 6px 10px; font-size: 12px; color: var(--text-2);
+}
+.cn-tab.on { color: var(--text-0); border-bottom-color: var(--accent); }
+
+.cn-snippet { position: relative; border: 1px solid var(--border); border-radius: var(--radius-m); }
+.cn-snippet pre {
+  margin: 0; padding: 12px 96px 12px 12px; overflow-x: auto;
+  font-size: 12px; line-height: 1.55; color: var(--text-1); white-space: pre;
+}
+.cn-snippet > button { position: absolute; top: 8px; right: 8px; }
+
+.cn-sub { font-size: 12px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+
+@media (max-width: 640px) {
+  .cn-token { flex-direction: column; align-items: flex-start; }
+  .cn-table { display: block; overflow-x: auto; }
+}

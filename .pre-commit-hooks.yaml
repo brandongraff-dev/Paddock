@@ -1,0 +1,19 @@
+# Hooks other repositories can consume with `repo: <this repository>` in their
+# .pre-commit-config.yaml. See integrations/ci/pre-commit-config.yaml.
+- id: paddock-lockfiles
+  name: Paddock lockfiles
+  description: Send changed dependency lockfiles to Paddock (soft-fails offline).
+  entry: integrations/ci/paddock-ci.sh precommit
+  language: script
+  files: '(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|requirements\.txt|poetry\.lock|Pipfile\.lock|Cargo\.lock|pom\.xml|Gemfile\.lock|go\.sum|go\.mod)$'
+  pass_filenames: true
+  require_serial: true
+
+- id: paddock-gate
+  name: Paddock gate (no unsuppressed high+ findings)
+  description: Block a push while Paddock reports unsuppressed high or critical findings for this project.
+  entry: integrations/ci/paddock-ci.sh gate --fail-on high --soft
+  language: script
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]

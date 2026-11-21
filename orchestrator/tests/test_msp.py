@@ -410,6 +410,7 @@ async def test_delegated_session_surface_is_narrowed(client, world):
     assert (await client.post("/v1/license", headers=_h(sw), json={"key": "x"})).status_code == 403
     assert (await client.delete("/v1/license", headers=_h(sw))).status_code == 403
     assert (await client.get("/v1/license", headers=_h(sw))).status_code == 200
+    assert (await client.post("/v1/ingest/sources", headers=_h(sw), json={"name": "ci"})).status_code == 403
     # but /v1/msp/me tells the UI who is acting
     me = (await client.get("/v1/msp/me", headers=_h(sw))).json()
     assert me["mode"] == "delegated" and me["customer"]["slug"] == "cust-a" and me["msp"]["slug"] == "msp-one"

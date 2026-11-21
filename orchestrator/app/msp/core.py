@@ -302,6 +302,8 @@ _DELEGATED_DENY: tuple[tuple[re.Pattern[str], str], ...] = (
 # Path patterns denied only for state-changing methods (reads stay allowed).
 _DELEGATED_DENY_WRITES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/v1/license(/.*)?$"), "MSP sessions cannot change a customer's licence"),
+    # Ingest tokens are persistent credentials, like API keys.
+    (re.compile(r"^/v1/ingest/sources(/.*)?$"), "MSP sessions cannot mint or rotate customer ingest tokens"),
 )
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # /v1/msp/me is how the dashboard learns who it is; it is read-only.

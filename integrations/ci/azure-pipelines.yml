@@ -1,0 +1,36 @@
+# Paddock for Azure DevOps. Save as azure-pipelines.yml or use as a template.
+#
+# Pipeline variables (mark as secret): PADDOCK_URL, PADDOCK_INGEST_TOKEN
+# (PADDOCK_API_KEY only for lockfiles/gate). Secrets are mapped explicitly via env:.
+# Pin PADDOCK_CI_REF to a tag or commit SHA in production.
+trigger:
+  branches:
+    include: [main]
+pr:
+  branches:
+    include: ["*"]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  PADDOCK_CI_REF: main
+
+steps:
+  - checkout: self
+    fetchDepth: 1
+
+  - script: |
+      set -euo pipefail
+      curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh" -o paddock-ci
+      chmod +x paddock-ci
+      # Any scanner works; Trivy shown. Formats Paddock reads: SARIF, CycloneDX, SPDX,
+      # OCSF, Trivy, Grype, Semgrep, Nuclei, ZAP JSON, CSV.
+      curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin" v0.58.1
+      "$HOME/.local/bin/trivy" fs --quiet --format json --output trivy.json .
+      ./paddock-ci ingest trivy.json
+    displayName: Paddock scan and ingest
+    env:
+      PADDOCK_URL: $(PADDOCK_URL)
+      PADDOCK_INGEST_TOKEN: $(PADDOCK_INGEST_TOKEN)
+      PADDOCK_PROJECT: $(Build.Repository.Name)

@@ -312,6 +312,8 @@ def _extract_credentials(request: Request) -> tuple[str | None, str | None]:
         bearer = auth[7:].strip()
         if bearer.startswith("pak_"):
             api_key = api_key or bearer
+        elif bearer.startswith("pdi_"):
+            pass  # per-source ingest token: checked by POST /v1/ingest itself, not a principal
         else:
             token = bearer
     return api_key, token
@@ -491,6 +493,10 @@ _rule("POST", r"/v1/auth/login", None)
 # Two-way ticket sync callbacks (Jira/ServiceNow/Linear). Authenticated by the
 # integration's inbound token / webhook signature inside the handler instead.
 _rule("POST", rf"/v1/integrations/{_ANY}/inbound", None)
+# Universal ingest: authenticated in the handler by a per-source ingest token
+# (scoped to ingest only) or an API key with `scan`. Management is admin-only.
+_rule("GET POST PATCH DELETE", r"/v1/ingest/(sources|log)(/.*)?", "admin")
+_rule("POST", r"/v1/ingest", None)
 
 # --- SSO (schema 020): admin config first, then the public login flow ------ #
 _rule("GET POST PUT PATCH DELETE", r"/v1/auth/sso/admin(/.*)?", "admin")

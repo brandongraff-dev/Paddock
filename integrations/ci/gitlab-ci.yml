@@ -1,0 +1,40 @@
+# Paddock for GitLab CI. Copy into .gitlab-ci.yml (or `include:` this file).
+#
+# CI/CD variables to define (Settings > CI/CD > Variables, mask + protect them):
+#   PADDOCK_URL           https://paddock.example.com
+#   PADDOCK_INGEST_TOKEN  per-source token from Paddock: Integrations > Connect anything
+#   PADDOCK_API_KEY       (only for the lockfile + gate job) key with scan + read
+#
+# Pin PADDOCK_CI_REF to a tag or commit SHA in production.
+variables:
+  PADDOCK_CI_REF: main
+  PADDOCK_CI_URL: https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh
+
+.paddock-base:
+  stage: test
+  image:
+    name: aquasec/trivy:0.58.1
+    entrypoint: [""]
+  before_script:
+    - apk add --no-cache -q bash curl jq
+    - curl -fsSL "$PADDOCK_CI_URL" -o /usr/local/bin/paddock-ci && chmod +x /usr/local/bin/paddock-ci
+
+# 1. Scan with Trivy, send the JSON to Paddock (no API key needed, only the ingest token).
+paddock-ingest:
+  extends: .paddock-base
+  script:
+    - trivy fs --quiet --format json --output trivy.json .
+    - paddock-ci ingest trivy.json
+  rules:
+    - if: $PADDOCK_INGEST_TOKEN
+
+# 2. Alternative: let Paddock match your lockfiles itself, then fail the pipeline on high+.
+paddock-gate:
+  extends: .paddock-base
+  script:
+    - paddock-ci lockfiles
+    - paddock-ci gate --fail-on high
+  rules:
+    - if: $PADDOCK_API_KEY
+      when: manual
+      allow_failure: true

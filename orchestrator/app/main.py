@@ -63,6 +63,7 @@ from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
 from .verification import router as verification_router
 from .reports import router as reports_router
+from .routers import ingest as ingest_router
 from .scheduler import scheduler_loop
 from .billing import gate as billing_gate
 from .billing import router as billing_router
@@ -308,6 +309,8 @@ def create_app() -> FastAPI:
     from .routers import msp as msp_router
 
     app.include_router(msp_router.router)
+    # Universal ingest + per-source ingest tokens (schema 027).
+    app.include_router(ingest_router.router)
 
     return app
 
