@@ -142,6 +142,34 @@ integration: ## end-to-end pipeline harness (drives all services, asserts cross-
 realrun: ## authorized real-target run + crude FP measurement (default scanme.nmap.org)
 	python3 hardening/realrun.py $(TARGET)
 
+# ---------- operations (docs/OPERATIONS.md) ----------
+
+.PHONY: migrate
+migrate: ## apply pending schema migrations (compose one-shot)
+	$(COMPOSE) run --rm migrate
+
+.PHONY: migrate-status
+migrate-status: ## show applied / pending / drifted schema migrations
+	$(COMPOSE) run --rm migrate python -m app.migrate status
+
+.PHONY: backup
+backup: ## pg_dump + sha256 (+ BACKUP_ENCRYPT=age|gpg) into ./backups, with retention
+	bash scripts/backup.sh
+
+.PHONY: restore
+restore: ## restore a backup: make restore FILE=backups/paddock-....dump[.age|.gpg]
+	@test -n "$(FILE)" || (echo "FILE required" && exit 1)
+	bash scripts/restore.sh "$(FILE)"
+
+.PHONY: scale-test
+scale-test: ## seed 10k assets/100k findings/1M scope decisions into a scratch DB and time the API (SCALE_ADMIN_DSN=...)
+	python3 hardening/scale_test.py
+
+.PHONY: helm-lint
+helm-lint: ## helm lint + template the chart
+	helm lint deploy/helm/paddock
+	helm template paddock deploy/helm/paddock >/dev/null
+
 # ---------- housekeeping ----------
 
 .PHONY: fmt

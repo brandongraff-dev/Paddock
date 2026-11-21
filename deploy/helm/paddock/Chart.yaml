@@ -1,0 +1,15 @@
+apiVersion: v2
+name: paddock
+description: >-
+  Paddock: self-hosted, defensive attack-surface management. Orchestrator API,
+  dashboard, passive/active discovery workers, intel, correlation, OT/IoT
+  discovery (Sentry ingest) and the integrations worker, with versioned schema
+  migrations run as a pre-install/pre-upgrade Job.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords: [security, asm, attack-surface, defensive]
+home: https://github.com/brandongraff-dev/cybersec
+sources:
+  - https://github.com/brandongraff-dev/cybersec

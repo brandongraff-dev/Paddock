@@ -57,34 +57,89 @@ else:
     )
 
 
+def _schema_transform(f) -> str:
+    # Contract defect workaround: an old schema/003_findings.sql declared a
+    # column named `references` without quotes, which Postgres 16 rejects as
+    # a reserved keyword. We quote it for our tests; the orchestrator's SQL
+    # already uses the quoted form. (The recorded checksum is the file's.)
+    return f.sql.replace("  references    TEXT[]", '  "references"    TEXT[]')
+
+
+async def apply_schema(con) -> None:
+    """Apply schema/ through the versioned migration runner (app.migrate)."""
+    from app import migrate
+
+    await migrate.migrate_up(con, schema_dir=SCHEMA_DIR, transform=_schema_transform)
+
+
+# Schema is migrated ONCE per session into a template database; each test
+# clones it (CREATE DATABASE ... TEMPLATE), which is much faster than
+# re-running every file per test. ORCH_TEST_NO_TEMPLATE=1 migrates every test
+# database from scratch instead.
+_USE_TEMPLATE = os.environ.get("ORCH_TEST_NO_TEMPLATE", "") not in ("1", "true", "yes")
+_template: dict[str, str] = {}
+
+
+@pytest.fixture(scope="session")
+def _template_cleanup():
+    yield
+    if _template:
+        import asyncio
+
+        async def _drop() -> None:
+            admin = await asyncpg.connect(_template["admin_dsn"])
+            try:
+                await admin.execute(f'DROP DATABASE IF EXISTS "{_template["name"]}"')
+            finally:
+                await admin.close()
+
+        try:
+            asyncio.run(_drop())
+        except Exception:  # noqa: BLE001 -- best-effort cleanup
+            pass
+
+
+async def _ensure_template(admin_dsn: str, base_dsn: str) -> str:
+    if _template.get("name"):
+        return _template["name"]
+    name = f"tmpl_{uuid.uuid4().hex[:12]}"
+    admin = await asyncpg.connect(admin_dsn)
+    await admin.execute(f'CREATE DATABASE "{name}"')
+    await admin.close()
+    con = await asyncpg.connect(f"{base_dsn}/{name}")
+    try:
+        await apply_schema(con)
+    finally:
+        await con.close()
+    _template.update(name=name, admin_dsn=admin_dsn)
+    return name
+
+
 @pytest_asyncio.fixture
-async def db_pool(postgresql_my_proc):
-    """Fresh database per test, schema applied."""
+async def db_pool(postgresql_my_proc, _template_cleanup):
+    """Fresh database per test, schema applied by the migration runner."""
     host = postgresql_my_proc.host
     port = postgresql_my_proc.port
     user = postgresql_my_proc.user
     password = postgresql_my_proc.password
     auth = f"{user}:{password}" if password else user
-    admin_dsn = f"postgresql://{auth}@{host}:{port}/postgres"
+    base_dsn = f"postgresql://{auth}@{host}:{port}"
+    admin_dsn = f"{base_dsn}/postgres"
 
     dbname = f"test_{uuid.uuid4().hex[:12]}"
+    template = await _ensure_template(admin_dsn, base_dsn) if _USE_TEMPLATE else None
     admin = await asyncpg.connect(admin_dsn)
-    await admin.execute(f'CREATE DATABASE "{dbname}"')
+    if template:
+        await admin.execute(f'CREATE DATABASE "{dbname}" TEMPLATE "{template}"')
+    else:
+        await admin.execute(f'CREATE DATABASE "{dbname}"')
     await admin.close()
 
-    dsn = f"postgresql://{auth}@{host}:{port}/{dbname}"
+    dsn = f"{base_dsn}/{dbname}"
     pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=4)
-    async with pool.acquire() as con:
-        for f in sorted(SCHEMA_DIR.glob("*.sql")):
-            sql_text = f.read_text()
-            # Contract defect workaround: schema/003_findings.sql declares a
-            # column named `references` without quotes, which Postgres 16
-            # rejects as a reserved keyword. We quote it for our tests; the
-            # orchestrator's SQL already uses the quoted form.
-            sql_text = sql_text.replace(
-                "  references    TEXT[]", '  "references"    TEXT[]'
-            )
-            await con.execute(sql_text)
+    if not template:
+        async with pool.acquire() as con:
+            await apply_schema(con)
 
     try:
         yield pool

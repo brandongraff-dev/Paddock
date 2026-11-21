@@ -486,6 +486,9 @@ async def _write_decision(
             worker,
             reason or ("match" if allow else "no matching active scope_entry"),
         )
+    from .metrics import observe_scope_decision
+
+    observe_scope_decision(allow)
 
 
 async def check(

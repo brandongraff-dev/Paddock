@@ -13,6 +13,10 @@ An aiohttp server on :8101 exposing the passive IoT/OT discovery API:
   * ``GET  /healthz``  -- liveness (+ the passive-only invariant).
   * ``GET  /readyz``   -- readiness (DB reachable, if DB enabled).
   * ``GET  /stats``    -- counters (devices, OT, segments, findings, guard).
+  * ``GET  /metrics``  -- Prometheus text: per-sensor last-ingest time (the
+                          "Sentry silent" alert). Bearer METRICS_TOKEN when
+                          set; otherwise open only if REQUIRE_SENTRY_TOKEN is
+                          off (dev), else 404.
 
 SAFETY: this service never initiates a connection to a discovered device. It
 parses passively-provided observations only. See app/__init__.py.
@@ -24,7 +28,10 @@ import base64
 import binascii
 import hmac
 import logging
+import os
 import signal
+import time
+from datetime import datetime
 from typing import Any, Optional
 
 import aiohttp
@@ -38,6 +45,45 @@ from .orchestrator import OrchestratorClient
 from .pipeline import DiscoveryEngine
 
 log = logging.getLogger("otdiscovery")
+_STARTED_AT = time.time()
+
+
+def _esc(v: Any) -> str:
+    s = str(v if v is not None else "")[:128]
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def _render_metrics(sensors: dict[str, dict[str, Any]], last_ingest: float | None) -> str:
+    """Prometheus text exposition (no client library needed)."""
+    g = "paddock_sentry_last_ingest_timestamp_seconds"
+    lines = [
+        f"# HELP {g} Unix time a Sentry sensor last posted a batch.",
+        f"# TYPE {g} gauge",
+    ]
+    batches = []
+    for sid, rec in sorted(sensors.items()):
+        try:
+            ts = datetime.fromisoformat(str(rec.get("last_seen"))).timestamp()
+        except (TypeError, ValueError):
+            continue
+        labels = f'sensor="{_esc(sid)}",site="{_esc(rec.get("site"))}"'
+        lines.append(f"{g}{{{labels}}} {ts:.3f}")
+        batches.append(f'paddock_sentry_batches_total{{sensor="{_esc(sid)}"}} {int(rec.get("batches") or 0)}')
+    lines += [
+        "# HELP paddock_sentry_batches_total Batches received per Sentry sensor since start.",
+        "# TYPE paddock_sentry_batches_total counter",
+        *batches,
+        "# HELP paddock_otdiscovery_last_ingest_timestamp_seconds Last successful /ingest (0 = none since start).",
+        "# TYPE paddock_otdiscovery_last_ingest_timestamp_seconds gauge",
+        f"paddock_otdiscovery_last_ingest_timestamp_seconds {last_ingest or 0:.3f}",
+        "# HELP paddock_otdiscovery_sensors Sentry sensors seen since start.",
+        "# TYPE paddock_otdiscovery_sensors gauge",
+        f"paddock_otdiscovery_sensors {len(sensors)}",
+        "# HELP paddock_otdiscovery_start_timestamp_seconds Process start time.",
+        "# TYPE paddock_otdiscovery_start_timestamp_seconds gauge",
+        f"paddock_otdiscovery_start_timestamp_seconds {_STARTED_AT:.3f}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 class OtDiscoveryService:
@@ -48,6 +94,7 @@ class OtDiscoveryService:
         self.engine: Optional[DiscoveryEngine] = None
         self._stop = asyncio.Event()
         self._ready = False
+        self._last_ingest_ts: float | None = None
 
     async def start(self) -> None:
         logging.basicConfig(
@@ -110,6 +157,21 @@ class OtDiscoveryService:
             "segment_matrix": self.engine.last_segment_matrix,
             "last_active_probe_attempts_to_devices": len(self.engine.last_guard_violations),
         })
+
+    async def _handle_metrics(self, req: web.Request) -> web.Response:
+        token = os.environ.get("METRICS_TOKEN", "")
+        if token:
+            got = req.headers.get("Authorization", "")
+            if not (got[:7].lower() == "bearer " and hmac.compare_digest(
+                    got[7:].strip().encode(), token.encode())):
+                return web.json_response({"error": "metrics token required"}, status=401)
+        elif self.cfg.require_sentry_token:
+            return web.json_response({"error": "not found"}, status=404)
+        sensors = self.engine.sensors if self.engine is not None else {}
+        return web.Response(
+            text=_render_metrics(sensors, self._last_ingest_ts),
+            content_type="text/plain", charset="utf-8",
+        )
 
     async def _read_input(
         self, req: web.Request
@@ -187,6 +249,7 @@ class OtDiscoveryService:
         except Exception as exc:
             log.exception("/ingest failed")
             return web.json_response({"error": str(exc)}, status=500)
+        self._last_ingest_ts = time.time()
         return web.json_response(result)
 
     async def _handle_analyze(self, _req: web.Request) -> web.Response:
@@ -204,6 +267,7 @@ class OtDiscoveryService:
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),
             web.get("/stats", self._handle_stats),
+            web.get("/metrics", self._handle_metrics),
             web.post("/ingest", self._handle_ingest),
             web.post("/analyze", self._handle_analyze),
         ])

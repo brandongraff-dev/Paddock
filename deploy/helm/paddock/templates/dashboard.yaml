@@ -1,0 +1,72 @@
+{{- if .Values.dashboard.enabled }}
+{{- $v := .Values.dashboard -}}
+{{- $sel := dict "root" $ "component" "dashboard" -}}
+{{- $orch := printf "%s:%v" (include "paddock.componentName" (dict "root" $ "component" "orchestrator")) .Values.orchestrator.port -}}
+# The image's nginx.conf hard-codes the compose upstream `orchestrator:8080`;
+# this replaces it with the release's Service and moves every writable path to
+# /tmp so the root filesystem can stay read-only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "paddock.componentName" $sel }}-nginx
+  labels:
+    {{- include "paddock.componentLabels" $sel | nindent 4 }}
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    events { worker_connections 1024; }
+    http {
+      include       /etc/nginx/mime.types;
+      default_type  application/octet-stream;
+      sendfile      on;
+      keepalive_timeout 65;
+      server_tokens off;
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path       /tmp/proxy_temp;
+      fastcgi_temp_path     /tmp/fastcgi_temp;
+      uwsgi_temp_path       /tmp/uwsgi_temp;
+      scgi_temp_path        /tmp/scgi_temp;
+      access_log /dev/stdout;
+      error_log  /dev/stderr warn;
+      upstream orchestrator_upstream { server {{ $orch }}; }
+      server {
+        listen {{ $v.port }};
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+        location ~* \.(?:js|css|woff2|png|svg|ico)$ {
+          expires 7d;
+          add_header Cache-Control "public, immutable";
+          try_files $uri =404;
+        }
+        location /v1/ {
+          proxy_pass http://orchestrator_upstream;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_buffering off;
+          proxy_cache off;
+          proxy_read_timeout 24h;
+          proxy_send_timeout 24h;
+          chunked_transfer_encoding on;
+        }
+        location / { try_files $uri $uri/ /index.html; }
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+      }
+    }
+---
+{{ include "paddock.deployment" (dict
+  "root" $ "component" "dashboard" "values" $v
+  "command" (list "nginx" "-g" "daemon off;")
+  "probes" (include "paddock.httpProbes" (dict "live" "/"))
+  "extraMounts" "- name: nginx-conf\n  mountPath: /etc/nginx/nginx.conf\n  subPath: nginx.conf\n  readOnly: true\n- name: nginx-cache\n  mountPath: /var/cache/nginx"
+  "extraVolumes" (printf "- name: nginx-conf\n  configMap:\n    name: %s-nginx\n- name: nginx-cache\n  emptyDir: {}" (include "paddock.componentName" $sel))) }}
+---
+{{ include "paddock.service" (dict "root" $ "component" "dashboard" "values" $v) }}
+{{- end }}

@@ -18,7 +18,8 @@ RUN pip install --no-cache-dir \
       "pydantic-settings>=2" \
       "python-json-logger>=2.0" \
       "PyJWT>=2.8" \
-      "bcrypt>=4.0"
+      "bcrypt>=4.0" \
+      "prometheus_client>=0.20"
 
 COPY app ./app
 
