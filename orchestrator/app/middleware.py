@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+import re
 import uuid
 from typing import Awaitable, Callable
 
@@ -37,6 +38,9 @@ def configure_logging() -> None:
     logging.getLogger("asyncpg").setLevel(logging.WARNING)
 
 
+_RID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Attach a request-id and emit one structured access log per request."""
 
@@ -45,7 +49,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        rid = request.headers.get(REQUEST_ID_HEADER) or uuid.uuid4().hex
+        # A client-supplied id is only kept when it is a plain token; anything
+        # else is replaced so it can't be used to forge/poison audit rows.
+        rid = request.headers.get(REQUEST_ID_HEADER) or ""
+        if not _RID_RE.fullmatch(rid):
+            rid = uuid.uuid4().hex
         request.state.request_id = rid
         start = time.perf_counter()
         try:

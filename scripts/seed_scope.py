@@ -24,7 +24,7 @@ ORCH = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8080")
 SAFE_SEED = [
     {
         "kind": "ipv4_cidr",
-        "value": "127.0.0.0/8",
+        "value": "127.0.0.1/32",
         "notes": "localhost; always safe to point at yourself",
         "auth_doc_ref": "RFC1122",
     },

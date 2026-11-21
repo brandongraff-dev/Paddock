@@ -1,6 +1,8 @@
 """Settings loaded from environment via pydantic-settings."""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,9 +32,23 @@ class Settings(BaseSettings):
     #              dev, the existing tests, and the fleet of worker services
     #              keep working with no credentials. DEFAULT for now.
     #   enforce -- deny-closed; every request must present a valid API key or
-    #              JWT. The hardening/compose stream flips the default to this
-    #              in production (NOT here, by design).
-    auth_mode: str = "dev"
+    #              JWT. This is the DEFAULT: a deployment that forgets to set
+    #              AUTH_MODE fails closed. Only docker-compose.override.yml
+    #              (local dev, ports bound to 127.0.0.1) opts into `dev`.
+    auth_mode: Literal["dev", "enforce"] = "enforce"
+
+    # Browser origins allowed to call the API (comma-separated). Never "*".
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # Only these peers may set X-Forwarded-For (comma-separated CIDRs). The
+    # audit log records the socket peer otherwise, so a client can't forge
+    # the IP an action is attributed to.
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+
+    # Login throttling: max failed attempts per (username) and per (client
+    # ip) inside the window before 429s.
+    login_max_failures: int = 10
+    login_window_sec: int = 300
 
     # A shared, per-service API key the worker fleet (passive/active/intel/...)
     # can send via `Authorization: Bearer <key>` or `X-API-Key`. When set it

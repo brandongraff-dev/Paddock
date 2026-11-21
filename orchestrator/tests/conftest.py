@@ -34,11 +34,27 @@ if str(ROOT) not in sys.path:
 
 SCHEMA_DIR = ROOT.parent / "schema"
 
+# The app now defaults to AUTH_MODE=enforce (fail closed). Most suites exercise
+# business logic as the synthetic dev admin; governance suites flip to enforce
+# per-test via their own fixtures.
+from app.config import settings as _settings  # noqa: E402
 
-postgresql_my_proc = factories.postgresql_proc(
-    executable=str(Path(PG_BIN) / "pg_ctl"),
-    port=None,
-)
+_settings.auth_mode = "dev"
+
+
+# ORCH_TEST_PG="host:port[:user]" reuses an already-running server instead of
+# spawning one (pg_ctl refuses to run as root, e.g. inside dev containers).
+_EXT = os.environ.get("ORCH_TEST_PG")
+if _EXT:
+    _h, _p, *_u = _EXT.split(":")
+    postgresql_my_proc = factories.postgresql_noproc(
+        host=_h, port=int(_p), user=(_u[0] if _u else "postgres"),
+    )
+else:
+    postgresql_my_proc = factories.postgresql_proc(
+        executable=str(Path(PG_BIN) / "pg_ctl"),
+        port=None,
+    )
 
 
 @pytest_asyncio.fixture

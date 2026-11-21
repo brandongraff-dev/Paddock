@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -75,7 +76,7 @@ async def add_scope(
     pool=Depends(get_pool),
     r=Depends(get_redis),
 ):
-    _validate_entry_value(body.kind, body.value)
+    canonical_value = _validate_entry_value(body.kind, body.value)
 
     sql = f"""
         INSERT INTO scope_entries
@@ -94,7 +95,7 @@ async def add_scope(
         row = await con.fetchrow(
             sql,
             body.kind,
-            body.value,
+            canonical_value,
             body.added_by,
             body.auth_doc_ref,
             body.expires_at,
@@ -210,30 +211,77 @@ async def list_scope_decisions(
     return [ScopeDecisionOut.model_validate(dict(r)) for r in rows]
 
 
-def _validate_entry_value(kind: str, value: str) -> None:
+# Multi-label public suffixes a wildcard must never be rooted at. Single-label
+# TLDs ("com", "io") are refused structurally; this covers the common
+# two-label registry suffixes without pulling in the full PSL.
+_PUBLIC_SUFFIXES_2 = frozenset({
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "net.nz",
+    "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp", "co.kr", "or.kr", "com.br", "com.cn",
+    "net.cn", "org.cn", "gov.cn", "com.mx", "com.ar", "com.tr", "com.tw", "com.hk",
+    "com.sg", "com.my", "co.in", "net.in", "org.in", "co.za", "org.za", "co.il",
+    "com.pl", "com.ua", "com.ru", "co.id", "or.id", "com.vn", "com.ph", "com.pk",
+    "github.io", "herokuapp.com", "azurewebsites.net", "cloudfront.net",
+    "amazonaws.com", "appspot.com", "vercel.app", "netlify.app", "pages.dev",
+    "workers.dev", "web.app", "firebaseapp.com", "blogspot.com", "s3.amazonaws.com",
+})
+
+# Broadest CIDR an operator can authorise in one entry.
+_MIN_PREFIX = {4: 16, 6: 32}
+
+
+def _validate_entry_value(kind: str, value: str) -> str:
+    """Validate a scope entry and return its CANONICAL stored form.
+
+    Refuses entries that would authorise far more than any one organisation
+    owns (a wildcard on a public suffix, 0.0.0.0/0), entries that are never a
+    legitimate target (cloud metadata), and anything the matcher would read
+    differently from the operator (control characters, IDN spoofing).
+    """
     import ipaddress
 
     v = value.strip()
     if kind in {"domain", "subdomain_wildcard"}:
-        if not v or "/" in v or " " in v:
+        raw = v[2:] if kind == "subdomain_wildcard" and v.startswith("*.") else v
+        canon = scope_svc.normalize(raw)
+        if not canon or scope_svc._is_ip(canon) is not None or "/" in raw or "@" in raw:
+            raise HTTPException(status_code=422, detail=f"invalid {kind} value: {value!r}")
+        if kind == "subdomain_wildcard":
+            labels = canon.split(".")
+            if len(labels) < 2 or canon in _PUBLIC_SUFFIXES_2:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"refusing wildcard on public suffix {canon!r}: "
+                    "authorise the registrable domain you own instead",
+                )
+        return canon
+    if kind in {"ipv4_cidr", "ipv6_cidr"}:
+        want = 4 if kind == "ipv4_cidr" else 6
+        try:
+            net = ipaddress.ip_network(v, strict=False)
+            if net.version != want:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"invalid {kind} value")
+        if net.prefixlen < _MIN_PREFIX[want]:
             raise HTTPException(
-                status_code=422, detail=f"invalid {kind} value: {value!r}"
+                status_code=422,
+                detail=f"{kind} broader than /{_MIN_PREFIX[want]} refused; split it "
+                "into the ranges you are actually authorised for",
             )
-    elif kind == "ipv4_cidr":
-        try:
-            net = ipaddress.ip_network(v, strict=False)
-            if net.version != 4:
-                raise ValueError
-        except ValueError:
-            raise HTTPException(status_code=422, detail="invalid ipv4_cidr value")
-    elif kind == "ipv6_cidr":
-        try:
-            net = ipaddress.ip_network(v, strict=False)
-            if net.version != 6:
-                raise ValueError
-        except ValueError:
-            raise HTTPException(status_code=422, detail="invalid ipv6_cidr value")
-    elif kind == "asn":
-        s = v.upper().lstrip("AS")
-        if not s.isdigit():
+        if any(
+            net.version == bad.version and net.overlaps(bad)
+            for bad in scope_svc.HARD_DENY_NETS
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{kind} overlaps a protected range (cloud metadata / multicast / "
+                "reserved) that is never a scan target",
+            )
+        return str(net)
+    if kind == "asn":
+        m = re.fullmatch(r"(?:AS)?([0-9]{1,10})", v, flags=re.IGNORECASE | re.ASCII)
+        if not m or int(m.group(1)) > 4294967295:
             raise HTTPException(status_code=422, detail="invalid asn value")
+        return f"AS{int(m.group(1))}"
+    raise HTTPException(status_code=422, detail=f"unknown scope kind {kind!r}")

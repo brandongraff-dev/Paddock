@@ -89,6 +89,25 @@ def compute_entry_hash(prev_hash: str, row: dict[str, Any]) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
+def _sanitize(value: Any) -> Any:
+    """Make a value safe to store AND hash-stable across a JSONB round trip.
+
+    * NUL bytes are stripped: Postgres rejects them, which used to make the
+      INSERT fail and the action go unaudited.
+    * Floats become strings: JSONB re-renders numbers (1e16 -> 10000000000000000),
+      which made verify() report a permanently broken chain.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, dict):
+        return {_sanitize(str(k)): _sanitize(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize(v) for v in value]
+    return value
+
+
 async def record(
     pool,
     *,
@@ -108,7 +127,14 @@ async def record(
 ) -> dict[str, Any]:
     """Append one row to the hash chain and return it. Serialised via advisory lock."""
     ts = datetime.now(timezone.utc)
-    details = details or {}
+    details = _sanitize(details or {})
+    actor, actor_role, action, method, path, classification, justification, request_id = (
+        _sanitize(v) for v in (
+            actor, actor_role, action, method, path, classification, justification, request_id,
+        )
+    )
+    if resource_id is not None:
+        resource_id = _sanitize(str(resource_id))
     async with pool.acquire() as con:
         async with con.transaction():
             # Serialise appends: the lock is held until the transaction commits.

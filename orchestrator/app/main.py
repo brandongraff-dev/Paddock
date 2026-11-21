@@ -125,10 +125,10 @@ def create_app() -> FastAPI:
     # before external exposure.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip() and o.strip() != "*"],
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Justification", "X-Request-ID"],
     )
 
     @app.get("/healthz")

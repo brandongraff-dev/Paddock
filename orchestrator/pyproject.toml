@@ -22,6 +22,8 @@ dev = [
     "httpx>=0.27",
     "fakeredis>=2.20",
     "pytest-postgresql>=6",
+    "hypothesis>=6.100",  # property-based scope fuzzing
+    "ada-url>=1.15",      # WHATWG URL oracle for the differential fuzzer
 ]
 
 [tool.pytest.ini_options]

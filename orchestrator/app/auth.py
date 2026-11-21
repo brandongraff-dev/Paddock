@@ -99,9 +99,15 @@ _VALID_SCOPES = frozenset({"read", "triage", "scan", "ask", "write", "audit", "a
 
 
 def capabilities_for(role: str, scopes: frozenset[str] | set[str] | None = None) -> frozenset[str]:
+    """Capabilities of a principal.
+
+    API-key scopes can only NARROW the owning user's role, never widen it:
+    an admin's key minted with ["read"] is read-only, and a viewer's key
+    minted with ["admin"] is still a viewer (and stays one after demotion).
+    """
     caps = set(ROLE_CAPABILITIES.get(role, ROLE_CAPABILITIES["viewer"]))
-    if scopes:
-        caps |= {s for s in scopes if s in _VALID_SCOPES}
+    if scopes is not None:
+        caps &= {s for s in scopes if s in _VALID_SCOPES}
     return frozenset(caps)
 
 
@@ -240,7 +246,15 @@ def issue_jwt(*, user_id: str | None, username: str, role: str, clearance: str) 
 
 
 def verify_jwt(token: str) -> dict[str, Any]:
-    return jwt.decode(token, _jwt_secret(), algorithms=[settings.jwt_algorithm])
+    claims = jwt.decode(
+        token,
+        _jwt_secret(),
+        algorithms=[settings.jwt_algorithm],
+        options={"require": ["exp", "iat", "sub"]},
+    )
+    if claims.get("typ") != "access":
+        raise jwt.InvalidTokenError("not an access token")
+    return claims
 
 
 # --------------------------------------------------------------------------- #
@@ -323,6 +337,9 @@ async def _principal_from_jwt(request: Request, token: str) -> Principal:
                 "SELECT id, username, role, clearance, active FROM app_users WHERE username = $1",
                 username,
             )
+        if row is None:
+            # Deleted user: never fall back to trusting role claims in a token.
+            raise AuthError("unknown user")
         if row is not None:
             if not row["active"]:
                 raise AuthError("user disabled")
@@ -348,7 +365,9 @@ async def resolve_principal(request: Request) -> Principal | None:
     api_key, token = _extract_credentials(request)
     if api_key:
         svc = settings.service_api_key
-        if svc and hmac.compare_digest(api_key, svc):
+        # compare bytes: compare_digest(str, str) raises on non-ASCII input,
+        # which used to surface as an unaudited 500.
+        if svc and hmac.compare_digest(api_key.encode("utf-8"), svc.encode("utf-8")):
             return service_principal()
         return await _principal_from_api_key(request, api_key)
     if token:
@@ -563,11 +582,7 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
             return
         rtype, rid_val = _resource_from_path(request.url.path)
         classification = getattr(request.state, "audit_classification", None)
-        client = request.client
-        ip = client.host if client else None
-        fwd = request.headers.get("x-forwarded-for")
-        if fwd:
-            ip = fwd.split(",")[0].strip()
+        ip = client_ip(request)
         try:
             await audit.record(
                 pool,
@@ -587,6 +602,42 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
             )
         except Exception:  # noqa: BLE001 -- never fail the request on audit
             logger.exception("audit_record_failed", extra={"path": request.url.path})
+
+
+def _trusted_proxies() -> tuple:
+    import ipaddress
+
+    nets = []
+    for c in settings.trusted_proxy_cidrs.split(","):
+        c = c.strip()
+        if c:
+            try:
+                nets.append(ipaddress.ip_network(c, strict=False))
+            except ValueError:
+                logger.warning("bad_trusted_proxy_cidr", extra={"cidr": c})
+    return tuple(nets)
+
+
+def client_ip(request: Request) -> str | None:
+    """Socket peer, or the X-Forwarded-For client ONLY when the peer is a
+    configured trusted proxy. Otherwise XFF is attacker-controlled."""
+    import ipaddress
+
+    peer = request.client.host if request.client else None
+    fwd = request.headers.get("x-forwarded-for")
+    if not (peer and fwd):
+        return peer
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+    if any(peer_ip.version == n.version and peer_ip in n for n in _trusted_proxies()):
+        cand = fwd.split(",")[0].strip()
+        try:
+            return str(ipaddress.ip_address(cand))
+        except ValueError:
+            return peer
+    return peer
 
 
 # --------------------------------------------------------------------------- #
