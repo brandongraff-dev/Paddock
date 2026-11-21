@@ -29,6 +29,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -440,6 +441,15 @@ async def _principal_from_scim_token(request: Request, token: str) -> Principal:
     )
 
 
+# Service-key routes whose tenant comes from a second credential, not from the
+# caller: otdiscovery brackets a managed sensor's upload with claim/done, and
+# the orchestrator resolves the tenant from the sensor's own credential
+# (X-Sensor-Token), then does all work inside that tenant. Under
+# TENANCY_STRICT these may omit X-Paddock-Tenant; every other service call
+# must still name one.
+_TENANTLESS_SERVICE_PATHS = re.compile(r"^/v1/sensors/ingest/(claim|done)$")
+
+
 async def resolve_principal(request: Request) -> Principal | None:
     """Resolve a request's credential to a Principal, or None if none presented.
 
@@ -455,7 +465,7 @@ async def resolve_principal(request: Request) -> Principal | None:
         if svc and hmac.compare_digest(api_key.encode("utf-8"), svc.encode("utf-8")):
             ref = request.headers.get(tenancy.TENANT_HEADER)
             if not ref:
-                if settings.tenancy_strict:
+                if settings.tenancy_strict and not _TENANTLESS_SERVICE_PATHS.match(request.url.path):
                     # The service key is a fleet credential, not a tenant: in a
                     # multi-tenant deployment every call must say whose it is.
                     raise AuthError("service key requires X-Paddock-Tenant (TENANCY_STRICT)")
@@ -479,7 +489,6 @@ async def resolve_principal(request: Request) -> Principal | None:
 # RBAC policy: (method, path) -> required capability
 # --------------------------------------------------------------------------- #
 
-import re  # noqa: E402
 
 # Ordered rules. First match wins. Patterns match the concrete request path
 # (with real ids). `None` capability means the route is public (no auth).

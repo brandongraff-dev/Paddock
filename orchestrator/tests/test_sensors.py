@@ -407,3 +407,24 @@ async def test_routine_sensor_traffic_is_not_audited_but_failures_are(client, db
     mid = await n_audit()
     await client.post(f"/v1/sensors/{e['sensor_id']}/revoke")
     assert await n_audit() > mid  # lifecycle changes always are
+
+
+async def test_strict_tenancy_claim_needs_no_tenant_header(client, monkeypatch):
+    """Under TENANCY_STRICT the service key must name a tenant, except on the
+    upload bracket, where the sensor credential decides the tenant."""
+    e = await _enrolled(client)
+    monkeypatch.setattr(settings, "service_api_key", "svc-key-0123456789")
+    monkeypatch.setattr(settings, "tenancy_strict", True)
+    h = {**_sh(e["credential"]), "X-API-Key": "svc-key-0123456789"}
+    c = await client.post("/v1/sensors/ingest/claim", headers=h, json={"batch_id": "b-strict-01"})
+    assert c.status_code == 200, c.text
+    assert c.json()["state"] == "new" and c.json()["tenant_id"] == e.get("tenant_id", c.json()["tenant_id"])
+    d = await client.post("/v1/sensors/ingest/done", headers=h, json={"batch_id": "b-strict-01", "flows": 1})
+    assert d.status_code == 200
+    # ...but any other service-key call without a tenant is still refused
+    r = await client.get("/v1/sensors", headers={"X-API-Key": "svc-key-0123456789"})
+    assert r.status_code == 401
+    # and the bracket still needs a valid sensor credential
+    bad = {"X-Sensor-Token": "pst_not-a-real-credential", "X-API-Key": "svc-key-0123456789"}
+    r = await client.post("/v1/sensors/ingest/claim", headers=bad, json={"batch_id": "b-strict-02"})
+    assert r.status_code in (401, 403)
