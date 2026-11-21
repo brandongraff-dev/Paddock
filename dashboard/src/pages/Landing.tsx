@@ -89,6 +89,7 @@ const RULES = [
 export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
+  const isPhone = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 720px)").matches;
   const [railRef, railIn] = useInView<HTMLDivElement>(0.15);
   const [megaRef, megaIn] = useInView<HTMLDivElement>(0.6);
 
@@ -97,7 +98,7 @@ export default function Landing() {
       <div className="lp-col">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <PixelField className="lp-pixels" cell={6} maxDpr={1} wake={{ x: 0.43, y: 0.64 }} />
+          <PixelField className="lp-pixels" cell={6} maxDpr={1} wake={isPhone ? { x: 0.4, y: 0.62 } : { x: 0.43, y: 0.64 }} />
         </div>
 
         <nav className="lp-nav">
