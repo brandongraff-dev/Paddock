@@ -122,6 +122,24 @@ when run without the orchestrator.
   `ALLOW_NO_AUTH` stub is pinned deny-closed (`false`) in the prod compose.
 - **Service principals.** Inter-service callers (workers, correlation, …)
   authenticate with a per-service API key injected via env, scoped `write`.
+- **Single sign-on (OIDC + SAML 2.0).** Authorization-code flow with PKCE,
+  `state` (bound to the browser by an HttpOnly cookie) and `nonce`; ID tokens
+  verified against the IdP's JWKS (asymmetric algorithms only; `iss`/`aud`/
+  `azp`/`exp`/`nonce`). SAML assertions must be signed by the pinned IdP
+  certificate, with audience/destination/`InResponseTo` checks and an
+  assertion-ID replay cache. The callback never puts a token in a URL: it
+  hands the SPA a 60-second one-time code that only redeems together with a
+  verifier generated in the tab that started the login. IdP client secrets
+  are AES-GCM encrypted at rest (`PADDOCK_SECRET_KEY`). Every SSO login
+  (success or failure) and every identity-config change is audited.
+  Break-glass accounts can never be claimed by an IdP identity, and with
+  **SSO required** they are the only accounts that may use a password.
+- **SCIM 2.0.** `/scim/v2` accepts only admin-minted SCIM tokens (sha256 at
+  rest) whose sole capability is `scim`. SCIM can see SCIM/SSO-provisioned
+  users only — never local or break-glass accounts. Deactivation revokes the
+  user's API keys and every JWT issued so far (a per-user session watermark
+  checked on each request; re-activation does not revive old tokens).
+  See [docs/SSO.md](docs/SSO.md).
 
 ## 5. Authorization — RBAC + ABAC + classification
 

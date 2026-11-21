@@ -19,6 +19,13 @@ RUN pip install --no-cache-dir \
       "python-json-logger>=2.0" \
       "PyJWT>=2.8" \
       "bcrypt>=4.0"
+# Integrations + enterprise identity (OIDC/SAML SSO, SCIM). Pinned pair: see pyproject.toml.
+RUN pip install --no-cache-dir \
+      "httpx>=0.27" \
+      "cryptography>=42" \
+      "python3-saml>=1.16,<2" \
+      "xmlsec==1.3.18" \
+      "lxml==6.1.3"
 
 COPY app ./app
 

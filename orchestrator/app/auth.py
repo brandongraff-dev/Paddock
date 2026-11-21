@@ -214,6 +214,18 @@ def generate_api_key() -> tuple[str, str, str]:
     return full, prefix, hash_api_key(full)
 
 
+# SCIM bearer tokens (schema 020): pscim_<prefix>_<secret>, sha256 at rest.
+# They resolve to a principal whose ONLY capability is `scim`.
+SCIM_TOKEN_PREFIX = "pscim_"
+
+
+def generate_scim_token() -> tuple[str, str, str]:
+    """Return (full_token, prefix, token_hash). The full token is shown once."""
+    prefix = secrets.token_hex(4)
+    full = f"{SCIM_TOKEN_PREFIX}{prefix}_{secrets.token_urlsafe(32)}"
+    return full, prefix, hash_api_key(full)
+
+
 # --------------------------------------------------------------------------- #
 # JWT
 # --------------------------------------------------------------------------- #
@@ -334,7 +346,8 @@ async def _principal_from_jwt(request: Request, token: str) -> Principal:
     if pool is not None and username:
         async with pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT id, username, role, clearance, active FROM app_users WHERE username = $1",
+                "SELECT id, username, role, clearance, active, sessions_revoked_at "
+                "FROM app_users WHERE username = $1",
                 username,
             )
         if row is None:
@@ -343,6 +356,11 @@ async def _principal_from_jwt(request: Request, token: str) -> Principal:
         if row is not None:
             if not row["active"]:
                 raise AuthError("user disabled")
+            # Session watermark (schema 020): SCIM deactivation etc. revokes
+            # every token issued at or before it, even after re-activation.
+            revoked = row["sessions_revoked_at"]
+            if revoked is not None and float(claims.get("iat", 0)) <= revoked.timestamp():
+                raise AuthError("session revoked")
             role = row["role"]
             clearance = row["clearance"]
             user_id = str(row["id"])
@@ -357,12 +375,38 @@ async def _principal_from_jwt(request: Request, token: str) -> Principal:
     )
 
 
+async def _principal_from_scim_token(request: Request, token: str) -> Principal:
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise AuthError("auth backend unavailable")
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "SELECT id, name, expires_at, revoked FROM scim_tokens WHERE token_hash = $1",
+            hash_api_key(token),
+        )
+        if row is None or row["revoked"]:
+            raise AuthError("invalid SCIM token")
+        if row["expires_at"] is not None and row["expires_at"] <= datetime.now(timezone.utc):
+            raise AuthError("SCIM token expired")
+        await con.execute("UPDATE scim_tokens SET last_used = NOW() WHERE id = $1", row["id"])
+    return Principal(
+        actor=f"scim:{row['name']}",
+        role="scim",
+        clearance="public",
+        capabilities=frozenset({"scim"}),  # SCIM only -- never capabilities_for()
+        kind="scim",
+        api_key_id=str(row["id"]),
+    )
+
+
 async def resolve_principal(request: Request) -> Principal | None:
     """Resolve a request's credential to a Principal, or None if none presented.
 
     Raises ``AuthError`` when a credential IS presented but is invalid.
     """
     api_key, token = _extract_credentials(request)
+    if token and token.startswith(SCIM_TOKEN_PREFIX):
+        return await _principal_from_scim_token(request, token)
     if api_key:
         svc = settings.service_api_key
         # compare bytes: compare_digest(str, str) raises on non-ASCII input,
@@ -394,6 +438,16 @@ _ANY = r"[^/]+"
 
 # --- public ---------------------------------------------------------------- #
 _rule("POST", r"/v1/auth/login", None)
+
+# --- SSO (schema 020): admin config first, then the public login flow ------ #
+_rule("GET POST PUT PATCH DELETE", r"/v1/auth/sso/admin(/.*)?", "admin")
+_rule("GET", r"/v1/auth/sso/providers", None)
+_rule("POST", r"/v1/auth/sso/exchange", None)
+_rule("GET", rf"/v1/auth/sso/{_ANY}/(start|callback|metadata)", None)
+_rule("POST", rf"/v1/auth/sso/{_ANY}/acs", None)
+
+# --- SCIM 2.0: only a SCIM token carries the `scim` capability -------------- #
+_rule("GET POST PUT PATCH DELETE", r"/scim/v2(/.*)?", "scim")
 
 # --- read-only operational checks that use non-GET verbs ------------------- #
 _rule("POST", r"/v1/scope/check", "read")
@@ -559,7 +613,20 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         principal: Principal | None,
     ) -> JSONResponse:
         rid = getattr(request.state, "request_id", None)
-        resp = JSONResponse({"detail": detail}, status_code=status_code)
+        if request.url.path.startswith("/scim/"):
+            # SCIM clients (Okta, Entra) expect the RFC 7644 §3.12 error shape.
+            resp = JSONResponse(
+                {
+                    "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+                    "status": str(status_code),
+                    "detail": detail,
+                },
+                status_code=status_code,
+                media_type="application/scim+json",
+                headers={"WWW-Authenticate": "Bearer"} if status_code == 401 else None,
+            )
+        else:
+            resp = JSONResponse({"detail": detail}, status_code=status_code)
         if rid:
             resp.headers["X-Request-ID"] = rid
         await self._audit(request, principal, status_code, denied=True)

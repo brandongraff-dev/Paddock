@@ -110,6 +110,11 @@ services:
       ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
       # First-boot admin password (set once; see .env.example). Never shipped.
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      # Enterprise identity (SSO + SCIM, docs/SSO.md). Public URLs + the key
+      # that encrypts IdP client secrets at rest.
+      SSO_BASE_URL: ${SSO_BASE_URL:-http://localhost:8080}
+      SSO_DASHBOARD_URL: ${SSO_DASHBOARD_URL:-http://localhost:3000}
+      PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:-}
     tmpfs:
       - /tmp
     networks: [edge, internal]

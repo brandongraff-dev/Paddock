@@ -54,6 +54,9 @@ Around that core it also gives you:
 - **Governance built in:** auth (API keys + JWT), RBAC + ABAC classification
   filtering pushed into SQL, and a **tamper-evident, hash-chained audit log** you
   can verify.
+- **Enterprise identity:** OIDC + SAML 2.0 single sign-on (Okta, Entra ID,
+  Google Workspace, Auth0, Keycloak) with group → role mapping, an SSO-required
+  switch, and SCIM 2.0 provisioning. See [docs/SSO.md](docs/SSO.md).
 - **An analyst UI:** dark, dense, keyboard-driven — live asset graph (react-flow),
   findings table, chain cards, attack paths, a day-by-day timeline, and a scope
   admin page with its own audit trail.
