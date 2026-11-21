@@ -84,10 +84,12 @@ interface Props {
   originX?: number;
   /** Lean toward the pointer and light up the dots around it. */
   interactive?: boolean;
+  /** Render as a streaming wake pouring out leftwards from this point (0..1 canvas space). */
+  wake?: { x: number; y: number };
   className?: string;
 }
 
-export default function PixelField({ cell = 5, animate = true, originX = 0, interactive = false, className }: Props) {
+export default function PixelField({ cell = 5, animate = true, originX = 0, interactive = false, wake, className }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -128,6 +130,41 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
 
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
+          if (wake) {
+            const rx = i / cols;
+            const ry = j / rows;
+            const dx = wake.x - rx;
+            let envW = 0;
+            let ttW = 0.5;
+            if (dx > -0.05) {
+              const dxc = Math.max(0, dx);
+              const sway = (vnoise(dxc * 3.2 - time * 0.0006, 7.3) - 0.5) * 0.09;
+              const center = wake.y - dxc * 0.32 + sway + lift * 0.5;
+              const hw = 0.045 + 0.30 * Math.pow(dxc, 0.66);
+              const off = (ry - center) / hw;
+              if (Math.abs(off) < 1.5) {
+                const core = Math.exp(-off * off * 1.5);
+                const head = Math.min(1, (dx + 0.05) / 0.07);
+                const sp = 0.6 + hash(j, 5) * 1.3;
+                const streak = vnoise(i * 0.035 + time * 0.0011 * sp, j * 0.33);
+                envW = core * Math.exp(-dxc * 0.85) * head * (0.45 + 1.1 * streak);
+                ttW = Math.min(0.82, Math.max(0.12, 0.8 - dxc * 0.95 + off * 0.05));
+              }
+            }
+            let litW = envW * 1.7 - (BAYER8[j & 7][i & 7] / 64 * 0.55 + hash(i, j) * 0.45) * 0.55;
+            if (interactive && ptr.on > 0.01) {
+              const ddx = (rx - ptr.x) * aspect;
+              const ddy = ry - ptr.y;
+              const d = Math.sqrt(ddx * ddx + ddy * ddy) / 0.22;
+              if (d < 1) { litW += (1 - d) * (1 - d) * 0.8 * ptr.on; if (envW === 0) ttW = 0.5 + (rx - ptr.x) * 0.9; }
+            }
+            if (litW <= 0.02) continue;
+            const [wr, wg, wb] = ramp(ttW);
+            const wk = Math.min(1, litW * 1.5);
+            ctx.fillStyle = `rgb(${(wr * wk) | 0},${(wg * wk) | 0},${(wb * wk) | 0})`;
+            ctx.fillRect(i * cell, j * cell, dot, dot);
+            continue;
+          }
           const nx = i / cols - originX - lean;
           const ny = j / rows;
           // Band axis runs from upper-left to lower-right, ~28° off horizontal.
@@ -167,7 +204,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       ptr.x += (ptr.tx - ptr.x) * 0.12;
       ptr.y += (ptr.ty - ptr.y) * 0.12;
       ptr.on += (ptr.ton - ptr.on) * 0.1;
-      if (now - last > (interactive ? 40 : 66)) {
+      if (now - last > (interactive || wake ? 40 : 66)) {
         paint(now - t0);
         last = now;
       }
@@ -191,7 +228,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       window.addEventListener("pointermove", onMove, { passive: true });
       document.addEventListener("pointerleave", onLeave);
     }
-    if ((animate || interactive) && !reduce) raf = requestAnimationFrame(loop);
+    if ((animate || interactive || wake) && !reduce) raf = requestAnimationFrame(loop);
 
     return () => {
       cancelAnimationFrame(raf);
@@ -199,7 +236,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       window.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerleave", onLeave);
     };
-  }, [cell, animate, originX, interactive]);
+  }, [cell, animate, originX, interactive, wake?.x, wake?.y]);
 
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
