@@ -19,6 +19,11 @@ _MODULES: tuple[str, ...] = (
     "jira",
     "servicenow",
     "linear",
+    # SIEM (OCSF 1.3): see docs/INTEGRATIONS-SIEM.md
+    "splunk_hec",
+    "sentinel",
+    "elastic",
+    "syslog",
 )
 
 

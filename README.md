@@ -282,6 +282,9 @@ away from people who run it themselves.
   notes, the [product vision](docs/VISION.md), the
   [cloud roadmap](docs/CLOUD_ROADMAP.md), [commercial readiness](docs/READINESS.md),
   and the [Sentry sensor guide](docs/SENTRY.md).
+- **Interop:** [SIEM connectors in OCSF](docs/INTEGRATIONS-SIEM.md) (Splunk,
+  Sentinel, Elastic, syslog) and [standards exports](docs/STANDARDS.md)
+  (SARIF, CycloneDX, SPDX, VEX, plus a GitHub Action).
 - **Chat:** Discord — *link coming at launch* (badge above is a placeholder).
 
 Issues and PRs welcome. If you're here from r/netsec: the

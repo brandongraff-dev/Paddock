@@ -36,6 +36,7 @@ from .routers import integrations_inbound as integrations_inbound_router
 from .routers import ml as ml_router
 from .routers import monitoring as monitoring_router
 from .routers import devices as devices_router
+from .routers import exports as exports_router
 from .routers import fleet as fleet_router
 from .routers import integrations as integrations_router
 from .routers import ontology as ontology_router
@@ -233,6 +234,9 @@ def create_app() -> FastAPI:
     app.include_router(integrations_inbound_router.router)
     # Integrations: connector catalogue, CRUD, test, delivery log
     app.include_router(integrations_router.router)
+    # Standards exports/imports: OCSF, SARIF, CycloneDX/SPDX, VEX
+    app.include_router(exports_router.export_router)
+    app.include_router(exports_router.import_router)
 
     return app
 
