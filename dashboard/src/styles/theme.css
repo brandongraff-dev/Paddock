@@ -170,10 +170,10 @@ body,
 .topbar .title { font-size: 11.5px; font-weight: 500; letter-spacing: 0.08em; color: var(--text-0); }
 .topbar .ticker {
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 11px;
+  border: 0;
+  padding: 0;
   color: var(--text-2);
+  font-size: 11.5px;
 }
 .topbar .ticker .dot { box-shadow: none !important; }
 
@@ -349,32 +349,6 @@ textarea:focus { border-color: var(--border-focus) !important; box-shadow: 0 0 0
 .login-title { font-family: var(--serif); font-size: 22px; font-weight: 420; letter-spacing: -0.015em; }
 .login-mark { background: none !important; box-shadow: none !important; color: var(--text-0) !important; }
 
-/* ---------------- Classification marking ---------------- */
-/* Still unmissable (it is a governance control), but a hairline, not a fence. */
-.class-banner {
-  padding: 5px 20px;
-  gap: 14px;
-  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--border);
-  box-shadow: none;
-}
-.class-banner-rule {
-  background: linear-gradient(90deg, transparent, currentColor);
-  opacity: 0.35;
-}
-.class-banner-rule:last-child { background: linear-gradient(90deg, currentColor, transparent); }
-.class-banner-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  padding: 2px 8px;
-  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
-}
-.class-banner-sub { font-size: 9.5px; letter-spacing: 0.08em; color: var(--text-3); }
-
 /* user menu sits left-aligned in the sidebar foot */
 .usermenu .usermenu-id { align-items: flex-start; }
 .usermenu .usermenu-role { text-transform: lowercase; letter-spacing: 0; }
@@ -394,3 +368,178 @@ textarea:focus { border-color: var(--border-focus) !important; box-shadow: 0 0 0
 }
 .proof-row input { min-width: 0; }
 .proof-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ---------------- Pixel aurora + liquid glass ---------------- */
+/* The aurora fills the main sheet (the rail keeps its flat chrome colour).
+   The sheet itself doesn't scroll, only <main> does, so the field stays put
+   and the glass cards slide over it. */
+.canvas-pixels {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.9;
+}
+.canvas > .topbar, .canvas > .main { position: relative; z-index: 1; }
+
+/* Liquid glass: translucent tinted fill, heavy blur + saturation so the
+   pixels melt behind the surface, a bright specular rim on the top edge, a
+   soft inner glow, and a diagonal sheen. */
+/* Premium glass: a clear slab (blur + saturation + refracted colour fringes
+   at the edges) carrying a more solid frosted plate, as in layered iOS glass.
+   Stat tiles: plate inset inside a glass frame. Panels: the header is the
+   plate, the body stays clear glass so charts sit over the aurora. */
+.panel,
+.stat-tile {
+  position: relative;
+  border-radius: 22px;
+  background:
+    linear-gradient(160deg, rgba(255, 246, 232, 0.07) 0%, rgba(255, 246, 232, 0) 40%, rgba(255, 246, 232, 0.025) 100%),
+    rgba(20, 17, 14, 0.30);
+  -webkit-backdrop-filter: blur(22px) saturate(185%) contrast(1.04);
+  backdrop-filter: blur(22px) saturate(185%) contrast(1.04);
+  border: 1px solid rgba(255, 244, 226, 0.10);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 248, 235, 0.20),
+    inset -1px -1px 0 rgba(255, 248, 235, 0.07),
+    inset 14px 0 26px -18px rgba(159, 194, 216, 0.32),
+    inset -14px 0 26px -18px rgba(230, 115, 80, 0.26),
+    0 16px 36px -20px rgba(0, 0, 0, 0.75);
+  overflow: clip;
+}
+.panel::before { content: none; }
+
+/* the solid plate */
+.stat-tile::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 17px;
+  background:
+    linear-gradient(180deg, rgba(255, 246, 232, 0.07), rgba(255, 246, 232, 0) 60%),
+    rgba(24, 21, 18, 0.80);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+  backdrop-filter: blur(30px) saturate(140%);
+  box-shadow: inset 0 0.5px 0 rgba(255, 248, 235, 0.16);
+  pointer-events: none;
+}
+.stat-tile > * { position: relative; z-index: 1; }
+.stat-tile { padding: 20px 22px 22px; }
+
+.panel { padding: 10px 12px 16px; }
+.panel > .panel-h {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border-radius: 17px;
+  background:
+    linear-gradient(180deg, rgba(255, 246, 232, 0.07), rgba(255, 246, 232, 0) 70%),
+    rgba(24, 21, 18, 0.80);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+  backdrop-filter: blur(30px) saturate(140%);
+  box-shadow: inset 0 0.5px 0 rgba(255, 248, 235, 0.16);
+}
+.panel > :not(.panel-h) { margin-left: 6px; margin-right: 6px; }
+.panel .table thead th { background: transparent; }
+@supports not (backdrop-filter: blur(1px)) {
+  .panel, .stat-tile { background: var(--panel); }
+}
+
+.page-header h1, .page-header .subtitle { text-shadow: 0 1px 14px rgba(0, 0, 0, 0.85); }
+
+/* keep the header zone calm: the aurora lives mostly behind the cards */
+.canvas-pixels {
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.1) 0, rgba(0, 0, 0, 0.1) 150px, #000 340px, #000 100%);
+}
+.canvas > .topbar {
+  background: rgba(14, 12, 10, 0.5);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+/* ---------------- Topbar: quiet, hairline, no boxes ---------------- */
+.canvas > .topbar {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 1px solid var(--border);
+}
+.topbar .ticker .dot { width: 6px; height: 6px; background: var(--text-3) !important; }
+.class-pill {
+  --class-color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--class-color);
+  user-select: none;
+}
+.class-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--class-color);
+  opacity: 0.8;
+}
+.class-pill::after {
+  content: "";
+  width: 1px;
+  height: 12px;
+  margin-left: 5px;
+  background: var(--border-strong);
+}
+
+/* ================= Glass everywhere ================= *
+ * Same slab language as .panel / .stat-tile, applied to every other
+ * card-like surface. Content cards get the clear slab; overlays (drawers,
+ * modals, palette, login) get the same slab but more opaque so dense text
+ * stays crisp.                                                            */
+.chain-card, .takeover-card, .vuln-card, .risk-card, .cluster-card, .prov-card,
+.ig-card, .setup-card, .setup-stat, .rp-fw, .ml-metric, .path-card, .rem-card,
+.dev-exposure-card, .dev-seg-card, .atk-tile, .ask-box, .filterbar,
+.audit-verify-panel, .proof-panel, .rem-panel, .dev-exposure-panel {
+  background:
+    linear-gradient(160deg, rgba(255, 246, 232, 0.06) 0%, rgba(255, 246, 232, 0) 40%, rgba(255, 246, 232, 0.02) 100%),
+    rgba(20, 17, 14, 0.34);
+  -webkit-backdrop-filter: blur(22px) saturate(185%) contrast(1.04);
+  backdrop-filter: blur(22px) saturate(185%) contrast(1.04);
+  border: 1px solid rgba(255, 244, 226, 0.10);
+  border-radius: 18px;
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 248, 235, 0.18),
+    inset -1px -1px 0 rgba(255, 248, 235, 0.06),
+    inset 12px 0 24px -18px rgba(159, 194, 216, 0.28),
+    inset -12px 0 24px -18px rgba(230, 115, 80, 0.22),
+    0 14px 30px -20px rgba(0, 0, 0, 0.75);
+}
+/* small, dense controls: keep them calmer */
+.filterbar { border-radius: 14px; }
+.setup-stat, .ml-metric, .atk-tile { border-radius: 14px; }
+
+/* overlays */
+.drawer, .ig-drawer, .modal, .cmdk, .login-card, .toast {
+  background:
+    linear-gradient(160deg, rgba(255, 246, 232, 0.07) 0%, rgba(255, 246, 232, 0) 45%),
+    rgba(16, 14, 12, 0.76);
+  -webkit-backdrop-filter: blur(34px) saturate(170%);
+  backdrop-filter: blur(34px) saturate(170%);
+  border: 1px solid rgba(255, 244, 226, 0.11);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 248, 235, 0.18),
+    inset -1px -1px 0 rgba(255, 248, 235, 0.06),
+    inset 14px 0 28px -20px rgba(159, 194, 216, 0.26),
+    inset -14px 0 28px -20px rgba(230, 115, 80, 0.2),
+    0 30px 70px -24px rgba(0, 0, 0, 0.85);
+}
+.modal, .cmdk, .login-card { border-radius: 22px; }
+.drawer, .ig-drawer { border-radius: 22px 0 0 22px; }
+
+/* nested panels (e.g. ontology layout) shouldn't re-blur on themselves */
+.panel .panel, .ont-layout .panel { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(8, 7, 6, 0.35); }
+
+/* the pixel aurora also sits behind the login screen */
+.login-screen { position: relative; isolation: isolate; overflow: hidden; }
+.login-pixels { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0.85; }
+.setup-screen { position: relative; isolation: isolate; }
+.setup-pixels { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0.8; }

@@ -14,6 +14,8 @@ import DetailDrawer from "./DetailDrawer";
 import CommandPalette from "./CommandPalette";
 import { ClassificationBanner } from "./Classification";
 import HorseMark from "../brand/HorseMark";
+import Wordmark from "../brand/Wordmark";
+import PixelField from "../brand/PixelField";
 
 interface NavEntry {
   to: string;
@@ -395,7 +397,7 @@ export default function Shell({ children, noScroll }: Props) {
       <nav className="rail" aria-label="primary">
         <NavLink to="/welcome" className="brand" title="Paddock — about">
           <HorseMark size={26} />
-          <span className="brand-name">Paddock</span>
+          <Wordmark height={19} className="brand-name" />
         </NavLink>
         <CmdkButton />
         <div className="rail-scroll">
@@ -421,6 +423,7 @@ export default function Shell({ children, noScroll }: Props) {
       </nav>
 
       <div className="canvas">
+        <PixelField className="canvas-pixels" cell={5} animate={false} originX={0.26} />
         <header className="topbar">
           <div className="crumbs">
             <span className="crumb-group">{group}</span>
@@ -428,11 +431,11 @@ export default function Shell({ children, noScroll }: Props) {
             <span className="title mono">{title.toUpperCase()}</span>
           </div>
           <div className="spacer" />
+          <ClassificationBanner />
           <Ticker />
         </header>
 
         <main className={`main${noScroll ? " no-scroll" : ""}`}>
-          <ClassificationBanner />
           {children}
         </main>
       </div>

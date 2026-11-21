@@ -15,6 +15,7 @@
  * is proven (when REQUIRE_SCOPE_PROOF is on).
  */
 
+import PixelField from "../brand/PixelField";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -576,6 +577,7 @@ export default function Setup() {
 
   return (
     <div className="setup-screen">
+      <PixelField className="setup-pixels" cell={5} animate={false} originX={0.1} />
       <header className="setup-top">
         <div className="setup-brand">
           <HorseMark size={24} />

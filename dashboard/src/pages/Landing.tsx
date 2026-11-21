@@ -1,8 +1,13 @@
-import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
+import Wordmark from "../brand/Wordmark";
+import PixelField from "../brand/PixelField";
+import GallopTrail from "../brand/GallopTrail";
+import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
+import Showcase from "./landing/Showcase";
+import { useInView } from "./landing/hooks";
 import "../styles/landing.css";
 
 /**
@@ -65,6 +70,13 @@ const AGENTS: Agent[] = [
   },
 ];
 
+const REPO = "https://github.com/brandongraff-dev/cybersec";
+const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
+  { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["Principles", "#principles"], ["Console", "/login"]] },
+  { title: "Project", links: [["Source", REPO], ["Documentation", `${REPO}/tree/main/docs`], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
+  { title: "Security", links: [["Security policy", `${REPO}/blob/main/SECURITY.md`], ["Report a vulnerability", `${REPO}/security/advisories/new`], ["Code of conduct", `${REPO}/blob/main/CODE_OF_CONDUCT.md`]] },
+];
+
 const RULES = [
   ["No exploitation", "Findings describe impact. They never carry a working payload."],
   ["No credential attacks", "Default-credential risk is fingerprinted, never tried."],
@@ -72,57 +84,28 @@ const RULES = [
   ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited."],
 ];
 
-/** Deterministic blocky "pixel mosaic" for the sky, as in a broken plate. */
-function useSkyBlocks(n = 70) {
-  return useMemo(() => {
-    let s = 7;
-    const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-    return Array.from({ length: n }, () => {
-      const size = 3 + Math.floor(rnd() * 9);
-      return {
-        x: Math.floor(rnd() * 100),
-        y: Math.floor(rnd() * 26),
-        w: size * (1 + Math.floor(rnd() * 3)),
-        h: size,
-        o: 0.03 + rnd() * 0.09,
-        l: rnd() > 0.5,
-      };
-    });
-  }, [n]);
-}
-
 export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
-  const blocks = useSkyBlocks();
+  const [railRef, railIn] = useInView<HTMLDivElement>(0.15);
+  const [megaRef, megaIn] = useInView<HTMLDivElement>(0.6);
 
   return (
     <div className="lp">
+      <div className="lp-col">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <svg className="lp-blocks" viewBox="0 0 100 60" preserveAspectRatio="none">
-            {blocks.map((b, i) => (
-              <rect
-                key={i}
-                x={b.x}
-                y={b.y}
-                width={b.w / 4}
-                height={b.h / 4}
-                fill={b.l ? "#d9d0c2" : "#2a2520"}
-                opacity={b.o}
-              />
-            ))}
-          </svg>
+          <PixelField className="lp-pixels" cell={6} maxDpr={1} wake={{ x: 0.43, y: 0.64 }} />
         </div>
-        <div className="lp-grain" aria-hidden="true" />
 
         <nav className="lp-nav">
           <Link to="/welcome" className="lp-brand">
             <HorseMark size={30} />
-            <span>Paddock</span>
+            <Wordmark height={22} />
           </Link>
           <div className="lp-links">
             <a href="#agents">Agents</a>
+            <a href="#product">Product</a>
             <a href="#principles">Principles</a>
             <a href="https://github.com/brandongraff-dev/cybersec" target="_blank" rel="noreferrer">
               Source
@@ -140,6 +123,7 @@ export default function Landing() {
         </h1>
 
         <div className="lp-horse">
+          <GallopTrail className="lp-trail" />
           <DigitHorse body={0.42} />
         </div>
 
@@ -163,7 +147,7 @@ export default function Landing() {
           <span className="lp-eyebrow mono">Defensive agents</span>
           <h2>Four agents. One invariant: only what you own.</h2>
         </div>
-        <div className="lp-rail" role="list">
+        <div className={`lp-rail${railIn ? " in" : ""}`} role="list" ref={railRef}>
           {AGENTS.map((a) => (
             <article className={`lp-card tone-${a.tone}`} key={a.id} role="listitem">
               <div className="lp-card-img">
@@ -193,6 +177,10 @@ export default function Landing() {
         </div>
       </section>
 
+      <DitherRule className="lp-rule-dither" />
+      <Showcase />
+
+
       <section className="lp-principles" id="principles">
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Hard rules · enforced in code</span>
@@ -206,27 +194,44 @@ export default function Landing() {
             </div>
           ))}
         </div>
-        <div className="lp-proof">
-          <div>
-            <b>10,000,000</b>
-            <span>hostile targets fuzzed against WHATWG + RFC 3986 parsers</span>
-          </div>
-          <div>
-            <b>0</b>
-            <span>scope parser differentials after hardening (from 77,554 per million)</span>
-          </div>
-          <div>
-            <b>SHA-256</b>
-            <span>hash-chained, verifiable audit log of every decision</span>
-          </div>
-        </div>
       </section>
 
-      <footer className="lp-foot">
-        <span className="mono">paddock · AGPL-3.0 · self-hosted</span>
-        <span>
-          Horse after Eadweard Muybridge, <i>The Horse in Motion</i>, 1878 (public domain).
-        </span>
+
+      </div>
+
+      <footer className="lp-footer">
+        <DitherRule className="lp-footer-dither" rows={10} deep />
+        <div className="lp-footer-in">
+          <div className="lp-footer-cta">
+            <h2>Close the paths before they&apos;re walked.</h2>
+            <div>
+              <Link to={enter} className="lp-run lp-footer-btn">
+                {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+          </div>
+          <div className="lp-footer-grid">
+            <div className="lp-footer-brand" ref={megaRef}>
+              <div className={`lp-footer-logo${megaIn ? " in" : ""}`}>
+                <HorseMark size={34} />
+                <Wordmark height={30} shimmer deep />
+              </div>
+              <p>Map the paths attackers would take, and close them before they do.</p>
+            </div>
+            {FOOTER_LINKS.map((col) => (
+              <nav key={col.title} aria-label={col.title}>
+                <h5>{col.title}</h5>
+                {col.links.map(([label, href]) =>
+                  href.startsWith("/") ? (
+                    <Link key={label} to={href}>{label}</Link>
+                  ) : (
+                    <a key={label} href={href} {...(href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}>{label}</a>
+                  ),
+                )}
+              </nav>
+            ))}
+          </div>
+        </div>
       </footer>
     </div>
   );
