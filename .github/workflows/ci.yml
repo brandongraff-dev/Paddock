@@ -240,15 +240,23 @@ jobs:
           python-version: "3.12"
       - run: pip install -r docs/requirements.txt
       - run: mkdocs build --strict
+
+  # --------------------------------------------------------------------- #
   # Deploy artefacts: Helm chart (lint + template in 4 profiles +
   # kubeconform + hardening invariants), Prometheus rules (promtool check +
   # unit tests), Grafana dashboard JSON, compose file syntax.
+  # --------------------------------------------------------------------- #
   deploy:
     name: deploy (helm + kubeconform + promtool)
+    runs-on: ubuntu-latest
+    env:
       HELM_VERSION: v3.16.4
       KUBECONFORM_VERSION: v0.6.7
       PROM_VERSION: 2.53.3
+    steps:
+      - uses: actions/checkout@v4
       - name: Install helm, kubeconform, promtool
+        run: |
           set -euo pipefail
           mkdir -p "$HOME/bin" && cd "$(mktemp -d)"
           curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz
@@ -262,6 +270,7 @@ jobs:
         run: bash deploy/helm/ci-check.sh
       - name: Prometheus rules
         working-directory: deploy/prometheus
+        run: |
           promtool check rules paddock-alerts.yml
           promtool test rules paddock-alerts.test.yml
       - name: Grafana dashboard is valid JSON
