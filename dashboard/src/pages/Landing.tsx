@@ -1,7 +1,7 @@
-import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
+import PixelField from "../brand/PixelField";
 import { useAuth } from "../state/auth";
 import "../styles/landing.css";
 
@@ -72,47 +72,15 @@ const RULES = [
   ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited."],
 ];
 
-/** Deterministic blocky "pixel mosaic" for the sky, as in a broken plate. */
-function useSkyBlocks(n = 70) {
-  return useMemo(() => {
-    let s = 7;
-    const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-    return Array.from({ length: n }, () => {
-      const size = 3 + Math.floor(rnd() * 9);
-      return {
-        x: Math.floor(rnd() * 100),
-        y: Math.floor(rnd() * 26),
-        w: size * (1 + Math.floor(rnd() * 3)),
-        h: size,
-        o: 0.03 + rnd() * 0.09,
-        l: rnd() > 0.5,
-      };
-    });
-  }, [n]);
-}
-
 export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
-  const blocks = useSkyBlocks();
 
   return (
     <div className="lp">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <svg className="lp-blocks" viewBox="0 0 100 60" preserveAspectRatio="none">
-            {blocks.map((b, i) => (
-              <rect
-                key={i}
-                x={b.x}
-                y={b.y}
-                width={b.w / 4}
-                height={b.h / 4}
-                fill={b.l ? "#d9d0c2" : "#2a2520"}
-                opacity={b.o}
-              />
-            ))}
-          </svg>
+          <PixelField className="lp-pixels" />
         </div>
         <div className="lp-grain" aria-hidden="true" />
 

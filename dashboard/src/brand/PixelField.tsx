@@ -1,0 +1,169 @@
+import { useEffect, useRef } from "react";
+
+/**
+ * PixelField — a dithered dot-matrix aurora.
+ *
+ * A diagonal band of light (patina blue → pale cream → ember → sepia black)
+ * is sampled on a coarse grid; every cell is quantised through an ordered
+ * (Bayer) threshold plus per-cell noise, so the gradient dissolves into
+ * speckled pixels, the way a halftone plate breaks at its edges. Colours come
+ * from the Daguerreotype tokens, not neon.
+ */
+
+const BAYER8 = [
+  [0, 32, 8, 40, 2, 34, 10, 42],
+  [48, 16, 56, 24, 50, 18, 58, 26],
+  [12, 44, 4, 36, 14, 46, 6, 38],
+  [60, 28, 52, 20, 62, 30, 54, 22],
+  [3, 35, 11, 43, 1, 33, 9, 41],
+  [51, 19, 59, 27, 49, 17, 57, 25],
+  [15, 47, 7, 39, 13, 45, 5, 37],
+  [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+type RGB = [number, number, number];
+
+/** Colour ramp across the band: position 0 (blue edge) … 1 (ember edge). */
+const RAMP: { at: number; c: RGB }[] = [
+  { at: 0.0, c: [18, 16, 14] },
+  { at: 0.18, c: [48, 82, 108] },
+  { at: 0.34, c: [95, 135, 160] },
+  { at: 0.46, c: [182, 211, 227] },
+  { at: 0.54, c: [236, 222, 196] },
+  { at: 0.64, c: [233, 160, 110] },
+  { at: 0.78, c: [213, 73, 60] },
+  { at: 0.92, c: [92, 28, 22] },
+  { at: 1.0, c: [18, 16, 14] },
+];
+
+function ramp(t: number): RGB {
+  if (t <= 0) return RAMP[0].c;
+  for (let i = 1; i < RAMP.length; i++) {
+    if (t <= RAMP[i].at) {
+      const a = RAMP[i - 1];
+      const b = RAMP[i];
+      const k = (t - a.at) / (b.at - a.at);
+      return [
+        a.c[0] + (b.c[0] - a.c[0]) * k,
+        a.c[1] + (b.c[1] - a.c[1]) * k,
+        a.c[2] + (b.c[2] - a.c[2]) * k,
+      ];
+    }
+  }
+  return RAMP[RAMP.length - 1].c;
+}
+
+/** Cheap deterministic hash → [0,1). */
+function hash(x: number, y: number): number {
+  let h = (x * 374761393 + y * 668265263) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return (((h ^ (h >>> 16)) >>> 0) % 100000) / 100000;
+}
+
+/** Smooth value noise for warping the band. */
+function vnoise(x: number, y: number): number {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const xf = x - xi;
+  const yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf);
+  const v = yf * yf * (3 - 2 * yf);
+  const a = hash(xi, yi);
+  const b = hash(xi + 1, yi);
+  const c = hash(xi, yi + 1);
+  const d = hash(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+interface Props {
+  /** Grid cell in CSS px (dot pitch). */
+  cell?: number;
+  /** Animate a slow drift. Ignored under prefers-reduced-motion. */
+  animate?: boolean;
+  className?: string;
+}
+
+export default function PixelField({ cell = 5, animate = true, className }: Props) {
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return; // jsdom / no canvas: the CSS fallback gradient shows instead
+
+    const reduce =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0;
+    let last = 0;
+    let t0 = 0;
+
+    const paint = (time: number) => {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      if (!w || !h) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "#0e0c0a";
+      ctx.fillRect(0, 0, w, h);
+
+      const cols = Math.ceil(w / cell);
+      const rows = Math.ceil(h / cell);
+      const drift = time * 0.00004;
+      const dot = Math.max(1, cell - 1.4);
+
+      for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+          const nx = i / cols;
+          const ny = j / rows;
+          // Band axis runs from upper-left to lower-right, ~28° off horizontal.
+          const along = nx * 0.88 + ny * 1.1;
+          const across = nx * -0.5 + ny * 1.0 - 0.18;
+          const warp = (vnoise(i * 0.045 + drift * 90, j * 0.06) - 0.5) * 0.22;
+          // Band centre line fades as it travels; width tapers toward the right.
+          const profile = across + warp - 0.12 * Math.sin(along * 2.4 + drift * 60);
+          const tt = 0.5 + profile * 1.9;
+          if (tt <= 0 || tt >= 1) continue;
+          // Brightness envelope: strong on the left, dying out to the right.
+          const fade = Math.max(0, 1 - along * 0.62);
+          const env = Math.sin(tt * Math.PI) * fade;
+          // Ordered dither + noise decides whether this dot lights at all.
+          const thr =
+            (BAYER8[j & 7][i & 7] / 64) * 0.55 + hash(i, j) * 0.45;
+          const lit = env * 1.25 - thr * 0.55;
+          if (lit <= 0.02) continue;
+          const [r, g, b] = ramp(tt);
+          const k = Math.min(1, lit * 1.5);
+          ctx.fillStyle = `rgb(${(r * k) | 0},${(g * k) | 0},${(b * k) | 0})`;
+          ctx.fillRect(i * cell, j * cell, dot, dot);
+        }
+      }
+    };
+
+    const loop = (now: number) => {
+      if (!t0) t0 = now;
+      if (now - last > 66) {
+        paint(now - t0);
+        last = now;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+
+    paint(0);
+    const onResize = () => paint(last ? last - t0 : 0);
+    window.addEventListener("resize", onResize);
+    if (animate && !reduce) raf = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [cell, animate]);
+
+  return <canvas ref={ref} className={className} aria-hidden="true" />;
+}
