@@ -52,6 +52,8 @@ EVENT_TYPES: dict[str, str] = {
     "scan.failed": "A scan failed",
     "report.digest": "The scheduled digest is ready",
     "integration.test": "A test event sent from the Integrations page",
+    "sensor.offline": "A Sentry sensor stopped reporting",
+    "sensor.online": "A silent Sentry sensor is reporting again",
 }
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")

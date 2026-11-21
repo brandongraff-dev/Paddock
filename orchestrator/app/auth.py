@@ -561,6 +561,16 @@ _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
 _rule("GET", r"/v1/export/(findings\.ocsf|sarif|sbom|vex)", "read")
 _rule("POST", r"/v1/import/(sbom|lockfiles)", "scan")
 
+# --- Sentry sensors (schema 034) -------------------------------------------- #
+# Sensor-facing: authenticated in-handler by the enrollment token / sensor
+# credential (rate limited, hashed at rest), not by a principal.
+_rule("POST", r"/v1/sensors/(enroll|heartbeat)", None)
+# otdiscovery (service key) brackets each upload with claim/done.
+_rule("POST", r"/v1/sensors/ingest/(claim|done)", "write")
+# Token metadata is admin-only; the rest of GET /v1/sensors falls to `read`,
+# every write to the deny-closed `admin` default.
+_rule("GET", r"/v1/sensors/tokens", "admin")
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.

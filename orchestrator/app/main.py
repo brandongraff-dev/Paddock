@@ -63,6 +63,8 @@ from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
 from .reports import router as reports_router
 from .scheduler import scheduler_loop
+from . import sensors as sensors_svc
+from .routers import sensors as sensors_router
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +122,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler_task = asyncio.create_task(scheduler_loop(app))
         app.state.scheduler_task = scheduler_task
 
+    # Sentry liveness: flags silent sensors and emits sensor.offline/online.
+    sensor_task: asyncio.Task | None = asyncio.create_task(sensors_svc.monitor_loop(app))
+
     try:
         yield
     finally:
-        for task in (scheduler_task, anchor_task):
+        for task in (scheduler_task, anchor_task, sensor_task):
             if task is None:
                 continue
             task.cancel()
@@ -273,6 +278,7 @@ def create_app() -> FastAPI:
     # Fleet agents + gated enforcement, auto-remediation, IoT/OT devices
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
+    app.include_router(sensors_router.router)
     app.include_router(remediation_router.router)
     # Two-way ticketing: inbound callbacks from Jira / ServiceNow / Linear.
     app.include_router(integrations_inbound_router.router)
