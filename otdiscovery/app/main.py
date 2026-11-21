@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hmac
 import logging
 import signal
 from typing import Any, Optional
@@ -105,32 +106,36 @@ class OtDiscoveryService:
             "service": self.engine.stats,
             "passive_only": PASSIVE_ONLY,
             "observations_stored": len(self.engine.observations),
+            "sensors": self.engine.sensors,
+            "segment_matrix": self.engine.last_segment_matrix,
             "last_active_probe_attempts_to_devices": len(self.engine.last_guard_violations),
         })
 
-    async def _read_input(self, req: web.Request) -> tuple[Optional[bytes], Optional[list[Any]], Optional[web.Response]]:
-        """Return (pcap_bytes, observations, error_response)."""
+    async def _read_input(
+        self, req: web.Request
+    ) -> tuple[Optional[bytes], Optional[list[Any]], Optional[web.Response], Optional[dict[str, Any]]]:
+        """Return (pcap_bytes, observations, error_response, sensor_envelope)."""
         ctype = (req.headers.get("Content-Type") or "").lower()
         raw = await req.read()
         if len(raw) > self.cfg.max_capture_bytes:
             return None, None, web.json_response(
-                {"error": "capture too large"}, status=413)
+                {"error": "capture too large"}, status=413), None
 
         # Raw pcap upload (octet-stream, or a body that is literally a pcap).
         if pcap.looks_like_pcap(raw):
-            return raw, None, None
+            return raw, None, None, None
 
         if "application/json" in ctype or raw[:1] in (b"{", b"["):
             try:
                 body = await req.json()
             except Exception:
                 return None, None, web.json_response(
-                    {"error": "invalid JSON body"}, status=400)
+                    {"error": "invalid JSON body"}, status=400), None
             if isinstance(body, list):
-                return None, body, None
+                return None, body, None, None
             if not isinstance(body, dict):
                 return None, None, web.json_response(
-                    {"error": "body must be a JSON object or array"}, status=400)
+                    {"error": "body must be a JSON object or array"}, status=400), None
             pcap_bytes: Optional[bytes] = None
             b64 = body.get("pcap_base64") or body.get("pcap")
             if isinstance(b64, str) and b64:
@@ -138,26 +143,42 @@ class OtDiscoveryService:
                     pcap_bytes = base64.b64decode(b64, validate=False)
                 except (binascii.Error, ValueError):
                     return None, None, web.json_response(
-                        {"error": "pcap_base64 is not valid base64"}, status=400)
+                        {"error": "pcap_base64 is not valid base64"}, status=400), None
+            sensor = body.get("sensor") if isinstance(body.get("sensor"), dict) else None
             observations = body.get("observations")
             if observations is not None and not isinstance(observations, list):
                 return None, None, web.json_response(
-                    {"error": "observations must be a list"}, status=400)
+                    {"error": "observations must be a list"}, status=400), None
             if pcap_bytes is None and not observations:
                 return None, None, web.json_response(
-                    {"error": "provide pcap_base64 and/or observations"}, status=400)
-            return pcap_bytes, observations, None
+                    {"error": "provide pcap_base64 and/or observations"}, status=400), None
+            return pcap_bytes, observations, None, sensor
 
         # Fall back: treat the raw body as pcap bytes if non-empty.
         if raw:
-            return raw, None, None
-        return None, None, web.json_response({"error": "empty body"}, status=400)
+            return raw, None, None, None
+        return None, None, web.json_response({"error": "empty body"}, status=400), None
+
+    def _authorized(self, req: web.Request) -> bool:
+        tokens = self.cfg.sentry_tokens
+        if not tokens:
+            return True
+        auth = req.headers.get("Authorization", "")
+        presented = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        return any(hmac.compare_digest(presented.encode(), t.encode()) for t in tokens)
 
     async def _handle_ingest(self, req: web.Request) -> web.Response:
         assert self.engine is not None
-        pcap_bytes, observations, err = await self._read_input(req)
+        if self.cfg.require_sentry_token and not self.cfg.sentry_tokens:
+            return web.json_response(
+                {"error": "sensor ingest is disabled: set SENTRY_TOKENS (comma-separated) "
+                          "and give each Sentry one of them"}, status=503)
+        if not self._authorized(req):
+            return web.json_response({"error": "invalid or missing sensor token"}, status=401)
+        pcap_bytes, observations, err, sensor = await self._read_input(req)
         if err is not None:
             return err
+        self.engine.note_sensor(sensor)
         replace = req.query.get("replace", "").lower() in ("1", "true", "yes")
         try:
             result = await self.engine.ingest(

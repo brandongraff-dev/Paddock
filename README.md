@@ -45,6 +45,10 @@ Around that core it also gives you:
   and dependency reachability (detection only).
 - **Threat-intel:** STIX 2.1 / TAXII 2.1 IOC ingest, matched defensively against
   your own assets and findings.
+- **Inside the network (Paddock Sentry):** a listen-only sensor on a mirror
+  port identifies every IoT/OT device and flags devices that scan, cross
+  segments, phone home from OT, or start behaving unlike their model
+  ([guide](docs/SENTRY.md)).
 - **Adaptive risk:** an ML risk ranker and anomaly detector (cold-start — see
   [Status](#status-honest)), surface-change tracking, owner routing + ticketing.
 - **Governance built in:** auth (API keys + JWT), RBAC + ABAC classification
@@ -273,8 +277,9 @@ away from people who run it themselves.
   tests + integration harness, and the "tests never touch a live DB" rule.
 - **Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - **Docs:** [`docs/`](docs/) — architecture, inter-service contracts, per-service
-  notes, the [product vision](docs/VISION.md), and the
-  [cloud roadmap](docs/CLOUD_ROADMAP.md).
+  notes, the [product vision](docs/VISION.md), the
+  [cloud roadmap](docs/CLOUD_ROADMAP.md), [commercial readiness](docs/READINESS.md),
+  and the [Sentry sensor guide](docs/SENTRY.md).
 - **Chat:** Discord — *link coming at launch* (badge above is a placeholder).
 
 Issues and PRs welcome. If you're here from r/netsec: the

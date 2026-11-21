@@ -61,6 +61,8 @@ jobs:
           - { service: graphsync,       path: graphsync,       extra: test }
           - { service: worker-passive,  path: workers/passive, extra: test }
           - { service: worker-active,   path: workers/active,  extra: dev }
+          - { service: otdiscovery,     path: otdiscovery,     extra: test }
+          - { service: sentry,          path: sentry,          extra: test }
 
     services:
       postgres:

@@ -419,9 +419,16 @@ services:
       DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
       ORCHESTRATOR_URL: http://orchestrator:8080
       OTDISCOVERY_HTTP_PORT: "8101"
+      # Paddock Sentry sensors post here. Fail closed until tokens are set.
+      SENTRY_TOKENS: ${SENTRY_TOKENS:-}
+      REQUIRE_SENTRY_TOKEN: "true"
+      BASELINE_PATH: /var/lib/otdiscovery/baselines.json
+    ports: ["8101:8101"]
+    volumes:
+      - otdiscovery_data:/var/lib/otdiscovery
     tmpfs:
       - /tmp
-    networks: [internal]
+    networks: [internal, edge]
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
@@ -451,6 +458,7 @@ services:
       start_period: 30s
 
 volumes:
+  otdiscovery_data:
   pg_data:
   neo4j_data:
   neo4j_logs:

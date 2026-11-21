@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 from . import active_probe_guard, pcap
 from .config import Config
+from . import behavior
 from .cvematch import match_devices
 from .db import Database
 from .exposure import ExposureResult, analyze as analyze_exposure
@@ -157,6 +158,9 @@ class DiscoveryEngine:
         self.db = db
         self.orch = orch
         self.observations: list[dict[str, Any]] = []
+        self.baselines = behavior.BaselineStore(cfg.baseline_path)
+        self.sensors: dict[str, dict[str, Any]] = {}
+        self.last_segment_matrix: list[dict[str, Any]] = []
         self.last_inventory: list[Device] = []
         self.last_guard_attempts: list[str] = []
         self.last_guard_violations: list[str] = []
@@ -189,11 +193,43 @@ class DiscoveryEngine:
             self.observations = parsed
         else:
             self.observations.extend(parsed)
+        self._prune()
         self.stats["ingests"] += 1
         self.stats["observations_stored"] = len(self.observations)
         result = await self._run(self.observations)
         result["observations_ingested"] = len(parsed)
         return result
+
+    def note_sensor(self, sensor: dict[str, Any] | None) -> None:
+        if not isinstance(sensor, dict) or not sensor.get("id"):
+            return
+        sid = str(sensor["id"])[:128]
+        rec = self.sensors.setdefault(sid, {"batches": 0})
+        rec.update({
+            "site": sensor.get("site"), "version": sensor.get("version"),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "last_window": sensor.get("window"),
+        })
+        rec["batches"] += 1
+
+    def _prune(self) -> None:
+        """Bound memory: flows age out; then cap the store, oldest flows first.
+        Announcements/OT samples (identity evidence) are kept preferentially."""
+        flows = [o for o in self.observations if o.get("kind") == "flow"]
+        if flows:
+            newest = max(float(o.get("last_seen") or 0) for o in flows)
+            horizon = newest - self.cfg.flow_retention_s
+            self.observations = [
+                o for o in self.observations
+                if o.get("kind") != "flow" or float(o.get("last_seen") or 0) >= horizon
+            ]
+        excess = len(self.observations) - self.cfg.max_observations
+        if excess > 0:
+            idx = [i for i, o in enumerate(self.observations) if o.get("kind") == "flow"][:excess]
+            drop = set(idx)
+            self.observations = [o for i, o in enumerate(self.observations) if i not in drop]
+            if len(self.observations) > self.cfg.max_observations:
+                self.observations = self.observations[-self.cfg.max_observations:]
 
     async def analyze(self) -> dict[str, Any]:
         self.stats["analyses"] += 1
@@ -217,11 +253,35 @@ class DiscoveryEngine:
         edge_resp: dict[str, Any] = {}
         finding_resp: dict[str, Any] = {}
 
+        flows = [o for o in observations if o.get("kind") == "flow"]
+        behav = behavior.analyze(
+            devices, flows,
+            params=behavior.BehaviorParams(
+                window_s=self.cfg.behavior_window_s, scan_hosts=self.cfg.scan_hosts,
+                scan_ports=self.cfg.scan_ports, learn_s=self.cfg.baseline_learn_s,
+                v4_prefix=self.cfg.ipv4_segment_prefix, v6_prefix=self.cfg.ipv6_segment_prefix,
+            ),
+            baselines=self.baselines,
+        )
+        self.last_segment_matrix = behav.segment_matrix
+
         with active_probe_guard(device_ips) as guard:
             cve_findings = await match_devices(devices, self._cve_fetch)
-            findings = exposure.findings + cve_findings
+            findings = exposure.findings + cve_findings + behav.findings
 
             assets, edges = project_assets(devices, exposure)
+            # Segments that only appear in observed traffic still need a node
+            # for the reachability edges to attach to.
+            known_segs = {a["value"] for a in assets if a["kind"] == "network_segment"}
+            for cell in behav.segment_matrix:
+                for cidr in (cell["from"], cell["to"]):
+                    if cidr not in known_segs:
+                        known_segs.add(cidr)
+                        assets.append({"kind": "network_segment", "value": cidr,
+                                       "source": "otdiscovery", "confidence": 60,
+                                       "metadata": {"cidr": cidr, "classification": "unknown",
+                                                    "observed_only": True, "passive": True}})
+            edges = edges + behav.edges
             if self.orch is not None:
                 asset_resp = await self.orch.bulk_assets(assets)
                 if edges:
@@ -258,6 +318,9 @@ class DiscoveryEngine:
             "ot_it_violations": exposure.ot_it_violations,
             "ot_public_exposures": exposure.ot_public,
             "cve_matches": len(cve_findings),
+            "behavior_findings": len(behav.findings),
+            "behavior": behav.stats,
+            "segment_matrix": behav.segment_matrix,
             "findings_total": len(findings),
             "findings_posted": posted_findings,
             "assets_projected": len([d for d in devices if d.is_device])

@@ -81,6 +81,23 @@ class Config:
     # Behaviour
     log_level: str = field(default_factory=lambda: (_env("LOG_LEVEL", "INFO") or "INFO").upper())
 
+    # --- Sentry sensors + behaviour analytics ---------------------------- #
+    # Comma-separated bearer tokens accepted on /ingest. Unset = open ingest
+    # (dev only: anything on the network could feed observations).
+    sentry_tokens: tuple[str, ...] = field(default_factory=lambda: tuple(
+        t.strip() for t in (_env("SENTRY_TOKENS", "") or "").split(",") if t.strip()))
+    # Hardened deployments set this: with no tokens configured, /ingest then
+    # refuses everything (fail closed) instead of accepting anonymous data.
+    require_sentry_token: bool = field(default_factory=lambda: _env_bool("REQUIRE_SENTRY_TOKEN", False))
+    # Flows older than this (relative to the newest) are dropped from memory.
+    flow_retention_s: int = field(default_factory=lambda: _env_int("FLOW_RETENTION_S", 3600))
+    max_observations: int = field(default_factory=lambda: _env_int("MAX_OBSERVATIONS", 200_000))
+    behavior_window_s: int = field(default_factory=lambda: _env_int("BEHAVIOR_WINDOW_S", 900))
+    baseline_learn_s: int = field(default_factory=lambda: _env_int("BASELINE_LEARN_S", 7 * 86400))
+    baseline_path: str | None = field(default_factory=lambda: _env("BASELINE_PATH"))
+    scan_hosts: int = field(default_factory=lambda: _env_int("SCAN_HOSTS", 16))
+    scan_ports: int = field(default_factory=lambda: _env_int("SCAN_PORTS", 24))
+
 
 def load() -> Config:
     return Config()

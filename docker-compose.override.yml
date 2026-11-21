@@ -63,3 +63,9 @@ services:
 
   correlation:
     ports: ["127.0.0.1:8091:8091"]
+
+  # Sentry ingest: open in dev (no token), and only on loopback.
+  otdiscovery:
+    ports: !override ["127.0.0.1:8101:8101"]
+    environment:
+      REQUIRE_SENTRY_TOKEN: "false"

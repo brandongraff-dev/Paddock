@@ -1,0 +1,30 @@
+# /etc/systemd/system/paddock-sentry.service
+#   sudo cp paddock-sentry.service /etc/systemd/system/
+#   sudo systemctl edit paddock-sentry   # set PADDOCK_SERVER / PADDOCK_SENTRY_TOKEN / interface
+#   sudo systemctl enable --now paddock-sentry
+[Unit]
+Description=Paddock Sentry passive network sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=PADDOCK_SERVER=https://paddock.example:8101
+Environment=PADDOCK_SENTRY_TOKEN=replace-me
+Environment=PADDOCK_SENTRY_IFACE=eth1
+Environment=PADDOCK_SITE=main-office
+ExecStart=/usr/local/bin/paddock-sentry run --iface ${PADDOCK_SENTRY_IFACE}
+Restart=always
+RestartSec=5
+# Least privilege: capture only, nothing else.
+DynamicUser=yes
+StateDirectory=paddock-sentry
+Environment=PADDOCK_SENTRY_OUTBOX=/var/lib/paddock-sentry/outbox
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

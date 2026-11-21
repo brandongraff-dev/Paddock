@@ -18,7 +18,9 @@ COPY app ./app
 EXPOSE 8101
 
 # Non-root user.
-RUN useradd --system --home /srv/otdiscovery otdisc && chown -R otdisc:otdisc /srv/otdiscovery
+RUN useradd --system --home /srv/otdiscovery otdisc \
+    && mkdir -p /var/lib/otdiscovery \
+    && chown -R otdisc:otdisc /srv/otdiscovery /var/lib/otdiscovery
 USER otdisc
 
 CMD ["python", "-m", "app.main"]
