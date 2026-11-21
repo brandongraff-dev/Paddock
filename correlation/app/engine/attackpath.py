@@ -36,6 +36,7 @@ import time
 from decimal import Decimal
 from typing import Any, Optional
 
+from .. import tenancy
 from ..db import Database
 from .policy import UnsafeRuleError, validate_narrative_text
 
@@ -616,7 +617,7 @@ class AttackPathEngine:
                           $1::uuid, $2::uuid, $3::jsonb, $4, $5::numeric,
                           $6::numeric, $7, $8, $9, $10, $11, NOW(), $12::jsonb
                         )
-                        ON CONFLICT (fingerprint) DO UPDATE SET
+                        ON CONFLICT (tenant_id, fingerprint) DO UPDATE SET
                           source_asset_id = EXCLUDED.source_asset_id,
                           target_asset_id = EXCLUDED.target_asset_id,
                           hops            = EXCLUDED.hops,
@@ -673,7 +674,7 @@ class AttackPathEngine:
             try:
                 await self._redis.xadd(
                     self._events_stream,
-                    {"event": json.dumps(event, default=str)},
+                    {"event": json.dumps(tenancy.stamp_event(event), default=str)},
                 )
             except Exception:
                 log.exception("failed to publish attack_path_found event")

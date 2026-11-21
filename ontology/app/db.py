@@ -20,6 +20,8 @@ from typing import Any, AsyncIterator
 
 import asyncpg
 
+from . import tenancy
+
 from . import types as T
 
 log = logging.getLogger(__name__)
@@ -59,6 +61,7 @@ class Database:
             init=_init_connection,
             command_timeout=120,
         )
+        await tenancy.check_role(self._pool)
         log.info("db: pool connected (%s/%s)", self._min, self._max)
 
     async def close(self) -> None:
@@ -74,8 +77,20 @@ class Database:
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[asyncpg.Connection]:
+        """A pooled connection inside a transaction that carries the current
+        tenant (``set_config('app.tenant_id', ..., true)``): row-level security
+        pins every statement to it and nothing outlives the transaction."""
         async with self.pool.acquire() as conn:
-            yield conn
+            async with tenancy.scoped(conn):
+                yield conn
+
+    @asynccontextmanager
+    async def acquire_platform(self) -> AsyncIterator[asyncpg.Connection]:
+        """Like :meth:`acquire` but as the platform tenant: the only tenant
+        allowed to write global catalogues (``@paddock:global`` tables)."""
+        with tenancy.platform_context():
+            async with self.acquire() as conn:
+                yield conn
 
     async def ping(self) -> bool:
         try:

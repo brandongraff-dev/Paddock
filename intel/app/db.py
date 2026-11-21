@@ -13,6 +13,8 @@ from typing import Any, AsyncIterator, Iterable
 
 import asyncpg
 
+from . import tenancy
+
 log = logging.getLogger(__name__)
 
 
@@ -51,6 +53,7 @@ class Database:
             init=_init_connection,
             command_timeout=60,
         )
+        await tenancy.check_role(self._pool)
         log.info("db: pool connected (%s/%s)", self._min, self._max)
 
     async def close(self) -> None:
@@ -66,8 +69,20 @@ class Database:
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[asyncpg.Connection]:
+        """A pooled connection inside a transaction that carries the current
+        tenant (``set_config('app.tenant_id', ..., true)``): row-level security
+        pins every statement to it and nothing outlives the transaction."""
         async with self.pool.acquire() as conn:
-            yield conn
+            async with tenancy.scoped(conn):
+                yield conn
+
+    @asynccontextmanager
+    async def acquire_platform(self) -> AsyncIterator[asyncpg.Connection]:
+        """Like :meth:`acquire` but as the platform tenant: the only tenant
+        allowed to write global catalogues (``@paddock:global`` tables)."""
+        with tenancy.platform_context():
+            async with self.acquire() as conn:
+                yield conn
 
     async def ping(self) -> bool:
         try:
@@ -110,7 +125,7 @@ class Database:
            OR EXCLUDED.modified_at >= cves.modified_at
         RETURNING xmax = 0 AS inserted
         """
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:
             row = await conn.fetchrow(
                 sql,
                 record["id"],
@@ -128,7 +143,7 @@ class Database:
 
     async def update_epss(self, cve_id: str, epss: float, percentile: float) -> bool:
         """Update EPSS score. UPDATE-only — won't insert unknown CVEs."""
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:
             result = await conn.execute(
                 """
                 UPDATE cves
@@ -142,7 +157,7 @@ class Database:
         return result.endswith(" 1")
 
     async def mark_kev(self, cve_id: str, added_at: datetime | None) -> bool:
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:
             result = await conn.execute(
                 """
                 UPDATE cves
@@ -231,7 +246,7 @@ class Database:
         last_cursor: str | None = None,
         stats: dict[str, Any] | None = None,
     ) -> None:
-        async with self.acquire() as conn:
+        async with self.acquire_platform() as conn:
             await conn.execute(
                 """
                 INSERT INTO intel_cursors (source, last_synced, last_cursor, stats)

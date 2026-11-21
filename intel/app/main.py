@@ -22,6 +22,7 @@ import aiohttp
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from .db import Database
 from .orchestrator import OrchestratorClient
 from .sources import nvd as nvd_source
@@ -138,11 +139,16 @@ class IntelService:
     async def run_linker(self) -> dict[str, Any]:
         assert self.orch is not None
         async with self._sync_locks["linker"]:
-            res = await linker_module.run_all(
-                self.db,
-                self.orch,
-                min_finding_confidence=self.cfg.finding_min_confidence,
-            )
+            # Matching is per tenant (cve_matches are tenant rows, assets come
+            # from the orchestrator in that tenant); the CVE feed itself is global.
+            res = tenancy.merge_counts(await tenancy.run_for_request_or_all(
+                self.db.pool,
+                lambda: linker_module.run_all(
+                    self.db,
+                    self.orch,
+                    min_finding_confidence=self.cfg.finding_min_confidence,
+                ),
+            ))
         self.stats["linker"] = {
             "last_run": datetime.now(timezone.utc).isoformat(),
             **res,
@@ -242,15 +248,21 @@ class IntelService:
         asset_id = payload.get("asset_id")
         if not asset_id or self.orch is None:
             return
-        asset = await self.orch.get_asset(asset_id)
-        if not asset:
-            return
-        await linker_module.match_one_asset(
-            self.db,
-            self.orch,
-            asset,
-            min_finding_confidence=self.cfg.finding_min_confidence,
-        )
+        try:
+            # The event names its tenant: everything below (the orchestrator
+            # lookup AND the cve_matches write) runs as that tenant.
+            with tenancy.bind_event(payload):
+                asset = await self.orch.get_asset(asset_id)
+                if not asset:
+                    return
+                await linker_module.match_one_asset(
+                    self.db,
+                    self.orch,
+                    asset,
+                    min_finding_confidence=self.cfg.finding_min_confidence,
+                )
+        except tenancy.TenantError as exc:
+            log.warning("dropping asset_added event without a usable tenant: %s", exc)
 
     # ------------------------------------------------------------------
     # HTTP
@@ -298,7 +310,7 @@ class IntelService:
         })
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),

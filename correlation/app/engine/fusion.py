@@ -41,6 +41,7 @@ from collections import deque
 from decimal import Decimal
 from typing import Any, Optional
 
+from .. import tenancy
 from ..db import Database
 # REUSE the existing narrative safety guard + severity ranking from the
 # attack-path engine rather than reimplementing them.
@@ -585,7 +586,7 @@ class FusionEngine:
             try:
                 await self._redis.xadd(
                     self._events_stream,
-                    {"event": json.dumps(event, default=str)},
+                    {"event": json.dumps(tenancy.stamp_event(event), default=str)},
                 )
             except Exception:
                 log.exception("failed to publish chain_detected (fusion) event")

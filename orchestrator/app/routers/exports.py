@@ -525,7 +525,7 @@ def _check_project_name(name: Optional[str]) -> str:
 _UPSERT_PROJECT = """
     INSERT INTO sca_projects (name, source_ref, ecosystems, last_scanned)
     VALUES ($1, $2, $3::text[], NOW())
-    ON CONFLICT (name) DO UPDATE SET
+    ON CONFLICT (tenant_id, name) DO UPDATE SET
         source_ref   = COALESCE(EXCLUDED.source_ref, sca_projects.source_ref),
         ecosystems   = (SELECT ARRAY(SELECT DISTINCT unnest(sca_projects.ecosystems || EXCLUDED.ecosystems) ORDER BY 1)),
         last_scanned = NOW()
