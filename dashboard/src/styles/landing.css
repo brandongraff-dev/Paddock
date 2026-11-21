@@ -210,7 +210,7 @@
 .lp-rail.in .lp-card:nth-child(2) { transition-delay: 120ms, 120ms, 0s; }
 .lp-rail.in .lp-card:nth-child(3) { transition-delay: 240ms, 240ms, 0s; }
 .lp-rail.in .lp-card:nth-child(4) { transition-delay: 360ms, 360ms, 0s; }
-.lp-rail.in .lp-card:hover { transform: translateY(-8px); transition-delay: 0s; box-shadow: 0 50px 80px -34px rgba(0, 0, 0, 0.95), 0 0 90px -28px var(--tone); }
+.lp-rail.in .lp-card:hover { transform: translateY(-8px); transition-delay: 0s; box-shadow: 0 50px 80px -34px rgba(0, 0, 0, 0.95), 0 0 60px -34px var(--tone); }
 .tone-sepia { --tone: #d3a97f; }
 .tone-ash { --tone: #c4beb2; }
 .tone-patina { --tone: #9fc2d8; }
