@@ -80,10 +80,12 @@ interface Props {
   cell?: number;
   /** Animate a slow drift. Ignored under prefers-reduced-motion. */
   animate?: boolean;
+  /** Slide the band horizontally (fraction of width; negative = rightwards). */
+  originX?: number;
   className?: string;
 }
 
-export default function PixelField({ cell = 5, animate = true, className }: Props) {
+export default function PixelField({ cell = 5, animate = true, originX = 0, className }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -119,7 +121,7 @@ export default function PixelField({ cell = 5, animate = true, className }: Prop
 
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
-          const nx = i / cols;
+          const nx = i / cols - originX;
           const ny = j / rows;
           // Band axis runs from upper-left to lower-right, ~28° off horizontal.
           const along = nx * 0.88 + ny * 1.1;
@@ -163,7 +165,7 @@ export default function PixelField({ cell = 5, animate = true, className }: Prop
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", onResize);
     };
-  }, [cell, animate]);
+  }, [cell, animate, originX]);
 
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
