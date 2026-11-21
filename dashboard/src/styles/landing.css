@@ -28,8 +28,14 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  /* keep the headline legible: the field dims toward the bottom and right edge */
-  mask-image: linear-gradient(180deg, #000 0%, #000 62%, transparent 100%);
+}
+/* fade to the page colour with an overlay: far cheaper than a mask on an animated canvas */
+.lp-sky::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, transparent 62%, #0e0c0a 100%);
 }
 .lp-pixels { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .lp-blocks {
@@ -45,8 +51,7 @@
   z-index: 3;
   pointer-events: none;
   background-image: var(--grain);
-  opacity: 0.22;
-  mix-blend-mode: overlay;
+  opacity: 0.06;
 }
 
 .lp-nav {

@@ -44,6 +44,7 @@ export default function GallopTrail({ className }: { className?: string }) {
     ];
 
     const frame = (now: number) => {
+      if (now - last < 32) { raf = requestAnimationFrame(frame); return; } // ~30fps is plenty for dust
       const dt = Math.min(0.05, (now - last) / 1000 || 0.016);
       last = now;
       ctx.clearRect(0, 0, w, h);

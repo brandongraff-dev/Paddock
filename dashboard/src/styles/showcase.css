@@ -39,8 +39,6 @@
 }
 .sc-win.in { opacity: 1; transform: none; }
 .sc-front { transition-delay: 260ms; }
-.sc-win.in.sc-front { animation: sc-float 9s ease-in-out 1.6s infinite; }
-.sc-win.in:not(.sc-front) { animation: sc-float 11s ease-in-out 1.2s infinite reverse; }
 @keyframes sc-float { 50% { transform: translateY(-9px); } }
 
 .sc-frame { position: absolute; top: 0; left: 0; transform-origin: 0 0; display: flex; flex-direction: column; position: relative; color: var(--text-0); font-family: var(--sans); }
@@ -90,7 +88,7 @@
 .sc-trend .sc-area, .sc-trend .sc-end { opacity: 0; }
 .sc-trend.in .sc-stroke { animation: sc-draw 1.8s var(--ease) 0.3s forwards; }
 .sc-trend.in .sc-area { animation: sc-fade 1.2s ease 1.2s forwards; }
-.sc-trend.in .sc-end { animation: sc-fade 0.6s ease 2s forwards, sc-ping 2.4s ease-out 2.2s infinite; transform-box: fill-box; transform-origin: center; }
+.sc-trend.in .sc-end { animation: sc-fade 0.6s ease 2s forwards; }
 @keyframes sc-draw { to { stroke-dashoffset: 0; } }
 @keyframes sc-fade { to { opacity: 1; } }
 @keyframes sc-ping { 0% { filter: drop-shadow(0 0 0 rgba(230,115,80,.7)); } 70%, 100% { filter: drop-shadow(0 0 12px rgba(230,115,80,0)); } }
@@ -109,7 +107,7 @@
 .sc-dim-edge { fill: none; stroke: rgba(236, 226, 208, 0.12); stroke-width: 1.4; stroke-dasharray: 4 5; }
 .sc-edge, .sc-edge-glow { fill: none; stroke: url(#sc-edge); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
 .sc-edge { stroke-width: 2.4; }
-.sc-edge-glow { stroke-width: 9; opacity: 0.22; filter: blur(5px); }
+.sc-edge-glow { stroke-width: 7; opacity: 0.16; }
 .sc-svg.in .sc-edge, .sc-svg.in .sc-edge-glow { animation: sc-draw 0.7s var(--ease) forwards; }
 .sc-node { opacity: 0; }
 .sc-svg.in .sc-node { animation: sc-pop 0.7s var(--ease) forwards; }
@@ -143,3 +141,13 @@
 
 .sc-graph { background: rgba(12, 10, 8, 0.86); }
 .sc-node { transform-box: fill-box; }
+
+/* Performance: inside the product windows the glass is flat translucency (no
+   backdrop blur) and each window is its own paint-contained layer. */
+.sc-win { contain: layout paint; will-change: opacity, transform; }
+.sc-win .panel, .sc-win .stat-tile, .sc-win .stat-tile::before, .sc-win .panel > .panel-h {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.sc-win .panel, .sc-win .stat-tile { background: linear-gradient(160deg, rgba(255,246,232,.06), rgba(255,246,232,0) 45%), rgba(16, 13, 11, 0.62); }
+.sc-win .stat-tile::before, .sc-win .panel > .panel-h { background: linear-gradient(180deg, rgba(255,246,232,.06), rgba(255,246,232,0) 70%), rgba(22, 19, 16, 0.92); }

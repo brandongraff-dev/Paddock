@@ -60,6 +60,10 @@ export function hash(x: number, y: number): number {
   return (((h ^ (h >>> 16)) >>> 0) % 100000) / 100000;
 }
 
+/** Value-noise lattice, built once: lookups replace four hash() calls per sample. */
+const NZ = new Float32Array(256 * 256);
+for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) NZ[y * 256 + x] = hash(x, y);
+
 /** Smooth value noise for warping the band. */
 function vnoise(x: number, y: number): number {
   const xi = Math.floor(x);
@@ -68,11 +72,21 @@ function vnoise(x: number, y: number): number {
   const yf = y - yi;
   const u = xf * xf * (3 - 2 * xf);
   const v = yf * yf * (3 - 2 * yf);
-  const a = hash(xi, yi);
-  const b = hash(xi + 1, yi);
-  const c = hash(xi, yi + 1);
-  const d = hash(xi + 1, yi + 1);
+  const x0 = xi & 255, x1 = (xi + 1) & 255, y0 = (yi & 255) * 256, y1 = ((yi + 1) & 255) * 256;
+  const a = NZ[y0 + x0];
+  const b = NZ[y0 + x1];
+  const c = NZ[y1 + x0];
+  const d = NZ[y1 + x1];
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+/** Colour ramp sampled once into a table. */
+const LUT = new Uint8Array(1024 * 3);
+for (let i = 0; i < 1024; i++) {
+  const [r, g, b] = ramp(i / 1023);
+  LUT[i * 3] = r;
+  LUT[i * 3 + 1] = g;
+  LUT[i * 3 + 2] = b;
 }
 
 interface Props {
@@ -104,6 +118,11 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
     let raf = 0;
     let last = 0;
     let t0 = 0;
+    let small: HTMLCanvasElement | null = null;
+    let smallCtx: CanvasRenderingContext2D | null = null;
+    let img: ImageData | null = null;
+    let THR = new Float32Array(0);
+    let ROWSP = new Float32Array(0);
     // pointer in 0..1 canvas space (smoothed), plus presence 0..1
     const ptr = { x: 0.5, y: 0.5, tx: 0.5, ty: 0.5, on: 0, ton: 0 };
 
@@ -117,16 +136,37 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
         canvas.height = Math.round(h * dpr);
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = "#0e0c0a";
-      ctx.fillRect(0, 0, w, h);
 
       const cols = Math.ceil(w / cell);
       const rows = Math.ceil(h / cell);
+      // One image pixel per cell, written straight into a buffer: tens of
+      // thousands of fillStyle/fillRect calls per frame were the lag.
+      if (!small || small.width !== cols || small.height !== rows) {
+        small = document.createElement("canvas");
+        small.width = cols;
+        small.height = rows;
+        smallCtx = small.getContext("2d");
+        img = smallCtx ? smallCtx.createImageData(cols, rows) : null;
+        THR = new Float32Array(cols * rows);
+        for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) THR[j * cols + i] = (BAYER8[j & 7][i & 7] / 64) * 0.55 + hash(i, j) * 0.45;
+        ROWSP = new Float32Array(rows);
+        for (let j = 0; j < rows; j++) ROWSP[j] = 0.6 + hash(j, 5) * 1.3;
+      }
+      if (!smallCtx || !img) return;
+      const px = img.data;
+      px.fill(0);
+      const put = (i: number, j: number, r: number, g: number, b: number) => {
+        const o = (j * cols + i) * 4;
+        px[o] = r;
+        px[o + 1] = g;
+        px[o + 2] = b;
+        px[o + 3] = 255;
+      };
       const drift = time * 0.00004;
       const lean = interactive ? (ptr.x - 0.5) * 0.12 : 0;
       const lift = interactive ? (ptr.y - 0.5) * 0.08 : 0;
       const aspect = w / h;
-      const dot = Math.max(1, cell - 1.4);
+      const gap = 1.4;
 
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
@@ -145,13 +185,13 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
               if (Math.abs(off) < 1.5) {
                 const core = Math.exp(-off * off * 1.5);
                 const head = Math.min(1, (dx + 0.05) / 0.07);
-                const sp = 0.6 + hash(j, 5) * 1.3;
+                const sp = ROWSP[j];
                 const streak = vnoise(i * 0.035 + time * 0.0011 * sp, j * 0.33);
                 envW = core * Math.exp(-dxc * 0.85) * head * (0.45 + 1.1 * streak);
                 ttW = Math.min(0.82, Math.max(0.12, 0.8 - dxc * 0.95 + off * 0.05));
               }
             }
-            let litW = envW * 1.7 - (BAYER8[j & 7][i & 7] / 64 * 0.55 + hash(i, j) * 0.45) * 0.55;
+            let litW = envW * 1.7 - THR[j * cols + i] * 0.55;
             if (interactive && ptr.on > 0.01) {
               const ddx = (rx - ptr.x) * aspect;
               const ddy = ry - ptr.y;
@@ -159,10 +199,9 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
               if (d < 1) { litW += (1 - d) * (1 - d) * 0.8 * ptr.on; if (envW === 0) ttW = 0.5 + (rx - ptr.x) * 0.9; }
             }
             if (litW <= 0.02) continue;
-            const [wr, wg, wb] = ramp(ttW);
+            const wl = ((ttW < 0 ? 0 : ttW > 1 ? 1 : ttW) * 1023 | 0) * 3;
             const wk = Math.min(1, litW * 1.5);
-            ctx.fillStyle = `rgb(${(wr * wk) | 0},${(wg * wk) | 0},${(wb * wk) | 0})`;
-            ctx.fillRect(i * cell, j * cell, dot, dot);
+            put(i, j, (LUT[wl] * wk) | 0, (LUT[wl + 1] * wk) | 0, (LUT[wl + 2] * wk) | 0);
             continue;
           }
           const nx = i / cols - originX - lean;
@@ -180,9 +219,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
           const fade = Math.max(0, 1 - along * 0.62);
           const env = inBand ? Math.sin(tt * Math.PI) * fade : 0;
           // Ordered dither + noise decides whether this dot lights at all.
-          const thr =
-            (BAYER8[j & 7][i & 7] / 64) * 0.55 + hash(i, j) * 0.45;
-          let lit = env * 1.25 - thr * 0.55;
+          let lit = env * 1.25 - THR[j * cols + i] * 0.55;
           if (interactive && ptr.on > 0.01) {
             // a soft lens: dots near the pointer brighten and ignite even off-band
             const dx = (i / cols - ptr.x) * aspect;
@@ -191,15 +228,30 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
             if (d < 1) lit += (1 - d) * (1 - d) * 0.9 * ptr.on * (0.5 + 0.5 * env + 0.3);
           }
           if (lit <= 0.02) continue;
-          const [r, g, b] = ramp(inBand ? tt : 0.5 + ((i / cols - ptr.x) * 0.9));
+          const ct = inBand ? tt : 0.5 + ((i / cols - ptr.x) * 0.9);
+          const ci = ((ct < 0 ? 0 : ct > 1 ? 1 : ct) * 1023 | 0) * 3;
           const k = Math.min(1, lit * 1.5);
-          ctx.fillStyle = `rgb(${(r * k) | 0},${(g * k) | 0},${(b * k) | 0})`;
-          ctx.fillRect(i * cell, j * cell, dot, dot);
+          put(i, j, (LUT[ci] * k) | 0, (LUT[ci + 1] * k) | 0, (LUT[ci + 2] * k) | 0);
         }
       }
+
+      // blit the cell buffer up, carve the dot gaps, then lay the background under it
+      smallCtx.putImageData(img, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(small, 0, 0, cols * cell, rows * cell);
+      ctx.globalCompositeOperation = "destination-out";
+      for (let i = 1; i <= cols; i++) ctx.fillRect(i * cell - gap, 0, gap, rows * cell);
+      for (let j = 1; j <= rows; j++) ctx.fillRect(0, j * cell - gap, cols * cell, gap);
+      ctx.globalCompositeOperation = "destination-over";
+      ctx.fillStyle = "#0e0c0a";
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = "source-over";
     };
 
+    let visible = true;
     const loop = (now: number) => {
+      if (!visible || document.hidden) { raf = 0; return; }
       if (!t0) t0 = now;
       ptr.x += (ptr.tx - ptr.x) * 0.12;
       ptr.y += (ptr.ty - ptr.y) * 0.12;
@@ -228,10 +280,19 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       window.addEventListener("pointermove", onMove, { passive: true });
       document.addEventListener("pointerleave", onLeave);
     }
-    if ((animate || interactive || wake) && !reduce) raf = requestAnimationFrame(loop);
+    const animated = (animate || interactive || wake) && !reduce;
+    const wakeUp = () => { if (animated && visible && !document.hidden && !raf) raf = requestAnimationFrame(loop); };
+    const io = typeof IntersectionObserver !== "undefined" && animated
+      ? new IntersectionObserver(([e]) => { visible = e.isIntersecting; wakeUp(); })
+      : null;
+    io?.observe(canvas);
+    document.addEventListener("visibilitychange", wakeUp);
+    wakeUp();
 
     return () => {
       cancelAnimationFrame(raf);
+      io?.disconnect();
+      document.removeEventListener("visibilitychange", wakeUp);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerleave", onLeave);

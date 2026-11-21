@@ -181,7 +181,7 @@ export function PathWindow({ run }: { run: boolean }) {
               </g>
             ))}
             {run && (
-              <circle r="4.5" fill="#ecdec4" filter="url(#sc-glow)">
+              <circle r="5" fill="#ecdec4" fillOpacity="0.95">
                 <animateMotion dur="4.2s" begin="2.8s" repeatCount="indefinite" path={full.join(" ").replace(/M/g, " M")} calcMode="linear" />
               </circle>
             )}

@@ -95,7 +95,7 @@ export default function Landing() {
     <div className="lp">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <PixelField className="lp-pixels" interactive wake={{ x: 0.43, y: 0.64 }} />
+          <PixelField className="lp-pixels" cell={6} interactive wake={{ x: 0.43, y: 0.64 }} />
         </div>
         <div className="lp-grain" aria-hidden="true" />
 
