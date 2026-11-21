@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import re
 from functools import lru_cache
@@ -28,6 +29,11 @@ def _rules() -> dict[str, Any]:
         with open(_DATA, "r", encoding="utf-8") as fh:
             return json.load(fh)
     except Exception:  # pragma: no cover - data ships with the package
+        # Loud, not silent: a missing rules file once shipped unnoticed and
+        # turned the whole JS/TS/Go scanner (and Python sources) into a no-op.
+        logging.getLogger(__name__).error(
+            "taint_rules_missing: %s unreadable; SAST fallback is DEGRADED", _DATA
+        )
         return {"python_sources": [], "regex_rules": []}
 
 
@@ -76,6 +82,25 @@ _PY_SOURCE_PREFIXES = None
 
 def _py_sources() -> list[str]:
     return _rules().get("python_sources", [])
+
+
+# A secret-ish NAME is matched on identifier segments ("db_password", "apiKey"),
+# so "queue_passive" or "tokenizer" don't qualify.
+_SECRET_NAME = re.compile(
+    # case-insensitive keyword, case-SENSITIVE camelCase boundaries
+    r"(?:^|_|(?<=[a-z])(?=[A-Z]))(?i:pass(?:word|wd)?|pwd|secret|api_?key|apikey|token|"
+    r"private_?key|access_?key|client_?secret|credentials?)(?:$|_|(?=[A-Z]))"
+)
+
+
+def _looks_secret(v: str) -> bool:
+    """Literal looks like a credential: >= 8 chars, no spaces, letters AND digits."""
+    return (
+        len(v) >= 8
+        and not any(c.isspace() for c in v)
+        and any(c.isdigit() for c in v)
+        and any(c.isalpha() for c in v)
+    )
 
 
 def _dotted(node: ast.AST) -> Optional[str]:
@@ -216,9 +241,10 @@ class _PyTaint:
                         return pref
         if isinstance(node, ast.Call):
             fname = _dotted(node.func) or ""
-            if fname == "input" or fname.endswith(".get_json") or fname in (
-                "os.getenv", "os.environ.get",
-            ):
+            # Environment variables are deliberately NOT sources: they are
+            # operator configuration, and treating them as attacker input made
+            # every `urlopen(os.environ[...])` health-check an SSRF finding.
+            if fname == "input" or fname.endswith(".get_json"):
                 return fname
         return None
 
@@ -338,8 +364,9 @@ class _PyTaint:
                 names += self._target_names(t)
         elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
             names = [stmt.target.id]
-        secret_re = re.compile(r"(?i)(pass(word|wd)?|secret|api_?key|apikey|token|private_?key)")
-        if any(secret_re.search(n) for n in names):
+        if not _looks_secret(value.value):
+            return
+        if any(_SECRET_NAME.search(n) for n in names):
             self._emit(stmt, "hardcoded-secret", "hardcoded_secret",
                        "Hardcoded credential/secret assigned to %s" % (names[0] if names else "var"),
                        "medium", "CWE-798", source="n/a", sink="literal", origin=None)
@@ -389,9 +416,13 @@ def scan_regex(path: str, content: str, lang: str) -> list[dict[str, Any]]:
     for i, line in enumerate(lines):
         # small window to catch args spilling onto the next lines
         window = "\n".join(lines[i:i + 3])
+        first_len = len(lines[i])
         for rule in rules:
             try:
-                if not re.search(rule["pattern"], window):
+                m = re.search(rule["pattern"], window)
+                # The window only lets arguments spill onto following lines;
+                # a match that STARTS on a later line is that line's finding.
+                if not m or m.start() > first_len:
                     continue
                 reqs = rule.get("requires_any") or []
                 if reqs and not any(re.search(p, window) for p in reqs):

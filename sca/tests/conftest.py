@@ -36,7 +36,10 @@ def _test_dsn() -> Optional[str]:
     return _normalize_dsn(raw)
 
 
-@pytest_asyncio.fixture(scope="session")
+# The pool lives for the session, so it must also be bound to the session
+# event loop (pytest-asyncio >= 0.24 otherwise runs tests on per-function
+# loops and asyncpg raises "attached to a different loop").
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def db() -> AsyncIterator[Database]:
     dsn = _test_dsn()
     if dsn is None:

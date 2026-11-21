@@ -113,3 +113,44 @@ def test_yanked_from_keys():
     risks = malicious.detect(comps, {}, yanked_keys={"PyPI|oops|1.2.3"})
     assert len(risks) == 1
     assert risks[0]["risk_type"] == "yanked"
+
+
+def test_typosquat_transposition_is_one_edit_and_high_severity():
+    # Swapped letters are the most common real squat; OSA scores them as 1.
+    assert typosquat.typo_distance("reqeust", "request") == 1
+    assert typosquat.levenshtein("reqeust", "request") == 2
+    r = typosquat.detect([{"ecosystem": "npm", "name": "reqeust", "version": "1"}])[0]
+    assert r["severity"] == "high" and r["detail"]["edit_distance"] == 1
+
+
+def test_typosquat_short_names_need_a_closer_match():
+    comps = [
+        {"ecosystem": "npm", "name": "xs", "version": "1"},       # 2 chars: never compared
+        {"ecosystem": "npm", "name": "axois", "version": "1"},    # 5 chars, 1 swap from axios
+        {"ecosystem": "npm", "name": "vxyz", "version": "1"},     # 4 chars, 2 edits from vue: no
+    ]
+    names = {r["name"] for r in typosquat.detect(comps, max_distance=2)}
+    assert names == {"axois"}
+
+
+def test_typosquat_popular_neighbours_are_not_flagged():
+    # eslint/tslint, react/preact... are both legit and popular -> exact matches.
+    comps = [{"ecosystem": "npm", "name": n, "version": "1"} for n in ("eslint", "tslint", "jest", "next")]
+    comps.append({"ecosystem": "PyPI", "name": "requests", "version": "2"})
+    assert typosquat.detect(comps, max_distance=2) == []
+
+
+def test_typosquat_is_per_ecosystem():
+    comps = [{"ecosystem": "PyPI", "name": "reqeusts", "version": "1"},
+             {"ecosystem": "crates.io", "name": "reqeusts", "version": "1"}]
+    hits = typosquat.detect(comps)
+    assert [(h["ecosystem"], h["detail"]["resembles"]) for h in hits] == [("PyPI", "requests")]
+
+
+def test_typosquat_two_edits_only_count_on_long_names():
+    comps = [{"ecosystem": "npm", "name": "parse5", "version": "7"},          # 2 from parcel
+             {"ecosystem": "npm", "name": "expresss-js", "version": "1"}]     # long, 2 from express? no
+    assert [h["name"] for h in typosquat.detect(comps)] == []
+    long_hit = typosquat.detect([{"ecosystem": "npm", "name": "socket.oi", "version": "1"},
+                                 {"ecosystem": "npm", "name": "jsonwebtokne", "version": "1"}])
+    assert {h["detail"]["resembles"] for h in long_hit} == {"socket.io", "jsonwebtoken"}

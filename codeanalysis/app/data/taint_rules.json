@@ -1,0 +1,332 @@
+{
+  "_comment": "Bundled taint rules for the Semgrep-less SAST fallback. Python sinks live in code (app/sast/taint_fallback.py); Python SOURCES and all JS/TS/Go rules live here. Detection only.",
+  "version": 1,
+  "python_sources": [
+    "request.args",
+    "request.form",
+    "request.values",
+    "request.json",
+    "request.data",
+    "request.files",
+    "request.cookies",
+    "request.headers",
+    "request.get_data",
+    "request.get_json",
+    "request.view_args",
+    "request.GET",
+    "request.POST",
+    "request.FILES",
+    "request.COOKIES",
+    "request.META",
+    "request.body",
+    "request.query_params",
+    "request.path_params",
+    "request.query",
+    "request.match_info",
+    "request.rel_url",
+    "flask.request",
+    "self.request",
+    "sys.argv",
+    "sys.stdin"
+  ],
+  "regex_rules": [
+    {
+      "id": "js-sql-injection",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "sql_injection",
+      "severity": "high",
+      "cwe": "CWE-89",
+      "message": "Untrusted request input is interpolated into a SQL query",
+      "source": "HTTP request input",
+      "sink": "SQL query",
+      "pattern": "\\.(?:query|execute|raw|prepare|unsafe)\\s*\\(\\s*(?:`[^`]*\\$\\{|[\"'][^\"']*[\"']\\s*\\+)",
+      "requires_any": [
+        "\\breq(?:uest)?\\.(?:query|body|params|headers|cookies|url|originalUrl)\\b|\\bctx\\.(?:query|params|request)\\b|\\bevent\\.(?:body|queryStringParameters|pathParameters|headers)\\b|\\blocation\\.(?:search|hash)\\b|\\bprocess\\.argv\\b|\\bsearchParams\\.get\\("
+      ]
+    },
+    {
+      "id": "js-sql-string-built",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "sql_injection",
+      "severity": "medium",
+      "cwe": "CWE-89",
+      "message": "SQL query built by string interpolation; use parameterised queries",
+      "source": "dynamic value",
+      "sink": "SQL query",
+      "pattern": "(?i)\\.(?:query|execute|raw)\\s*\\(\\s*(?:`[^`]*\\b(?:select|insert|update|delete)\\b[^`]*\\$\\{|[\"'][^\"']*\\b(?:select|insert|update|delete)\\b[^\"']*[\"']\\s*\\+)",
+      "forbid_any": [
+        "\\breq(?:uest)?\\.(?:query|body|params|headers|cookies|url|originalUrl)\\b|\\bctx\\.(?:query|params|request)\\b|\\bevent\\.(?:body|queryStringParameters|pathParameters|headers)\\b|\\blocation\\.(?:search|hash)\\b|\\bprocess\\.argv\\b|\\bsearchParams\\.get\\("
+      ]
+    },
+    {
+      "id": "js-command-injection",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "command_injection",
+      "severity": "critical",
+      "cwe": "CWE-78",
+      "message": "Untrusted request input reaches an OS command API",
+      "source": "HTTP request input",
+      "sink": "child_process",
+      "pattern": "(?:\\b(?:child_process|childProcess|cp|proc|shell|shelljs)\\.|(?<![\\w.]))(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)\\s*\\(",
+      "requires_any": [
+        "\\breq(?:uest)?\\.(?:query|body|params|headers|cookies|url|originalUrl)\\b|\\bctx\\.(?:query|params|request)\\b|\\bevent\\.(?:body|queryStringParameters|pathParameters|headers)\\b|\\blocation\\.(?:search|hash)\\b|\\bprocess\\.argv\\b|\\bsearchParams\\.get\\("
+      ]
+    },
+    {
+      "id": "js-code-injection",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "code_injection",
+      "severity": "critical",
+      "cwe": "CWE-95",
+      "message": "Untrusted request input is evaluated as code",
+      "source": "HTTP request input",
+      "sink": "eval",
+      "pattern": "(?<![\\w.])(?:eval|Function)\\s*\\(|\\bnew\\s+Function\\s*\\(|\\bvm\\.runIn\\w*Context\\s*\\(|\\bsetTimeout\\s*\\(\\s*[\\\"'`]",
+      "requires_any": [
+        "\\breq(?:uest)?\\.(?:query|body|params|headers|cookies|url|originalUrl)\\b|\\bctx\\.(?:query|params|request)\\b|\\bevent\\.(?:body|queryStringParameters|pathParameters|headers)\\b|\\blocation\\.(?:search|hash)\\b|\\bprocess\\.argv\\b|\\bsearchParams\\.get\\("
+      ]
+    },
+    {
+      "id": "js-ssrf",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "ssrf",
+      "severity": "high",
+      "cwe": "CWE-918",
+      "message": "Untrusted request input controls the target of an outbound request",
+      "source": "HTTP request input",
+      "sink": "outbound HTTP",
+      "pattern": "(?<![\\w.])(?:fetch|got|needle|request)\\s*\\(|\\baxios(?:\\.(?:get|post|put|patch|delete|head|request))?\\s*\\(|\\bhttps?\\.(?:get|request)\\s*\\(|\\bsuperagent\\.(?:get|post)\\s*\\(",
+      "requires_any": [
+        "\\breq(?:uest)?\\.(?:query|body|params|headers|cookies|url|originalUrl)\\b|\\bctx\\.(?:query|params|request)\\b|\\bevent\\.(?:body|queryStringParameters|pathParameters|headers)\\b|\\blocation\\.(?:search|hash)\\b|\\bprocess\\.argv\\b|\\bsearchParams\\.get\\("
+      ]
+    },
+    {
+      "id": "js-path-traversal",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "path_traversal",
+      "severity": "high",
+      "cwe": "CWE-22",
+      "message": "Untrusted request input reaches a filesystem path",
+      "source": "HTTP request input",
+      "sink": "filesystem",
+      "pattern": "\\bfs(?:\\.promises)?\\.(?:readFile|readFileSync|createReadStream|writeFile|writeFileSync|appendFile|unlink|unlinkSync|readdir|rm|rmSync)\\s*\\(|\\bres\\.(?:sendFile|download)\\s*\\(",
+      "requires_any": [
+        "\\breq(?:uest)?\\.(?:query|body|params|headers|cookies|url|originalUrl)\\b|\\bctx\\.(?:query|params|request)\\b|\\bevent\\.(?:body|queryStringParameters|pathParameters|headers)\\b|\\blocation\\.(?:search|hash)\\b|\\bprocess\\.argv\\b|\\bsearchParams\\.get\\("
+      ]
+    },
+    {
+      "id": "js-insecure-deserialization",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "insecure_deserialization",
+      "severity": "high",
+      "cwe": "CWE-502",
+      "message": "node-serialize style unserialize() can execute attacker-supplied functions",
+      "source": "untrusted data",
+      "sink": "unserialize",
+      "pattern": "(?<![\\w])unserialize\\s*\\("
+    },
+    {
+      "id": "js-weak-crypto",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "weak_crypto",
+      "severity": "medium",
+      "cwe": "CWE-327",
+      "message": "Weak hash or cipher (MD5/SHA-1/DES/RC4) in use",
+      "source": "n/a",
+      "sink": "crypto",
+      "pattern": "createHash\\(\\s*[\"'](?:md5|sha1)[\"']|\\bcreateCipher\\s*\\(|createCipheriv\\(\\s*[\"'](?:des|des-ede|des-ede3|rc4|bf)[^\"']*[\"']"
+    },
+    {
+      "id": "js-tls-verification-disabled",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "insecure_transport",
+      "severity": "high",
+      "cwe": "CWE-295",
+      "message": "TLS certificate verification is disabled",
+      "source": "n/a",
+      "sink": "TLS",
+      "pattern": "rejectUnauthorized\\s*:\\s*false|NODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*[\"']?0"
+    },
+    {
+      "id": "js-hardcoded-secret",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "class": "hardcoded_secret",
+      "severity": "medium",
+      "cwe": "CWE-798",
+      "message": "Hardcoded credential/secret in source",
+      "source": "n/a",
+      "sink": "literal",
+      "pattern": "(?i)\\b[\\w$]*(?:api_?key|secret|token|passw(?:or)?d|private_?key|access_?key|client_?secret)[\\w$]*[\"']?\\s*[:=]\\s*[\"'`](?=[^\"'`\\s]*\\d)(?=[^\"'`\\s]*[A-Za-z])[^\"'`\\s]{8,}[\"'`]",
+      "forbid_any": [
+        "(?i)process\\.env|os\\.Getenv|example|changeme|placeholder|your_|xxxx|dummy|<[^>]+>|\\btest"
+      ]
+    },
+    {
+      "id": "go-command-injection",
+      "languages": [
+        "go"
+      ],
+      "class": "command_injection",
+      "severity": "critical",
+      "cwe": "CWE-78",
+      "message": "Untrusted request input reaches exec.Command",
+      "source": "HTTP request input",
+      "sink": "exec.Command",
+      "pattern": "\\bexec\\.Command(?:Context)?\\s*\\(",
+      "requires_any": [
+        "\\br\\.(?:FormValue|PostFormValue|URL|Header|Body|PathValue|Form|PostForm)\\b|\\bc\\.(?:Query|Param|PostForm|DefaultQuery|GetHeader|FormValue)\\(|\\bmux\\.Vars\\(|\\bos\\.Args\\b"
+      ]
+    },
+    {
+      "id": "go-sql-injection",
+      "languages": [
+        "go"
+      ],
+      "class": "sql_injection",
+      "severity": "high",
+      "cwe": "CWE-89",
+      "message": "Untrusted request input is formatted into a SQL query",
+      "source": "HTTP request input",
+      "sink": "SQL query",
+      "pattern": "fmt\\.Sprintf\\(\\s*\"(?i:[^\"]*\\b(?:select|insert|update|delete)\\b)[^\"]*%[sv]|\\.(?:Query|QueryRow|Exec|QueryContext|QueryRowContext|ExecContext)\\(\\s*(?:ctx\\s*,\\s*)?\"[^\"]*\"\\s*\\+",
+      "requires_any": [
+        "\\br\\.(?:FormValue|PostFormValue|URL|Header|Body|PathValue|Form|PostForm)\\b|\\bc\\.(?:Query|Param|PostForm|DefaultQuery|GetHeader|FormValue)\\(|\\bmux\\.Vars\\(|\\bos\\.Args\\b"
+      ]
+    },
+    {
+      "id": "go-sql-string-built",
+      "languages": [
+        "go"
+      ],
+      "class": "sql_injection",
+      "severity": "medium",
+      "cwe": "CWE-89",
+      "message": "SQL query built with fmt.Sprintf; use placeholders",
+      "source": "dynamic value",
+      "sink": "SQL query",
+      "pattern": "fmt\\.Sprintf\\(\\s*\"(?i:[^\"]*\\b(?:select|insert|update|delete)\\b)[^\"]*%[sv]",
+      "forbid_any": [
+        "\\br\\.(?:FormValue|PostFormValue|URL|Header|Body|PathValue|Form|PostForm)\\b|\\bc\\.(?:Query|Param|PostForm|DefaultQuery|GetHeader|FormValue)\\(|\\bmux\\.Vars\\(|\\bos\\.Args\\b"
+      ]
+    },
+    {
+      "id": "go-ssrf",
+      "languages": [
+        "go"
+      ],
+      "class": "ssrf",
+      "severity": "high",
+      "cwe": "CWE-918",
+      "message": "Untrusted request input controls the target of an outbound request",
+      "source": "HTTP request input",
+      "sink": "outbound HTTP",
+      "pattern": "\\bhttp\\.(?:Get|Post|Head|PostForm|NewRequest(?:WithContext)?)\\s*\\(",
+      "requires_any": [
+        "\\br\\.(?:FormValue|PostFormValue|URL|Header|Body|PathValue|Form|PostForm)\\b|\\bc\\.(?:Query|Param|PostForm|DefaultQuery|GetHeader|FormValue)\\(|\\bmux\\.Vars\\(|\\bos\\.Args\\b"
+      ]
+    },
+    {
+      "id": "go-path-traversal",
+      "languages": [
+        "go"
+      ],
+      "class": "path_traversal",
+      "severity": "high",
+      "cwe": "CWE-22",
+      "message": "Untrusted request input reaches a filesystem path",
+      "source": "HTTP request input",
+      "sink": "filesystem",
+      "pattern": "\\b(?:os\\.(?:Open|OpenFile|ReadFile|WriteFile|Create|Remove|RemoveAll)|ioutil\\.ReadFile|http\\.ServeFile)\\s*\\(",
+      "requires_any": [
+        "\\br\\.(?:FormValue|PostFormValue|URL|Header|Body|PathValue|Form|PostForm)\\b|\\bc\\.(?:Query|Param|PostForm|DefaultQuery|GetHeader|FormValue)\\(|\\bmux\\.Vars\\(|\\bos\\.Args\\b"
+      ]
+    },
+    {
+      "id": "go-weak-crypto",
+      "languages": [
+        "go"
+      ],
+      "class": "weak_crypto",
+      "severity": "medium",
+      "cwe": "CWE-327",
+      "message": "Weak hash or cipher (MD5/SHA-1/DES/RC4) in use",
+      "source": "n/a",
+      "sink": "crypto",
+      "pattern": "\\b(?:md5|sha1|des|rc4)\\.(?:New\\w*|Sum)\\s*\\("
+    },
+    {
+      "id": "go-tls-verification-disabled",
+      "languages": [
+        "go"
+      ],
+      "class": "insecure_transport",
+      "severity": "high",
+      "cwe": "CWE-295",
+      "message": "TLS certificate verification is disabled (InsecureSkipVerify)",
+      "source": "n/a",
+      "sink": "TLS",
+      "pattern": "InsecureSkipVerify\\s*:\\s*true"
+    },
+    {
+      "id": "go-hardcoded-secret",
+      "languages": [
+        "go"
+      ],
+      "class": "hardcoded_secret",
+      "severity": "medium",
+      "cwe": "CWE-798",
+      "message": "Hardcoded credential/secret in source",
+      "source": "n/a",
+      "sink": "literal",
+      "pattern": "(?i)\\b\\w*(?:api_?key|secret|token|passw(?:or)?d|private_?key|access_?key)\\w*\\s*(?::=|=)\\s*\"(?=[^\"\\s]*\\d)(?=[^\"\\s]*[A-Za-z])[^\"\\s]{8,}\"",
+      "forbid_any": [
+        "(?i)process\\.env|os\\.Getenv|example|changeme|placeholder|your_|xxxx|dummy|<[^>]+>|\\btest"
+      ]
+    },
+    {
+      "id": "secret-known-format",
+      "languages": [
+        "javascript",
+        "typescript",
+        "go"
+      ],
+      "class": "hardcoded_secret",
+      "severity": "high",
+      "cwe": "CWE-798",
+      "message": "Credential with a known provider format committed to source",
+      "source": "n/a",
+      "sink": "literal",
+      "pattern": "\\bAKIA[0-9A-Z]{16}\\b|\\bgh[pousr]_[A-Za-z0-9]{36}\\b|\\bxox[baprs]-[A-Za-z0-9-]{10,}|\\bsk_live_[A-Za-z0-9]{20,}|-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----|\\bAIza[0-9A-Za-z_-]{35}\\b"
+    }
+  ]
+}

@@ -118,3 +118,26 @@ def test_dataflow_steps_recorded():
 
 def test_broken_python_returns_no_hits():
     assert tf.scan_python("x.py", "def (:\n bad") == []
+
+
+def test_env_config_is_not_an_ssrf_source():
+    src = (
+        "import os\n"
+        "from urllib.request import urlopen\n"
+        "ORCH = os.environ.get('ORCH_URL', 'http://localhost')\n"
+        "def ping():\n"
+        "    return urlopen(ORCH + '/healthz')\n"
+    )
+    classes, _ = _classes(src)
+    assert "ssrf" not in classes
+
+
+def test_secret_names_match_identifier_segments_only():
+    src = (
+        "queue_passive = 'queue:passive'\n"
+        "token_type = 'bearer'\n"
+        "tokenizer_name = 'bert-base-uncased-v2'\n"
+        "db_password = 'Hunter2-Prod-9931'\n"
+    )
+    _, hits = _classes(src)
+    assert [h["start_line"] for h in hits] == [4]

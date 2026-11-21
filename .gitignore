@@ -29,7 +29,7 @@ htmlcov/
 !.env.example
 
 # data + runtime
-data/
+/data/
 *.sqlite
 *.db
 *.rdb
