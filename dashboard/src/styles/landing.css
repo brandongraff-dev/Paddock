@@ -372,16 +372,13 @@
   border-inline: 1px solid rgba(236, 226, 208, 0.1);
 }
 
-/* ---- footer: cream, blended in from the dark page ---- */
+/* ---- footer: flat paper tone, hard edge against the dark page ---- */
 .lp-footer {
   --ink: #1c1814;
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  margin-top: -160px;
-  padding-top: 160px;
-  /* dark at the top (covering the end of the column and its side lines), then a long warm-grey ramp up to cream */
-  background: linear-gradient(180deg, rgba(14, 12, 10, 0) 0, #0e0c0a 120px, #2a241e 190px, #766d60 255px, #b9b09e 305px, #c9c0ad 340px);
+  background: #c9c0ad;
   color: var(--ink);
 }
 .lp-footer::before {
@@ -393,8 +390,8 @@
     radial-gradient(55% 55% at 88% 100%, rgba(200, 100, 70, 0.14), transparent 70%),
     radial-gradient(45% 50% at 8% 100%, rgba(110, 150, 175, 0.18), transparent 70%);
 }
-.lp-footer-dither { position: absolute; top: 150px; left: 0; opacity: 0.6; mask-image: linear-gradient(180deg, transparent, #000 40%, transparent); -webkit-mask-image: linear-gradient(180deg, transparent, #000 40%, transparent); }
-.lp-footer-in { width: min(1360px, calc(100% - var(--lp-gut) * 2)); margin: 0 auto; padding: clamp(150px, 20vh, 190px) clamp(16px, 4vw, 44px) 56px; }
+.lp-footer-dither { position: absolute; top: 0; left: 0; }
+.lp-footer-in { width: min(1360px, calc(100% - var(--lp-gut) * 2)); margin: 0 auto; padding: clamp(90px, 14vh, 130px) clamp(16px, 4vw, 44px) 56px; }
 .lp-footer-cta { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 28px; padding-bottom: clamp(36px, 7vh, 72px); border-bottom: 1px solid rgba(26, 22, 18, 0.14); }
 .lp-footer-cta h2 { margin: 0; max-width: 18ch; font-family: var(--serif); font-weight: 380; font-size: clamp(34px, 4.4vw, 64px); line-height: 1.02; letter-spacing: -0.025em; text-transform: none; color: var(--ink); }
 .lp-footer-btn { padding: 0 26px; height: 52px; }

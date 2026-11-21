@@ -200,7 +200,7 @@ export default function Landing() {
       </div>
 
       <footer className="lp-footer">
-        <DitherRule className="lp-footer-dither" />
+        <DitherRule className="lp-footer-dither" rows={10} deep />
         <div className="lp-footer-in">
           <div className="lp-footer-cta">
             <h2>Close the paths before they&apos;re walked.</h2>

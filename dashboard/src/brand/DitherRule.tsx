@@ -4,7 +4,7 @@ import { hash, ramp } from "./PixelField";
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 /** A thin horizontal band of dithered dots, blue to ember, fading top to bottom. */
-export default function DitherRule({ className, rows = 9, cell = 5 }: { className?: string; rows?: number; cell?: number }) {
+export default function DitherRule({ className, rows = 9, cell = 5, deep = false }: { className?: string; rows?: number; cell?: number; deep?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -28,8 +28,9 @@ export default function DitherRule({ className, rows = 9, cell = 5 }: { classNam
           const wave = 0.5 + 0.5 * Math.sin(x * 9 + hash(i >> 3, 3) * 2);
           const thr = BAYER[(j & 3) * 4 + (i & 3)] / 16 * 0.6 + hash(i, j) * 0.4;
           if (density * (0.55 + 0.45 * wave) <= thr) continue;
-          const [r, g, b] = ramp(0.12 + x * 0.7);
-          ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${0.85 - j * 0.07})`;
+          const [r0, g0, b0] = ramp(0.12 + x * 0.7);
+          const m = deep ? 0.6 : 1; // deeper tones read on light paper
+          ctx.fillStyle = `rgba(${(r0 * m) | 0},${(g0 * m) | 0},${(b0 * m) | 0},${deep ? 0.95 - j * 0.05 : 0.85 - j * 0.07})`;
           ctx.fillRect(i * cell, j * cell, cell - 1.3, cell - 1.3);
         }
       }
@@ -37,6 +38,6 @@ export default function DitherRule({ className, rows = 9, cell = 5 }: { classNam
     draw();
     window.addEventListener("resize", draw);
     return () => window.removeEventListener("resize", draw);
-  }, [rows, cell]);
+  }, [rows, cell, deep]);
   return <canvas ref={ref} className={className} style={{ width: "100%", height: rows * cell, display: "block" }} aria-hidden="true" />;
 }
