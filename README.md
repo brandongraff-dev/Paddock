@@ -84,9 +84,11 @@ make quickstart                      # = cp .env + docker compose up + make demo
 so the dashboard has a real-looking graph, findings, and an attack chain the
 moment you open it — **start on the Graph page** (`/graph`).
 
-**Login.** The dev profile runs `AUTH_MODE=dev`: ports are open and you're a
-synthetic admin, so **no login is required** — a first-timer isn't blocked by
-auth. (The hardened profile seeds an `admin` user whose password comes from
+**Login.** The dev profile runs `AUTH_MODE=dev`: you're a synthetic admin, so
+**no login is required** — a first-timer isn't blocked by auth. Because of that,
+the dev profile publishes its ports on `127.0.0.1` only, and the orchestrator's
+own default is `AUTH_MODE=enforce` (anything that forgets to set it fails
+closed). (The hardened profile seeds an `admin` user whose password comes from
 `ADMIN_BOOTSTRAP_PASSWORD` in `.env`; no known credential is ever shipped. See
 [SECURITY.md §4](SECURITY.md).)
 
@@ -208,7 +210,10 @@ known gaps: [SECURITY.md §10](SECURITY.md).)
 - A broad test suite (~900 test functions across the services and the dashboard),
   run per-service in CI (`.github/workflows/ci.yml`).
 - Scope enforcement (3 layers), RBAC/ABAC, and the tamper-evident audit chain are
-  implemented and tested.
+  implemented and tested. The scope normaliser is differential-fuzzed against
+  WHATWG and RFC 3986 URL parsers (`hardening/stress_scope.py`: 10M hostile
+  targets, 0 disagreements) and refuses targets that resolve to cloud metadata
+  or to private ranges you haven't explicitly scoped.
 - One real authorized run against `scanme.nmap.org` with a crude false-positive
   measurement (`make realrun`, see [`hardening/RUNBOOK.md`](hardening/RUNBOOK.md)).
 
@@ -268,7 +273,7 @@ away from people who run it themselves.
   tests + integration harness, and the "tests never touch a live DB" rule.
 - **Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - **Docs:** [`docs/`](docs/) — architecture, inter-service contracts, per-service
-  notes.
+  notes, and the [cloud roadmap](docs/CLOUD_ROADMAP.md).
 - **Chat:** Discord — *link coming at launch* (badge above is a placeholder).
 
 Issues and PRs welcome. If you're here from r/netsec: the

@@ -118,7 +118,12 @@ incident.
   freely `TRUNCATE` — so that URL must only ever point at a **disposable** DB.
 - The orchestrator suite uses **`pytest-postgresql`**, which spins up its own
   throwaway Postgres instance and a fresh database **per test**. It never reads
-  your `DATABASE_URL`.
+  your `DATABASE_URL`. `pg_ctl` refuses to run as root (e.g. in dev
+  containers); there, start a disposable server as another user and point the
+  suite at it with `ORCH_TEST_PG=127.0.0.1:<port>[:<user>]` — it still creates
+  and drops its own database per test.
+- Scope changes must keep the differential fuzzer green:
+  `pip install ada-url && python hardening/stress_scope.py --n 1000000`.
 - When you add a DB test, follow the existing `conftest.py` pattern (skip
   without a test DSN; create/own your data; clean up after). **Never** hardcode
   a DSN, and never let a suite connect to the compose `postgres` service that's
