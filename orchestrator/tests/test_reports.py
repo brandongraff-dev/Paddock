@@ -252,7 +252,7 @@ async def test_attack_path_ledger_episodes(db_pool):
         a = await _asset(con, "p.example")
         ins = """INSERT INTO attack_paths (source_asset_id, target_asset_id, hops, length, total_cost,
                    exploitability, severity, title, fingerprint) VALUES ($1,$1,'[]',1,1,$2,'high','t','fp')
-                 ON CONFLICT (fingerprint) DO UPDATE SET exploitability = EXCLUDED.exploitability"""
+                 ON CONFLICT (tenant_id, fingerprint) DO UPDATE SET exploitability = EXCLUDED.exploitability"""
         await con.execute(ins, a, 10)
         await con.execute(ins, a, 20)  # upsert: same episode, refreshed
         await con.execute("DELETE FROM attack_paths WHERE fingerprint='fp'")

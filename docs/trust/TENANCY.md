@@ -47,7 +47,7 @@ The app role cannot write `tenants`; tenant creation is an operator action.
 
 ## Limits (read before selling this as multi-tenant SaaS)
 
-1. **Only the orchestrator runs as `paddock_app`.** The compute services that
+1. (SUPERSEDED, see "Compute services and workers" below.) **Only the orchestrator runs as `paddock_app`.** The compute services that
    hold `DATABASE_URL` (intel, brain, mlrisk, changewatch, triage, correlation,
    sca, codeanalysis, graphsync, ontology, threatintel, otdiscovery,
    remediation, worker-*) still connect as the owner/superuser in
@@ -56,7 +56,7 @@ The app role cannot write `tenants`; tenant creation is an operator action.
    the `ask_*` views and `graphsync` mirrors everything into a single Neo4j
    graph — both would leak across tenants. Multi-tenant mode requires making
    each of them tenant-aware (or disabling them) first.
-2. **Workers do not yet echo `tenant_id`** from the job payload as
+2. (SUPERSEDED, see below.) **Workers do not yet echo `tenant_id`** from the job payload as
    `X-Paddock-Tenant`, so worker callbacks for a non-default tenant's scans land
    in the default tenant (and 404). The API-level isolation is complete; the
    scanning pipeline for tenant ≠ default is not.
