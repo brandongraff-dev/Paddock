@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import FindingRow from "../components/FindingRow";
 import FilterBar from "../components/FilterBar";
 import EmptyState from "../components/EmptyState";
@@ -47,6 +47,17 @@ export default function FindingsPage() {
   }, [q.data, sev]);
 
   const openDrawer = useStore((s) => s.openDrawer);
+  // Deep links from notifications (Slack, Jira, email, webhooks) arrive as
+  // /findings?focus=<finding id>: open that finding once, then drop the param.
+  const [params, setParams] = useSearchParams();
+  const focus = params.get("focus");
+  useEffect(() => {
+    if (!focus) return;
+    openDrawer({ kind: "finding", id: focus });
+    const next = new URLSearchParams(params);
+    next.delete("focus");
+    setParams(next, { replace: true });
+  }, [focus, openDrawer, params, setParams]);
   const patch = usePatchFinding();
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);

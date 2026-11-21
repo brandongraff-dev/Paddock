@@ -1,8 +1,11 @@
 /**
  * Scope admin — defensive UX:
  *   - Audit log is prominent (expandable row per entry).
- *   - Creating a wildcard entry (value === "*" or kind === "wildcard") requires
- *     an explicit confirm modal that spells out the blast impact.
+ *   - Creating a wildcard entry (kind === "subdomain_wildcard" or a "*." value)
+ *     requires an explicit confirm modal that spells out the blast impact.
+ *   - Proof-of-control: each entry shows whether ownership is proven, and
+ *     domains can be proven inline (DNS TXT / HTTPS file); IP ranges and ASNs
+ *     are attested (LOA reference + approver).
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,11 +16,114 @@ import {
   entryDecisions,
   listScope,
 } from "../api/scope";
+import { issueChallenge, verifyScope } from "../api/onboarding";
 import type { ScopeEntry, ScopeKind } from "../api/types";
 import EmptyState from "../components/EmptyState";
 import Gate from "../components/Gate";
 
-const KINDS: ScopeKind[] = ["domain", "ip_cidr", "repo", "cloud_account", "wildcard"];
+const KINDS: ScopeKind[] = ["domain", "subdomain_wildcard", "ipv4_cidr", "ipv6_cidr", "asn"];
+
+const PLACEHOLDER: Record<ScopeKind, string> = {
+  domain: "app.example.com",
+  subdomain_wildcard: "example.com (covers *.example.com)",
+  ipv4_cidr: "203.0.113.0/24",
+  ipv6_cidr: "2001:db8::/48",
+  asn: "AS64500",
+};
+
+const PROOF_TONE: Record<string, string> = {
+  verified: "var(--ok)", attested: "var(--ok)", pending: "var(--warn)", expired: "var(--bad)",
+};
+
+function ProofBadge({ e }: { e: ScopeEntry }) {
+  const p = e.proof;
+  if (!p) return <span className="mono" style={{ color: "var(--text-2)" }}>—</span>;
+  const failing = p.status === "verified" && p.failing_since;
+  const label = failing ? "verified · failing" : p.status;
+  const tone = failing ? "var(--warn)" : PROOF_TONE[p.status] ?? "var(--text-2)";
+  return (
+    <span
+      className="chip"
+      style={{ color: tone, borderColor: tone }}
+      title={
+        p.required && !p.effective
+          ? "Not authorising scans until ownership is proven"
+          : p.last_error ?? (p.method ? `via ${p.method}` : "")
+      }
+    >
+      {label}
+      {p.required && !p.effective ? " · blocked" : ""}
+    </span>
+  );
+}
+
+function ProofPanel({ e, onDone }: { e: ScopeEntry; onDone: () => void }) {
+  const id = Number(e.id);
+  const isDomain = e.kind === "domain" || e.kind === "subdomain_wildcard";
+  const [loa, setLoa] = useState("");
+  const [approver, setApprover] = useState("");
+  const challenge = useQuery({
+    queryKey: ["scope-challenge", e.id],
+    queryFn: () => issueChallenge(id),
+    enabled: isDomain,
+    staleTime: Infinity,
+  });
+  const verify = useMutation({
+    mutationFn: () =>
+      verifyScope(id, isDomain ? {} : { method: "attestation", loa_ref: loa, approver }),
+    onSuccess: onDone,
+  });
+  const copy = (t: string) => {
+    try { void navigator.clipboard?.writeText(t); } catch { /* clipboard unavailable */ }
+  };
+  return (
+    <div className="proof-panel" onClick={(ev) => ev.stopPropagation()}>
+      {isDomain ? (
+        challenge.data ? (
+          <>
+            <p>Publish <b>one</b> of these, then check:</p>
+            <div className="proof-row">
+              <span className="label">DNS TXT</span>
+              <code>{challenge.data.dns_txt.name}</code>
+              <code>{challenge.data.dns_txt.value}</code>
+              <button className="ghost" onClick={() => copy(challenge.data!.dns_txt.value)}>copy</button>
+            </div>
+            {challenge.data.http_file && (
+              <div className="proof-row">
+                <span className="label">HTTPS file</span>
+                <code>{challenge.data.http_file.url}</code>
+                <code>{challenge.data.http_file.body}</code>
+                <button className="ghost" onClick={() => copy(challenge.data!.http_file!.body)}>copy</button>
+              </div>
+            )}
+          </>
+        ) : (
+          <p>{challenge.isError ? "Could not issue a challenge." : "Issuing challenge…"}</p>
+        )
+      ) : (
+        <div className="proof-row">
+          <span className="label">Attest</span>
+          <input placeholder="LOA / contract reference" value={loa} onChange={(ev) => setLoa(ev.target.value)} />
+          <input placeholder="Approver (name, role)" value={approver} onChange={(ev) => setApprover(ev.target.value)} />
+        </div>
+      )}
+      <div className="proof-actions">
+        <button
+          className="primary"
+          disabled={verify.isPending || (!isDomain && (!loa.trim() || !approver.trim()))}
+          onClick={() => verify.mutate()}
+        >
+          {isDomain ? "Check now" : "Record attestation"}
+        </button>
+        {verify.data && (
+          <span style={{ color: verify.data.check.ok ? "var(--ok)" : "var(--bad)" }}>
+            {verify.data.check.ok ? "Proven" : verify.data.check.detail}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ConfirmWildcard({
   entry,
@@ -131,6 +237,7 @@ export default function ScopePage() {
   >(null);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [proving, setProving] = useState<string | null>(null);
 
   const add = useMutation({
     mutationFn: addScopeEntry,
@@ -158,7 +265,7 @@ export default function ScopePage() {
       auth_doc_ref: authRef || undefined,
       notes: notes || undefined,
     };
-    const broad = kind === "wildcard" || value.trim() === "*" || value.trim().startsWith("*.");
+    const broad = kind === "subdomain_wildcard" || value.trim() === "*" || value.trim().startsWith("*.");
     if (broad) {
       setPendingWild(payload);
       return;
@@ -204,7 +311,7 @@ export default function ScopePage() {
           </div>
           <div className="field">
             <label>Value</label>
-            <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={kind === "ip_cidr" ? "10.0.0.0/8" : "example.com"} required />
+            <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={PLACEHOLDER[kind]} required />
           </div>
           <div className="field">
             <label>Auth doc ref</label>
@@ -238,6 +345,7 @@ export default function ScopePage() {
                 <th>added_at</th>
                 <th>auth_doc_ref</th>
                 <th>expires_at</th>
+                <th>ownership</th>
                 <th>active</th>
                 <th></th>
               </tr>
@@ -269,6 +377,7 @@ export default function ScopePage() {
                     <td className="mono">{e.added_at}</td>
                     <td className="mono">{e.auth_doc_ref ?? "—"}</td>
                     <td className="mono">{e.expires_at ?? "—"}</td>
+                    <td><ProofBadge e={e} /></td>
                     <td>
                       <span
                         className="chip"
@@ -280,8 +389,19 @@ export default function ScopePage() {
                         {e.active ? "active" : "inactive"}
                       </span>
                     </td>
-                    <td style={{ textAlign: "right" }}>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <Gate need="admin">
+                        {e.active && e.proof && !["verified", "attested"].includes(e.proof.status) && (
+                          <button
+                            className="ghost"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              setProving(proving === e.id ? null : e.id);
+                            }}
+                          >
+                            {e.kind === "domain" || e.kind === "subdomain_wildcard" ? "prove ownership" : "attest"}
+                          </button>
+                        )}
                         <button
                           className="danger"
                           disabled={!e.active}
@@ -298,14 +418,24 @@ export default function ScopePage() {
                     </td>
                   </tr>
                 );
+                const proofRow = proving === e.id ? (
+                  <tr key={`${e.id}-proof`} style={{ cursor: "default" }}>
+                    <td colSpan={9}>
+                      <ProofPanel
+                        e={e}
+                        onDone={() => qc.invalidateQueries({ queryKey: ["scope"] })}
+                      />
+                    </td>
+                  </tr>
+                ) : null;
                 const auditRow = isOpen ? (
                   <tr key={`${e.id}-audit`} style={{ cursor: "default" }}>
-                    <td colSpan={8} style={{ padding: 0 }}>
+                    <td colSpan={9} style={{ padding: 0 }}>
                       <AuditLog entryId={e.id} />
                     </td>
                   </tr>
                 ) : null;
-                return auditRow ? [mainRow, auditRow] : [mainRow];
+                return [mainRow, proofRow, auditRow].filter(Boolean) as JSX.Element[];
               })}
             </tbody>
           </table>

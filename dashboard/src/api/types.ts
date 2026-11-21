@@ -236,7 +236,8 @@ export interface FindingChain {
   findings?: Finding[];
 }
 
-export type ScopeKind = "domain" | "ip_cidr" | "repo" | "cloud_account" | "wildcard";
+/** Must match the orchestrator's ScopeKind (orchestrator/app/models.py). */
+export type ScopeKind = "domain" | "subdomain_wildcard" | "ipv4_cidr" | "ipv6_cidr" | "asn";
 
 export interface ScopeEntry {
   id: string;
@@ -248,6 +249,8 @@ export interface ScopeEntry {
   auth_doc_ref?: string | null;
   expires_at?: string | null;
   notes?: string | null;
+  /** Proof-of-control status (schema 021); absent on older servers. */
+  proof?: import("./onboarding").ScopeProof;
 }
 
 export interface ScopeDecision {

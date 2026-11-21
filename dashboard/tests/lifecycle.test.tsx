@@ -360,3 +360,18 @@ describe("api: getFinding", () => {
     expect(b.id).toBe("bare");
   });
 });
+
+describe("Findings deep link", () => {
+  it("opens the finding named by ?focus= (links from Slack/Jira/email)", async () => {
+    mockFetch([[/\/v1\/findings\?/, { items: [], total: 0, limit: 50, offset: 0 }]]);
+    const { useStore } = await import("../src/state/store");
+    useStore.setState({ drawer: { kind: null } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      React.createElement(QueryClientProvider, { client: qc },
+        React.createElement(MemoryRouter, { initialEntries: ["/findings?focus=f-123"] },
+          React.createElement(FindingsPage))),
+    );
+    await waitFor(() => expect(useStore.getState().drawer).toEqual({ kind: "finding", id: "f-123" }));
+  });
+});
