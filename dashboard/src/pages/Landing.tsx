@@ -214,7 +214,7 @@ export default function Landing() {
             <div className="lp-footer-brand" ref={megaRef}>
               <div className={`lp-footer-logo${megaIn ? " in" : ""}`}>
                 <HorseMark size={34} />
-                <Wordmark height={30} shimmer />
+                <Wordmark height={30} shimmer deep />
               </div>
               <p>Map the paths attackers would take, and close them before they do.</p>
             </div>
