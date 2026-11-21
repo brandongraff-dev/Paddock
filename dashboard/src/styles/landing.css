@@ -439,3 +439,35 @@
   background-size: 260px 260px, 900px 900px, 420px 420px;
   opacity: 0.36;
 }
+
+/* Desktop: all four agents in one row, no scrolling. Narrow screens keep the swipeable rail. */
+@media (min-width: 960px) {
+  .lp-rail {
+    grid-auto-flow: row;
+    grid-auto-columns: unset;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: clamp(12px, 1.3vw, 20px);
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+  .lp-card { border-radius: 24px; }
+  .lp-card-img { aspect-ratio: 1 / 0.95; }
+  .lp-card-img canvas { inset: 2% 3% 38%; width: 94%; height: 60%; }
+  .lp-card-body { margin: -112px 8px 8px; padding: 16px 16px 10px; gap: 10px; border-radius: 18px; }
+  .lp-card-top { flex-direction: column; align-items: flex-start; gap: 9px; }
+  .lp-card-top h3 { font-size: clamp(24px, 2.1vw, 32px); }
+  .lp-tag { padding: 4px 9px; font-size: 9.5px; }
+  .lp-card-info { font-size: 9.5px; }
+  .lp-card-body p { font-size: 12.5px; min-height: 58px; line-height: 1.5; }
+  .lp-run { height: 42px; border-radius: 12px; font-size: 12.5px; }
+}
+@media (min-width: 960px) {
+  .lp-card-body { flex: 1; }
+}
+@media (min-width: 960px) and (max-width: 1250px) {
+  .lp-card-img { aspect-ratio: 1 / 1.05; }
+  .lp-card-body { margin-top: -84px; }
+  .lp-card-info span:first-child { display: none; }
+  .lp-card-info { justify-content: flex-start; }
+}
+@media (min-width: 960px) { .lp-card-body .lp-run { margin-top: auto; } }
