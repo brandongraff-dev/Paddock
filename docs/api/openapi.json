@@ -11241,6 +11241,13 @@
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "resolved_ips": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Resolved Ips",
+            "type": "array"
           }
         },
         "required": [

@@ -1909,6 +1909,7 @@ export interface ScopeCheckOut {
   matched_entry_metadata?: Record<string, unknown>;
   normalized: string;
   reason: string;
+  resolved_ips?: string[];
 }
 
 export interface ScopeDecisionOut {

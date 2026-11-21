@@ -2608,6 +2608,7 @@ ScopeCheckOut = TypedDict(
         'matched_entry_metadata': NotRequired['dict[str, Any]'],
         'normalized': Required['str'],
         'reason': Required['str'],
+        'resolved_ips': NotRequired['list[str]'],
     },
     total=False,
 )
