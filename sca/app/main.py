@@ -27,6 +27,7 @@ import aiohttp
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from . import osv as osv_module
 from . import parsers
 from .db import Database
@@ -318,6 +319,13 @@ class ScaService:
         return web.json_response(counts)
 
     async def _handle_scan_dir(self, req: web.Request) -> web.Response:
+        # /scan-dir reads the SERVICE HOST's filesystem: a platform-operator
+        # facility, never something one tenant may point at paths another
+        # tenant's checkouts could live under.
+        caller = tenancy.requested_tenant()
+        if (caller is not None and caller != tenancy.DEFAULT_TENANT_ID) or (
+                caller is None and tenancy.strict()):
+            return web.json_response({"error": "scan-dir is platform-tenant only"}, status=403)
         try:
             body = await req.json()
         except Exception:
@@ -347,7 +355,10 @@ class ScaService:
         return web.json_response(counts)
 
     def _make_app(self) -> web.Application:
-        app = web.Application(client_max_size=64 * 1024 * 1024)
+        app = web.Application(
+            client_max_size=64 * 1024 * 1024,
+            middlewares=[tenancy.aiohttp_middleware()],
+        )
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),

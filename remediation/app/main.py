@@ -21,6 +21,7 @@ from typing import Any
 from aiohttp import web
 
 from . import config as config_module
+from . import tenancy
 from . import github as gh
 from .config import Config
 from .db import Database
@@ -124,7 +125,9 @@ class RemediationService:
         return web.json_response({"ok": True, "summary": summary, "results": results})
 
     def _make_app(self) -> web.Application:
-        app = web.Application()
+        # The orchestrator names the caller's tenant (X-Paddock-Tenant + service key);
+        # every handler then reads/writes through that tenant's RLS partition.
+        app = web.Application(middlewares=[tenancy.aiohttp_middleware()])
         app.add_routes([
             web.get("/healthz", self._healthz),
             web.get("/readyz", self._readyz),
