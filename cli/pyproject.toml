@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paddock-cli"
+version = "0.1.0"
+description = "Scan a repo for vulnerable and malicious dependencies, leaked secrets and code bugs, then get ready-made fixes. Runs locally, no server."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+keywords = ["security", "sca", "sast", "secrets", "sarif", "osv", "supply-chain"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+]
+# Deliberately empty: stdlib only, so `pipx run` is fast and the supply-chain
+# surface of a security tool stays minimal.
+dependencies = []
+
+[project.optional-dependencies]
+semgrep = ["semgrep>=1.50"]   # optional: prefer Semgrep over the bundled taint scanner
+test = ["pytest>=7.4"]
+
+[project.scripts]
+paddock = "paddock_cli.main:main"
+paddock-cli = "paddock_cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["paddock_cli*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]

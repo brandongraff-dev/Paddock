@@ -92,6 +92,7 @@ nav:
   - Developers:
       - API: API.md
       - SDKs, CLI & Terraform: SDK.md
+      - paddock CLI (scan & fix): CLI.md
       - Service contracts: CONTRACTS.md
   - Operations:
       - Operations guide: OPERATIONS.md

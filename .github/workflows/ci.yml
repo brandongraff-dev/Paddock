@@ -307,3 +307,44 @@ jobs:
         run: python3 -c "import json; d=json.load(open('deploy/grafana/paddock-overview.json')); assert d['uid'] and d['panels']"
       - name: Backup/restore scripts parse
         run: bash -n scripts/backup.sh && bash -n scripts/restore.sh
+
+  # --------------------------------------------------------------------- #
+  # paddock CLI (cli/): stdlib-only developer tool built on the sca,
+  # codeanalysis, remediation and orchestrator-SARIF engines. Tests run on
+  # the oldest and newest supported Python; then the built wheel is
+  # installed into a clean venv and exercised away from the checkout, which
+  # proves the vendored engines are complete.
+  # --------------------------------------------------------------------- #
+  cli:
+    name: cli (paddock-cli, py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install pytest pyyaml
+      - name: Tests
+        working-directory: cli
+        run: python -m pytest -q
+      - name: Wheel installs and runs outside the checkout
+        run: |
+          pip wheel --no-deps -q -w "$RUNNER_TEMP/wheel" cli
+          python -m venv "$RUNNER_TEMP/clean"
+          "$RUNNER_TEMP/clean/bin/pip" install -q "$RUNNER_TEMP"/wheel/paddock_cli-*.whl
+          "$RUNNER_TEMP/clean/bin/pip" list --format=freeze | grep -v -E '^(pip|setuptools|paddock-cli)==' && exit 1 || true
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/clean/bin/paddock" --version
+          # offline, so CI never depends on OSV; the fixture has planted secret/taint/config bugs
+          set +e
+          "$RUNNER_TEMP/clean/bin/paddock" scan "$GITHUB_WORKSPACE/cli/tests/fixtures/vuln-repo" \
+            --offline --only secrets,code,config --fail-on high --sarif "$RUNNER_TEMP/out.sarif"
+          test $? -eq 1
+          python -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['version']=='2.1.0' and d['runs'][0]['results']" "$RUNNER_TEMP/out.sarif"
+      - name: Docker image builds
+        if: matrix.python == '3.13'
+        run: docker build -f cli/Dockerfile -t paddock-cli:ci . && docker run --rm paddock-cli:ci --version
