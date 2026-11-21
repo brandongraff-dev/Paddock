@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="palantir-asm orchestrator",
+        title="paddock orchestrator",
         description=(
             "Defensive ASM orchestrator: scope service, job dispatch, and the "
             "asset/finding/timeline API. Workers in this platform perform "

@@ -26,7 +26,7 @@ from .config import AgentConfig, Credentials, load_credentials, save_credentials
 from .inventory import collect_inventory
 from .platform_block import BaseEnforcer, detect_platform, get_enforcer
 
-log = logging.getLogger("palantir-agent")
+log = logging.getLogger("paddock-agent")
 
 
 class Agent:
@@ -66,7 +66,7 @@ class Agent:
 
     def _require_enrolled(self) -> None:
         if not self.creds or not self.client.agent_token:
-            raise FleetClientError("agent is not enrolled; run `pasm enroll` first")
+            raise FleetClientError("agent is not enrolled; run `paddock enroll` first")
 
     # ------------------------------------------------------------------ #
     # inventory

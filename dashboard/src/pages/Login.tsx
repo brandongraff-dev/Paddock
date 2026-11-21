@@ -84,7 +84,7 @@ export default function Login() {
         <div className="login-brand">
           <span className="login-mark"><HorseMark size={40} title="" /></span>
           <div>
-            <div className="login-title">palantir-asm</div>
+            <div className="login-title">Paddock</div>
             <div className="login-sub mono">attack surface management</div>
           </div>
         </div>

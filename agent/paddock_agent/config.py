@@ -33,26 +33,26 @@ def _env_int(name: str, default: int) -> int:
 
 
 DEFAULT_CRED_PATH = os.environ.get(
-    "PASM_AGENT_CRED", str(Path.home() / ".config" / "palantir-agent" / "credentials.json")
+    "PADDOCK_AGENT_CRED", str(Path.home() / ".config" / "paddock-agent" / "credentials.json")
 )
 DEFAULT_QUARANTINE_DIR = os.environ.get(
-    "PASM_QUARANTINE_DIR", "/var/lib/palantir-agent/quarantine"
+    "PADDOCK_QUARANTINE_DIR", "/var/lib/paddock-agent/quarantine"
 )
 
 
 @dataclass
 class AgentConfig:
-    server: str = field(default_factory=lambda: _env("PASM_SERVER", "http://localhost:8080") or "")
+    server: str = field(default_factory=lambda: _env("PADDOCK_SERVER", "http://localhost:8080") or "")
     cred_path: str = field(default_factory=lambda: DEFAULT_CRED_PATH)
     quarantine_dir: str = field(default_factory=lambda: DEFAULT_QUARANTINE_DIR)
     # SAFETY: dry-run is TRUE by default. A real apply requires BOTH the server
     # to have approved the action for real (dry_run=false) AND this flag off.
-    dry_run: bool = field(default_factory=lambda: _env_bool("PASM_DRY_RUN", True))
-    heartbeat_interval_s: int = field(default_factory=lambda: _env_int("PASM_HEARTBEAT_SEC", 30))
-    inventory_interval_s: int = field(default_factory=lambda: _env_int("PASM_INVENTORY_SEC", 300))
-    timeout_s: int = field(default_factory=lambda: _env_int("PASM_HTTP_TIMEOUT", 20))
+    dry_run: bool = field(default_factory=lambda: _env_bool("PADDOCK_DRY_RUN", True))
+    heartbeat_interval_s: int = field(default_factory=lambda: _env_int("PADDOCK_HEARTBEAT_SEC", 30))
+    inventory_interval_s: int = field(default_factory=lambda: _env_int("PADDOCK_INVENTORY_SEC", 300))
+    timeout_s: int = field(default_factory=lambda: _env_int("PADDOCK_HTTP_TIMEOUT", 20))
     # platform override (mostly for tests); defaults to the running OS.
-    platform_name: str | None = field(default_factory=lambda: _env("PASM_PLATFORM"))
+    platform_name: str | None = field(default_factory=lambda: _env("PADDOCK_PLATFORM"))
 
     def with_server(self, server: str | None) -> "AgentConfig":
         if server:

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from palantir_agent.platform_block import BaseEnforcer
+from paddock_agent.platform_block import BaseEnforcer
 
 
 class RecordingEnforcer(BaseEnforcer):

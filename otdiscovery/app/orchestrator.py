@@ -26,7 +26,7 @@ class OrchestratorClient:
         base_url: str,
         *,
         timeout_s: int = 30,
-        user_agent: str = "palantir-asm-otdiscovery/0.1",
+        user_agent: str = "paddock-otdiscovery/0.1",
         session: aiohttp.ClientSession | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")

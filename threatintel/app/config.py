@@ -60,8 +60,8 @@ class Config:
     http_timeout_s: int = field(default_factory=lambda: _env_int("HTTP_TIMEOUT_S", 30))
     max_poll_pages: int = field(default_factory=lambda: _env_int("TI_MAX_POLL_PAGES", 20))
     user_agent: str = field(default_factory=lambda: _env(
-        "TI_USER_AGENT", "palantir-asm-threatintel/0.1 (+defensive-asm)"
-    ) or "palantir-asm-threatintel/0.1")
+        "TI_USER_AGENT", "paddock-threatintel/0.1 (+defensive-asm)"
+    ) or "paddock-threatintel/0.1")
 
     # Behaviour
     log_level: str = field(default_factory=lambda: (_env("LOG_LEVEL", "INFO") or "INFO").upper())

@@ -77,8 +77,8 @@ class Config:
         default_factory=lambda: _env_int("TRIAGE_WEBHOOK_TIMEOUT_S", 5)
     )
     user_agent: str = field(default_factory=lambda: _env(
-        "TRIAGE_USER_AGENT", "palantir-asm-triage/1.0"
-    ) or "palantir-asm-triage/1.0")
+        "TRIAGE_USER_AGENT", "paddock-triage/1.0"
+    ) or "paddock-triage/1.0")
 
     # Event stream
     events_stream: str = field(

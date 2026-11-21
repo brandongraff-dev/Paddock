@@ -1,5 +1,5 @@
 /**
- * CommandPalette — Palantir-style cmd-K / ctrl-K launcher.
+ * CommandPalette — Spotlight-style cmd-K / ctrl-K launcher.
  *
  * Mounted once, globally, from Shell. Opens on cmd/ctrl-K or the top-bar
  * affordance; closes on Esc or backdrop click. A single input drives four
@@ -307,7 +307,7 @@ export default function CommandPalette() {
           <span><span className="kbd">↵</span> open</span>
           <span><span className="kbd">esc</span> close</span>
           <span className="sp" />
-          <span className="mono">palantir-asm</span>
+          <span className="mono">paddock</span>
         </div>
       </div>
     </div>

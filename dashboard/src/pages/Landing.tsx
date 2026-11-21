@@ -119,7 +119,7 @@ export default function Landing() {
         <nav className="lp-nav">
           <Link to="/welcome" className="lp-brand">
             <HorseMark size={30} />
-            <span>palantir-asm</span>
+            <span>Paddock</span>
           </Link>
           <div className="lp-links">
             <a href="#agents">Agents</a>
@@ -223,7 +223,7 @@ export default function Landing() {
       </section>
 
       <footer className="lp-foot">
-        <span className="mono">palantir-asm · AGPL-3.0 · self-hosted</span>
+        <span className="mono">paddock · AGPL-3.0 · self-hosted</span>
         <span>
           Horse after Eadweard Muybridge, <i>The Horse in Motion</i>, 1878 (public domain).
         </span>

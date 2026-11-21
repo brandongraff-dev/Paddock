@@ -1,4 +1,4 @@
-# RUNBOOK — running palantir-asm against a real authorized target
+# RUNBOOK — running Paddock against a real authorized target
 
 This is the end-to-end procedure for running the full stack against an
 **authorized** target and measuring a crude false-positive rate. It assumes a

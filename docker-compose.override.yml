@@ -1,4 +1,4 @@
-# palantir-asm — DEV override
+# paddock — DEV override
 # =============================================================================
 # docker compose auto-merges this file on top of docker-compose.yml, so a plain
 # `docker compose up` (and `make up`) gives you the DEV experience:

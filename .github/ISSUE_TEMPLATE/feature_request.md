@@ -6,7 +6,7 @@ labels: ["enhancement"]
 ---
 
 <!--
-Heads up on scope: palantir-asm is a DEFENSIVE, detection-only platform. By
+Heads up on scope: Paddock is a DEFENSIVE, detection-only platform. By
 design it will never auto-exploit, attack credentials, or support evasion
 (see the "Hard rules" in the README and §6 of SECURITY.md). Requests that would
 add offensive/exploitation capability will be declined — please don't spend

@@ -54,7 +54,7 @@ class BaseEnforcer:
     name = "base"
     can_apply = False
 
-    def __init__(self, *, quarantine_dir: str = "/var/lib/palantir-agent/quarantine",
+    def __init__(self, *, quarantine_dir: str = "/var/lib/paddock-agent/quarantine",
                  runner: Runner | None = None) -> None:
         self.quarantine_dir = quarantine_dir
         self._run = runner or _real_runner
@@ -94,7 +94,7 @@ class LinuxEnforcer(BaseEnforcer):
             return {
                 "mechanism": "hosts-sinkhole",
                 "file": "/etc/hosts",
-                "line": f"127.0.0.1 {target}  # palantir-agent block",
+                "line": f"127.0.0.1 {target}  # paddock-agent block",
             }
         if action_type == "firewall_rule":
             direction, proto, port = self._parse_portspec(target)

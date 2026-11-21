@@ -1,4 +1,4 @@
-"""triage: ownership routing + ticketing + SLA tracking for palantir-asm.
+"""triage: ownership routing + ticketing + SLA tracking for paddock.
 
 This service turns findings into accountable work. On a periodic pass (and in
 response to ``finding_opened`` on ``stream:events``) it takes every open

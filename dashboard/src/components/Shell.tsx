@@ -349,7 +349,7 @@ export default function Shell({ children, noScroll }: Props) {
 
   const title =
     entries.find((n) => (n.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.to)))
-      ?.label ?? "palantir-asm";
+      ?.label ?? "Paddock";
 
   // The classification banner tracks the page you're on: clear the on-screen
   // max when the route changes so a drawer/page's data re-notes afresh.
@@ -365,10 +365,9 @@ export default function Shell({ children, noScroll }: Props) {
   return (
     <div className="shell">
       <nav className="rail" aria-label="primary">
-        <NavLink to="/welcome" className="brand" title="palantir-asm — about">
+        <NavLink to="/welcome" className="brand" title="Paddock — about">
           <HorseMark size={26} />
-          <span className="brand-name">palantir-asm</span>
-          <span className="brand-sub mono">pa</span>
+          <span className="brand-name">Paddock</span>
         </NavLink>
         <CmdkButton />
         <div className="rail-scroll">

@@ -294,7 +294,7 @@ class Pipeline:
             f"{len(gate_res.report.get('files', []))} file(s))\n"
             "- Prompt-injection scan: no injected instructions in finding or PR body\n"
             "- Adversarial verifier: addresses the finding; no out-of-scope changes\n\n"
-            "> This PR was PROPOSED by palantir-asm auto-remediation. It is "
+            "> This PR was PROPOSED by paddock auto-remediation. It is "
             "constrained to an allowlisted change class and double-checked for "
             "prompt injection. **It is NOT auto-merged — a human must review and "
             "approve.**\n"

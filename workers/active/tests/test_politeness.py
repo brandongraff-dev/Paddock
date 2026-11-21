@@ -70,9 +70,9 @@ def test_robots_parser_longest_prefix_wins():
     Allow: /private/public/
     """
     entry = _parse_robots(body)
-    assert _robots_allows_path(entry, "palantir-asm-scanner", "/private/x") is False
-    assert _robots_allows_path(entry, "palantir-asm-scanner", "/private/public/x") is True
-    assert _robots_allows_path(entry, "palantir-asm-scanner", "/open") is True
+    assert _robots_allows_path(entry, "paddock-scanner", "/private/x") is False
+    assert _robots_allows_path(entry, "paddock-scanner", "/private/public/x") is True
+    assert _robots_allows_path(entry, "paddock-scanner", "/open") is True
 
 
 @pytest.mark.asyncio

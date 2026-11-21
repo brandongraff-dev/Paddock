@@ -22,7 +22,7 @@
 
 ## Safety gate (required — see SECURITY.md §6)
 
-palantir-asm is **detection-only**. Confirm this PR does **not** add any of:
+Paddock is **detection-only**. Confirm this PR does **not** add any of:
 
 - [ ] auto-exploitation / payload delivery / PoC execution
 - [ ] credential attacks (brute force, spray, stuffing, submitting default creds)

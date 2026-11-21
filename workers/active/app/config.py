@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Identity
     worker_id: str = Field(default="active-1", alias="WORKER_ID")
     user_agent: str = Field(
-        default="palantir-asm-scanner/1.0 (+defensive-scanner)",
+        default="paddock-scanner/1.0 (+defensive-scanner)",
         alias="USER_AGENT",
     )
 

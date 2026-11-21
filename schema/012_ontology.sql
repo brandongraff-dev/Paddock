@@ -1,5 +1,5 @@
 -- Ontology / semantic layer: a typed entity model projected over the raw
--- tables, so analysts work with Objects + Links (Palantir-style) instead of
+-- tables, so analysts work with Objects + Links (ontology-style) instead of
 -- rows. A projector derives objects/links from assets/findings/etc.
 -- Applied after 001-011.
 

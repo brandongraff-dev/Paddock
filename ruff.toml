@@ -1,4 +1,4 @@
-# Ruff config for palantir-asm.
+# Ruff config for paddock.
 #
 # The CI `lint` job enforces the high-signal rule set below across every Python
 # service. These rules catch *real* defects — syntax errors, undefined names,

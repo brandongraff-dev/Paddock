@@ -70,8 +70,8 @@ class Config:
     # Networking
     http_timeout_s: int = field(default_factory=lambda: _env_int("HTTP_TIMEOUT_S", 30))
     user_agent: str = field(default_factory=lambda: _env(
-        "OTDISCOVERY_USER_AGENT", "palantir-asm-otdiscovery/0.1 (+defensive-asm; passive)"
-    ) or "palantir-asm-otdiscovery/0.1")
+        "OTDISCOVERY_USER_AGENT", "paddock-otdiscovery/0.1 (+defensive-asm; passive)"
+    ) or "paddock-otdiscovery/0.1")
 
     # Safety limit for an uploaded pcap / observation body.
     max_capture_bytes: int = field(

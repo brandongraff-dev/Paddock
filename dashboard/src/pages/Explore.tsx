@@ -1,7 +1,7 @@
 /**
  * Explore — the ontology / semantic layer.
  *
- * The Palantir move: analysts navigate typed Entities and their links, not
+ * The ontology move: analysts navigate typed Entities and their links, not
  * rows. Left rail = object-type picker (colored, with live counts). Center =
  * the typed-object list for the selected type (or cross-type search results).
  * Clicking an object opens the object view: its typed properties plus its

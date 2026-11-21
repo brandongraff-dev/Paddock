@@ -1,13 +1,13 @@
 # SECURITY.md — threat model & security posture
 
-palantir-asm is a **defensive** Attack Surface Management platform for
+Paddock is a **defensive** Attack Surface Management platform for
 authorized asset defense. This document is an honest threat model: what the
 system protects, the trust boundaries, the invariants it enforces, how it is
 hardened operationally, and — just as importantly — the gaps it does **not**
 yet close. It ends with the authorized-use statement that governs the whole
 project.
 
-> Reporting a vulnerability in palantir-asm itself: open a private advisory /
+> Reporting a vulnerability in Paddock itself: open a private advisory /
 > contact the maintainers before public disclosure. Do not file exploit details
 > in a public issue.
 
@@ -15,7 +15,7 @@ project.
 
 ## 1. What this system is (and is not)
 
-palantir-asm **discovers** assets from passive sources, **politely probes** the
+Paddock **discovers** assets from passive sources, **politely probes** the
 subset you have explicitly authorized, **correlates** findings against public
 vulnerability feeds, and **surfaces** the result to an analyst. It is a
 detection and situational-awareness tool.
@@ -161,7 +161,7 @@ The platform will not, by construction:
   passwords.
 - **evade** — no stealth/fragmented scans, no WAF-bypass headers, no decoys, no
   source spoofing. The scanner's User-Agent names itself
-  (`palantir-asm-scanner/1.0 (+defensive-scanner)`). Evasion-flavoured config
+  (`paddock-scanner/1.0 (+defensive-scanner)`). Evasion-flavoured config
   env vars and CLI flags are **refused at import/exec time**, not merely
   ignored. nuclei runs with `-exclude-tags intrusive,fuzz,dos` and fixed rate
   caps that narrowing config can tighten but never widen.
@@ -300,7 +300,7 @@ This is an MVP-grade platform with real, un-papered-over gaps:
 
 ## 12. Authorized-use statement
 
-**palantir-asm may be pointed only at assets you own or are explicitly,
+**Paddock may be pointed only at assets you own or are explicitly,
 documentedly authorized to assess.** The safe default scope is
 `scanme.nmap.org` (Nmap's official legal scan target —
 <https://nmap.org/book/legal-issues.html>) and loopback (`127.0.0.0/8`). Any

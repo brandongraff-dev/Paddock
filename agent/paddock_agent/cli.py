@@ -1,12 +1,12 @@
-"""`pasm` -- the operator CLI for the palantir-asm host agent.
+"""`paddock` -- the operator CLI for the paddock host agent.
 
-    pasm enroll   --server URL --token ENROLL_TOKEN
-    pasm status
-    pasm inventory               # collect (and with --send, upload) inventory
-    pasm actions                 # list this host's actions (proposed/approved/...)
-    pasm simulate TYPE TARGET    # DRY-RUN preview of a host-local action
-    pasm apply ACTION_ID         # apply a SERVER-APPROVED action, after confirm
-    pasm run                     # start the heartbeat/inventory run loop
+    paddock enroll   --server URL --token ENROLL_TOKEN
+    paddock status
+    paddock inventory               # collect (and with --send, upload) inventory
+    paddock actions                 # list this host's actions (proposed/approved/...)
+    paddock simulate TYPE TARGET    # DRY-RUN preview of a host-local action
+    paddock apply ACTION_ID         # apply a SERVER-APPROVED action, after confirm
+    paddock run                     # start the heartbeat/inventory run loop
 
 Safety:
   * ``simulate`` never mutates -- it prints the plan the enforcer WOULD run.
@@ -33,7 +33,7 @@ from .platform_block import get_enforcer
 
 def _operator_headers() -> dict[str, str]:
     """Operator credential for read/propose calls (separate from the agent token)."""
-    tok = os.environ.get("PASM_OPERATOR_TOKEN")
+    tok = os.environ.get("PADDOCK_OPERATOR_TOKEN")
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
 
@@ -155,9 +155,9 @@ def _cmd_run(args: argparse.Namespace, agent: Agent) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="pasm", description="palantir-asm host agent")
-    p.add_argument("--version", action="version", version=f"pasm {__version__}")
-    p.add_argument("--server", help="orchestrator base URL (default env PASM_SERVER)")
+    p = argparse.ArgumentParser(prog="paddock", description="paddock host agent")
+    p.add_argument("--version", action="version", version=f"paddock {__version__}")
+    p.add_argument("--server", help="orchestrator base URL (default env PADDOCK_SERVER)")
     p.add_argument("--dry-run", dest="dry_run", action="store_true",
                    help="force dry-run (simulate only; never mutate)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -197,7 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=os.environ.get("PASM_LOG_LEVEL", "INFO"),
+    logging.basicConfig(level=os.environ.get("PADDOCK_LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)

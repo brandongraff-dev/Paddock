@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end integration harness for palantir-asm.
+"""End-to-end integration harness for paddock.
 
 Drives the full service pipeline against a running stack and asserts the
 cross-service contracts that past bugs kept breaking (missing fields, bad
@@ -60,7 +60,7 @@ def items(path):
     return d.get("items", d) if isinstance(d, dict) else d
 
 
-print("palantir-asm integration harness\n" + "=" * 50)
+print("paddock integration harness\n" + "=" * 50)
 
 # 0. every service healthy
 for name, base in {"orchestrator": ORCH, **SVC}.items():

@@ -184,7 +184,7 @@ async def create_scan(
             detail={
                 "error": "refused_kind",
                 "message": (
-                    "This scan kind is not supported by palantir-asm. "
+                    "This scan kind is not supported by paddock. "
                     "Workers in this platform perform discovery and probing "
                     "only; see docs/CONTRACTS.md Do-not-build list."
                 ),

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import socket
 
-from palantir_agent import inventory
+from paddock_agent import inventory
 
 
 class _FakeConn:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from palantir_agent.actions import (
+from paddock_agent.actions import (
     Action,
     ActionError,
     Status,

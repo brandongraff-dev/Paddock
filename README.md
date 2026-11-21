@@ -1,4 +1,4 @@
-# palantir-asm
+# Paddock
 
 **Map the real attack paths from your internet-facing surface to your crown jewels — plus SCA, threat-intel, and an adaptive risk model, in one self-hosted platform.**
 
@@ -7,7 +7,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](#community)
 
-palantir-asm is a **defensive** Attack Surface Management + threat-intelligence
+Paddock is a **defensive** Attack Surface Management + threat-intelligence
 platform for teams defending their own infrastructure. Point it at assets you're
 authorized to assess; it discovers them from passive sources, politely probes the
 ones you've allowed, correlates what it finds against public vulnerability and
@@ -24,7 +24,7 @@ evasion. Every outbound request is scope-checked and audit-logged. See the
 
 ## What it does
 
-**The superpower: attack paths.** Most ASM tools hand you a list. palantir-asm
+**The superpower: attack paths.** Most ASM tools hand you a list. Paddock
 builds the *graph* — assets, the edges between them, and the findings on each —
 and then walks it to show you the **paths an attacker would actually take**, from
 an internet-facing foothold to something that matters, with the hop-by-hop
@@ -188,7 +188,7 @@ per-request in the worker's egress wrapper, and every decision is written to
 
 ### Authorized use only
 
-> **palantir-asm may be pointed only at assets you own or are explicitly,
+> **Paddock may be pointed only at assets you own or are explicitly,
 > documentedly authorized to assess.** Using it to scan, probe, or otherwise
 > interact with systems you are not authorized to test may be illegal and is
 > outside the supported and intended use of this project. The system enforces the
@@ -258,7 +258,7 @@ employable inside an org. See [SECURITY.md §6](SECURITY.md) for why.
 
 **[AGPL-3.0](LICENSE)** (`SPDX-License-Identifier: AGPL-3.0-only`).
 
-Open-core rationale: self-hosting palantir-asm is and will stay **free** — clone
+Open-core rationale: self-hosting Paddock is and will stay **free** — clone
 it, run it, modify it. The AGPL's network-use clause (§13) means anyone who offers
 a *modified* version as a network service must publish their changes under the same
 license. That keeps the self-hosted project healthy and in the open while

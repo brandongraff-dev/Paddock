@@ -1,4 +1,4 @@
-"""palantir-asm graphsync service.
+"""paddock graphsync service.
 
 Mirrors the Postgres asset graph (assets, asset_edges, open findings) into
 Neo4j and serves fast, read-only Cypher-powered graph queries: exploit-weighted

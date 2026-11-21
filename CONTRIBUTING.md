@@ -1,6 +1,6 @@
-# Contributing to palantir-asm
+# Contributing to Paddock
 
-Thanks for wanting to help. palantir-asm is a **defensive, detection-only**
+Thanks for wanting to help. Paddock is a **defensive, detection-only**
 Attack Surface Management platform, and that framing shapes what we will and
 won't merge. Please skim the [README](README.md) and [SECURITY.md](SECURITY.md)
 before you start — especially the "Hard rules" and §6 ("Detection, not

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from palantir_agent.platform_block import (
+from paddock_agent.platform_block import (
     LinuxEnforcer,
     MacEnforcer,
     NotSupportedError,

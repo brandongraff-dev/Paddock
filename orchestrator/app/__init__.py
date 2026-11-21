@@ -1,4 +1,4 @@
-"""palantir-asm orchestrator: HTTP API, scope service, job dispatcher.
+"""paddock orchestrator: HTTP API, scope service, job dispatcher.
 
 Defensive ASM platform orchestrator. This package is intentionally scoped to
 discovery, inventory and audit. It MUST NOT expose any endpoint, helper, or

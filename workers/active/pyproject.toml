@@ -1,7 +1,7 @@
 [project]
-name = "palantir-asm-worker-active"
+name = "paddock-worker-active"
 version = "1.0.0"
-description = "Active probing worker for palantir-asm. Polite. Loud. Transparent."
+description = "Active probing worker for paddock. Polite. Loud. Transparent."
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.27",

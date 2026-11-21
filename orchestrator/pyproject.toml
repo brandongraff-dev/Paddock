@@ -1,7 +1,7 @@
 [project]
-name = "palantir-asm-orchestrator"
+name = "paddock-orchestrator"
 version = "0.1.0"
-description = "Orchestrator service for the palantir-asm defensive ASM platform."
+description = "Orchestrator service for the paddock defensive ASM platform."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

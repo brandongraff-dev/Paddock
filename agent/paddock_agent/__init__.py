@@ -1,4 +1,4 @@
-"""palantir-asm fleet host agent.
+"""paddock fleet host agent.
 
 A small, opt-in agent that runs ON a host. It enrolls with the orchestrator,
 reports inventory, and can apply HOST-LOCAL defensive blocks -- but ONLY through

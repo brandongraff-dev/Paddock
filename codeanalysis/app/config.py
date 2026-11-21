@@ -56,8 +56,8 @@ class Config:
     http_port: int = field(default_factory=lambda: _env_int("CODEANALYSIS_HTTP_PORT", 8097))
     http_timeout_s: int = field(default_factory=lambda: _env_int("HTTP_TIMEOUT_S", 60))
     user_agent: str = field(default_factory=lambda: _env(
-        "CODEANALYSIS_USER_AGENT", "palantir-asm-codeanalysis/0.1 (+defensive-asm)"
-    ) or "palantir-asm-codeanalysis/0.1")
+        "CODEANALYSIS_USER_AGENT", "paddock-codeanalysis/0.1 (+defensive-asm)"
+    ) or "paddock-codeanalysis/0.1")
 
     # Semgrep
     semgrep_bin: str = field(default_factory=lambda: _env("SEMGREP_BIN", "semgrep") or "semgrep")

@@ -7,7 +7,7 @@ import { HORSE_MARK_H, HORSE_MARK_PATH, HORSE_MARK_W } from "./horseFrames";
 export default function HorseMark({
   size = 28,
   ring = true,
-  title = "palantir-asm",
+  title = "Paddock",
   className,
 }: {
   size?: number;

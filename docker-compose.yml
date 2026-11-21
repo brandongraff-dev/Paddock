@@ -1,4 +1,4 @@
-# palantir-asm — HARDENED (prod) compose profile
+# paddock — HARDENED (prod) compose profile
 # =============================================================================
 # This is the hardened baseline. For local development (open ports + dev auth)
 # docker compose auto-merges docker-compose.override.yml on top of this file,

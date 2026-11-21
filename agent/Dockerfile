@@ -1,4 +1,4 @@
-# palantir-asm fleet host agent.
+# paddock fleet host agent.
 #
 # IMPORTANT: this image is NOT a docker-compose service for the platform. It is
 # meant to run ON a target host, opt-in, to enroll + report inventory + apply
@@ -10,18 +10,18 @@
 # Example (opt-in, on a target Linux host):
 #   docker run --rm \
 #     --network host --cap-add NET_ADMIN \
-#     -e PASM_SERVER=https://orchestrator.internal:8080 \
-#     -e PASM_DRY_RUN=true \
-#     -v pasm-agent-cred:/root/.config/palantir-agent \
-#     -v pasm-quarantine:/var/lib/palantir-agent/quarantine \
-#     palantir-asm/agent pasm enroll --token "$FLEET_ENROLL_TOKEN"
+#     -e PADDOCK_SERVER=https://orchestrator.internal:8080 \
+#     -e PADDOCK_DRY_RUN=true \
+#     -v paddock-agent-cred:/root/.config/paddock-agent \
+#     -v paddock-quarantine:/var/lib/paddock-agent/quarantine \
+#     paddock/agent paddock enroll --token "$FLEET_ENROLL_TOKEN"
 #
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PASM_DRY_RUN=true
+    PADDOCK_DRY_RUN=true
 
 WORKDIR /srv/agent
 
@@ -32,8 +32,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
-COPY palantir_agent ./palantir_agent
+COPY paddock_agent ./paddock_agent
 RUN pip install --upgrade pip && pip install .
 
 # Default to dry-run status so a bare `docker run` is inert and safe.
-CMD ["pasm", "status"]
+CMD ["paddock", "status"]

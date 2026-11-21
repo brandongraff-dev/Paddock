@@ -478,7 +478,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="palantir-asm correlation",
+    title="paddock correlation",
     version="0.1.0",
     lifespan=_lifespan,
 )

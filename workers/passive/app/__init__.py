@@ -1,2 +1,2 @@
-"""palantir-asm passive discovery worker."""
+"""paddock passive discovery worker."""
 __version__ = "0.1.0"

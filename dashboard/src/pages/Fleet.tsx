@@ -103,7 +103,7 @@ function AgentsPanel({ agents, selected, onSelect }: {
       {agents.length === 0 ? (
         <EmptyState
           title="No agents enrolled."
-          hint="The agent runs ON a host (opt-in). Enroll with `pasm enroll --server … --token …`."
+          hint="The agent runs ON a host (opt-in). Enroll with `paddock enroll --server … --token …`."
         />
       ) : (
         <div className="fl-agent-list">

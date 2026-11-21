@@ -1,7 +1,7 @@
 # Cloud roadmap — the defensive counterpart to an autonomous pentester
 
 Autonomous offensive agents (Strix and friends) find holes by acting like an
-attacker. palantir-asm's cloud edition should be their mirror image: **agents
+attacker. Paddock's cloud edition should be their mirror image: **agents
 that continuously learn your surface, decide what actually matters, and close
 it — with every action scope-proven, audited and reversible.**
 
@@ -15,7 +15,7 @@ lists the hardening still owed before multi-tenancy.
 
 | # | Item | Why it is non-negotiable in the cloud |
 |---|------|------|
-| P1 | **Proof-of-control for scope** — a tenant may only add a domain after a DNS `TXT` or `/.well-known/palantir-asm/<token>` check (ACME-style), and IP ranges only via RDAP/WHOIS org match or a signed LOA upload. Re-verify on a schedule; auto-expire scope that loses proof. | Today scope is "an operator typed it in". In a SaaS, that is a scan-anyone-for-free service. Ownership proof is what makes a hosted scanner legal. |
+| P1 | **Proof-of-control for scope** — a tenant may only add a domain after a DNS `TXT` or `/.well-known/paddock/<token>` check (ACME-style), and IP ranges only via RDAP/WHOIS org match or a signed LOA upload. Re-verify on a schedule; auto-expire scope that loses proof. | Today scope is "an operator typed it in". In a SaaS, that is a scan-anyone-for-free service. Ownership proof is what makes a hosted scanner legal. |
 | P2 | **Resolved-IP pinning in workers** — `/v1/scope/check` now returns a decision computed on resolved addresses; workers should connect to exactly those IPs (httpx transport / `--resolve` for Go tools). | Closes the DNS-rebinding TOCTOU between the scope check and the tool's own lookup. |
 | P3 | **Isolated egress per tenant** — scanners in Firecracker/gVisor sandboxes with no route to the control plane or cloud metadata, published egress IP ranges per region. | The guardrails added to `scope.py` deny metadata/internal at decision time; the network must deny it too (defence in depth). |
 | P4 | **Keyed, anchored audit chain** — HMAC the chain with a KMS-held key and anchor the head hourly to an append-only store (S3 Object Lock / a transparency log). Make audit writes fail-closed on mutating routes. | Today the chain is tamper-*evident* only against someone without DB superuser. Customers' auditors will ask. |

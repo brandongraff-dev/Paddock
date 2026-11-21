@@ -1,4 +1,4 @@
-# palantir-asm active worker
+# paddock active worker
 # Polite, loud, transparent.
 FROM python:3.12-slim AS base
 
@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    USER_AGENT="palantir-asm-scanner/1.0 (+defensive-scanner)" \
+    USER_AGENT="paddock-scanner/1.0 (+defensive-scanner)" \
     DATA_DIR=/data \
     PD_VERSION_NAABU=2.3.1 \
     PD_VERSION_NUCLEI=3.3.0 \

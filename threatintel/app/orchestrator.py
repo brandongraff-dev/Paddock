@@ -20,7 +20,7 @@ class OrchestratorClient:
         base_url: str,
         *,
         timeout_s: int = 30,
-        user_agent: str = "palantir-asm-threatintel/0.1",
+        user_agent: str = "paddock-threatintel/0.1",
         session: aiohttp.ClientSession | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")

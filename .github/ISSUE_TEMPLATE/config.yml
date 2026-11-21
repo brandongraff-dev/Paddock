@@ -3,7 +3,7 @@ contact_links:
   - name: Security vulnerability (private)
     url: https://github.com/brandongraff-dev/cybersec/security/advisories/new
     about: >-
-      Found a vulnerability in palantir-asm itself? Report it privately via a
+      Found a vulnerability in paddock itself? Report it privately via a
       security advisory — do not open a public issue. See SECURITY.md.
   - name: Questions & discussion
     url: https://github.com/brandongraff-dev/cybersec/discussions

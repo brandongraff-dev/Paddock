@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "palantir-asm-otdiscovery"
+name = "paddock-otdiscovery"
 version = "0.1.0"
 description = "Passive IoT/OT device discovery: fingerprint devices and flag exposure from provided observations, never probing the devices themselves."
 requires-python = ">=3.11"

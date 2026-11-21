@@ -1,6 +1,6 @@
 # Dashboard — build & operations notes
 
-Path: `/home/user/palantir-asm/dashboard/`.
+Path: `/home/user/paddock/dashboard/`.
 
 The dashboard is a React + Vite + TypeScript single-page app that consumes the
 orchestrator's HTTP API documented in `docs/CONTRACTS.md`. It is deliberately
@@ -20,7 +20,7 @@ Production image (multi-stage, serves on :3000 via nginx with a `/v1/*` reverse
 proxy to the `orchestrator` compose service):
 
 ```
-docker build -t palantir-asm-dashboard /home/user/palantir-asm/dashboard
+docker build -t paddock-dashboard /home/user/paddock/dashboard
 ```
 
 `docker-compose up dashboard` in the repo root also works; the `dashboard`
@@ -180,7 +180,7 @@ reproducible set:
   `lib/graph.ts`), deterministic given the same input. That felt more
   "serious" than a bouncy force layout and keeps the screenshot stable.
 - Edge labels are rendered as short uppercase monospace text with a tiny
-  translucent background pill — the look is lifted from Palantir Foundry's
+  translucent background pill — the look follows ontology-explorer tools'
   object-graph editor.
 
 ## Known future work

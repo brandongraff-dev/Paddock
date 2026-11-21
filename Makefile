@@ -1,4 +1,4 @@
-# palantir-asm — operator targets
+# paddock — operator targets
 .DEFAULT_GOAL := help
 
 COMPOSE ?= docker compose
@@ -21,7 +21,7 @@ demo: ## seed a demo graph + print the dashboard URL and default login
 	python3 scripts/seed_demo.py
 	@echo ""
 	@echo "  ┌─────────────────────────────────────────────────────────────┐"
-	@echo "  │  palantir-asm is ready                                        │"
+	@echo "  │  paddock is ready                                        │"
 	@echo "  ├─────────────────────────────────────────────────────────────┤"
 	@echo "  │  Dashboard      http://localhost:3000                         │"
 	@echo "  │  API docs       http://localhost:8080/docs                    │"

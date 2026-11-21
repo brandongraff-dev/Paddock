@@ -79,8 +79,8 @@ class Config:
         default_factory=lambda: _env_int("CHANGEWATCH_WEBHOOK_TIMEOUT_S", 5)
     )
     user_agent: str = field(default_factory=lambda: _env(
-        "CHANGEWATCH_USER_AGENT", "palantir-asm-changewatch/1.0"
-    ) or "palantir-asm-changewatch/1.0")
+        "CHANGEWATCH_USER_AGENT", "paddock-changewatch/1.0"
+    ) or "paddock-changewatch/1.0")
 
     # Event stream
     events_stream: str = field(
