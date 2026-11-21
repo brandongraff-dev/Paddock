@@ -63,6 +63,11 @@ from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
 from .reports import router as reports_router
 from .scheduler import scheduler_loop
+from .growth import exposure as growth_exposure
+from .growth import suppliers as growth_suppliers
+from .growth import trust as growth_trust
+from .growth.config import growth_settings
+from .growth.runner import growth_loop
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +125,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler_task = asyncio.create_task(scheduler_loop(app))
         app.state.scheduler_task = scheduler_task
 
+    # Growth runner (schema 032): public exposure jobs + supplier assessments.
+    # Passive only: DNS + CT, never a packet to the assessed domain.
+    growth_task: asyncio.Task | None = None
+    if growth_settings.runner_enabled:
+        growth_task = asyncio.create_task(growth_loop(app))
+        app.state.growth_task = growth_task
+
     try:
         yield
     finally:
-        for task in (scheduler_task, anchor_task):
+        for task in (scheduler_task, anchor_task, growth_task):
             if task is None:
                 continue
             task.cancel()
@@ -294,6 +306,12 @@ def create_app() -> FastAPI:
     app.include_router(onboarding_router.system_router)
     # Reporting: executive report, weekly digest, compliance evidence packs
     app.include_router(reports_router.router)
+    # Growth (schema 032): free exposure report (public), shareable trust pages,
+    # supplier monitoring. All passive: DNS + certificate transparency only.
+    app.include_router(growth_exposure.router)
+    app.include_router(growth_trust.router)
+    app.include_router(growth_trust.public_router)
+    app.include_router(growth_suppliers.router)
 
     return app
 

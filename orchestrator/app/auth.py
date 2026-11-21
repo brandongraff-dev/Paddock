@@ -561,6 +561,14 @@ _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
 _rule("GET", r"/v1/export/(findings\.ocsf|sarif|sbom|vex)", "read")
 _rule("POST", r"/v1/import/(sbom|lockfiles)", "scan")
 
+# --- growth (schema 032): public passive endpoints + admin management ------- #
+# Unauthenticated BY DESIGN: passive-only (DNS + CT), rate limited, aggregate
+# output. The handlers enforce their own abuse controls (app/growth/abuse.py).
+_rule("POST", r"/v1/public/exposure-report", None)
+_rule("GET", rf"/v1/public/exposure-report/{_ANY}", None)
+_rule("GET POST", rf"/v1/public/trust/{_ANY}", None)
+_rule("GET POST DELETE PATCH PUT", r"/v1/trust-links(/.*)?", "admin")
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.

@@ -52,6 +52,9 @@ EVENT_TYPES: dict[str, str] = {
     "scan.failed": "A scan failed",
     "report.digest": "The scheduled digest is ready",
     "integration.test": "A test event sent from the Integrations page",
+    "supplier.grade_changed": "A monitored supplier's passive security grade changed",
+    "supplier.dangling_dns": "A monitored supplier has a new dangling DNS record (possible takeover)",
+    "supplier.cert_expiring": "A monitored supplier has an expired or expiring certificate",
 }
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")
