@@ -3,6 +3,7 @@ import SeverityChip from "./Severity";
 import AssetChip from "./AssetChip";
 import { ClassificationChip } from "./Classification";
 import { BlastMeter } from "./StatTile";
+import { PriorityScore, SlaBadge } from "./Lifecycle";
 
 interface Props {
   finding: Finding;
@@ -54,7 +55,14 @@ export default function FindingRow({ finding, focused, onClick }: Props) {
     >
       <SeverityChip severity={finding.severity} />
       <div className="title" title={finding.title}>
-        {finding.title}
+        <PriorityScore score={finding.priority_score} />
+        <span className="t">{finding.title}</span>
+        {(finding.source_count ?? 1) > 1 && (
+          <span className="dup-count" title="reported by several engines; collapsed into one">
+            ×{finding.source_count}
+          </span>
+        )}
+        <SlaBadge finding={finding} compact />
         {finding.kev && (
           <span className="chip chip-sev-critical" style={{ marginLeft: 6 }}>
             KEV

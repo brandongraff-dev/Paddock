@@ -18,6 +18,7 @@ export type FindingStatus =
   | "triaged"
   | "false_positive"
   | "accepted_risk"
+  | "accepted"
   | "fixed"
   | "wontfix";
 
@@ -117,6 +118,105 @@ export interface Finding {
   kev?: boolean;
   /** Governance §B — ABAC data classification. Absent rows read as "public". */
   classification?: Classification;
+
+  /* ---- Finding lifecycle (schema 019). All optional: older servers omit them. ---- */
+  /** Why it was accepted / marked false positive / reopened. */
+  status_reason?: string | null;
+  status_by?: string | null;
+  status_changed_at?: string | null;
+  /** Acceptance expiry; the server reopens the finding after this. */
+  accepted_until?: string | null;
+  suppressed?: boolean;
+  suppressed_by?: string | null;
+  fingerprint?: string | null;
+  /** Primary finding this one collapsed into (cross-engine dedupe). */
+  duplicate_of?: string | null;
+  sources?: FindingSource[];
+  source_count?: number;
+  due_at?: string | null;
+  sla_hours?: number | null;
+  sla_breached?: boolean;
+  owner?: string | null;
+  /** 0-100; the sum of `why` weights (capped). */
+  priority_score?: number | null;
+  why?: WhyFactor[];
+  /** Detail endpoint only: transition timeline, newest first. */
+  history?: StatusHistoryEntry[];
+}
+
+export interface WhyFactor {
+  key: string;
+  label: string;
+  weight: number;
+}
+
+export interface FindingSource {
+  finding_id: string;
+  rule_source: string;
+  rule_id: string;
+  status: FindingStatus;
+  last_seen: string;
+  primary: boolean;
+}
+
+export interface StatusHistoryEntry {
+  id: string;
+  from_status: FindingStatus | null;
+  to_status: FindingStatus;
+  reason: string | null;
+  accepted_until: string | null;
+  actor: string;
+  at: string;
+}
+
+/** Paged findings envelope; hidden-by-default rows are counted, not listed. */
+export interface FindingPage {
+  items: Finding[];
+  total: number;
+  limit: number;
+  offset: number;
+  suppressed_total?: number;
+  duplicates_total?: number;
+}
+
+export type SuppressedFilter = "exclude" | "include" | "only";
+
+export interface Suppression {
+  id: string;
+  name: string | null;
+  rule_id: string | null;
+  rule_source: string | null;
+  asset_pattern: string | null;
+  tag: string | null;
+  reason: string;
+  author: string;
+  expires_at: string | null;
+  enabled: boolean;
+  active: boolean;
+  match_count: number;
+  suppressed_now: number;
+  last_matched_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SuppressionInput {
+  name?: string | null;
+  rule_id?: string | null;
+  rule_source?: string | null;
+  asset_pattern?: string | null;
+  tag?: string | null;
+  reason: string;
+  expires_at?: string | null;
+  enabled?: boolean;
+}
+
+export interface TransitionResult {
+  finding: Finding;
+  from_status: FindingStatus;
+  to_status: FindingStatus;
+  propagated_to: number;
+  suppression_id: string | null;
 }
 
 export interface FindingChain {

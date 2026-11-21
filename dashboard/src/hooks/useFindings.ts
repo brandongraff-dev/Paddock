@@ -1,6 +1,28 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getFinding, listChains, listFindings, listTimeline, patchFinding } from "../api/findings";
-import type { Finding, FindingStatus, Severity } from "../api/types";
+import {
+  acceptFinding,
+  createSuppression,
+  deleteSuppression,
+  getFinding,
+  listChains,
+  listFindings,
+  listFindingsPage,
+  listSuppressions,
+  listTimeline,
+  markFalsePositive,
+  patchFinding,
+  patchSuppression,
+  reopenFinding,
+  type DismissBody,
+} from "../api/findings";
+import type {
+  Finding,
+  FindingStatus,
+  Severity,
+  SuppressedFilter,
+  Suppression,
+  SuppressionInput,
+} from "../api/types";
 
 export interface FindingFilter {
   severity?: Severity;
@@ -9,6 +31,8 @@ export interface FindingFilter {
   rule_source?: string;
   kev?: boolean;
   q?: string;
+  suppressed?: SuppressedFilter;
+  sla_breached?: boolean;
 }
 
 const PAGE = 50;
@@ -44,6 +68,63 @@ export function usePatchFinding() {
       qc.setQueryData(["finding", data.id], data);
     },
   });
+}
+
+/** Counts only (limit=1): total + hidden-by-default suppressed/duplicate rows. */
+export function useFindingCounts(filter: FindingFilter) {
+  return useQuery({
+    queryKey: ["findings", "counts", filter],
+    queryFn: () => listFindingsPage({ ...filter, limit: 1, offset: 0 }),
+    select: (p) => ({
+      total: p.total,
+      suppressed: p.suppressed_total ?? 0,
+      duplicates: p.duplicates_total ?? 0,
+    }),
+    staleTime: 10_000,
+  });
+}
+
+export type TransitionKind = "accept" | "false_positive" | "reopen";
+
+/** accept / false-positive / reopen — all audited server-side. */
+export function useFindingTransition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { id: string; kind: TransitionKind } & Partial<DismissBody>) => {
+      if (p.kind === "reopen") return reopenFinding(p.id, p.reason);
+      const body: DismissBody = {
+        reason: p.reason ?? "",
+        accepted_until: p.accepted_until ?? undefined,
+        suppress: p.suppress || undefined,
+      };
+      return p.kind === "accept" ? acceptFinding(p.id, body) : markFalsePositive(p.id, body);
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["findings"] });
+      qc.invalidateQueries({ queryKey: ["finding", res.finding.id] });
+      if (res.suppression_id) qc.invalidateQueries({ queryKey: ["suppressions"] });
+    },
+  });
+}
+
+export function useSuppressions() {
+  return useQuery({ queryKey: ["suppressions"], queryFn: () => listSuppressions(), staleTime: 10_000 });
+}
+
+export function useSuppressionMutations() {
+  const qc = useQueryClient();
+  const done = () => {
+    qc.invalidateQueries({ queryKey: ["suppressions"] });
+    qc.invalidateQueries({ queryKey: ["findings"] });
+  };
+  return {
+    create: useMutation({ mutationFn: (b: SuppressionInput) => createSuppression(b), onSuccess: done }),
+    toggle: useMutation({
+      mutationFn: (s: Pick<Suppression, "id" | "enabled">) => patchSuppression(s.id, { enabled: !s.enabled }),
+      onSuccess: done,
+    }),
+    remove: useMutation({ mutationFn: (id: string) => deleteSuppression(id), onSuccess: done }),
+  };
 }
 
 export function useChains() {

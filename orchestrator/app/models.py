@@ -270,7 +270,8 @@ class SurfaceGraphOut(BaseModel):
 
 Severity = Literal["info", "low", "medium", "high", "critical"]
 FindingStatus = Literal[
-    "open", "triaged", "false_positive", "accepted_risk", "fixed", "wontfix"
+    "open", "triaged", "false_positive", "accepted_risk", "fixed", "wontfix",
+    "accepted",  # schema 019: risk accepted (reason required, optional expiry)
 ]
 # Single-sourced from app.constants.RULE_SOURCES (which mirrors the DB CHECK
 # constraint on findings.rule_source). tests/test_rule_source_sync.py asserts

@@ -1,0 +1,139 @@
+# Correlation chain-rule range. Each case is a small asset graph (`host`
+# groups assets for `same_host`) plus findings; `expect` lists the shipped
+# chain rules (correlation/app/rules/chains/*.yaml) that must fire.
+engine: correlation
+cases:
+  # ----------------------------------------------------- kev_on_public_host
+  - id: kev-cve-on-public-endpoint
+    expect: [kev_on_public_host]
+    assets:
+      - {id: a1, kind: subdomain, value: vpn.acme.io, host: vpn}
+      - {id: a2, kind: endpoint, value: "https://vpn.acme.io/", host: vpn}
+    findings:
+      - {asset: a1, rule_id: CVE-2023-4966, rule_source: cve_match, severity: critical,
+         cvss: 9.4, metadata: {kev: true}}
+  - id: kev-cve-but-fixed
+    expect: []
+    assets:
+      - {id: a1, kind: subdomain, value: vpn.acme.io, host: vpn}
+      - {id: a2, kind: endpoint, value: "https://vpn.acme.io/", host: vpn}
+    findings:
+      - {asset: a1, rule_id: CVE-2023-4966, rule_source: cve_match, severity: critical,
+         status: fixed, metadata: {kev: true}}
+  - id: non-kev-cve-on-public-endpoint
+    expect: []
+    assets:
+      - {id: a1, kind: subdomain, value: www.acme.io, host: www}
+      - {id: a2, kind: endpoint, value: "https://www.acme.io/", host: www}
+    findings:
+      - {asset: a1, rule_id: CVE-2024-0001, rule_source: cve_match, severity: high, cvss: 7.5}
+  - id: kev-cve-internal-only
+    expect: []
+    note: no endpoint on the host -> not internet-facing
+    assets:
+      - {id: a1, kind: ipv4, value: 10.0.0.5, host: db}
+    findings:
+      - {asset: a1, rule_id: CVE-2023-4966, rule_source: cve_match, severity: critical,
+         metadata: {kev: true}}
+
+  # ---------------------------------------------- exposed_git_plus_vuln_lib
+  - id: dotgit-plus-high-cve
+    expect: [exposed_git_plus_vuln_lib]
+    assets:
+      - {id: a1, kind: subdomain, value: dev.acme.io, host: dev}
+    findings:
+      - {asset: a1, rule_id: exposed-dotgit-config, rule_source: exposed_file, severity: medium}
+      - {asset: a1, rule_id: CVE-2021-23337, rule_source: cve_match, severity: high, cvss: 7.2}
+  - id: dotgit-plus-medium-cve
+    expect: []
+    assets:
+      - {id: a1, kind: subdomain, value: dev.acme.io, host: dev}
+    findings:
+      - {asset: a1, rule_id: exposed-dotgit-config, rule_source: exposed_file, severity: medium}
+      - {asset: a1, rule_id: CVE-2020-8203, rule_source: cve_match, severity: medium, cvss: 5.3}
+  - id: dotgit-and-cve-on-different-hosts
+    expect: []
+    assets:
+      - {id: a1, kind: subdomain, value: dev.acme.io, host: dev}
+      - {id: a2, kind: subdomain, value: api.acme.io, host: api}
+    findings:
+      - {asset: a1, rule_id: exposed-dotgit-config, rule_source: exposed_file, severity: medium}
+      - {asset: a2, rule_id: CVE-2021-23337, rule_source: cve_match, severity: high, cvss: 7.2}
+  - id: dotenv-is-not-dotgit
+    expect: []
+    assets:
+      - {id: a1, kind: subdomain, value: dev.acme.io, host: dev}
+    findings:
+      - {asset: a1, rule_id: exposed-dotenv, rule_source: exposed_file, severity: high}
+      - {asset: a1, rule_id: CVE-2021-23337, rule_source: cve_match, severity: high, cvss: 7.2}
+
+  # -------------------------------------------- leaked_secret_live_endpoint
+  - id: leaked-secret-with-live-endpoint
+    expect: [leaked_secret_live_endpoint]
+    assets:
+      - {id: r1, kind: repository, value: acme/payments, host: repo}
+      - {id: e1, kind: endpoint, value: "https://pay.acme.io/", host: pay}
+    findings:
+      - {asset: r1, rule_id: secret-aws-access-key, rule_source: secret_scan, severity: high}
+  - id: secret-marked-false-positive
+    expect: []
+    assets:
+      - {id: r1, kind: repository, value: acme/payments, host: repo}
+      - {id: e1, kind: endpoint, value: "https://pay.acme.io/", host: pay}
+    findings:
+      - {asset: r1, rule_id: secret-aws-access-key, rule_source: secret_scan, severity: high,
+         status: false_positive}
+  - id: secret-without-any-endpoint
+    expect: []
+    assets:
+      - {id: r1, kind: repository, value: acme/payments, host: repo}
+    findings:
+      - {asset: r1, rule_id: secret-aws-access-key, rule_source: secret_scan, severity: high}
+
+  # ------------------------------------------- open_admin_plus_default_tech
+  - id: admin-panel-default-creds-product
+    expect: [open_admin_plus_default_tech]
+    assets:
+      - {id: e1, kind: endpoint, value: "https://ops.acme.io/admin", host: ops}
+      - {id: t1, kind: technology, value: grafana, host: ops,
+         metadata: {product_known_default_creds: true}}
+    findings:
+      - {asset: e1, rule_id: exposed-admin-panel-grafana, rule_source: nuclei, severity: medium}
+  - id: admin-panel-without-default-creds
+    expect: []
+    assets:
+      - {id: e1, kind: endpoint, value: "https://ops.acme.io/admin", host: ops}
+      - {id: t1, kind: technology, value: keycloak, host: ops}
+    findings:
+      - {asset: e1, rule_id: exposed-admin-panel-keycloak, rule_source: nuclei, severity: medium}
+  - id: default-creds-product-no-admin-panel
+    expect: []
+    assets:
+      - {id: e1, kind: endpoint, value: "https://ops.acme.io/", host: ops}
+      - {id: t1, kind: technology, value: grafana, host: ops,
+         metadata: {product_known_default_creds: true}}
+    findings:
+      - {asset: e1, rule_id: http-missing-security-headers, rule_source: nuclei, severity: info}
+
+  # ------------------------------------ outdated_tls_plus_sensitive_endpoint
+  - id: tls10-on-login-host
+    expect: [outdated_tls_plus_sensitive_endpoint]
+    assets:
+      - {id: a1, kind: subdomain, value: login.acme.io, host: login}
+    findings:
+      - {asset: a1, rule_id: tls-version-tls10-enabled, rule_source: tls_check, severity: medium}
+      - {asset: a1, rule_id: login-endpoint-detected, rule_source: header_check, severity: info}
+  - id: tls12-on-login-host
+    expect: []
+    assets:
+      - {id: a1, kind: subdomain, value: login.acme.io, host: login}
+    findings:
+      - {asset: a1, rule_id: tls-version-tls12-only, rule_source: tls_check, severity: info}
+      - {asset: a1, rule_id: login-endpoint-detected, rule_source: header_check, severity: info}
+  - id: tls10-without-sensitive-endpoint
+    expect: []
+    assets:
+      - {id: a1, kind: subdomain, value: static.acme.io, host: static}
+    findings:
+      - {asset: a1, rule_id: tls-version-tls10-enabled, rule_source: tls_check, severity: medium}
+      - {asset: a1, rule_id: missing-hsts, rule_source: header_check, severity: low}
