@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import audit as audit_svc
 from ..auth import require_scope
+from ..billing import gate as billing_gate
 from ..db import get_pool
 from ..models import AuditAnchorOut, AuditEntryOut, AuditPage, AuditVerifyOut
 
@@ -94,7 +95,10 @@ async def verify_audit(request: Request, pool=Depends(get_pool)):
     return AuditVerifyOut(**result)
 
 
-@router.post("/anchor", response_model=AuditAnchorOut, dependencies=[Depends(require_scope("admin"))])
+@router.post(
+    "/anchor", response_model=AuditAnchorOut,
+    dependencies=[Depends(require_scope("admin")), Depends(billing_gate.require_paid("audit_anchoring"))],
+)
 async def anchor_audit(request: Request, pool=Depends(get_pool)):
     kwargs = {}
     if hasattr(request.app.state, "audit_anchor_sink"):

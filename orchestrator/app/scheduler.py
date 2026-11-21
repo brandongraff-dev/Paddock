@@ -29,6 +29,8 @@ from . import tenancy
 from .config import settings
 from .models import ScheduleOut, ScheduleRunOut
 from .routers import scans as scans_mod
+from .billing import gate as billing_gate
+from .billing import metering as billing_metering
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +372,10 @@ async def scheduler_loop(app) -> None:
             proof_due = _scope_proof_due()
             for tid in await tenancy.list_tenant_ids(pool):
                 with tenancy.tenant_context(tid):
-                    await _guarded("schedules_tick_failed", run_due_schedules(pool, r))
+                    # Hosted billing: a tenant over its asset quota keeps its
+                    # data but starts no new scheduled scans (billing/gate.py).
+                    if await billing_gate.scans_allowed(pool):
+                        await _guarded("schedules_tick_failed", run_due_schedules(pool, r))
                     kick_integration_syncs(pool, r)
                     await _guarded("lifecycle_sweep_failed", sweep_expired(pool))
                     if proof_due:
@@ -379,6 +384,8 @@ async def scheduler_loop(app) -> None:
             from .reports.digest import run_due_digests
 
             await _guarded("digest_tick_failed", run_due_digests(pool))
+            # Hosted billing: report metered usage to Stripe (no-op unless STRIPE_SECRET_KEY).
+            await _guarded("billing_usage_tick_failed", billing_metering.tick(app))
         except asyncio.CancelledError:
             logger.info("scheduler_stopped")
             raise

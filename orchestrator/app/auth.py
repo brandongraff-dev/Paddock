@@ -561,6 +561,11 @@ _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
 _rule("GET", r"/v1/export/(findings\.ocsf|sarif|sbom|vex)", "read")
 _rule("POST", r"/v1/import/(sbom|lockfiles)", "scan")
 
+# --- billing (schema 028): the Stripe webhook authenticates by signature ----- #
+_rule("POST", r"/v1/billing/webhook", None)
+# Public status page feed: fixed component names, up/degraded, nothing else.
+_rule("GET", r"/status", None)
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.
@@ -619,7 +624,7 @@ def _resource_from_path(path: str) -> tuple[str | None, str | None]:
 
 # Non-GET routes that do not mutate state: no write-ahead audit record (they
 # are still audited after the fact, exactly as before).
-_NO_WRITE_AHEAD = frozenset({"/v1/scope/check"})
+_NO_WRITE_AHEAD = frozenset({"/v1/scope/check", "/v1/billing/webhook"})
 
 
 class GovernanceMiddleware(BaseHTTPMiddleware):

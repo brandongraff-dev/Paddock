@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import scope as scope_svc
+from ..billing import gate as billing_gate
 from ..db import get_pool
 from ..models import (
     ScanCompleteIn,
@@ -172,7 +173,10 @@ async def dispatch_scoped_scan(
 # Create (with parent-scan inheritance)
 # --------------------------------------------------------------------------- #
 
-@router.post("", response_model=ScanOut, status_code=201)
+@router.post(
+    "", response_model=ScanOut, status_code=201,
+    dependencies=[Depends(billing_gate.require_quota("assets"))],
+)
 async def create_scan(
     body: ScanIn,
     pool=Depends(get_pool),

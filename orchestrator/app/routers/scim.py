@@ -30,6 +30,7 @@ from fastapi.routing import APIRoute
 from .. import audit
 from .. import auth as auth_svc
 from ..auth import current_principal, require_scope
+from ..billing import gate as billing_gate
 from ..db import get_pool
 from ..identity import scim_logic as sl
 from ..identity.scim_logic import ScimError
@@ -66,7 +67,7 @@ router = APIRouter(
     prefix="/scim/v2",
     tags=["scim"],
     route_class=ScimRoute,
-    dependencies=[Depends(require_scope("scim"))],
+    dependencies=[Depends(require_scope("scim")), Depends(billing_gate.require_paid("scim"))],
 )
 
 USER_COLS = (
