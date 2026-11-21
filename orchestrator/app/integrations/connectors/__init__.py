@@ -10,7 +10,13 @@ import logging
 
 log = logging.getLogger(__name__)
 
-_MODULES: tuple[str, ...] = ()
+_MODULES: tuple[str, ...] = (
+    "webhook",
+    "slack",
+    "teams",
+    "pagerduty",
+    "email",
+)
 
 
 def load_all() -> None:

@@ -51,6 +51,8 @@ Around that core it also gives you:
   ([guide](docs/SENTRY.md)).
 - **Adaptive risk:** an ML risk ranker and anomaly detector (cold-start — see
   [Status](#status-honest)), surface-change tracking, owner routing + ticketing.
+- **Integrations:** HMAC-signed webhooks, Slack, Microsoft Teams, PagerDuty and
+  email, with retries and a delivery log on one page ([guide](docs/INTEGRATIONS.md)).
 - **Governance built in:** auth (API keys + JWT), RBAC + ABAC classification
   filtering pushed into SQL, and a **tamper-evident, hash-chained audit log** you
   can verify.

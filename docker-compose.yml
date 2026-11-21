@@ -110,6 +110,10 @@ services:
       ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
       # First-boot admin password (set once; see .env.example). Never shipped.
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      # Encrypts integration credentials at rest (see .env.example).
+      PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:-}
+      PADDOCK_SECRET_KEY_OLD: ${PADDOCK_SECRET_KEY_OLD:-}
+      PADDOCK_DASHBOARD_URL: ${PADDOCK_DASHBOARD_URL:-http://localhost:3000}
     tmpfs:
       - /tmp
     networks: [edge, internal]
@@ -147,6 +151,32 @@ services:
       start_period: 20s
 
   # ======================= workers (egress, no inbound) =====================
+  # Integrations dispatcher + delivery worker (Slack/Teams/PagerDuty/webhooks/
+  # email). Same image as the orchestrator; egress only, nothing published.
+  integrations:
+    build: ./orchestrator
+    <<: *hardened-py
+    command: ["python", "-m", "app.integrations.worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://asm:${POSTGRES_PASSWORD}@postgres:5432/asm
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:-}
+      PADDOCK_SECRET_KEY_OLD: ${PADDOCK_SECRET_KEY_OLD:-}
+      PADDOCK_DASHBOARD_URL: ${PADDOCK_DASHBOARD_URL:-http://localhost:3000}
+    tmpfs:
+      - /tmp
+    networks: [internal, egress]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(0 if time.time() - os.path.getmtime('/tmp/integrations-heartbeat') < 120 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   worker-passive:
     build: ./workers/passive
     # read_only omitted: subfinder writes a config/cache under $HOME. caps
