@@ -273,7 +273,8 @@ away from people who run it themselves.
   tests + integration harness, and the "tests never touch a live DB" rule.
 - **Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - **Docs:** [`docs/`](docs/) — architecture, inter-service contracts, per-service
-  notes, and the [cloud roadmap](docs/CLOUD_ROADMAP.md).
+  notes, the [product vision](docs/VISION.md), and the
+  [cloud roadmap](docs/CLOUD_ROADMAP.md).
 - **Chat:** Discord — *link coming at launch* (badge above is a placeholder).
 
 Issues and PRs welcome. If you're here from r/netsec: the
