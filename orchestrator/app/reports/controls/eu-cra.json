@@ -1,0 +1,203 @@
+{
+  "framework": "eu-cra",
+  "name": "EU Cyber Resilience Act, Annex I",
+  "version": "2024/2847",
+  "publisher": "European Union",
+  "url": "https://eur-lex.europa.eu/eli/reg/2024/2847/oj",
+  "description": "Regulation (EU) 2024/2847. Essential cybersecurity requirements (Part I) and vulnerability handling requirements (Part II) for manufacturers of products with digital elements. Paddock evidence applies to the product only where the SBOM projects and observed devices are the manufacturer's product (firmware, companion apps, cloud back-end). Reporting of actively exploited vulnerabilities (Article 14) is listed for completeness.",
+  "controls": [
+    {
+      "id": "I.1",
+      "family": "Part I · Product properties",
+      "title": "Cybersecurity appropriate to the risks",
+      "summary": "Products are designed, developed and produced to ensure an appropriate level of cybersecurity based on the risks.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "Requires the manufacturer's cybersecurity risk assessment.",
+      "attestation": "Provide the cybersecurity risk assessment in the technical documentation."
+    },
+    {
+      "id": "I.2(a)",
+      "family": "Part I · Product properties",
+      "title": "No known exploitable vulnerabilities at release",
+      "summary": "Made available on the market without known exploitable vulnerabilities.",
+      "evidence": [
+        "kev_open",
+        "component_vulns",
+        "critical_overdue"
+      ],
+      "max_status": "partial",
+      "rationale": "Open KEV findings and critical component vulnerabilities in the SBOM are gaps; Paddock cannot confirm the state of each released version.",
+      "attestation": "Confirm the vulnerability status of each release placed on the market."
+    },
+    {
+      "id": "I.2(b)",
+      "family": "Part I · Product properties",
+      "title": "Secure by default configuration",
+      "summary": "Made available with a secure by default configuration, with the possibility to reset to the original state.",
+      "evidence": [
+        "secure_configuration",
+        "cleartext_protocols"
+      ],
+      "max_status": "partial",
+      "rationale": "Observed configuration of deployed units only.",
+      "attestation": "Document default configuration and reset capability."
+    },
+    {
+      "id": "I.2(c)",
+      "family": "Part I · Product properties",
+      "title": "Vulnerabilities can be addressed through security updates",
+      "summary": "Vulnerabilities can be addressed through security updates, including automatic updates where applicable.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "The update mechanism is a product design property.",
+      "attestation": "Describe the update mechanism and its defaults."
+    },
+    {
+      "id": "I.2(d)",
+      "family": "Part I · Product properties",
+      "title": "Protection from unauthorised access",
+      "summary": "Ensure protection from unauthorised access by appropriate control mechanisms.",
+      "evidence": [
+        "exposure_hygiene",
+        "secrets_exposure"
+      ],
+      "max_status": "partial",
+      "rationale": "Exposed admin surfaces, default logins and leaked credentials are detected on the product's observable interfaces.",
+      "attestation": "Document authentication and access control design."
+    },
+    {
+      "id": "I.2(e)",
+      "family": "Part I · Product properties",
+      "title": "Confidentiality of data",
+      "summary": "Protect the confidentiality of stored, transmitted or otherwise processed data, e.g. by encryption.",
+      "evidence": [
+        "tls_posture",
+        "cleartext_protocols"
+      ],
+      "max_status": "partial",
+      "rationale": "Data in transit on observed interfaces only; data at rest is not observable."
+    },
+    {
+      "id": "I.2(j)",
+      "family": "Part I · Product properties",
+      "title": "Limited attack surface",
+      "summary": "Designed, developed and produced to limit attack surfaces, including external interfaces.",
+      "evidence": [
+        "exposure_hygiene",
+        "attack_path_analysis"
+      ],
+      "max_status": "partial",
+      "rationale": "Measures the externally observable attack surface and paths through it."
+    },
+    {
+      "id": "I.2(l)",
+      "family": "Part I · Product properties",
+      "title": "Security-relevant activity is recorded and monitored",
+      "summary": "Provide security related information by recording and monitoring relevant internal activity, with an opt-out for users.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "A product logging capability; Paddock's audit log is not the product's.",
+      "attestation": "Describe the product's security logging."
+    },
+    {
+      "id": "II.1",
+      "family": "Part II · Vulnerability handling",
+      "title": "Identify and document components and vulnerabilities (SBOM)",
+      "summary": "Identify and document vulnerabilities and components, including an SBOM in a commonly used, machine-readable format covering at least top-level dependencies.",
+      "evidence": [
+        "software_inventory",
+        "component_vulns"
+      ],
+      "rationale": "Paddock maintains a machine-readable SBOM per project with direct (top-level) and transitive dependencies, continuously matched to OSV. Ensure the projects analysed are the shipped product."
+    },
+    {
+      "id": "II.2",
+      "family": "Part II · Vulnerability handling",
+      "title": "Address and remediate vulnerabilities without delay",
+      "summary": "Address and remediate vulnerabilities without delay, including by providing security updates.",
+      "evidence": [
+        "remediation_sla",
+        "critical_overdue"
+      ],
+      "rationale": "SLA-tracked remediation from detection to verified fix."
+    },
+    {
+      "id": "II.3",
+      "family": "Part II · Vulnerability handling",
+      "title": "Effective and regular security tests and reviews",
+      "summary": "Apply effective and regular tests and reviews of the security of the product.",
+      "evidence": [
+        "code_analysis",
+        "external_scanning"
+      ],
+      "max_status": "partial",
+      "rationale": "Automated SAST/SCA and external scanning are regular tests; manual reviews and penetration tests are not evidenced."
+    },
+    {
+      "id": "II.4",
+      "family": "Part II · Vulnerability handling",
+      "title": "Publicly disclose fixed vulnerabilities",
+      "summary": "Once an update is available, share and publicly disclose information about fixed vulnerabilities.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "Advisory publication is a manufacturer process.",
+      "attestation": "Provide published security advisories."
+    },
+    {
+      "id": "II.5",
+      "family": "Part II · Vulnerability handling",
+      "title": "Coordinated vulnerability disclosure policy",
+      "summary": "Put in place and enforce a policy on coordinated vulnerability disclosure.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "Policy.",
+      "attestation": "Provide the CVD policy."
+    },
+    {
+      "id": "II.6",
+      "family": "Part II · Vulnerability handling",
+      "title": "Contact address for reporting vulnerabilities",
+      "summary": "Facilitate sharing of information about potential vulnerabilities, including a contact address.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "Process.",
+      "attestation": "Provide the reporting contact (e.g. security.txt)."
+    },
+    {
+      "id": "II.7",
+      "family": "Part II · Vulnerability handling",
+      "title": "Secure distribution of updates",
+      "summary": "Provide mechanisms to securely distribute updates so vulnerabilities are fixed in a timely manner.",
+      "mode": "manual",
+      "evidence": [],
+      "rationale": "Product design.",
+      "attestation": "Describe the signed update distribution mechanism."
+    },
+    {
+      "id": "II.8",
+      "family": "Part II · Vulnerability handling",
+      "title": "Security updates disseminated without delay",
+      "summary": "Disseminate available security updates without delay and free of charge, with advisory messages.",
+      "evidence": [
+        "remediation_sla"
+      ],
+      "max_status": "partial",
+      "rationale": "Remediation timeliness supports this; dissemination to users is a manufacturer process.",
+      "attestation": "Provide update release and notification records."
+    },
+    {
+      "id": "Art. 14",
+      "family": "Reporting obligations",
+      "title": "Report actively exploited vulnerabilities and severe incidents",
+      "summary": "Notify actively exploited vulnerabilities and severe incidents to the designated CSIRT and ENISA (early warning within 24 hours).",
+      "evidence": [
+        "kev_open",
+        "threat_intel"
+      ],
+      "max_status": "partial",
+      "rationale": "KEV and threat-intel matching help detect active exploitation affecting the product; the notification itself is a manufacturer duty.",
+      "attestation": "Provide the reporting procedure and any notifications made."
+    }
+  ]
+}

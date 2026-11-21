@@ -430,6 +430,10 @@ _rule("POST", r"/v1/ml/retrain", "scan")
 # --- ask -------------------------------------------------------------------- #
 _rule("POST", r"/v1/ask", "ask")
 
+# --- reports: read everywhere; sending a digest on demand is admin --------- #
+_rule("POST", r"/v1/reports/digest/send", "admin")
+_rule("GET", r"/v1/reports(/.*)?", "read")
+
 # --- service ingest + worker lifecycle (write) ----------------------------- #
 _rule("POST", r"/v1/assets/bulk", "write")
 _rule("POST", r"/v1/edges/bulk", "write")

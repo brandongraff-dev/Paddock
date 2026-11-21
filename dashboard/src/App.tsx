@@ -23,6 +23,7 @@ import ThreatIntelPage from "./pages/ThreatIntel";
 import DevicesPage from "./pages/Devices";
 import FleetPage from "./pages/Fleet";
 import RemediationPage from "./pages/Remediation";
+import ReportsPage from "./pages/Reports";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
 import { useLiveEvents } from "./hooks/useLiveEvents";
@@ -79,6 +80,7 @@ function AuthedApp() {
         <Route path="/devices" element={<Shell><DevicesPage /></Shell>} />
         <Route path="/fleet" element={<Shell><FleetPage /></Shell>} />
         <Route path="/remediation" element={<Shell><RemediationPage /></Shell>} />
+        <Route path="/reports" element={<Shell><ReportsPage /></Shell>} />
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

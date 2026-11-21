@@ -46,6 +46,7 @@ from .routers import scans as scans_router
 from .routers import scope as scope_router
 from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
+from .reports import router as reports_router
 from .scheduler import scheduler_loop
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,8 @@ def create_app() -> FastAPI:
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
     app.include_router(remediation_router.router)
+    # Reporting: executive report, weekly digest, compliance evidence packs
+    app.include_router(reports_router.router)
 
     return app
 

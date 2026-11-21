@@ -1,0 +1,125 @@
+{
+  "framework": "iso-27001-2022",
+  "name": "ISO/IEC 27001 Annex A",
+  "version": "2022",
+  "publisher": "ISO/IEC",
+  "url": "https://www.iso.org/standard/27001",
+  "description": "The Annex A controls (relevant subset) for which Paddock provides technical evidence. Organisational, people and physical controls are out of scope and marked for attestation where relevant.",
+  "controls": [
+    {
+      "id": "A.5.7", "family": "A.5 · Organizational controls",
+      "title": "Threat intelligence",
+      "summary": "Information about threats is collected and analysed to produce threat intelligence.",
+      "evidence": ["threat_intel"],
+      "rationale": "STIX/TAXII and CISA KEV ingestion matched against assets."
+    },
+    {
+      "id": "A.5.9", "family": "A.5 · Organizational controls",
+      "title": "Inventory of information and other associated assets",
+      "summary": "An inventory of assets, including owners, is developed and maintained.",
+      "evidence": ["asset_inventory", "device_inventory", "ownership"],
+      "rationale": "Discovered and observed assets with owner routing rules."
+    },
+    {
+      "id": "A.5.12", "family": "A.5 · Organizational controls",
+      "title": "Classification of information",
+      "summary": "Information is classified according to security needs.",
+      "evidence": ["classification"], "max_status": "partial",
+      "rationale": "Assets and findings carry classification labels enforced by ABAC; the classification scheme is organisational.",
+      "attestation": "Provide the classification scheme."
+    },
+    {
+      "id": "A.5.21", "family": "A.5 · Organizational controls",
+      "title": "Managing information security in the ICT supply chain",
+      "summary": "Processes manage security risks of ICT products and services supply chains.",
+      "evidence": ["software_inventory", "component_vulns"], "max_status": "partial",
+      "rationale": "Open-source component risk only."
+    },
+    {
+      "id": "A.5.24", "family": "A.5 · Organizational controls",
+      "title": "Incident management planning and preparation",
+      "summary": "Incident management processes, roles and responsibilities are planned.",
+      "mode": "manual", "evidence": [],
+      "rationale": "Organisational.",
+      "attestation": "Provide the incident management plan."
+    },
+    {
+      "id": "A.8.8", "family": "A.8 · Technological controls",
+      "title": "Management of technical vulnerabilities",
+      "summary": "Information about technical vulnerabilities is obtained, exposure evaluated and measures taken.",
+      "evidence": ["vuln_management", "remediation_sla", "kev_open"],
+      "rationale": "Continuous identification, risk ranking and SLA-tracked remediation."
+    },
+    {
+      "id": "A.8.9", "family": "A.8 · Technological controls",
+      "title": "Configuration management",
+      "summary": "Configurations, including security configurations, are established and monitored.",
+      "evidence": ["secure_configuration"], "max_status": "partial",
+      "rationale": "Monitors the resulting configuration on the surface."
+    },
+    {
+      "id": "A.8.15", "family": "A.8 · Technological controls",
+      "title": "Logging",
+      "summary": "Logs recording activities, exceptions and events are produced, stored and protected.",
+      "evidence": ["audit_log"], "max_status": "partial",
+      "rationale": "Paddock's own tamper-evident audit log only."
+    },
+    {
+      "id": "A.8.16", "family": "A.8 · Technological controls",
+      "title": "Monitoring activities",
+      "summary": "Networks, systems and applications are monitored for anomalous behaviour.",
+      "evidence": ["behaviour_detection", "continuous_monitoring"],
+      "rationale": "Sentry behaviour detectors and continuous external monitoring."
+    },
+    {
+      "id": "A.8.20", "family": "A.8 · Technological controls",
+      "title": "Networks security",
+      "summary": "Networks and network devices are secured, managed and controlled.",
+      "evidence": ["exposure_hygiene", "segmentation_violations"], "max_status": "partial",
+      "rationale": "Outcome monitoring; network device management is not read."
+    },
+    {
+      "id": "A.8.21", "family": "A.8 · Technological controls",
+      "title": "Security of network services",
+      "summary": "Security mechanisms and service levels of network services are identified and monitored.",
+      "evidence": ["tls_posture", "cleartext_protocols"], "max_status": "partial",
+      "rationale": "Transport security of observed services."
+    },
+    {
+      "id": "A.8.22", "family": "A.8 · Technological controls",
+      "title": "Segregation of networks",
+      "summary": "Groups of services, users and systems are segregated in networks.",
+      "evidence": ["segmentation_map", "segmentation_violations"],
+      "rationale": "Observed segmentation and violations from passive traffic."
+    },
+    {
+      "id": "A.8.24", "family": "A.8 · Technological controls",
+      "title": "Use of cryptography",
+      "summary": "Rules for effective use of cryptography, including key management, are defined and implemented.",
+      "evidence": ["tls_posture", "certificate_inventory"], "max_status": "partial",
+      "rationale": "Public TLS and certificate evidence only; key management is organisational."
+    },
+    {
+      "id": "A.8.28", "family": "A.8 · Technological controls",
+      "title": "Secure coding",
+      "summary": "Secure coding principles are applied to software development.",
+      "evidence": ["code_analysis", "secrets_exposure"], "max_status": "partial",
+      "rationale": "SAST and secret scanning results."
+    },
+    {
+      "id": "A.8.29", "family": "A.8 · Technological controls",
+      "title": "Security testing in development and acceptance",
+      "summary": "Security testing processes are defined and implemented in the development life cycle.",
+      "evidence": ["code_analysis", "component_vulns"], "max_status": "partial",
+      "rationale": "Automated SAST/SCA results; acceptance testing is organisational."
+    },
+    {
+      "id": "A.8.32", "family": "A.8 · Technological controls",
+      "title": "Change management",
+      "summary": "Changes to information processing facilities and systems are subject to change management.",
+      "evidence": ["continuous_monitoring"], "max_status": "partial",
+      "rationale": "Detects surface changes (new hosts, ports, certificates) for reconciliation with approved changes.",
+      "attestation": "Provide change-management records."
+    }
+  ]
+}
