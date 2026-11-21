@@ -39,6 +39,8 @@ from .routers import devices as devices_router
 from .routers import exports as exports_router
 from .routers import fleet as fleet_router
 from .routers import integrations as integrations_router
+from .routers import integration_sync as integration_sync_router
+from .routers import network_actions as network_actions_router
 from .routers import ontology as ontology_router
 from .routers import remediation as remediation_router
 from .routers import posture as posture_router
@@ -237,6 +239,9 @@ def create_app() -> FastAPI:
     # Standards exports/imports: OCSF, SARIF, CycloneDX/SPDX, VEX
     app.include_router(exports_router.export_router)
     app.include_router(exports_router.import_router)
+    # Context SOURCE sync status + network quarantine via the fleet gate (schema 025)
+    app.include_router(integration_sync_router.router)
+    app.include_router(network_actions_router.router)
 
     return app
 

@@ -8,21 +8,11 @@ RUN groupadd --system app && useradd --system --gid app --home /app --shell /sbi
 
 WORKDIR /app
 
+# Install from pyproject.toml (single source of truth for dependencies; a
+# hand-copied list here drifted and shipped images missing httpx/cryptography).
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir \
-      "fastapi>=0.115" \
-      "uvicorn[standard]>=0.30" \
-      "asyncpg>=0.30" \
-      "redis>=5" \
-      "pydantic>=2" \
-      "pydantic-settings>=2" \
-      "python-json-logger>=2.0" \
-      "PyJWT>=2.8" \
-      "bcrypt>=4.0" \
-      "httpx>=0.27" \
-      "cryptography>=42"
-
 COPY app ./app
+RUN pip install --no-cache-dir ".[aws]"
 
 RUN chown -R app:app /app
 USER app

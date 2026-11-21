@@ -261,8 +261,8 @@ def _tags(metadata: Any) -> list[str]:
 
 
 _FINDING_SQL = """
-SELECT f.id, f.title, f.severity, f.description, f.impact, f.rule_id, f.rule_source,
-       f.status, f.assigned_to, f.cvss, f.epss, f.metadata AS f_metadata,
+SELECT f.id, f.title, f.severity, f.description, f.impact, f.remediation, f.rule_id, f.rule_source,
+       f.status, f.assigned_to, f.cvss, f.epss, f.evidence, f.metadata AS f_metadata,
        a.id AS asset_id, a.kind AS asset_kind, a.value AS asset_value, a.metadata AS a_metadata
   FROM findings f JOIN assets a ON a.id = f.asset_id
  WHERE f.id = $1
@@ -296,8 +296,31 @@ async def _finding_context(pool: Any, finding_id: Any) -> Optional[dict[str, Any
             "tags": _tags(row["a_metadata"]),
             "cvss": float(row["cvss"]) if row["cvss"] is not None else None,
             "epss": float(row["epss"]) if row["epss"] is not None else None,
+            # Full finding for structured consumers (OCSF/SIEM, ticketing).
+            "finding": {
+                "id": str(row["id"]), "title": row["title"], "severity": row["severity"],
+                "description": row["description"], "impact": row["impact"],
+                "remediation": row["remediation"], "rule_id": row["rule_id"],
+                "rule_source": row["rule_source"], "status": row["status"],
+                "cvss": float(row["cvss"]) if row["cvss"] is not None else None,
+                "epss": float(row["epss"]) if row["epss"] is not None else None,
+                "evidence": _evidence_identifiers(row["evidence"]),
+            },
         },
     }
+
+
+# Evidence can hold response bodies/snippets: only identifiers leave Paddock.
+_EVIDENCE_KEYS = ("cve", "cve_id", "cve_ids", "cves", "cwe", "cwe_id", "cwe_ids", "cwes",
+                  "kev", "file", "path", "line", "start_line", "end_line", "package",
+                  "ecosystem", "version", "fixed_version", "purl", "port", "protocol", "detector")
+
+
+def _evidence_identifiers(raw: Any) -> dict[str, Any]:
+    ev = _as_json(raw, {})
+    if not isinstance(ev, dict):
+        return {}
+    return {k: ev[k] for k in _EVIDENCE_KEYS if k in ev}
 
 
 async def _asset_label(pool: Any, asset_id: Any) -> tuple[Optional[str], Optional[str], list[str]]:
@@ -453,6 +476,9 @@ def build_connector(row: Mapping[str, Any], http: Any, pool: Any = None) -> Conn
             "stored credentials cannot be decrypted with the configured PADDOCK_SECRET_KEY; re-enter them"
         ) from exc
     conn = cls(_as_json(row.get("config"), {}), secret_values, http)
+    # Connectors that open their own sockets (SIEM syslog, LAN controllers)
+    # read this per-integration opt-in directly.
+    conn.allow_private = bool(row.get("allow_private", False))
     # TICKET connectors persist finding<->ticket links and suppress echo loops;
     # they need to know which integration row they are and the DB pool.
     bind = getattr(conn, "bind", None)

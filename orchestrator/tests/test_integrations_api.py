@@ -501,3 +501,27 @@ async def test_worker_delivers_ticket_and_persists_link(client, db_pool):
     await service.emit(db_pool, _event(data={"finding_id": fid, "asset": "admin.example.com"}))
     await service.process_due(db_pool, transport=jira.transport())
     assert len(jira.issues) == 1
+
+
+# --------------------------------------------------------------------------- #
+# cross-module contract: stream mapper -> Event -> OCSF (SIEM connectors)
+# --------------------------------------------------------------------------- #
+
+async def test_finding_events_map_to_full_ocsf_without_raw_evidence(db_pool):
+    from app.integrations import ocsf
+
+    async with db_pool.acquire() as con:
+        aid = await con.fetchval("INSERT INTO assets (kind, value, canonical, source) VALUES "
+                                 "('subdomain', 'api.example.com', 'api.example.com', 't') RETURNING id")
+        fid = await con.fetchval(
+            "INSERT INTO findings (asset_id, rule_id, rule_source, severity, title, description, remediation, "
+            "evidence, cvss) VALUES ($1, 'CVE-2024-3400', 'cve_match', 'critical', 'PAN-OS RCE', 'd', 'patch', "
+            "$2::jsonb, 10.0) RETURNING id",
+            aid, json.dumps({"cve_ids": ["CVE-2024-3400"], "response_snippet": "SECRET-BODY"}))
+    ev = await service.event_from_stream(db_pool, {"event": "finding_opened", "finding_id": str(fid)}, "9-0")
+    f = ev.data["finding"]
+    assert f["title"] == "PAN-OS RCE" and f["evidence"] == {"cve_ids": ["CVE-2024-3400"]}
+    assert "SECRET-BODY" not in json.dumps(ev.as_dict())
+    doc = ocsf.event_to_ocsf(ev)
+    assert doc["class_uid"] == 2002                       # Vulnerability Finding
+    assert "CVE-2024-3400" in json.dumps(doc)
