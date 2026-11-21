@@ -6,7 +6,7 @@ import { HORSE_MARK_H, HORSE_MARK_PATH, HORSE_MARK_W } from "./horseFrames";
  */
 export default function HorseMark({
   size = 28,
-  ring = true,
+  ring = false,
   title = "Paddock",
   className,
 }: {
@@ -15,9 +15,9 @@ export default function HorseMark({
   title?: string;
   className?: string;
 }) {
-  const s = 26 / HORSE_MARK_W; // horse spans 26 of 40 units
+  const s = (ring ? 26 : 38) / HORSE_MARK_W; // horse spans 26 (ringed) or 38 of 40 units
   const tx = (40 - HORSE_MARK_W * s) / 2;
-  const ty = (40 - HORSE_MARK_H * s) / 2 + 0.6;
+  const ty = (40 - HORSE_MARK_H * s) / 2 + (ring ? 0.6 : 0);
   return (
     <svg
       className={className}

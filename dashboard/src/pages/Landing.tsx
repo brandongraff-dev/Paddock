@@ -125,10 +125,6 @@ export default function Landing() {
           <span className="l3">Defend.</span>
         </h1>
 
-        <div className="lp-hero-cta">
-          <CtaBox />
-        </div>
-
         <div className="lp-horse">
           <GallopTrail className="lp-trail" />
           <DigitHorse body={0.42} />
@@ -147,6 +143,10 @@ export default function Landing() {
             before they do
           </p>
         </footer>
+      </section>
+
+      <section className="lp-cta-strip" aria-label="Get started">
+        <CtaBox className="cta-strip" />
       </section>
 
       <section className="lp-agents" id="agents">
