@@ -1,5 +1,7 @@
 /* "See it work" — product windows built from mock data. */
 .lp-showcase {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1000px;
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -14,8 +16,8 @@
   z-index: -1;
   opacity: 0.55;
   pointer-events: none;
-  mask-image: linear-gradient(180deg, transparent 0, #000 22%, #000 70%, transparent 100%);
 }
+.lp-showcase::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(180deg, #0e0c0a 0, transparent 22%, transparent 70%, #0e0c0a 100%); }
 .lp-showcase .lp-section-head { padding: 0; margin-bottom: clamp(32px, 6vh, 64px); }
 
 .sc-stage { position: relative; max-width: 1280px; margin: 0 auto; padding-bottom: 12%; }

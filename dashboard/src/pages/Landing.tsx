@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
-import Wordmark, { WORDMARK_ASPECT } from "../brand/Wordmark";
+import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
 import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
@@ -70,6 +70,13 @@ const AGENTS: Agent[] = [
   },
 ];
 
+const REPO = "https://github.com/brandongraff-dev/cybersec";
+const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
+  { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["Principles", "#principles"], ["Console", "/login"]] },
+  { title: "Project", links: [["Source", REPO], ["Documentation", `${REPO}/tree/main/docs`], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
+  { title: "Security", links: [["Security policy", `${REPO}/blob/main/SECURITY.md`], ["Report a vulnerability", `${REPO}/security/advisories/new`], ["Code of conduct", `${REPO}/blob/main/CODE_OF_CONDUCT.md`]] },
+];
+
 const RULES = [
   ["No exploitation", "Findings describe impact. They never carry a working payload."],
   ["No credential attacks", "Default-credential risk is fingerprinted, never tried."],
@@ -81,15 +88,15 @@ export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
   const [railRef, railIn] = useInView<HTMLDivElement>(0.15);
-  const [megaRef, megaIn] = useInView<HTMLDivElement>(0.55);
+  const [megaRef, megaIn] = useInView<HTMLDivElement>(0.6);
 
   return (
     <div className="lp">
+      <div className="lp-col">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <PixelField className="lp-pixels" cell={6} wake={{ x: 0.43, y: 0.64 }} />
+          <PixelField className="lp-pixels" cell={6} maxDpr={1} wake={{ x: 0.43, y: 0.64 }} />
         </div>
-        <div className="lp-grain" aria-hidden="true" />
 
         <nav className="lp-nav">
           <Link to="/welcome" className="lp-brand">
@@ -190,22 +197,42 @@ export default function Landing() {
       </section>
 
 
-      <section className="lp-mega">
-        <div className="lp-mega-cta">
-          <h2>Close the paths before they&apos;re walked.</h2>
-          <div>
-            <Link to={enter} className="lp-run lp-mega-btn">
-              {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
-            </Link>
-            <a className="lp-mega-link" href="https://github.com/brandongraff-dev/cybersec" target="_blank" rel="noreferrer">
-              Read the source ↗
-            </a>
+      </div>
+
+      <footer className="lp-footer">
+        <DitherRule className="lp-footer-dither" />
+        <div className="lp-footer-in">
+          <div className="lp-footer-cta">
+            <h2>Close the paths before they&apos;re walked.</h2>
+            <div>
+              <Link to={enter} className="lp-run lp-footer-btn">
+                {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+          </div>
+          <div className="lp-footer-grid">
+            <div className="lp-footer-brand" ref={megaRef}>
+              <div className={`lp-footer-logo${megaIn ? " in" : ""}`}>
+                <HorseMark size={34} />
+                <Wordmark height={30} shimmer />
+              </div>
+              <p>Map the paths attackers would take, and close them before they do.</p>
+            </div>
+            {FOOTER_LINKS.map((col) => (
+              <nav key={col.title} aria-label={col.title}>
+                <h5>{col.title}</h5>
+                {col.links.map(([label, href]) =>
+                  href.startsWith("/") ? (
+                    <Link key={label} to={href}>{label}</Link>
+                  ) : (
+                    <a key={label} href={href} {...(href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}>{label}</a>
+                  ),
+                )}
+              </nav>
+            ))}
           </div>
         </div>
-        <div ref={megaRef} className={`lp-mega-mark${megaIn ? " in" : ""}`} style={{ aspectRatio: `${WORDMARK_ASPECT / 0.73}` }} aria-hidden="true">
-          <Wordmark fluid shimmer />
-        </div>
-      </section>
+      </footer>
     </div>
   );
 }

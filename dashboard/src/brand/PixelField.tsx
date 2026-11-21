@@ -98,12 +98,14 @@ interface Props {
   originX?: number;
   /** Lean toward the pointer and light up the dots around it. */
   interactive?: boolean;
+  /** Cap on device-pixel-ratio: lower is cheaper on retina screens. */
+  maxDpr?: number;
   /** Render as a streaming wake pouring out leftwards from this point (0..1 canvas space). */
   wake?: { x: number; y: number };
   className?: string;
 }
 
-export default function PixelField({ cell = 5, animate = true, originX = 0, interactive = false, wake, className }: Props) {
+export default function PixelField({ cell = 5, animate = true, originX = 0, interactive = false, maxDpr = 2, wake, className }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -130,7 +132,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       if (!w || !h) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
       if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
@@ -256,7 +258,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       ptr.x += (ptr.tx - ptr.x) * 0.12;
       ptr.y += (ptr.ty - ptr.y) * 0.12;
       ptr.on += (ptr.ton - ptr.on) * 0.1;
-      if (now - last > (interactive || wake ? 40 : 66)) {
+      if (now - last > (interactive || wake ? 45 : 66)) {
         paint(now - t0);
         last = now;
       }
@@ -297,7 +299,7 @@ export default function PixelField({ cell = 5, animate = true, originX = 0, inte
       window.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerleave", onLeave);
     };
-  }, [cell, animate, originX, interactive, wake?.x, wake?.y]);
+  }, [cell, animate, originX, interactive, maxDpr, wake?.x, wake?.y]);
 
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
