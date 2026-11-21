@@ -363,8 +363,27 @@ async def event_from_stream(pool: Any, fields: Mapping[str, Any], stream_id: Opt
             ctx = {"title": f"Finding {p.get('finding_id')}", "severity": None, "summary": "",
                    "data": {"finding_id": p.get("finding_id")}}
         verb = {"fixed": "Resolved", "false_positive": "Marked false positive",
-                "accepted_risk": "Risk accepted", "wontfix": "Won't fix"}.get(status, "Closed")
+                "accepted": "Risk accepted", "accepted_risk": "Risk accepted",
+                "wontfix": "Won't fix"}.get(status, "Closed")
         data = {**ctx["data"], "status": status}
+        return Event(
+            type=etype, title=f"{verb}: {ctx['title']}", summary=ctx["summary"],
+            severity=_sev(ctx["severity"]), data=data,
+            url=dashboard_url(f"/findings?focus={p.get('finding_id')}"),
+            id=stable_event_id(f"{etype}:{p.get('finding_id')}:{sid}"), **extra,
+        )
+
+    if name in ("finding_reopened", "finding_updated"):
+        # Reopened by a human, an expired acceptance (lifecycle sweep), or a
+        # regression; "updated" covers severity/owner/status edits.
+        etype = "finding.reopened" if name == "finding_reopened" else "finding.updated"
+        ctx = await _finding_context(pool, p.get("finding_id"))
+        if ctx is None:
+            ctx = {"title": f"Finding {p.get('finding_id')}", "severity": p.get("severity"),
+                   "summary": "", "data": {"finding_id": p.get("finding_id")}}
+        verb = "Reopened" if name == "finding_reopened" else "Updated"
+        data = {**ctx["data"], "status": p.get("status") or ctx["data"].get("status"),
+                "reason": p.get("reason")}
         return Event(
             type=etype, title=f"{verb}: {ctx['title']}", summary=ctx["summary"],
             severity=_sev(ctx["severity"]), data=data,

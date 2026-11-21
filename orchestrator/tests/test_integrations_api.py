@@ -525,3 +525,19 @@ async def test_finding_events_map_to_full_ocsf_without_raw_evidence(db_pool):
     doc = ocsf.event_to_ocsf(ev)
     assert doc["class_uid"] == 2002                       # Vulnerability Finding
     assert "CVE-2024-3400" in json.dumps(doc)
+
+
+async def test_lifecycle_reopen_and_accept_reach_integrations(db_pool):
+    async with db_pool.acquire() as con:
+        aid = await con.fetchval("INSERT INTO assets (kind, value, canonical, source) VALUES "
+                                 "('domain', 'r.example', 'r.example', 't') RETURNING id")
+        fid = await con.fetchval("INSERT INTO findings (asset_id, rule_id, rule_source, severity, title, "
+                                 "description) VALUES ($1, 'r9', 'policy', 'high', 'Old TLS', 'd') RETURNING id",
+                                 aid)
+    reopened = await service.event_from_stream(
+        db_pool, {"event": "finding_reopened", "finding_id": str(fid), "status": "open",
+                  "reason": "acceptance expired"}, "5-0")
+    assert reopened.type == "finding.reopened" and reopened.data["reason"] == "acceptance expired"
+    accepted = await service.event_from_stream(
+        db_pool, {"event": "finding_closed", "finding_id": str(fid), "status": "accepted"}, "6-0")
+    assert accepted.type == "finding.accepted" and accepted.title.startswith("Risk accepted")
