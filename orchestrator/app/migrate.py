@@ -106,6 +106,9 @@ class OutOfOrderError(MigrationError):
 # Files
 # --------------------------------------------------------------------------- #
 
+TENANCY_FILE = "099_tenancy.sql"  # re-applied after any later migration (step 5)
+
+
 @dataclass(frozen=True)
 class MigrationFile:
     filename: str
@@ -360,6 +363,7 @@ class RunResult:
     restamped: list[str] = field(default_factory=list)
     out_of_order: list[str] = field(default_factory=list)
     durations_ms: dict[str, int] = field(default_factory=dict)
+    reasserted: list[str] = field(default_factory=list)
 
 
 async def migrate_up(
@@ -467,6 +471,21 @@ async def migrate_up(
             result.applied.append(f.filename)
             result.durations_ms[f.filename] = ms
             logger.info("migrate_applied", extra={"file": f.filename, "duration_ms": ms})
+
+        # 5. Re-assert tenancy. 099_tenancy.sql walks EVERY table and adds
+        #    tenant_id + row-level security; it is idempotent. On an upgrade it
+        #    is already recorded, so a table created by a newer file (026, 027…)
+        #    would otherwise ship with no tenant isolation at all.
+        tenancy = next((f for f in files if f.filename == TENANCY_FILE), None)
+        if tenancy is not None and any(n != TENANCY_FILE for n in result.applied):
+            sql = transform(tenancy) if transform else tenancy.sql
+            try:
+                async with con.transaction():
+                    await con.execute(sql)
+            except Exception as exc:
+                raise MigrationError(f"re-applying {TENANCY_FILE} failed: {exc}") from exc
+            result.reasserted.append(TENANCY_FILE)
+            logger.info("migrate_tenancy_reasserted", extra={"after": result.applied})
     finally:
         await _release_lock(con)
     return result
