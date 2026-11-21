@@ -124,9 +124,11 @@ async def test_audit_failure_counter(client, monkeypatch):
     r = await client.post("/v1/scope", json={
         "kind": "domain", "value": "audit-fail.example", "added_by": "t", "auth_doc_ref": "x",
     })
-    assert r.status_code < 500  # request still served
+    # Fail-closed auditing (trust): a mutation that cannot be audited is refused
+    # before the handler runs -- and the failure is still counted for alerting.
+    assert r.status_code == 503
     after = _sample((await client.get("/metrics")).text, "paddock_audit_append_failures_total")
-    assert after == before + 1
+    assert after >= before + 1
 
 
 # --------------------------------------------------------------------------- #

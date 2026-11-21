@@ -154,14 +154,14 @@ async def test_checksum_drift_refused_then_allowed(empty_db, schema_copy):
 
 
 async def test_failed_migration_rolls_back_and_stops(empty_db, schema_copy):
-    (schema_copy / "098_bad.sql").write_text(
+    (schema_copy / "990_bad.sql").write_text(
         "CREATE TABLE half_done (id int);\nSELECT * FROM no_such_table;\n"
     )
-    (schema_copy / "099_after.sql").write_text("CREATE TABLE after_bad (id int);\n")
-    with pytest.raises(migrate.MigrationError, match="098_bad.sql"):
+    (schema_copy / "991_after.sql").write_text("CREATE TABLE after_bad (id int);\n")
+    with pytest.raises(migrate.MigrationError, match="990_bad.sql"):
         await _up(empty_db, schema_dir=schema_copy)
     rows = await _rows(empty_db)
-    assert "098_bad.sql" not in rows and "099_after.sql" not in rows
+    assert "990_bad.sql" not in rows and "991_after.sql" not in rows
     assert "001_scope.sql" in rows  # earlier files committed individually
     con = await asyncpg.connect(empty_db)
     try:
@@ -174,9 +174,9 @@ async def test_failed_migration_rolls_back_and_stops(empty_db, schema_copy):
     finally:
         await con.close()
     # Fix the file -> the run resumes from it.
-    (schema_copy / "098_bad.sql").write_text("CREATE TABLE half_done (id int);\n")
+    (schema_copy / "990_bad.sql").write_text("CREATE TABLE half_done (id int);\n")
     res = await _up(empty_db, schema_dir=schema_copy)
-    assert res.applied == ["098_bad.sql", "099_after.sql"]
+    assert res.applied == ["990_bad.sql", "991_after.sql"]
 
 
 async def test_no_transaction_marker(empty_db, schema_copy):
