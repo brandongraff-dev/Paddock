@@ -42,7 +42,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from . import audit, job_binding, tenancy
+from . import audit, job_binding, service_routes, tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -790,6 +790,14 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
 
         # 3b. A worker callback must belong to the tenant of the job it answers.
         if principal is not None and principal.kind == "service":
+            if settings.tenancy_strict and not service_routes.permitted(request.method, request.url.path):
+                # Strict mode: the fleet-wide key may only call the routes the
+                # fleet really calls (app/service_routes.py); everything else
+                # (users, keys, scope writes, integrations, audit, ...) is refused.
+                return await self._deny(
+                    request, 403,
+                    "the service key may not call this route under TENANCY_STRICT", principal,
+                )
             pool = getattr(request.app.state, "pool", None)
             if pool is not None:
                 try:
