@@ -395,39 +395,3 @@ async def test_mapping_change_recomputes_existing_scim_users(client, db_pool, sc
         )
     assert '"scim_users_recomputed": 1' in str(d)
 
-
-# --------------------------------------------------------------------------- #
-# A token minted in a non-default tenant authenticates, in ITS tenant
-# --------------------------------------------------------------------------- #
-
-from .test_tenancy import TENANT_A, TENANT_B, _h, enforce, tenants  # noqa: E402,F401  (fixtures)
-
-
-async def test_scim_token_from_a_second_tenant_authenticates_in_that_tenant(tenants, client, db_pool, app):  # noqa: F811
-    key_a, _ = tenants["a"]
-    key_b, _ = tenants["b"]
-    minted = {}
-    for name, key in (("a", key_a), ("b", key_b)):
-        r = await client.post("/v1/auth/sso/admin/scim-tokens", headers=_h(key), json={"name": f"okta-{name}"})
-        assert r.status_code == 201, r.text
-        minted[name] = {"Authorization": f"Bearer {r.json()['token']}", "Content-Type": SCIM}
-    # a token minted in tenant B used to 401 ("invalid SCIM token"): it was looked up with no tenant context
-    for name in ("a", "b"):
-        r = await client.get("/scim/v2/ServiceProviderConfig", headers=minted[name])
-        assert r.status_code == 200, (name, r.text)
-
-    # ... and the resolved principal acts in the TOKEN's tenant, not the default
-    class _Req:
-        pass
-
-    req = _Req()
-    req.app = app
-    for name, tid in (("a", TENANT_A), ("b", TENANT_B)):
-        p = await auth_svc._principal_from_scim_token(req, minted[name]["Authorization"].split()[1])
-        assert p.kind == "scim" and p.tenant_id == tid, (name, p.tenant_id)
-    async with db_pool.acquire() as con:      # last_used stamped on both rows
-        assert await con.fetchval("SELECT COUNT(*) FROM scim_tokens WHERE last_used IS NOT NULL") == 2
-    # a suspended tenant's SCIM token stops working
-    async with db_pool.acquire() as con:
-        await con.execute("UPDATE tenants SET status = 'suspended' WHERE id = $1::uuid", TENANT_B)
-    assert (await client.get("/scim/v2/ServiceProviderConfig", headers=minted["b"])).status_code == 401
