@@ -19,7 +19,7 @@ export interface OperationRequest {
 
 export interface ActionOut {
   action_type: string;
-  agent_id: string;
+  agent_id?: string | null;
   applied_at: string | null;
   approved_by: string | null;
   created_at: string;
@@ -28,6 +28,7 @@ export interface ActionOut {
   finding_id: string | null;
   id: string;
   indicator_id: string | null;
+  integration_id?: string | null;
   reason: string | null;
   requested_by: string | null;
   result: Record<string, unknown>;
@@ -286,11 +287,27 @@ export interface AttackPathPage {
   total: number;
 }
 
+export interface AttackPaths {
+  closed: number;
+  open_end: number;
+  open_start: number;
+  opened: number;
+  top_closed: PathBrief[];
+  top_opened: PathBrief[];
+}
+
 export interface AttackTechniqueCoverage {
   count: number;
   tactic: string;
   technique: string;
   technique_id: string;
+}
+
+export interface AuditAnchorOut {
+  anchor?: Record<string, unknown> | null;
+  anchored: boolean;
+  reason?: string | null;
+  receipt?: Record<string, unknown> | null;
 }
 
 export interface AuditEntryOut {
@@ -321,9 +338,14 @@ export interface AuditPage {
 }
 
 export interface AuditVerifyOut {
+  anchor?: Record<string, unknown> | null;
   checked: number;
   first_broken_id?: number | null;
+  head_hash?: string | null;
+  head_id?: number | null;
   ok: boolean;
+  reason?: string | null;
+  tenant_id?: string | null;
 }
 
 export interface ChainIn {
@@ -354,11 +376,35 @@ export interface ChainOut {
   title: string;
 }
 
+export interface ChallengeOut {
+  dns_txt: Record<string, string>;
+  domain: string;
+  http_file?: Record<string, string> | null;
+  kind: string;
+  methods: string[];
+  proof: ScopeProofOut;
+  scope_entry_id: number;
+  token: string;
+}
+
+export interface ChangeBrief {
+  asset_value?: string | null;
+  change_type: string;
+  detected_at: string;
+  severity: string;
+  summary: string;
+}
+
 export interface ChangePage {
   items: SurfaceChangeOut[];
   limit: number;
   offset: number;
   total: number;
+}
+
+export interface ChangeRow {
+  change_type: string;
+  count: number;
 }
 
 export interface ChangeSummaryDay {
@@ -374,6 +420,12 @@ export interface ChangeSummaryOut {
   by_day?: ChangeSummaryDay[];
   by_type?: Record<string, number>;
   total?: number;
+}
+
+export interface CheckOut {
+  detail: string;
+  method: string;
+  ok: boolean;
 }
 
 export interface ClusterOut {
@@ -415,13 +467,58 @@ export interface CodeFindingPage {
   total: number;
 }
 
+export interface CompliancePack {
+  clearance: string;
+  controls: ControlOut[];
+  disclaimer: string;
+  framework: FrameworkSummary;
+  generated_at: string;
+  org_name: string;
+}
+
+export interface ControlOut {
+  attestation?: string | null;
+  evidence: EvidenceOut[];
+  family: string;
+  id: string;
+  max_status: "satisfied" | "partial";
+  mode: "automated" | "manual";
+  rationale: string;
+  status: "satisfied" | "partial" | "gap" | "requires_attestation";
+  summary: string;
+  title: string;
+}
+
+export interface Coverage {
+  assets_total: number;
+  by_kind: CoverageKind[];
+  fleet_agents: number;
+  fleet_agents_recent: number;
+  last_completed_scan?: string | null;
+  sbom_components: number;
+  sbom_last_scanned?: string | null;
+  sbom_projects: number;
+  scans_by_status: Record<string, number>;
+  tls_below_b: number;
+  tls_graded: number;
+}
+
+export interface CoverageKind {
+  kind: string;
+  seen_24h: number;
+  seen_30d: number;
+  seen_7d: number;
+  stale: number;
+  total: number;
+}
+
 export interface DenyIn {
   note?: string | null;
 }
 
 export interface DeviceDetailOut {
   device: DeviceOut;
-  findings: FindingBrief[];
+  findings: app__routers__devices__FindingBrief[];
   segment?: SegmentOut | null;
 }
 
@@ -454,6 +551,13 @@ export interface DevicePage {
   total: number;
 }
 
+export interface DeviceRuleRow {
+  label: string;
+  open_end: number;
+  opened: number;
+  rule_id: string;
+}
+
 export interface DeviceSummaryOut {
   by_role: Record<string, number>;
   by_type: Record<string, number>;
@@ -465,6 +569,32 @@ export interface DeviceSummaryOut {
   ot_total: number;
   segments: number;
   total: number;
+}
+
+export interface Devices {
+  behaviour: DeviceRuleRow[];
+  iot_total: number;
+  new_devices: number;
+  observed_reachability: number;
+  ot_total: number;
+  segments: number;
+  top: app__reports__models__FindingBrief[];
+}
+
+export interface DigestRunOut {
+  detail?: string | null;
+  event_id?: string | null;
+  id?: string | null;
+  period_end: string;
+  period_start: string;
+  status: string;
+  workspace: string;
+}
+
+export interface DismissIn {
+  accepted_until?: string | null;
+  reason: string;
+  suppress?: boolean;
 }
 
 export interface EdgeBulkIn {
@@ -519,6 +649,51 @@ export interface EnrollOut {
   token_prefix: string;
 }
 
+export interface EvidenceOut {
+  detail: string;
+  key: string;
+  metrics?: Record<string, unknown>;
+  rows?: Record<string, unknown>[];
+  status: "pass" | "partial" | "fail" | "none";
+  title: string;
+}
+
+export interface ExchangeIn {
+  code: string;
+  verifier?: string | null;
+}
+
+export interface ExchangeOut {
+  access_token: string;
+  clearance: string;
+  expires_in: number;
+  role: string;
+  token_type?: string;
+  username: string;
+}
+
+export interface ExecuteIn {
+  note?: string | null;
+}
+
+export interface ExecuteOut {
+  action: ActionOut;
+  detail: string;
+  dry_run: boolean;
+  ok: boolean;
+  planned?: string[];
+}
+
+export interface ExposureTrend {
+  delta: number;
+  delta_pct?: number | null;
+  end_value: number;
+  open_end: Record<string, number>;
+  open_start: Record<string, number>;
+  points: TrendPoint[];
+  start_value: number;
+}
+
 export interface FeatureState {
   description: string;
   enabled: boolean;
@@ -526,37 +701,16 @@ export interface FeatureState {
   name: string;
 }
 
-export interface FindingBrief {
-  cvss?: number | null;
-  description?: string | null;
-  first_seen: string;
-  id: string;
-  last_seen: string;
-  metadata?: Record<string, unknown>;
-  rule_id: string;
-  rule_source: string;
-  severity: string;
-  status: string;
-  title: string;
-}
-
 export interface FindingBulkIn {
   items: FindingIn[];
 }
 
-export interface FindingBulkOut {
+export interface FindingBulkLifecycleOut {
+  duplicates?: number;
   inserted: number;
-  items: FindingOut[];
+  items: FindingLifecycleOut[];
+  suppressed?: number;
   updated: number;
-}
-
-/**
- * Single finding with its asset and any chain it participates in.
- */
-export interface FindingDetailOut {
-  asset: AssetOut | null;
-  chains?: ChainOut[];
-  finding: FindingOut;
 }
 
 export interface FindingIn {
@@ -577,7 +731,19 @@ export interface FindingIn {
   title: string;
 }
 
-export interface FindingOut {
+export interface FindingLifecycleDetailOut {
+  asset: AssetOut | null;
+  chains?: ChainOut[];
+  finding: FindingLifecycleOut;
+  history?: StatusHistoryOut[];
+}
+
+/**
+ * ``FindingOut`` + lifecycle fields. Every addition is optional so the
+ * response stays a strict superset of the legacy shape.
+ */
+export interface FindingLifecycleOut {
+  accepted_until?: string | null;
   asset_id: string;
   asset_kind?: string | null;
   asset_value?: string | null;
@@ -586,33 +752,62 @@ export interface FindingOut {
   classification?: string | null;
   cvss: number | null;
   description: string;
+  due_at?: string | null;
+  duplicate_of?: string | null;
   epss: number | null;
   evidence: Record<string, unknown>;
+  fingerprint?: string | null;
   first_seen: string;
   id: string;
   impact: string | null;
+  kev?: boolean | null;
   last_seen: string;
   metadata: Record<string, unknown>;
+  owner?: string | null;
+  priority_score?: number | null;
   references: string[];
   remediation: string | null;
   rule_id: string;
   rule_source: "nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel";
   severity: "info" | "low" | "medium" | "high" | "critical";
-  status: "open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix";
+  sla_breached?: boolean;
+  sla_hours?: number | null;
+  source_count?: number;
+  sources?: FindingSource[];
+  status: "open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted";
+  status_by?: string | null;
+  status_changed_at?: string | null;
+  status_reason?: string | null;
+  suppressed?: boolean;
+  suppressed_at?: string | null;
+  suppressed_by?: string | null;
   title: string;
+  vuln_keys?: string[];
+  why?: WhyFactor[];
 }
 
-export interface FindingPage {
-  items: FindingOut[];
+export interface FindingLifecyclePage {
+  duplicates_total?: number;
+  items: FindingLifecycleOut[];
   limit: number;
   offset: number;
+  suppressed_total?: number;
   total: number;
 }
 
 export interface FindingPatch {
   assigned_to?: string | null;
   notes?: string | null;
-  status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix") | null;
+  status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null;
+}
+
+export interface FindingSource {
+  finding_id: string;
+  last_seen: string;
+  primary?: boolean;
+  rule_id: string;
+  rule_source: string;
+  status: string;
 }
 
 export interface FindingTechniqueOut {
@@ -624,6 +819,24 @@ export interface FindingTechniqueOut {
   tactic: string;
   technique: string;
   technique_id: string;
+}
+
+export interface FrameworkSummary {
+  automated: number;
+  counts: Record<string, number>;
+  description: string;
+  id: string;
+  name: string;
+  publisher: string;
+  total: number;
+  url?: string | null;
+  version: string;
+}
+
+export interface FromFindingIn {
+  finding_id: string;
+  integration_id: string;
+  reason?: string | null;
 }
 
 export interface GraphEdgeOut {
@@ -672,11 +885,53 @@ export interface HopFindingRef {
   title: string;
 }
 
+export interface IdentitySettingsIn {
+  break_glass_users?: string[] | null;
+  scim_default_clearance?: ("public" | "internal" | "confidential" | "restricted") | null;
+  scim_default_role?: ("viewer" | "analyst" | "admin" | "auditor") | null;
+  scim_role_mappings?: RoleMapping[] | null;
+  sso_required?: boolean | null;
+}
+
+export interface IdentitySettingsOut {
+  break_glass_users: string[];
+  scim_base_url: string;
+  scim_default_clearance: string;
+  scim_default_role: string;
+  scim_role_mappings: Record<string, unknown>[];
+  sso_required: boolean;
+  updated_at: string;
+  updated_by?: string | null;
+}
+
 export interface InjectionSummary {
   blocked?: boolean;
   categories?: string[];
   flagged?: boolean;
   summary?: string;
+}
+
+export interface IntegrationIn {
+  allow_private?: boolean;
+  config?: Record<string, unknown>;
+  enabled?: boolean;
+  events?: string[];
+  filters?: Record<string, unknown>;
+  kind: string;
+  min_severity?: string;
+  name: string;
+  secrets?: Record<string, string | null>;
+}
+
+export interface IntegrationPatch {
+  allow_private?: boolean | null;
+  config?: Record<string, unknown> | null;
+  enabled?: boolean | null;
+  events?: string[] | null;
+  filters?: Record<string, unknown> | null;
+  min_severity?: string | null;
+  name?: string | null;
+  secrets?: (Record<string, string | null>) | null;
 }
 
 export interface InventoryIn {
@@ -758,6 +1013,7 @@ export interface MeOut {
   clearance: string;
   kind: string;
   role: string;
+  tenant_id?: string | null;
 }
 
 export interface MlRiskAssetRef {
@@ -794,6 +1050,81 @@ export interface MlRiskRow {
   model_version?: number | null;
   rationale?: MlRiskRationale[];
   scored_at?: string | null;
+}
+
+export interface Mttr {
+  by_severity: MttrRow[];
+  by_team: MttrRow[];
+  overall?: MttrRow | null;
+}
+
+export interface MttrRow {
+  count: number;
+  critical_high?: number;
+  key: string;
+  mean_hours: number;
+  median_hours: number;
+}
+
+export interface NetworkProposeIn {
+  action_type?: "quarantine_device" | "release_device";
+  finding_id?: string | null;
+  integration_id: string;
+  mac: string;
+  reason?: string | null;
+}
+
+export interface NewFindings {
+  by_severity: Record<string, number>;
+  critical: number;
+  high: number;
+  previous_by_severity: Record<string, number>;
+  previous_critical_high: number;
+  top: app__reports__models__FindingBrief[];
+}
+
+export interface OIDCConfig {
+  allow_private?: boolean;
+  client_id: string;
+  extra_auth_params?: Record<string, string>;
+  issuer: string;
+  scopes?: string[];
+  token_auth_method?: "client_secret_basic" | "client_secret_post" | "none";
+  trust_unverified_email?: boolean;
+  use_userinfo?: boolean;
+}
+
+export interface OnboardingCounts {
+  assets?: number;
+  domain_assets?: number;
+  domain_findings?: number;
+  findings?: number;
+}
+
+export interface OnboardingOut {
+  available?: boolean;
+  completed_at?: string | null;
+  counts?: OnboardingCounts;
+  current_step?: string;
+  deployment_mode?: string;
+  dismissed?: boolean;
+  first_scan?: ScanBrief | null;
+  has_verified_scope?: boolean;
+  needs_setup?: boolean;
+  require_scope_proof?: boolean;
+  scope_entry?: ScopeEntryWithProofOut | null;
+  steps_done?: string[];
+  workspace_name?: string | null;
+}
+
+export interface OnboardingPatch {
+  completed?: boolean | null;
+  current_step?: ("workspace" | "domain" | "verify" | "scan" | "results" | "team" | "done") | null;
+  dismissed?: boolean | null;
+  first_scan_id?: string | null;
+  scope_entry_id?: number | null;
+  step_done?: ("workspace" | "domain" | "verify" | "scan" | "results" | "team" | "done") | null;
+  workspace_name?: string | null;
 }
 
 /**
@@ -916,6 +1247,18 @@ export interface PathAssetRef {
   value?: string | null;
 }
 
+export interface PathBrief {
+  closed_at?: string | null;
+  exploitability?: number | null;
+  fingerprint: string;
+  kev_on_path?: boolean;
+  length?: number | null;
+  open_days?: number | null;
+  opened_at: string;
+  severity: string;
+  title: string;
+}
+
 export interface PendingAction {
   action_type: string;
   dry_run: boolean;
@@ -956,6 +1299,86 @@ export interface ProvenanceOut {
   source_service: string;
   subject_id: string;
   subject_type: string;
+}
+
+export interface ProviderIn {
+  allowed_domains?: string[];
+  client_secret?: string | null;
+  default_clearance?: "public" | "internal" | "confidential" | "restricted";
+  default_role?: "viewer" | "analyst" | "admin" | "auditor";
+  display_name: string;
+  enabled?: boolean;
+  groups_claim?: string;
+  jit_provisioning?: boolean;
+  kind: "oidc" | "saml";
+  oidc?: OIDCConfig | null;
+  preset?: "generic" | "okta" | "entra" | "google" | "auth0" | "keycloak";
+  require_mapping?: boolean;
+  role_mappings?: RoleMapping[];
+  saml?: SAMLConfig | null;
+  saml_metadata_xml?: string | null;
+  slug: string;
+  sync_roles?: boolean;
+}
+
+export interface ProviderOut {
+  allowed_domains: string[];
+  config: Record<string, unknown>;
+  created_at: string;
+  created_by?: string | null;
+  default_clearance: string;
+  default_role: string;
+  display_name: string;
+  enabled: boolean;
+  groups_claim: string;
+  has_client_secret: boolean;
+  id: string;
+  jit_provisioning: boolean;
+  kind: string;
+  preset: string;
+  redirect_uri?: string | null;
+  require_mapping: boolean;
+  role_mappings: Record<string, unknown>[];
+  saml_acs_url?: string | null;
+  saml_entity_id?: string | null;
+  saml_metadata_url?: string | null;
+  slug: string;
+  sync_roles: boolean;
+  updated_at: string;
+}
+
+/**
+ * Partial update. ``client_secret``: omit = keep, "" = clear.
+ */
+export interface ProviderPatch {
+  allowed_domains?: string[] | null;
+  client_secret?: string | null;
+  default_clearance?: ("public" | "internal" | "confidential" | "restricted") | null;
+  default_role?: ("viewer" | "analyst" | "admin" | "auditor") | null;
+  display_name?: string | null;
+  enabled?: boolean | null;
+  groups_claim?: string | null;
+  jit_provisioning?: boolean | null;
+  oidc?: OIDCConfig | null;
+  preset?: ("generic" | "okta" | "entra" | "google" | "auth0" | "keycloak") | null;
+  require_mapping?: boolean | null;
+  role_mappings?: RoleMapping[] | null;
+  saml?: SAMLConfig | null;
+  saml_metadata_xml?: string | null;
+  sync_roles?: boolean | null;
+}
+
+export interface PublicProvider {
+  display_name: string;
+  kind: string;
+  preset: string;
+  slug: string;
+  start_url: string;
+}
+
+export interface PublicProvidersOut {
+  providers: PublicProvider[];
+  sso_required: boolean;
 }
 
 /**
@@ -1018,6 +1441,39 @@ export interface RemediationRow {
   verifier?: VerifierSummary;
 }
 
+export interface ReopenIn {
+  reason?: string | null;
+}
+
+export interface ReportData {
+  attack_paths: AttackPaths;
+  changes: SurfaceChanges;
+  clearance: string;
+  coverage: Coverage;
+  devices: Devices;
+  exposure: ExposureTrend;
+  generated_at: string;
+  highlights: string[];
+  mttr: Mttr;
+  new_findings: NewFindings;
+  org_name: string;
+  resolutions: Resolutions;
+  risky_assets: RiskyAsset[];
+  sla: Sla;
+  window: Window;
+}
+
+export interface Resolutions {
+  accepted_risk: number;
+  false_positive: number;
+  fixed: number;
+  fixed_by_severity: Record<string, number>;
+  pending_verification: number;
+  regressed: number;
+  verified: number;
+  wontfix: number;
+}
+
 export interface ResultIn {
   output?: Record<string, unknown>;
   revert?: Record<string, unknown> | null;
@@ -1026,6 +1482,36 @@ export interface ResultIn {
 
 export interface RevertIn {
   note?: string | null;
+}
+
+export interface RiskyAsset {
+  asset_id: string;
+  critical: number;
+  high: number;
+  kind: string;
+  open_findings: number;
+  score: number;
+  value: string;
+}
+
+/**
+ * One IdP group/claim value -> Paddock role (+ optional clearance).
+ */
+export interface RoleMapping {
+  clearance?: ("public" | "internal" | "confidential" | "restricted") | null;
+  group: string;
+  role: "viewer" | "analyst" | "admin" | "auditor";
+}
+
+export interface SAMLConfig {
+  email_attribute?: string | null;
+  groups_attribute?: string | null;
+  idp_entity_id: string;
+  idp_sso_url: string;
+  idp_x509_cert: string;
+  name_attribute?: string | null;
+  name_id_format?: string;
+  want_messages_signed?: boolean;
 }
 
 /**
@@ -1095,6 +1581,16 @@ export interface SbomVulnOut {
   refs?: unknown[];
   severity: "info" | "low" | "medium" | "high" | "critical";
   summary: string | null;
+}
+
+export interface ScanBrief {
+  error?: string | null;
+  finished_at?: string | null;
+  id: string;
+  kind: string;
+  queued_at?: string | null;
+  status: string;
+  target: string;
 }
 
 export interface ScanCompleteIn {
@@ -1182,6 +1678,34 @@ export interface ScheduleRunOut {
   status: string;
 }
 
+export interface ScimTokenCreateOut {
+  created_at: string;
+  created_by?: string | null;
+  expires_at?: string | null;
+  id: string;
+  last_used?: string | null;
+  name: string;
+  prefix: string;
+  revoked: boolean;
+  token: string;
+}
+
+export interface ScimTokenIn {
+  expires_at?: string | null;
+  name: string;
+}
+
+export interface ScimTokenOut {
+  created_at: string;
+  created_by?: string | null;
+  expires_at?: string | null;
+  id: string;
+  last_used?: string | null;
+  name: string;
+  prefix: string;
+  revoked: boolean;
+}
+
 export interface ScopeCheckIn {
   reason?: string;
   target: string;
@@ -1230,6 +1754,41 @@ export interface ScopeEntryOut {
   value: string;
 }
 
+export interface ScopeEntryWithProofOut {
+  active: boolean;
+  added_at: string;
+  added_by: string;
+  auth_doc_ref: string | null;
+  expires_at: string | null;
+  id: number;
+  kind: "domain" | "subdomain_wildcard" | "ipv4_cidr" | "ipv6_cidr" | "asn";
+  metadata?: Record<string, unknown>;
+  notes: string | null;
+  proof?: ScopeProofOut;
+  value: string;
+}
+
+export interface ScopeProofOut {
+  approver?: string | null;
+  attestation_expires_at?: string | null;
+  attested_at?: string | null;
+  attested_by?: string | null;
+  effective?: boolean;
+  expired_at?: string | null;
+  failing_since?: string | null;
+  grace_until?: string | null;
+  last_checked_at?: string | null;
+  last_error?: string | null;
+  last_ok_at?: string | null;
+  loa_ref?: string | null;
+  method?: ("dns_txt" | "http_file" | "attestation") | null;
+  methods?: string[];
+  required?: boolean;
+  status?: "pending" | "verified" | "attested" | "expired";
+  token_issued?: boolean;
+  verified_at?: string | null;
+}
+
 export interface SegmentOut {
   canonical: string;
   classification?: string | null;
@@ -1240,6 +1799,38 @@ export interface SegmentOut {
   value: string;
 }
 
+export interface ServiceStatus {
+  enabled: boolean;
+  feature: string;
+  name: string;
+  status: "ok" | "down" | "not_enabled";
+}
+
+export interface ServicesOut {
+  mode: string;
+  services: ServiceStatus[];
+}
+
+export interface Sla {
+  breached_open: number;
+  breaches: SlaBreach[];
+  by_severity: SlaRow[];
+  compliance_pct?: number | null;
+  late: number;
+  met: number;
+  overdue_end: number;
+}
+
+export interface SlaBreach {
+  asset_value?: string | null;
+  due_at: string;
+  finding_id: string;
+  overdue_hours: number;
+  severity: string;
+  team: string;
+  title: string;
+}
+
 export interface SlaPolicyOut {
   hours: number;
   severity: "info" | "low" | "medium" | "high" | "critical";
@@ -1247,6 +1838,27 @@ export interface SlaPolicyOut {
 
 export interface SlaPolicyPatch {
   hours: number;
+}
+
+export interface SlaRow {
+  breached_open: number;
+  compliance_pct?: number | null;
+  late: number;
+  met: number;
+  open_within_sla: number;
+  overdue_end: number;
+  policy_hours?: number | null;
+  severity: string;
+}
+
+export interface StatusHistoryOut {
+  accepted_until: string | null;
+  actor: string;
+  at: string;
+  from_status: string | null;
+  id: string;
+  reason: string | null;
+  to_status: string;
 }
 
 export interface SupplyChainRiskOut {
@@ -1270,6 +1882,44 @@ export interface SupplyChainRiskPage {
   total: number;
 }
 
+export interface SuppressionIn {
+  apply_existing?: boolean;
+  asset_pattern?: string | null;
+  enabled?: boolean;
+  expires_at?: string | null;
+  name?: string | null;
+  reason: string;
+  rule_id?: string | null;
+  rule_source?: string | null;
+  tag?: string | null;
+}
+
+export interface SuppressionOut {
+  active: boolean;
+  asset_pattern: string | null;
+  author: string;
+  created_at: string;
+  enabled: boolean;
+  expires_at: string | null;
+  id: string;
+  last_matched_at: string | null;
+  match_count: number;
+  name: string | null;
+  reason: string;
+  rule_id: string | null;
+  rule_source: string | null;
+  suppressed_now?: number;
+  tag: string | null;
+  updated_at: string;
+}
+
+export interface SuppressionPatch {
+  enabled?: boolean | null;
+  expires_at?: string | null;
+  name?: string | null;
+  reason?: string | null;
+}
+
 export interface SurfaceChangeOut {
   ack_at: string | null;
   ack_by: string | null;
@@ -1285,9 +1935,46 @@ export interface SurfaceChangeOut {
   summary: string;
 }
 
+export interface SurfaceChanges {
+  by_type: ChangeRow[];
+  new_assets_by_kind: Record<string, number>;
+  notable: ChangeBrief[];
+  total: number;
+}
+
 export interface SurfaceGraphOut {
   edges: GraphEdgeOut[];
   nodes: GraphNodeOut[];
+}
+
+export interface SyncNowOut {
+  counts?: Record<string, unknown>;
+  detail?: string | null;
+  run_id?: number | null;
+  status: string;
+}
+
+export interface SyncRunOut {
+  counts?: Record<string, unknown>;
+  detail?: string | null;
+  finished_at?: string | null;
+  id: number;
+  integration_id: string;
+  started_at: string;
+  status: string;
+  trigger: string;
+}
+
+export interface SyncStatusOut {
+  enabled: boolean;
+  integration_id: string;
+  kind: string;
+  last_run?: SyncRunOut | null;
+  name: string;
+}
+
+export interface TestIn {
+  mode?: "deliver" | "health";
 }
 
 export interface TiFeedIn {
@@ -1498,6 +2185,19 @@ export interface TlsGradeSummary {
   total?: number;
 }
 
+export interface TransitionOut {
+  finding: FindingLifecycleOut;
+  from_status: string;
+  propagated_to?: number;
+  suppression_id?: string | null;
+  to_status: string;
+}
+
+export interface TrendPoint {
+  at: string;
+  value: number;
+}
+
 export interface UsageLimitState {
   limit: number | null;
   over: boolean;
@@ -1556,10 +2256,81 @@ export interface VerifierSummary {
   verify_ok?: boolean | null;
 }
 
+export interface VerifyIn {
+  approver?: string | null;
+  loa_ref?: string | null;
+  method?: ("dns_txt" | "http_file" | "attestation") | null;
+  valid_until?: string | null;
+}
+
+export interface VerifyOut {
+  check: CheckOut;
+  proof: ScopeProofOut;
+  scope_entry_id: number;
+}
+
+export interface WhyFactor {
+  key: string;
+  label: string;
+  weight: number;
+}
+
+export interface Window {
+  days: number;
+  end: string;
+  label: string;
+  prev_start: string;
+  start: string;
+}
+
+export interface app__reports__models__FindingBrief {
+  asset_kind?: string | null;
+  asset_value?: string | null;
+  first_seen: string;
+  id: string;
+  rule_id: string;
+  rule_source: string;
+  severity: string;
+  status: string;
+  team?: string | null;
+  title: string;
+}
+
+export interface app__routers__devices__FindingBrief {
+  cvss?: number | null;
+  description?: string | null;
+  first_seen: string;
+  id: string;
+  last_seen: string;
+  metadata?: Record<string, unknown>;
+  rule_id: string;
+  rule_source: string;
+  severity: string;
+  status: string;
+  title: string;
+}
+
 /** name -> [method, path, paginated] */
 export const OPERATIONS = {
   healthz: ["GET", "/healthz", false],
   readyz: ["GET", "/readyz", false],
+  listGroups: ["GET", "/scim/v2/Groups", false],
+  createGroup: ["POST", "/scim/v2/Groups", false],
+  getGroup: ["GET", "/scim/v2/Groups/{group_id}", false],
+  replaceGroup: ["PUT", "/scim/v2/Groups/{group_id}", false],
+  patchGroup: ["PATCH", "/scim/v2/Groups/{group_id}", false],
+  deleteGroup: ["DELETE", "/scim/v2/Groups/{group_id}", false],
+  resourceTypes: ["GET", "/scim/v2/ResourceTypes", false],
+  resourceType: ["GET", "/scim/v2/ResourceTypes/{name}", false],
+  schemas: ["GET", "/scim/v2/Schemas", false],
+  schema: ["GET", "/scim/v2/Schemas/{schema_id}", false],
+  serviceProviderConfig: ["GET", "/scim/v2/ServiceProviderConfig", false],
+  listUsers: ["GET", "/scim/v2/Users", false],
+  createUser: ["POST", "/scim/v2/Users", false],
+  getUser: ["GET", "/scim/v2/Users/{user_id}", false],
+  replaceUser: ["PUT", "/scim/v2/Users/{user_id}", false],
+  patchUser: ["PATCH", "/scim/v2/Users/{user_id}", false],
+  deleteUser: ["DELETE", "/scim/v2/Users/{user_id}", false],
   listAlertRules: ["GET", "/v1/alert-rules", true],
   createAlertRule: ["POST", "/v1/alert-rules", false],
   patchAlertRule: ["PATCH", "/v1/alert-rules/{rule_id}", false],
@@ -1579,12 +2350,30 @@ export const OPERATIONS = {
   attackCatalog: ["GET", "/v1/attack/catalog", false],
   attackCoverage: ["GET", "/v1/attack/coverage", false],
   listAudit: ["GET", "/v1/audit", true],
+  anchorAudit: ["POST", "/v1/audit/anchor", false],
   verifyAudit: ["GET", "/v1/audit/verify", false],
   listApikeys: ["GET", "/v1/auth/apikeys", false],
   createApikey: ["POST", "/v1/auth/apikeys", false],
   revokeApikey: ["DELETE", "/v1/auth/apikeys/{key_id}", false],
   login: ["POST", "/v1/auth/login", false],
   me: ["GET", "/v1/auth/me", false],
+  adminListProviders: ["GET", "/v1/auth/sso/admin/providers", false],
+  adminCreateProvider: ["POST", "/v1/auth/sso/admin/providers", false],
+  adminGetProvider: ["GET", "/v1/auth/sso/admin/providers/{provider_id}", false],
+  adminUpdateProvider: ["PATCH", "/v1/auth/sso/admin/providers/{provider_id}", false],
+  adminDeleteProvider: ["DELETE", "/v1/auth/sso/admin/providers/{provider_id}", false],
+  adminTestProvider: ["POST", "/v1/auth/sso/admin/providers/{provider_id}/test", false],
+  adminListScimTokens: ["GET", "/v1/auth/sso/admin/scim-tokens", false],
+  adminCreateScimToken: ["POST", "/v1/auth/sso/admin/scim-tokens", false],
+  adminRevokeScimToken: ["DELETE", "/v1/auth/sso/admin/scim-tokens/{token_id}", false],
+  adminGetSettings: ["GET", "/v1/auth/sso/admin/settings", false],
+  adminPutSettings: ["PUT", "/v1/auth/sso/admin/settings", false],
+  exchange: ["POST", "/v1/auth/sso/exchange", false],
+  publicProviders: ["GET", "/v1/auth/sso/providers", false],
+  samlAcs: ["POST", "/v1/auth/sso/{slug}/acs", false],
+  oidcCallback: ["GET", "/v1/auth/sso/{slug}/callback", false],
+  samlMetadata: ["GET", "/v1/auth/sso/{slug}/metadata", false],
+  ssoStart: ["GET", "/v1/auth/sso/{slug}/start", false],
   listChains: ["GET", "/v1/chains", true],
   createChain: ["POST", "/v1/chains", false],
   listChanges: ["GET", "/v1/changes", true],
@@ -1598,11 +2387,19 @@ export const OPERATIONS = {
   getDevice: ["GET", "/v1/devices/{device_id}", false],
   bulkEdges: ["POST", "/v1/edges/bulk", false],
   eventsSse: ["GET", "/v1/events", false],
+  exportFindingsOcsf: ["GET", "/v1/export/findings.ocsf", false],
+  exportSarif: ["GET", "/v1/export/sarif", false],
+  exportSbom: ["GET", "/v1/export/sbom", false],
+  exportVex: ["GET", "/v1/export/vex", false],
   listFindingsPaged: ["GET", "/v1/findings", true],
   bulkUpsertFindings: ["POST", "/v1/findings/bulk", false],
   listFindingsLegacy: ["GET", "/v1/findings/list", true],
+  recomputeIdentity: ["POST", "/v1/findings/recompute-identity", false],
   getFinding: ["GET", "/v1/findings/{finding_id}", false],
   patchFinding: ["PATCH", "/v1/findings/{finding_id}", false],
+  acceptFinding: ["POST", "/v1/findings/{finding_id}/accept", false],
+  markFalsePositive: ["POST", "/v1/findings/{finding_id}/false-positive", false],
+  reopenFinding: ["POST", "/v1/findings/{finding_id}/reopen", false],
   findingTechniques: ["GET", "/v1/findings/{finding_id}/techniques", false],
   listActions: ["GET", "/v1/fleet/actions", true],
   proposeAction: ["POST", "/v1/fleet/actions", false],
@@ -1613,16 +2410,40 @@ export const OPERATIONS = {
   listAgents: ["GET", "/v1/fleet/agents", false],
   getAgent: ["GET", "/v1/fleet/agents/{agent_id}", false],
   enroll: ["POST", "/v1/fleet/enroll", false],
+  listNetworkActions: ["GET", "/v1/fleet/network-actions", true],
+  propose: ["POST", "/v1/fleet/network-actions", false],
+  proposeFromFinding: ["POST", "/v1/fleet/network-actions/from-finding", false],
+  execute: ["POST", "/v1/fleet/network-actions/{action_id}/execute", false],
   heartbeat: ["POST", "/v1/fleet/{agent_id}/heartbeat", false],
   postInventory: ["POST", "/v1/fleet/{agent_id}/inventory", false],
   graphNeighborhood: ["GET", "/v1/graph/neighborhood/{asset_id}", false],
   graphPaths: ["GET", "/v1/graph/paths", false],
+  importLockfiles: ["POST", "/v1/import/lockfiles", false],
+  importSbom: ["POST", "/v1/import/sbom", false],
+  syncStatus: ["GET", "/v1/integration-sync", false],
+  syncNow: ["POST", "/v1/integration-sync/{integration_id}", false],
+  syncRuns: ["GET", "/v1/integration-sync/{integration_id}/runs", false],
+  listIntegrations: ["GET", "/v1/integrations", false],
+  createIntegration: ["POST", "/v1/integrations", false],
+  catalog: ["GET", "/v1/integrations/catalog", false],
+  health: ["GET", "/v1/integrations/health", false],
+  getIntegration: ["GET", "/v1/integrations/{integration_id}", false],
+  updateIntegration: ["PATCH", "/v1/integrations/{integration_id}", false],
+  deleteIntegration: ["DELETE", "/v1/integrations/{integration_id}", false],
+  listDeliveries: ["GET", "/v1/integrations/{integration_id}/deliveries", true],
+  retryDelivery: ["POST", "/v1/integrations/{integration_id}/deliveries/{delivery_id}/retry", false],
+  disableIntegration: ["POST", "/v1/integrations/{integration_id}/disable", false],
+  enableIntegration: ["POST", "/v1/integrations/{integration_id}/enable", false],
+  integrationInbound: ["POST", "/v1/integrations/{integration_id}/inbound", false],
+  testIntegration: ["POST", "/v1/integrations/{integration_id}/test", false],
   getLicense: ["GET", "/v1/license", false],
   uploadLicense: ["POST", "/v1/license", false],
   removeLicense: ["DELETE", "/v1/license", false],
   getActiveModels: ["GET", "/v1/ml/model", false],
   retrain: ["POST", "/v1/ml/retrain", false],
   listMlRisk: ["GET", "/v1/ml/risk", true],
+  getOnboarding: ["GET", "/v1/onboarding", false],
+  putOnboarding: ["PUT", "/v1/onboarding", false],
   listObjects: ["GET", "/v1/ontology/objects", true],
   getObject: ["GET", "/v1/ontology/objects/{object_id}", false],
   searchObjects: ["GET", "/v1/ontology/search", true],
@@ -1636,8 +2457,14 @@ export const OPERATIONS = {
   recordProvenance: ["POST", "/v1/provenance", false],
   backfillProvenance: ["POST", "/v1/provenance/backfill", false],
   listRemediations: ["GET", "/v1/remediation", true],
-  propose: ["POST", "/v1/remediation/propose", false],
+  proposeRemediation: ["POST", "/v1/remediation/propose", false],
   getRemediation: ["GET", "/v1/remediation/{rid}", false],
+  complianceFrameworks: ["GET", "/v1/reports/compliance", false],
+  compliancePack: ["GET", "/v1/reports/compliance/{framework}", false],
+  digestPreview: ["GET", "/v1/reports/digest/preview", false],
+  digestSend: ["POST", "/v1/reports/digest/send", false],
+  digestHistory: ["GET", "/v1/reports/digests", false],
+  executiveReport: ["GET", "/v1/reports/executive", false],
   listComponents: ["GET", "/v1/sbom/components", true],
   getComponent: ["GET", "/v1/sbom/components/{component_id}", false],
   listProjects: ["GET", "/v1/sbom/projects", true],
@@ -1658,10 +2485,19 @@ export const OPERATIONS = {
   addScope: ["POST", "/v1/scope", false],
   checkScope: ["POST", "/v1/scope/check", false],
   deactivateScope: ["DELETE", "/v1/scope/{entry_id}", false],
+  issueChallenge: ["POST", "/v1/scope/{entry_id}/challenge", false],
   listScopeDecisions: ["GET", "/v1/scope/{entry_id}/decisions", true],
+  getScopeProof: ["GET", "/v1/scope/{entry_id}/proof", false],
+  verifyScope: ["POST", "/v1/scope/{entry_id}/verify", false],
   listSlaPolicies: ["GET", "/v1/sla-policies", false],
   patchSlaPolicy: ["PATCH", "/v1/sla-policies/{severity}", false],
   listSupplyChainRisks: ["GET", "/v1/supply-chain-risks", true],
+  listSuppressions: ["GET", "/v1/suppressions", true],
+  createSuppression: ["POST", "/v1/suppressions", false],
+  getSuppression: ["GET", "/v1/suppressions/{sup_id}", false],
+  patchSuppression: ["PATCH", "/v1/suppressions/{sup_id}", false],
+  deleteSuppression: ["DELETE", "/v1/suppressions/{sup_id}", false],
+  servicesStatus: ["GET", "/v1/system/services", false],
   listFeeds: ["GET", "/v1/ti/feeds", false],
   createFeed: ["POST", "/v1/ti/feeds", false],
   deleteFeed: ["DELETE", "/v1/ti/feeds/{feed_id}", false],
@@ -1701,6 +2537,125 @@ export abstract class GeneratedOperations {
    */
   readyz(options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("GET", "/readyz", { options });
+  }
+
+  /**
+   * GET /scim/v2/Groups — List Groups
+   */
+  listGroups(query?: { filter?: string | null; startIndex?: number; count?: number; excludedAttributes?: string | null; attributes?: string | null }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/Groups", { query, options });
+  }
+
+  /**
+   * POST /scim/v2/Groups — Create Group
+   */
+  createGroup(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/scim/v2/Groups", { options });
+  }
+
+  /**
+   * GET /scim/v2/Groups/{group_id} — Get Group
+   */
+  getGroup(groupId: string, query?: { excludedAttributes?: string | null; attributes?: string | null }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/Groups/{group_id}", { pathParams: { group_id: groupId }, query, options });
+  }
+
+  /**
+   * PUT /scim/v2/Groups/{group_id} — Replace Group
+   */
+  replaceGroup(groupId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("PUT", "/scim/v2/Groups/{group_id}", { pathParams: { group_id: groupId }, options });
+  }
+
+  /**
+   * PATCH /scim/v2/Groups/{group_id} — Patch Group
+   */
+  patchGroup(groupId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("PATCH", "/scim/v2/Groups/{group_id}", { pathParams: { group_id: groupId }, options });
+  }
+
+  /**
+   * DELETE /scim/v2/Groups/{group_id} — Delete Group
+   */
+  deleteGroup(groupId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("DELETE", "/scim/v2/Groups/{group_id}", { pathParams: { group_id: groupId }, options });
+  }
+
+  /**
+   * GET /scim/v2/ResourceTypes — Resource Types
+   */
+  resourceTypes(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/ResourceTypes", { options });
+  }
+
+  /**
+   * GET /scim/v2/ResourceTypes/{name} — Resource Type
+   */
+  resourceType(name: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/ResourceTypes/{name}", { pathParams: { name: name }, options });
+  }
+
+  /**
+   * GET /scim/v2/Schemas — Schemas
+   */
+  schemas(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/Schemas", { options });
+  }
+
+  /**
+   * GET /scim/v2/Schemas/{schema_id} — Schema
+   */
+  schema(schemaId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/Schemas/{schema_id}", { pathParams: { schema_id: schemaId }, options });
+  }
+
+  /**
+   * GET /scim/v2/ServiceProviderConfig — Service Provider Config
+   */
+  serviceProviderConfig(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/ServiceProviderConfig", { options });
+  }
+
+  /**
+   * GET /scim/v2/Users — List Users
+   */
+  listUsers(query?: { filter?: string | null; startIndex?: number; count?: number }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/Users", { query, options });
+  }
+
+  /**
+   * POST /scim/v2/Users — Create User
+   */
+  createUser(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/scim/v2/Users", { options });
+  }
+
+  /**
+   * GET /scim/v2/Users/{user_id} — Get User
+   */
+  getUser(userId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, options });
+  }
+
+  /**
+   * PUT /scim/v2/Users/{user_id} — Replace User
+   */
+  replaceUser(userId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("PUT", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, options });
+  }
+
+  /**
+   * PATCH /scim/v2/Users/{user_id} — Patch User
+   */
+  patchUser(userId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("PATCH", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, options });
+  }
+
+  /**
+   * DELETE /scim/v2/Users/{user_id} — Delete User
+   */
+  deleteUser(userId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("DELETE", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, options });
   }
 
   /**
@@ -1874,6 +2829,13 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/audit/anchor — Anchor Audit
+   */
+  anchorAudit(options?: RequestOptions): Promise<AuditAnchorOut> {
+    return this._request<AuditAnchorOut>("POST", "/v1/audit/anchor", { options });
+  }
+
+  /**
    * GET /v1/audit/verify — Verify Audit
    */
   verifyAudit(options?: RequestOptions): Promise<AuditVerifyOut> {
@@ -1913,6 +2875,127 @@ export abstract class GeneratedOperations {
    */
   me(options?: RequestOptions): Promise<MeOut> {
     return this._request<MeOut>("GET", "/v1/auth/me", { options });
+  }
+
+  /**
+   * GET /v1/auth/sso/admin/providers — Admin List Providers
+   */
+  adminListProviders(options?: RequestOptions): Promise<ProviderOut[]> {
+    return this._request<ProviderOut[]>("GET", "/v1/auth/sso/admin/providers", { options });
+  }
+
+  /**
+   * POST /v1/auth/sso/admin/providers — Admin Create Provider
+   */
+  adminCreateProvider(body: ProviderIn, options?: RequestOptions): Promise<ProviderOut> {
+    return this._request<ProviderOut>("POST", "/v1/auth/sso/admin/providers", { body, options });
+  }
+
+  /**
+   * GET /v1/auth/sso/admin/providers/{provider_id} — Admin Get Provider
+   */
+  adminGetProvider(providerId: string, options?: RequestOptions): Promise<ProviderOut> {
+    return this._request<ProviderOut>("GET", "/v1/auth/sso/admin/providers/{provider_id}", { pathParams: { provider_id: providerId }, options });
+  }
+
+  /**
+   * PATCH /v1/auth/sso/admin/providers/{provider_id} — Admin Update Provider
+   */
+  adminUpdateProvider(providerId: string, body: ProviderPatch, options?: RequestOptions): Promise<ProviderOut> {
+    return this._request<ProviderOut>("PATCH", "/v1/auth/sso/admin/providers/{provider_id}", { pathParams: { provider_id: providerId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/auth/sso/admin/providers/{provider_id} — Admin Delete Provider
+   */
+  adminDeleteProvider(providerId: string, options?: RequestOptions): Promise<void> {
+    return this._request<void>("DELETE", "/v1/auth/sso/admin/providers/{provider_id}", { pathParams: { provider_id: providerId }, options });
+  }
+
+  /**
+   * POST /v1/auth/sso/admin/providers/{provider_id}/test — Admin Test Provider
+   *
+   * Connectivity / configuration check. OIDC: run discovery + fetch JWKS.
+   */
+  adminTestProvider(providerId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/auth/sso/admin/providers/{provider_id}/test", { pathParams: { provider_id: providerId }, options });
+  }
+
+  /**
+   * GET /v1/auth/sso/admin/scim-tokens — Admin List Scim Tokens
+   */
+  adminListScimTokens(options?: RequestOptions): Promise<ScimTokenOut[]> {
+    return this._request<ScimTokenOut[]>("GET", "/v1/auth/sso/admin/scim-tokens", { options });
+  }
+
+  /**
+   * POST /v1/auth/sso/admin/scim-tokens — Admin Create Scim Token
+   */
+  adminCreateScimToken(body: ScimTokenIn, options?: RequestOptions): Promise<ScimTokenCreateOut> {
+    return this._request<ScimTokenCreateOut>("POST", "/v1/auth/sso/admin/scim-tokens", { body, options });
+  }
+
+  /**
+   * DELETE /v1/auth/sso/admin/scim-tokens/{token_id} — Admin Revoke Scim Token
+   */
+  adminRevokeScimToken(tokenId: string, options?: RequestOptions): Promise<ScimTokenOut> {
+    return this._request<ScimTokenOut>("DELETE", "/v1/auth/sso/admin/scim-tokens/{token_id}", { pathParams: { token_id: tokenId }, options });
+  }
+
+  /**
+   * GET /v1/auth/sso/admin/settings — Admin Get Settings
+   */
+  adminGetSettings(options?: RequestOptions): Promise<IdentitySettingsOut> {
+    return this._request<IdentitySettingsOut>("GET", "/v1/auth/sso/admin/settings", { options });
+  }
+
+  /**
+   * PUT /v1/auth/sso/admin/settings — Admin Put Settings
+   */
+  adminPutSettings(body: IdentitySettingsIn, options?: RequestOptions): Promise<IdentitySettingsOut> {
+    return this._request<IdentitySettingsOut>("PUT", "/v1/auth/sso/admin/settings", { body, options });
+  }
+
+  /**
+   * POST /v1/auth/sso/exchange — Exchange
+   */
+  exchange(body: ExchangeIn, options?: RequestOptions): Promise<ExchangeOut> {
+    return this._request<ExchangeOut>("POST", "/v1/auth/sso/exchange", { body, options });
+  }
+
+  /**
+   * GET /v1/auth/sso/providers — Public Providers
+   */
+  publicProviders(options?: RequestOptions): Promise<PublicProvidersOut> {
+    return this._request<PublicProvidersOut>("GET", "/v1/auth/sso/providers", { options });
+  }
+
+  /**
+   * POST /v1/auth/sso/{slug}/acs — Saml Acs
+   */
+  samlAcs(slug: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/auth/sso/{slug}/acs", { pathParams: { slug: slug }, options });
+  }
+
+  /**
+   * GET /v1/auth/sso/{slug}/callback — Oidc Callback
+   */
+  oidcCallback(slug: string, query?: { code?: string | null; state?: string | null; error?: string | null }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/auth/sso/{slug}/callback", { pathParams: { slug: slug }, query, options });
+  }
+
+  /**
+   * GET /v1/auth/sso/{slug}/metadata — Saml Metadata
+   */
+  samlMetadata(slug: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/auth/sso/{slug}/metadata", { pathParams: { slug: slug }, options });
+  }
+
+  /**
+   * GET /v1/auth/sso/{slug}/start — Sso Start
+   */
+  ssoStart(slug: string, query?: { return_to?: string | null; spa_challenge?: string | null }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/auth/sso/{slug}/start", { pathParams: { slug: slug }, query, options });
   }
 
   /**
@@ -2032,17 +3115,45 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/export/findings.ocsf — Export Findings Ocsf
+   */
+  exportFindingsOcsf(query?: { severity?: (Array<"info" | "low" | "medium" | "high" | "critical">) | null; min_severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: (Array<"open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted">) | null; rule_source?: (Array<"nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel">) | null; since?: string | null; limit?: number }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/export/findings.ocsf", { query, options });
+  }
+
+  /**
+   * GET /v1/export/sarif — Export Sarif
+   */
+  exportSarif(query?: { project?: string | null; min_severity?: ("info" | "low" | "medium" | "high" | "critical") | null; include_sca?: boolean; include_suppressed?: boolean; strip_prefix?: string | null; limit?: number }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/export/sarif", { query, options });
+  }
+
+  /**
+   * GET /v1/export/sbom — Export Sbom
+   */
+  exportSbom(query: { project: string; format?: "cyclonedx" | "spdx" }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/export/sbom", { query, options });
+  }
+
+  /**
+   * GET /v1/export/vex — Export Vex
+   */
+  exportVex(query: { project: string; format?: "cyclonedx" | "openvex" }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/export/vex", { query, options });
+  }
+
+  /**
    * GET /v1/findings — List Findings Paged
    */
-  listFindingsPaged(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<FindingPage> {
-    return this._request<FindingPage>("GET", "/v1/findings", { query, options });
+  listFindingsPaged(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; sla_breached?: boolean | null; fingerprint?: string | null; sort?: string; limit?: number; offset?: number }, options?: RequestOptions): Promise<FindingLifecyclePage> {
+    return this._request<FindingLifecyclePage>("GET", "/v1/findings", { query, options });
   }
 
   /**
    * POST /v1/findings/bulk — Bulk Upsert
    */
-  bulkUpsertFindings(body: FindingBulkIn, options?: RequestOptions): Promise<FindingBulkOut> {
-    return this._request<FindingBulkOut>("POST", "/v1/findings/bulk", { body, options });
+  bulkUpsertFindings(body: FindingBulkIn, options?: RequestOptions): Promise<FindingBulkLifecycleOut> {
+    return this._request<FindingBulkLifecycleOut>("POST", "/v1/findings/bulk", { body, options });
   }
 
   /**
@@ -2050,24 +3161,57 @@ export abstract class GeneratedOperations {
    *
    * Legacy bare-list response for pre-pagination clients.
    */
-  listFindingsLegacy(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<FindingOut[]> {
-    return this._request<FindingOut[]>("GET", "/v1/findings/list", { query, options });
+  listFindingsLegacy(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; limit?: number; offset?: number }, options?: RequestOptions): Promise<FindingLifecycleOut[]> {
+    return this._request<FindingLifecycleOut[]>("GET", "/v1/findings/list", { query, options });
+  }
+
+  /**
+   * POST /v1/findings/recompute-identity — Recompute Identity
+   *
+   * Admin: stamp dedupe identity on rows that predate schema 019 (or were
+   * inserted directly) and collapse duplicates among them.
+   */
+  recomputeIdentity(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/findings/recompute-identity", { options });
   }
 
   /**
    * GET /v1/findings/{finding_id} — Get Finding
    *
-   * Finding + its asset + any chain it participates in.
+   * Finding + its asset + any chain it participates in (+ lifecycle).
    */
-  getFinding(findingId: string, options?: RequestOptions): Promise<FindingDetailOut> {
-    return this._request<FindingDetailOut>("GET", "/v1/findings/{finding_id}", { pathParams: { finding_id: findingId }, options });
+  getFinding(findingId: string, options?: RequestOptions): Promise<FindingLifecycleDetailOut> {
+    return this._request<FindingLifecycleDetailOut>("GET", "/v1/findings/{finding_id}", { pathParams: { finding_id: findingId }, options });
   }
 
   /**
    * PATCH /v1/findings/{finding_id} — Patch Finding
    */
-  patchFinding(findingId: string, body: FindingPatch, options?: RequestOptions): Promise<FindingOut> {
-    return this._request<FindingOut>("PATCH", "/v1/findings/{finding_id}", { pathParams: { finding_id: findingId }, body, options });
+  patchFinding(findingId: string, body: FindingPatch, options?: RequestOptions): Promise<FindingLifecycleOut> {
+    return this._request<FindingLifecycleOut>("PATCH", "/v1/findings/{finding_id}", { pathParams: { finding_id: findingId }, body, options });
+  }
+
+  /**
+   * POST /v1/findings/{finding_id}/accept — Accept Finding
+   *
+   * Risk accepted. A fixed finding cannot be accepted (reopen it first).
+   */
+  acceptFinding(findingId: string, body: DismissIn, options?: RequestOptions): Promise<TransitionOut> {
+    return this._request<TransitionOut>("POST", "/v1/findings/{finding_id}/accept", { pathParams: { finding_id: findingId }, body, options });
+  }
+
+  /**
+   * POST /v1/findings/{finding_id}/false-positive — Mark False Positive
+   */
+  markFalsePositive(findingId: string, body: DismissIn, options?: RequestOptions): Promise<TransitionOut> {
+    return this._request<TransitionOut>("POST", "/v1/findings/{finding_id}/false-positive", { pathParams: { finding_id: findingId }, body, options });
+  }
+
+  /**
+   * POST /v1/findings/{finding_id}/reopen — Reopen Finding
+   */
+  reopenFinding(findingId: string, body?: ReopenIn | null, options?: RequestOptions): Promise<TransitionOut> {
+    return this._request<TransitionOut>("POST", "/v1/findings/{finding_id}/reopen", { pathParams: { finding_id: findingId }, body, options });
   }
 
   /**
@@ -2166,6 +3310,45 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/fleet/network-actions — List Network Actions
+   */
+  listNetworkActions(query?: { status?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<ActionPage> {
+    return this._request<ActionPage>("GET", "/v1/fleet/network-actions", { query, options });
+  }
+
+  /**
+   * POST /v1/fleet/network-actions — Propose
+   *
+   * Propose a quarantine/release of one device. Always dry_run + proposed.
+   */
+  propose(body: NetworkProposeIn, options?: RequestOptions): Promise<ActionOut> {
+    return this._request<ActionOut>("POST", "/v1/fleet/network-actions", { body, options });
+  }
+
+  /**
+   * POST /v1/fleet/network-actions/from-finding — Propose From Finding
+   *
+   * Turn a Sentry lateral-scan finding into a quarantine PROPOSAL (never an apply).
+   */
+  proposeFromFinding(body: FromFindingIn, options?: RequestOptions): Promise<ActionOut> {
+    return this._request<ActionOut>("POST", "/v1/fleet/network-actions/from-finding", { body, options });
+  }
+
+  /**
+   * POST /v1/fleet/network-actions/{action_id}/execute — Execute
+   *
+   * Run an APPROVED network action through its ACTION integration.
+   *
+   * dry_run rows (approved without ``apply_for_real``) only produce a preview
+   * and stay ``approved``; real rows become ``applied`` (with a revert plan)
+   * or ``failed``. A ``revert`` row releases the device its original action
+   * quarantined and marks that original ``reverted``.
+   */
+  execute(actionId: string, body: ExecuteIn, options?: RequestOptions): Promise<ExecuteOut> {
+    return this._request<ExecuteOut>("POST", "/v1/fleet/network-actions/{action_id}/execute", { pathParams: { action_id: actionId }, body, options });
+  }
+
+  /**
    * POST /v1/fleet/{agent_id}/heartbeat — Heartbeat
    */
   heartbeat(agentId: string, body: HeartbeatIn, options?: RequestOptions): Promise<HeartbeatOut> {
@@ -2195,6 +3378,135 @@ export abstract class GeneratedOperations {
    */
   graphPaths(query?: { source?: string | null; target?: string | null; max?: number | null }, options?: RequestOptions): Promise<Record<string, unknown>> {
     return this._request<Record<string, unknown>>("GET", "/v1/graph/paths", { query, options });
+  }
+
+  /**
+   * POST /v1/import/lockfiles — Import Lockfiles
+   *
+   * Upload a repo's lockfiles: ``{"project": "...", "files": {"path": "content"},
+   * "source_ref": "..."}``. Unsupported file names are ignored (and listed).
+   */
+  importLockfiles(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/import/lockfiles", { options });
+  }
+
+  /**
+   * POST /v1/import/sbom — Import Sbom
+   */
+  importSbom(query?: { project?: string | null; replace?: boolean }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/import/sbom", { query, options });
+  }
+
+  /**
+   * GET /v1/integration-sync — Sync Status
+   */
+  syncStatus(options?: RequestOptions): Promise<SyncStatusOut[]> {
+    return this._request<SyncStatusOut[]>("GET", "/v1/integration-sync", { options });
+  }
+
+  /**
+   * POST /v1/integration-sync/{integration_id} — Sync Now
+   */
+  syncNow(integrationId: string, options?: RequestOptions): Promise<SyncNowOut> {
+    return this._request<SyncNowOut>("POST", "/v1/integration-sync/{integration_id}", { pathParams: { integration_id: integrationId }, options });
+  }
+
+  /**
+   * GET /v1/integration-sync/{integration_id}/runs — Sync Runs
+   */
+  syncRuns(integrationId: string, query?: { limit?: number }, options?: RequestOptions): Promise<SyncRunOut[]> {
+    return this._request<SyncRunOut[]>("GET", "/v1/integration-sync/{integration_id}/runs", { pathParams: { integration_id: integrationId }, query, options });
+  }
+
+  /**
+   * GET /v1/integrations — List Integrations
+   */
+  listIntegrations(query?: { kind?: string | null }, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/integrations", { query, options });
+  }
+
+  /**
+   * POST /v1/integrations — Create Integration
+   */
+  createIntegration(body: IntegrationIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/integrations", { body, options });
+  }
+
+  /**
+   * GET /v1/integrations/catalog — Catalog
+   */
+  catalog(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/integrations/catalog", { options });
+  }
+
+  /**
+   * GET /v1/integrations/health — Health
+   */
+  health(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/integrations/health", { options });
+  }
+
+  /**
+   * GET /v1/integrations/{integration_id} — Get Integration
+   */
+  getIntegration(integrationId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/integrations/{integration_id}", { pathParams: { integration_id: integrationId }, options });
+  }
+
+  /**
+   * PATCH /v1/integrations/{integration_id} — Update Integration
+   */
+  updateIntegration(integrationId: string, body: IntegrationPatch, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("PATCH", "/v1/integrations/{integration_id}", { pathParams: { integration_id: integrationId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/integrations/{integration_id} — Delete Integration
+   */
+  deleteIntegration(integrationId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("DELETE", "/v1/integrations/{integration_id}", { pathParams: { integration_id: integrationId }, options });
+  }
+
+  /**
+   * GET /v1/integrations/{integration_id}/deliveries — List Deliveries
+   */
+  listDeliveries(integrationId: string, query?: { status?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/integrations/{integration_id}/deliveries", { pathParams: { integration_id: integrationId }, query, options });
+  }
+
+  /**
+   * POST /v1/integrations/{integration_id}/deliveries/{delivery_id}/retry — Retry Delivery
+   */
+  retryDelivery(integrationId: string, deliveryId: number, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/integrations/{integration_id}/deliveries/{delivery_id}/retry", { pathParams: { integration_id: integrationId, delivery_id: deliveryId }, options });
+  }
+
+  /**
+   * POST /v1/integrations/{integration_id}/disable — Disable Integration
+   */
+  disableIntegration(integrationId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/integrations/{integration_id}/disable", { pathParams: { integration_id: integrationId }, options });
+  }
+
+  /**
+   * POST /v1/integrations/{integration_id}/enable — Enable Integration
+   */
+  enableIntegration(integrationId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/integrations/{integration_id}/enable", { pathParams: { integration_id: integrationId }, options });
+  }
+
+  /**
+   * POST /v1/integrations/{integration_id}/inbound — Integration Inbound
+   */
+  integrationInbound(integrationId: string, query?: { token?: string | null }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/integrations/{integration_id}/inbound", { pathParams: { integration_id: integrationId }, query, options });
+  }
+
+  /**
+   * POST /v1/integrations/{integration_id}/test — Test Integration
+   */
+  testIntegration(integrationId: string, body?: TestIn | null, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/integrations/{integration_id}/test", { pathParams: { integration_id: integrationId }, body, options });
   }
 
   /**
@@ -2255,6 +3567,20 @@ export abstract class GeneratedOperations {
    */
   listMlRisk(query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<MlRiskPage> {
     return this._request<MlRiskPage>("GET", "/v1/ml/risk", { query, options });
+  }
+
+  /**
+   * GET /v1/onboarding — Get Onboarding
+   */
+  getOnboarding(options?: RequestOptions): Promise<OnboardingOut> {
+    return this._request<OnboardingOut>("GET", "/v1/onboarding", { options });
+  }
+
+  /**
+   * PUT /v1/onboarding — Put Onboarding
+   */
+  putOnboarding(body: OnboardingPatch, options?: RequestOptions): Promise<OnboardingOut> {
+    return this._request<OnboardingOut>("PUT", "/v1/onboarding", { body, options });
   }
 
   /**
@@ -2372,7 +3698,7 @@ export abstract class GeneratedOperations {
    * connection failure the response degrades to {ok:false, note:...} and a 200,
    * so the dashboard never sees a 5xx.
    */
-  propose(body: ProposeIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+  proposeRemediation(body: ProposeIn, options?: RequestOptions): Promise<Record<string, unknown>> {
     return this._request<Record<string, unknown>>("POST", "/v1/remediation/propose", { body, options });
   }
 
@@ -2381,6 +3707,50 @@ export abstract class GeneratedOperations {
    */
   getRemediation(rid: string, options?: RequestOptions): Promise<RemediationDetail> {
     return this._request<RemediationDetail>("GET", "/v1/remediation/{rid}", { pathParams: { rid: rid }, options });
+  }
+
+  /**
+   * GET /v1/reports/compliance — Compliance Frameworks
+   */
+  complianceFrameworks(options?: RequestOptions): Promise<FrameworkSummary[]> {
+    return this._request<FrameworkSummary[]>("GET", "/v1/reports/compliance", { options });
+  }
+
+  /**
+   * GET /v1/reports/compliance/{framework} — Compliance Pack
+   */
+  compliancePack(framework: string, query?: { format?: "json" | "html" | "pdf"; download?: boolean }, options?: RequestOptions): Promise<CompliancePack> {
+    return this._request<CompliancePack>("GET", "/v1/reports/compliance/{framework}", { pathParams: { framework: framework }, query, options });
+  }
+
+  /**
+   * GET /v1/reports/digest/preview — Digest Preview
+   *
+   * What the next digest would say, at the digest clearance (never above yours).
+   */
+  digestPreview(query?: { period?: string; format?: "json" | "text" | "html" }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/reports/digest/preview", { query, options });
+  }
+
+  /**
+   * POST /v1/reports/digest/send — Digest Send
+   */
+  digestSend(query?: { period?: string }, options?: RequestOptions): Promise<DigestRunOut> {
+    return this._request<DigestRunOut>("POST", "/v1/reports/digest/send", { query, options });
+  }
+
+  /**
+   * GET /v1/reports/digests — Digest History
+   */
+  digestHistory(query?: { limit?: number }, options?: RequestOptions): Promise<DigestRunOut[]> {
+    return this._request<DigestRunOut[]>("GET", "/v1/reports/digests", { query, options });
+  }
+
+  /**
+   * GET /v1/reports/executive — Executive Report
+   */
+  executiveReport(query?: { period?: string; format?: "json" | "html" | "pdf"; end?: string | null; download?: boolean }, options?: RequestOptions): Promise<ReportData> {
+    return this._request<ReportData>("GET", "/v1/reports/executive", { query, options });
   }
 
   /**
@@ -2515,8 +3885,8 @@ export abstract class GeneratedOperations {
   /**
    * GET /v1/scope — List Scope
    */
-  listScope(query?: { limit?: number; offset?: number; active_only?: boolean }, options?: RequestOptions): Promise<ScopeEntryOut[]> {
-    return this._request<ScopeEntryOut[]>("GET", "/v1/scope", { query, options });
+  listScope(query?: { limit?: number; offset?: number; active_only?: boolean }, options?: RequestOptions): Promise<ScopeEntryWithProofOut[]> {
+    return this._request<ScopeEntryWithProofOut[]>("GET", "/v1/scope", { query, options });
   }
 
   /**
@@ -2541,12 +3911,43 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/scope/{entry_id}/challenge — Issue Challenge
+   *
+   * Issue (or return the existing) ownership challenge for a domain entry.
+   *
+   * Publish EITHER the DNS TXT record or (exact domains only) the HTTPS file,
+   * then call ``POST /v1/scope/{id}/verify``. IP ranges and ASNs cannot be
+   * checked automatically; record an attestation via ``/verify`` instead.
+   */
+  issueChallenge(entryId: number, options?: RequestOptions): Promise<ChallengeOut> {
+    return this._request<ChallengeOut>("POST", "/v1/scope/{entry_id}/challenge", { pathParams: { entry_id: entryId }, options });
+  }
+
+  /**
    * GET /v1/scope/{entry_id}/decisions — List Scope Decisions
    *
    * Return the most recent `scope_decisions` rows for a scope entry.
    */
   listScopeDecisions(entryId: number, query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<ScopeDecisionOut[]> {
     return this._request<ScopeDecisionOut[]>("GET", "/v1/scope/{entry_id}/decisions", { pathParams: { entry_id: entryId }, query, options });
+  }
+
+  /**
+   * GET /v1/scope/{entry_id}/proof — Get Scope Proof
+   *
+   * One scope entry with its proof-of-control status.
+   */
+  getScopeProof(entryId: number, options?: RequestOptions): Promise<ScopeEntryWithProofOut> {
+    return this._request<ScopeEntryWithProofOut>("GET", "/v1/scope/{entry_id}/proof", { pathParams: { entry_id: entryId }, options });
+  }
+
+  /**
+   * POST /v1/scope/{entry_id}/verify — Verify Scope
+   *
+   * Check ownership now (domains) or record an attestation (IP ranges/ASN).
+   */
+  verifyScope(entryId: number, body?: VerifyIn | null, options?: RequestOptions): Promise<VerifyOut> {
+    return this._request<VerifyOut>("POST", "/v1/scope/{entry_id}/verify", { pathParams: { entry_id: entryId }, body, options });
   }
 
   /**
@@ -2568,6 +3969,48 @@ export abstract class GeneratedOperations {
    */
   listSupplyChainRisks(query?: { type?: ("dependency_confusion" | "typosquat" | "abandoned" | "malicious_version" | "yanked" | "unpinned" | "install_scripts") | null; severity?: ("info" | "low" | "medium" | "high" | "critical") | null; project?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<SupplyChainRiskPage> {
     return this._request<SupplyChainRiskPage>("GET", "/v1/supply-chain-risks", { query, options });
+  }
+
+  /**
+   * GET /v1/suppressions — List Suppressions
+   */
+  listSuppressions(query?: { active?: boolean | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<SuppressionOut[]> {
+    return this._request<SuppressionOut[]>("GET", "/v1/suppressions", { query, options });
+  }
+
+  /**
+   * POST /v1/suppressions — Create Suppression
+   */
+  createSuppression(body: SuppressionIn, options?: RequestOptions): Promise<SuppressionOut> {
+    return this._request<SuppressionOut>("POST", "/v1/suppressions", { body, options });
+  }
+
+  /**
+   * GET /v1/suppressions/{sup_id} — Get Suppression
+   */
+  getSuppression(supId: string, options?: RequestOptions): Promise<SuppressionOut> {
+    return this._request<SuppressionOut>("GET", "/v1/suppressions/{sup_id}", { pathParams: { sup_id: supId }, options });
+  }
+
+  /**
+   * PATCH /v1/suppressions/{sup_id} — Patch Suppression
+   */
+  patchSuppression(supId: string, body: SuppressionPatch, options?: RequestOptions): Promise<SuppressionOut> {
+    return this._request<SuppressionOut>("PATCH", "/v1/suppressions/{sup_id}", { pathParams: { sup_id: supId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/suppressions/{sup_id} — Delete Suppression
+   */
+  deleteSuppression(supId: string, options?: RequestOptions): Promise<void> {
+    return this._request<void>("DELETE", "/v1/suppressions/{sup_id}", { pathParams: { sup_id: supId }, options });
+  }
+
+  /**
+   * GET /v1/system/services — Services Status
+   */
+  servicesStatus(options?: RequestOptions): Promise<ServicesOut> {
+    return this._request<ServicesOut>("GET", "/v1/system/services", { options });
   }
 
   /**

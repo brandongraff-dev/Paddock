@@ -13,7 +13,7 @@ ActionOut = TypedDict(
     'ActionOut',
     {
         'action_type': Required['str'],
-        'agent_id': Required['str'],
+        'agent_id': NotRequired['str | None'],
         'applied_at': Required['str | None'],
         'approved_by': Required['str | None'],
         'created_at': Required['str'],
@@ -22,6 +22,7 @@ ActionOut = TypedDict(
         'finding_id': Required['str | None'],
         'id': Required['str'],
         'indicator_id': Required['str | None'],
+        'integration_id': NotRequired['str | None'],
         'reason': Required['str | None'],
         'requested_by': Required['str | None'],
         'result': Required['dict[str, Any]'],
@@ -386,6 +387,19 @@ AttackPathPage = TypedDict(
     total=False,
 )
 
+AttackPaths = TypedDict(
+    'AttackPaths',
+    {
+        'closed': Required['int'],
+        'open_end': Required['int'],
+        'open_start': Required['int'],
+        'opened': Required['int'],
+        'top_closed': Required['list[PathBrief]'],
+        'top_opened': Required['list[PathBrief]'],
+    },
+    total=False,
+)
+
 AttackTechniqueCoverage = TypedDict(
     'AttackTechniqueCoverage',
     {
@@ -393,6 +407,17 @@ AttackTechniqueCoverage = TypedDict(
         'tactic': Required['str'],
         'technique': Required['str'],
         'technique_id': Required['str'],
+    },
+    total=False,
+)
+
+AuditAnchorOut = TypedDict(
+    'AuditAnchorOut',
+    {
+        'anchor': NotRequired['dict[str, Any] | None'],
+        'anchored': Required['bool'],
+        'reason': NotRequired['str | None'],
+        'receipt': NotRequired['dict[str, Any] | None'],
     },
     total=False,
 )
@@ -435,9 +460,14 @@ AuditPage = TypedDict(
 AuditVerifyOut = TypedDict(
     'AuditVerifyOut',
     {
+        'anchor': NotRequired['dict[str, Any] | None'],
         'checked': Required['int'],
         'first_broken_id': NotRequired['int | None'],
+        'head_hash': NotRequired['str | None'],
+        'head_id': NotRequired['int | None'],
         'ok': Required['bool'],
+        'reason': NotRequired['str | None'],
+        'tenant_id': NotRequired['str | None'],
     },
     total=False,
 )
@@ -478,6 +508,33 @@ ChainOut = TypedDict(
     total=False,
 )
 
+ChallengeOut = TypedDict(
+    'ChallengeOut',
+    {
+        'dns_txt': Required['dict[str, str]'],
+        'domain': Required['str'],
+        'http_file': NotRequired['dict[str, str] | None'],
+        'kind': Required['str'],
+        'methods': Required['list[str]'],
+        'proof': Required['ScopeProofOut'],
+        'scope_entry_id': Required['int'],
+        'token': Required['str'],
+    },
+    total=False,
+)
+
+ChangeBrief = TypedDict(
+    'ChangeBrief',
+    {
+        'asset_value': NotRequired['str | None'],
+        'change_type': Required['str'],
+        'detected_at': Required['str'],
+        'severity': Required['str'],
+        'summary': Required['str'],
+    },
+    total=False,
+)
+
 ChangePage = TypedDict(
     'ChangePage',
     {
@@ -485,6 +542,15 @@ ChangePage = TypedDict(
         'limit': Required['int'],
         'offset': Required['int'],
         'total': Required['int'],
+    },
+    total=False,
+)
+
+ChangeRow = TypedDict(
+    'ChangeRow',
+    {
+        'change_type': Required['str'],
+        'count': Required['int'],
     },
     total=False,
 )
@@ -508,6 +574,16 @@ ChangeSummaryOut = TypedDict(
         'by_day': NotRequired['list[ChangeSummaryDay]'],
         'by_type': NotRequired['dict[str, int]'],
         'total': NotRequired['int'],
+    },
+    total=False,
+)
+
+CheckOut = TypedDict(
+    'CheckOut',
+    {
+        'detail': Required['str'],
+        'method': Required['str'],
+        'ok': Required['bool'],
     },
     total=False,
 )
@@ -563,6 +639,67 @@ CodeFindingPage = TypedDict(
     total=False,
 )
 
+CompliancePack = TypedDict(
+    'CompliancePack',
+    {
+        'clearance': Required['str'],
+        'controls': Required['list[ControlOut]'],
+        'disclaimer': Required['str'],
+        'framework': Required['FrameworkSummary'],
+        'generated_at': Required['str'],
+        'org_name': Required['str'],
+    },
+    total=False,
+)
+
+ControlOut = TypedDict(
+    'ControlOut',
+    {
+        'attestation': NotRequired['str | None'],
+        'evidence': Required['list[EvidenceOut]'],
+        'family': Required['str'],
+        'id': Required['str'],
+        'max_status': Required["Literal['satisfied', 'partial']"],
+        'mode': Required["Literal['automated', 'manual']"],
+        'rationale': Required['str'],
+        'status': Required["Literal['satisfied', 'partial', 'gap', 'requires_attestation']"],
+        'summary': Required['str'],
+        'title': Required['str'],
+    },
+    total=False,
+)
+
+Coverage = TypedDict(
+    'Coverage',
+    {
+        'assets_total': Required['int'],
+        'by_kind': Required['list[CoverageKind]'],
+        'fleet_agents': Required['int'],
+        'fleet_agents_recent': Required['int'],
+        'last_completed_scan': NotRequired['str | None'],
+        'sbom_components': Required['int'],
+        'sbom_last_scanned': NotRequired['str | None'],
+        'sbom_projects': Required['int'],
+        'scans_by_status': Required['dict[str, int]'],
+        'tls_below_b': Required['int'],
+        'tls_graded': Required['int'],
+    },
+    total=False,
+)
+
+CoverageKind = TypedDict(
+    'CoverageKind',
+    {
+        'kind': Required['str'],
+        'seen_24h': Required['int'],
+        'seen_30d': Required['int'],
+        'seen_7d': Required['int'],
+        'stale': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
 DenyIn = TypedDict(
     'DenyIn',
     {
@@ -575,7 +712,7 @@ DeviceDetailOut = TypedDict(
     'DeviceDetailOut',
     {
         'device': Required['DeviceOut'],
-        'findings': Required['list[FindingBrief]'],
+        'findings': Required['list[app__routers__devices__FindingBrief]'],
         'segment': NotRequired['SegmentOut | None'],
     },
     total=False,
@@ -618,6 +755,17 @@ DevicePage = TypedDict(
     total=False,
 )
 
+DeviceRuleRow = TypedDict(
+    'DeviceRuleRow',
+    {
+        'label': Required['str'],
+        'open_end': Required['int'],
+        'opened': Required['int'],
+        'rule_id': Required['str'],
+    },
+    total=False,
+)
+
 DeviceSummaryOut = TypedDict(
     'DeviceSummaryOut',
     {
@@ -631,6 +779,44 @@ DeviceSummaryOut = TypedDict(
         'ot_total': Required['int'],
         'segments': Required['int'],
         'total': Required['int'],
+    },
+    total=False,
+)
+
+Devices = TypedDict(
+    'Devices',
+    {
+        'behaviour': Required['list[DeviceRuleRow]'],
+        'iot_total': Required['int'],
+        'new_devices': Required['int'],
+        'observed_reachability': Required['int'],
+        'ot_total': Required['int'],
+        'segments': Required['int'],
+        'top': Required['list[app__reports__models__FindingBrief]'],
+    },
+    total=False,
+)
+
+DigestRunOut = TypedDict(
+    'DigestRunOut',
+    {
+        'detail': NotRequired['str | None'],
+        'event_id': NotRequired['str | None'],
+        'id': NotRequired['str | None'],
+        'period_end': Required['str'],
+        'period_start': Required['str'],
+        'status': Required['str'],
+        'workspace': Required['str'],
+    },
+    total=False,
+)
+
+DismissIn = TypedDict(
+    'DismissIn',
+    {
+        'accepted_until': NotRequired['str | None'],
+        'reason': Required['str'],
+        'suppress': NotRequired['bool'],
     },
     total=False,
 )
@@ -696,6 +882,75 @@ EnrollOut = TypedDict(
     total=False,
 )
 
+EvidenceOut = TypedDict(
+    'EvidenceOut',
+    {
+        'detail': Required['str'],
+        'key': Required['str'],
+        'metrics': NotRequired['dict[str, Any]'],
+        'rows': NotRequired['list[dict[str, Any]]'],
+        'status': Required["Literal['pass', 'partial', 'fail', 'none']"],
+        'title': Required['str'],
+    },
+    total=False,
+)
+
+ExchangeIn = TypedDict(
+    'ExchangeIn',
+    {
+        'code': Required['str'],
+        'verifier': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+ExchangeOut = TypedDict(
+    'ExchangeOut',
+    {
+        'access_token': Required['str'],
+        'clearance': Required['str'],
+        'expires_in': Required['int'],
+        'role': Required['str'],
+        'token_type': NotRequired['str'],
+        'username': Required['str'],
+    },
+    total=False,
+)
+
+ExecuteIn = TypedDict(
+    'ExecuteIn',
+    {
+        'note': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+ExecuteOut = TypedDict(
+    'ExecuteOut',
+    {
+        'action': Required['ActionOut'],
+        'detail': Required['str'],
+        'dry_run': Required['bool'],
+        'ok': Required['bool'],
+        'planned': NotRequired['list[str]'],
+    },
+    total=False,
+)
+
+ExposureTrend = TypedDict(
+    'ExposureTrend',
+    {
+        'delta': Required['int'],
+        'delta_pct': NotRequired['float | None'],
+        'end_value': Required['int'],
+        'open_end': Required['dict[str, int]'],
+        'open_start': Required['dict[str, int]'],
+        'points': Required['list[TrendPoint]'],
+        'start_value': Required['int'],
+    },
+    total=False,
+)
+
 FeatureState = TypedDict(
     'FeatureState',
     {
@@ -703,24 +958,6 @@ FeatureState = TypedDict(
         'enabled': Required['bool'],
         'min_edition': Required['str'],
         'name': Required['str'],
-    },
-    total=False,
-)
-
-FindingBrief = TypedDict(
-    'FindingBrief',
-    {
-        'cvss': NotRequired['float | None'],
-        'description': NotRequired['str | None'],
-        'first_seen': Required['str'],
-        'id': Required['str'],
-        'last_seen': Required['str'],
-        'metadata': NotRequired['dict[str, Any]'],
-        'rule_id': Required['str'],
-        'rule_source': Required['str'],
-        'severity': Required['str'],
-        'status': Required['str'],
-        'title': Required['str'],
     },
     total=False,
 )
@@ -733,26 +970,17 @@ FindingBulkIn = TypedDict(
     total=False,
 )
 
-FindingBulkOut = TypedDict(
-    'FindingBulkOut',
+FindingBulkLifecycleOut = TypedDict(
+    'FindingBulkLifecycleOut',
     {
+        'duplicates': NotRequired['int'],
         'inserted': Required['int'],
-        'items': Required['list[FindingOut]'],
+        'items': Required['list[FindingLifecycleOut]'],
+        'suppressed': NotRequired['int'],
         'updated': Required['int'],
     },
     total=False,
 )
-
-FindingDetailOut = TypedDict(
-    'FindingDetailOut',
-    {
-        'asset': Required['AssetOut | None'],
-        'chains': NotRequired['list[ChainOut]'],
-        'finding': Required['FindingOut'],
-    },
-    total=False,
-)
-"""Single finding with its asset and any chain it participates in."""
 
 FindingIn = TypedDict(
     'FindingIn',
@@ -776,9 +1004,21 @@ FindingIn = TypedDict(
     total=False,
 )
 
-FindingOut = TypedDict(
-    'FindingOut',
+FindingLifecycleDetailOut = TypedDict(
+    'FindingLifecycleDetailOut',
     {
+        'asset': Required['AssetOut | None'],
+        'chains': NotRequired['list[ChainOut]'],
+        'finding': Required['FindingLifecycleOut'],
+        'history': NotRequired['list[StatusHistoryOut]'],
+    },
+    total=False,
+)
+
+FindingLifecycleOut = TypedDict(
+    'FindingLifecycleOut',
+    {
+        'accepted_until': NotRequired['str | None'],
         'asset_id': Required['str'],
         'asset_kind': NotRequired['str | None'],
         'asset_value': NotRequired['str | None'],
@@ -787,30 +1027,51 @@ FindingOut = TypedDict(
         'classification': NotRequired['str | None'],
         'cvss': Required['float | None'],
         'description': Required['str'],
+        'due_at': NotRequired['str | None'],
+        'duplicate_of': NotRequired['str | None'],
         'epss': Required['float | None'],
         'evidence': Required['dict[str, Any]'],
+        'fingerprint': NotRequired['str | None'],
         'first_seen': Required['str'],
         'id': Required['str'],
         'impact': Required['str | None'],
+        'kev': NotRequired['bool | None'],
         'last_seen': Required['str'],
         'metadata': Required['dict[str, Any]'],
+        'owner': NotRequired['str | None'],
+        'priority_score': NotRequired['int | None'],
         'references': Required['list[str]'],
         'remediation': Required['str | None'],
         'rule_id': Required['str'],
         'rule_source': Required["Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel']"],
         'severity': Required["Literal['info', 'low', 'medium', 'high', 'critical']"],
-        'status': Required["Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix']"],
+        'sla_breached': NotRequired['bool'],
+        'sla_hours': NotRequired['int | None'],
+        'source_count': NotRequired['int'],
+        'sources': NotRequired['list[FindingSource]'],
+        'status': Required["Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted']"],
+        'status_by': NotRequired['str | None'],
+        'status_changed_at': NotRequired['str | None'],
+        'status_reason': NotRequired['str | None'],
+        'suppressed': NotRequired['bool'],
+        'suppressed_at': NotRequired['str | None'],
+        'suppressed_by': NotRequired['str | None'],
         'title': Required['str'],
+        'vuln_keys': NotRequired['list[str]'],
+        'why': NotRequired['list[WhyFactor]'],
     },
     total=False,
 )
+"""``FindingOut`` + lifecycle fields. Every addition is optional so the"""
 
-FindingPage = TypedDict(
-    'FindingPage',
+FindingLifecyclePage = TypedDict(
+    'FindingLifecyclePage',
     {
-        'items': Required['list[FindingOut]'],
+        'duplicates_total': NotRequired['int'],
+        'items': Required['list[FindingLifecycleOut]'],
         'limit': Required['int'],
         'offset': Required['int'],
+        'suppressed_total': NotRequired['int'],
         'total': Required['int'],
     },
     total=False,
@@ -821,7 +1082,20 @@ FindingPatch = TypedDict(
     {
         'assigned_to': NotRequired['str | None'],
         'notes': NotRequired['str | None'],
-        'status': NotRequired["Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix'] | None"],
+        'status': NotRequired["Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None"],
+    },
+    total=False,
+)
+
+FindingSource = TypedDict(
+    'FindingSource',
+    {
+        'finding_id': Required['str'],
+        'last_seen': Required['str'],
+        'primary': NotRequired['bool'],
+        'rule_id': Required['str'],
+        'rule_source': Required['str'],
+        'status': Required['str'],
     },
     total=False,
 )
@@ -837,6 +1111,32 @@ FindingTechniqueOut = TypedDict(
         'tactic': Required['str'],
         'technique': Required['str'],
         'technique_id': Required['str'],
+    },
+    total=False,
+)
+
+FrameworkSummary = TypedDict(
+    'FrameworkSummary',
+    {
+        'automated': Required['int'],
+        'counts': Required['dict[str, int]'],
+        'description': Required['str'],
+        'id': Required['str'],
+        'name': Required['str'],
+        'publisher': Required['str'],
+        'total': Required['int'],
+        'url': NotRequired['str | None'],
+        'version': Required['str'],
+    },
+    total=False,
+)
+
+FromFindingIn = TypedDict(
+    'FromFindingIn',
+    {
+        'finding_id': Required['str'],
+        'integration_id': Required['str'],
+        'reason': NotRequired['str | None'],
     },
     total=False,
 )
@@ -906,6 +1206,33 @@ HopFindingRef = TypedDict(
 )
 """A finding summary attached to a hop in the detail view."""
 
+IdentitySettingsIn = TypedDict(
+    'IdentitySettingsIn',
+    {
+        'break_glass_users': NotRequired['list[str] | None'],
+        'scim_default_clearance': NotRequired["Literal['public', 'internal', 'confidential', 'restricted'] | None"],
+        'scim_default_role': NotRequired["Literal['viewer', 'analyst', 'admin', 'auditor'] | None"],
+        'scim_role_mappings': NotRequired['list[RoleMapping] | None'],
+        'sso_required': NotRequired['bool | None'],
+    },
+    total=False,
+)
+
+IdentitySettingsOut = TypedDict(
+    'IdentitySettingsOut',
+    {
+        'break_glass_users': Required['list[str]'],
+        'scim_base_url': Required['str'],
+        'scim_default_clearance': Required['str'],
+        'scim_default_role': Required['str'],
+        'scim_role_mappings': Required['list[dict[str, Any]]'],
+        'sso_required': Required['bool'],
+        'updated_at': Required['str'],
+        'updated_by': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 InjectionSummary = TypedDict(
     'InjectionSummary',
     {
@@ -913,6 +1240,37 @@ InjectionSummary = TypedDict(
         'categories': NotRequired['list[str]'],
         'flagged': NotRequired['bool'],
         'summary': NotRequired['str'],
+    },
+    total=False,
+)
+
+IntegrationIn = TypedDict(
+    'IntegrationIn',
+    {
+        'allow_private': NotRequired['bool'],
+        'config': NotRequired['dict[str, Any]'],
+        'enabled': NotRequired['bool'],
+        'events': NotRequired['list[str]'],
+        'filters': NotRequired['dict[str, Any]'],
+        'kind': Required['str'],
+        'min_severity': NotRequired['str'],
+        'name': Required['str'],
+        'secrets': NotRequired['dict[str, str | None]'],
+    },
+    total=False,
+)
+
+IntegrationPatch = TypedDict(
+    'IntegrationPatch',
+    {
+        'allow_private': NotRequired['bool | None'],
+        'config': NotRequired['dict[str, Any] | None'],
+        'enabled': NotRequired['bool | None'],
+        'events': NotRequired['list[str] | None'],
+        'filters': NotRequired['dict[str, Any] | None'],
+        'min_severity': NotRequired['str | None'],
+        'name': NotRequired['str | None'],
+        'secrets': NotRequired['dict[str, str | None] | None'],
     },
     total=False,
 )
@@ -1018,6 +1376,7 @@ MeOut = TypedDict(
         'clearance': Required['str'],
         'kind': Required['str'],
         'role': Required['str'],
+        'tenant_id': NotRequired['str | None'],
     },
     total=False,
 )
@@ -1072,6 +1431,113 @@ MlRiskRow = TypedDict(
         'model_version': NotRequired['int | None'],
         'rationale': NotRequired['list[MlRiskRationale]'],
         'scored_at': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+Mttr = TypedDict(
+    'Mttr',
+    {
+        'by_severity': Required['list[MttrRow]'],
+        'by_team': Required['list[MttrRow]'],
+        'overall': NotRequired['MttrRow | None'],
+    },
+    total=False,
+)
+
+MttrRow = TypedDict(
+    'MttrRow',
+    {
+        'count': Required['int'],
+        'critical_high': NotRequired['int'],
+        'key': Required['str'],
+        'mean_hours': Required['float'],
+        'median_hours': Required['float'],
+    },
+    total=False,
+)
+
+NetworkProposeIn = TypedDict(
+    'NetworkProposeIn',
+    {
+        'action_type': NotRequired["Literal['quarantine_device', 'release_device']"],
+        'finding_id': NotRequired['str | None'],
+        'integration_id': Required['str'],
+        'mac': Required['str'],
+        'reason': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+NewFindings = TypedDict(
+    'NewFindings',
+    {
+        'by_severity': Required['dict[str, int]'],
+        'critical': Required['int'],
+        'high': Required['int'],
+        'previous_by_severity': Required['dict[str, int]'],
+        'previous_critical_high': Required['int'],
+        'top': Required['list[app__reports__models__FindingBrief]'],
+    },
+    total=False,
+)
+
+OIDCConfig = TypedDict(
+    'OIDCConfig',
+    {
+        'allow_private': NotRequired['bool'],
+        'client_id': Required['str'],
+        'extra_auth_params': NotRequired['dict[str, str]'],
+        'issuer': Required['str'],
+        'scopes': NotRequired['list[str]'],
+        'token_auth_method': NotRequired["Literal['client_secret_basic', 'client_secret_post', 'none']"],
+        'trust_unverified_email': NotRequired['bool'],
+        'use_userinfo': NotRequired['bool'],
+    },
+    total=False,
+)
+
+OnboardingCounts = TypedDict(
+    'OnboardingCounts',
+    {
+        'assets': NotRequired['int'],
+        'domain_assets': NotRequired['int'],
+        'domain_findings': NotRequired['int'],
+        'findings': NotRequired['int'],
+    },
+    total=False,
+)
+
+OnboardingOut = TypedDict(
+    'OnboardingOut',
+    {
+        'available': NotRequired['bool'],
+        'completed_at': NotRequired['str | None'],
+        'counts': NotRequired['OnboardingCounts'],
+        'current_step': NotRequired['str'],
+        'deployment_mode': NotRequired['str'],
+        'dismissed': NotRequired['bool'],
+        'first_scan': NotRequired['ScanBrief | None'],
+        'has_verified_scope': NotRequired['bool'],
+        'needs_setup': NotRequired['bool'],
+        'require_scope_proof': NotRequired['bool'],
+        'scope_entry': NotRequired['ScopeEntryWithProofOut | None'],
+        'steps_done': NotRequired['list[str]'],
+        'workspace_name': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+OnboardingPatch = TypedDict(
+    'OnboardingPatch',
+    {
+        'completed': NotRequired['bool | None'],
+        'current_step': NotRequired["Literal['workspace', 'domain', 'verify', 'scan', 'results', 'team', 'done'] | None"],
+        'dismissed': NotRequired['bool | None'],
+        'first_scan_id': NotRequired['str | None'],
+        'scope_entry_id': NotRequired['int | None'],
+        'step_done': NotRequired["Literal['workspace', 'domain', 'verify', 'scan', 'results', 'team', 'done'] | None"],
+        'workspace_name': NotRequired['str | None'],
     },
     total=False,
 )
@@ -1248,6 +1714,22 @@ PathAssetRef = TypedDict(
 )
 """Compact asset summary for a path's source/target or a hop node."""
 
+PathBrief = TypedDict(
+    'PathBrief',
+    {
+        'closed_at': NotRequired['str | None'],
+        'exploitability': NotRequired['float | None'],
+        'fingerprint': Required['str'],
+        'kev_on_path': NotRequired['bool'],
+        'length': NotRequired['int | None'],
+        'open_days': NotRequired['float | None'],
+        'opened_at': Required['str'],
+        'severity': Required['str'],
+        'title': Required['str'],
+    },
+    total=False,
+)
+
 PendingAction = TypedDict(
     'PendingAction',
     {
@@ -1306,6 +1788,104 @@ ProvenanceOut = TypedDict(
         'source_service': Required['str'],
         'subject_id': Required['str'],
         'subject_type': Required['str'],
+    },
+    total=False,
+)
+
+ProviderIn = TypedDict(
+    'ProviderIn',
+    {
+        'allowed_domains': NotRequired['list[str]'],
+        'client_secret': NotRequired['str | None'],
+        'default_clearance': NotRequired["Literal['public', 'internal', 'confidential', 'restricted']"],
+        'default_role': NotRequired["Literal['viewer', 'analyst', 'admin', 'auditor']"],
+        'display_name': Required['str'],
+        'enabled': NotRequired['bool'],
+        'groups_claim': NotRequired['str'],
+        'jit_provisioning': NotRequired['bool'],
+        'kind': Required["Literal['oidc', 'saml']"],
+        'oidc': NotRequired['OIDCConfig | None'],
+        'preset': NotRequired["Literal['generic', 'okta', 'entra', 'google', 'auth0', 'keycloak']"],
+        'require_mapping': NotRequired['bool'],
+        'role_mappings': NotRequired['list[RoleMapping]'],
+        'saml': NotRequired['SAMLConfig | None'],
+        'saml_metadata_xml': NotRequired['str | None'],
+        'slug': Required['str'],
+        'sync_roles': NotRequired['bool'],
+    },
+    total=False,
+)
+
+ProviderOut = TypedDict(
+    'ProviderOut',
+    {
+        'allowed_domains': Required['list[str]'],
+        'config': Required['dict[str, Any]'],
+        'created_at': Required['str'],
+        'created_by': NotRequired['str | None'],
+        'default_clearance': Required['str'],
+        'default_role': Required['str'],
+        'display_name': Required['str'],
+        'enabled': Required['bool'],
+        'groups_claim': Required['str'],
+        'has_client_secret': Required['bool'],
+        'id': Required['str'],
+        'jit_provisioning': Required['bool'],
+        'kind': Required['str'],
+        'preset': Required['str'],
+        'redirect_uri': NotRequired['str | None'],
+        'require_mapping': Required['bool'],
+        'role_mappings': Required['list[dict[str, Any]]'],
+        'saml_acs_url': NotRequired['str | None'],
+        'saml_entity_id': NotRequired['str | None'],
+        'saml_metadata_url': NotRequired['str | None'],
+        'slug': Required['str'],
+        'sync_roles': Required['bool'],
+        'updated_at': Required['str'],
+    },
+    total=False,
+)
+
+ProviderPatch = TypedDict(
+    'ProviderPatch',
+    {
+        'allowed_domains': NotRequired['list[str] | None'],
+        'client_secret': NotRequired['str | None'],
+        'default_clearance': NotRequired["Literal['public', 'internal', 'confidential', 'restricted'] | None"],
+        'default_role': NotRequired["Literal['viewer', 'analyst', 'admin', 'auditor'] | None"],
+        'display_name': NotRequired['str | None'],
+        'enabled': NotRequired['bool | None'],
+        'groups_claim': NotRequired['str | None'],
+        'jit_provisioning': NotRequired['bool | None'],
+        'oidc': NotRequired['OIDCConfig | None'],
+        'preset': NotRequired["Literal['generic', 'okta', 'entra', 'google', 'auth0', 'keycloak'] | None"],
+        'require_mapping': NotRequired['bool | None'],
+        'role_mappings': NotRequired['list[RoleMapping] | None'],
+        'saml': NotRequired['SAMLConfig | None'],
+        'saml_metadata_xml': NotRequired['str | None'],
+        'sync_roles': NotRequired['bool | None'],
+    },
+    total=False,
+)
+"""Partial update. ``client_secret``: omit = keep, "" = clear."""
+
+PublicProvider = TypedDict(
+    'PublicProvider',
+    {
+        'display_name': Required['str'],
+        'kind': Required['str'],
+        'preset': Required['str'],
+        'slug': Required['str'],
+        'start_url': Required['str'],
+    },
+    total=False,
+)
+
+PublicProvidersOut = TypedDict(
+    'PublicProvidersOut',
+    {
+        'providers': Required['list[PublicProvider]'],
+        'sso_required': Required['bool'],
     },
     total=False,
 )
@@ -1379,6 +1959,51 @@ RemediationRow = TypedDict(
     total=False,
 )
 
+ReopenIn = TypedDict(
+    'ReopenIn',
+    {
+        'reason': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+ReportData = TypedDict(
+    'ReportData',
+    {
+        'attack_paths': Required['AttackPaths'],
+        'changes': Required['SurfaceChanges'],
+        'clearance': Required['str'],
+        'coverage': Required['Coverage'],
+        'devices': Required['Devices'],
+        'exposure': Required['ExposureTrend'],
+        'generated_at': Required['str'],
+        'highlights': Required['list[str]'],
+        'mttr': Required['Mttr'],
+        'new_findings': Required['NewFindings'],
+        'org_name': Required['str'],
+        'resolutions': Required['Resolutions'],
+        'risky_assets': Required['list[RiskyAsset]'],
+        'sla': Required['Sla'],
+        'window': Required['Window'],
+    },
+    total=False,
+)
+
+Resolutions = TypedDict(
+    'Resolutions',
+    {
+        'accepted_risk': Required['int'],
+        'false_positive': Required['int'],
+        'fixed': Required['int'],
+        'fixed_by_severity': Required['dict[str, int]'],
+        'pending_verification': Required['int'],
+        'regressed': Required['int'],
+        'verified': Required['int'],
+        'wontfix': Required['int'],
+    },
+    total=False,
+)
+
 ResultIn = TypedDict(
     'ResultIn',
     {
@@ -1393,6 +2018,46 @@ RevertIn = TypedDict(
     'RevertIn',
     {
         'note': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+RiskyAsset = TypedDict(
+    'RiskyAsset',
+    {
+        'asset_id': Required['str'],
+        'critical': Required['int'],
+        'high': Required['int'],
+        'kind': Required['str'],
+        'open_findings': Required['int'],
+        'score': Required['int'],
+        'value': Required['str'],
+    },
+    total=False,
+)
+
+RoleMapping = TypedDict(
+    'RoleMapping',
+    {
+        'clearance': NotRequired["Literal['public', 'internal', 'confidential', 'restricted'] | None"],
+        'group': Required['str'],
+        'role': Required["Literal['viewer', 'analyst', 'admin', 'auditor']"],
+    },
+    total=False,
+)
+"""One IdP group/claim value -> Paddock role (+ optional clearance)."""
+
+SAMLConfig = TypedDict(
+    'SAMLConfig',
+    {
+        'email_attribute': NotRequired['str | None'],
+        'groups_attribute': NotRequired['str | None'],
+        'idp_entity_id': Required['str'],
+        'idp_sso_url': Required['str'],
+        'idp_x509_cert': Required['str'],
+        'name_attribute': NotRequired['str | None'],
+        'name_id_format': NotRequired['str'],
+        'want_messages_signed': NotRequired['bool'],
     },
     total=False,
 )
@@ -1484,6 +2149,20 @@ SbomVulnOut = TypedDict(
         'refs': NotRequired['list[Any]'],
         'severity': Required["Literal['info', 'low', 'medium', 'high', 'critical']"],
         'summary': Required['str | None'],
+    },
+    total=False,
+)
+
+ScanBrief = TypedDict(
+    'ScanBrief',
+    {
+        'error': NotRequired['str | None'],
+        'finished_at': NotRequired['str | None'],
+        'id': Required['str'],
+        'kind': Required['str'],
+        'queued_at': NotRequired['str | None'],
+        'status': Required['str'],
+        'target': Required['str'],
     },
     total=False,
 )
@@ -1611,6 +2290,46 @@ ScheduleRunOut = TypedDict(
 )
 """Result of POST /v1/schedules/{id}/run-now (or a scheduler tick)."""
 
+ScimTokenCreateOut = TypedDict(
+    'ScimTokenCreateOut',
+    {
+        'created_at': Required['str'],
+        'created_by': NotRequired['str | None'],
+        'expires_at': NotRequired['str | None'],
+        'id': Required['str'],
+        'last_used': NotRequired['str | None'],
+        'name': Required['str'],
+        'prefix': Required['str'],
+        'revoked': Required['bool'],
+        'token': Required['str'],
+    },
+    total=False,
+)
+
+ScimTokenIn = TypedDict(
+    'ScimTokenIn',
+    {
+        'expires_at': NotRequired['str | None'],
+        'name': Required['str'],
+    },
+    total=False,
+)
+
+ScimTokenOut = TypedDict(
+    'ScimTokenOut',
+    {
+        'created_at': Required['str'],
+        'created_by': NotRequired['str | None'],
+        'expires_at': NotRequired['str | None'],
+        'id': Required['str'],
+        'last_used': NotRequired['str | None'],
+        'name': Required['str'],
+        'prefix': Required['str'],
+        'revoked': Required['bool'],
+    },
+    total=False,
+)
+
 ScopeCheckIn = TypedDict(
     'ScopeCheckIn',
     {
@@ -1679,6 +2398,49 @@ ScopeEntryOut = TypedDict(
     total=False,
 )
 
+ScopeEntryWithProofOut = TypedDict(
+    'ScopeEntryWithProofOut',
+    {
+        'active': Required['bool'],
+        'added_at': Required['str'],
+        'added_by': Required['str'],
+        'auth_doc_ref': Required['str | None'],
+        'expires_at': Required['str | None'],
+        'id': Required['int'],
+        'kind': Required["Literal['domain', 'subdomain_wildcard', 'ipv4_cidr', 'ipv6_cidr', 'asn']"],
+        'metadata': NotRequired['dict[str, Any]'],
+        'notes': Required['str | None'],
+        'proof': NotRequired['ScopeProofOut'],
+        'value': Required['str'],
+    },
+    total=False,
+)
+
+ScopeProofOut = TypedDict(
+    'ScopeProofOut',
+    {
+        'approver': NotRequired['str | None'],
+        'attestation_expires_at': NotRequired['str | None'],
+        'attested_at': NotRequired['str | None'],
+        'attested_by': NotRequired['str | None'],
+        'effective': NotRequired['bool'],
+        'expired_at': NotRequired['str | None'],
+        'failing_since': NotRequired['str | None'],
+        'grace_until': NotRequired['str | None'],
+        'last_checked_at': NotRequired['str | None'],
+        'last_error': NotRequired['str | None'],
+        'last_ok_at': NotRequired['str | None'],
+        'loa_ref': NotRequired['str | None'],
+        'method': NotRequired["Literal['dns_txt', 'http_file', 'attestation'] | None"],
+        'methods': NotRequired['list[str]'],
+        'required': NotRequired['bool'],
+        'status': NotRequired["Literal['pending', 'verified', 'attested', 'expired']"],
+        'token_issued': NotRequired['bool'],
+        'verified_at': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 SegmentOut = TypedDict(
     'SegmentOut',
     {
@@ -1689,6 +2451,54 @@ SegmentOut = TypedDict(
         'internet_facing': NotRequired['bool'],
         'metadata': NotRequired['dict[str, Any]'],
         'value': Required['str'],
+    },
+    total=False,
+)
+
+ServiceStatus = TypedDict(
+    'ServiceStatus',
+    {
+        'enabled': Required['bool'],
+        'feature': Required['str'],
+        'name': Required['str'],
+        'status': Required["Literal['ok', 'down', 'not_enabled']"],
+    },
+    total=False,
+)
+
+ServicesOut = TypedDict(
+    'ServicesOut',
+    {
+        'mode': Required['str'],
+        'services': Required['list[ServiceStatus]'],
+    },
+    total=False,
+)
+
+Sla = TypedDict(
+    'Sla',
+    {
+        'breached_open': Required['int'],
+        'breaches': Required['list[SlaBreach]'],
+        'by_severity': Required['list[SlaRow]'],
+        'compliance_pct': NotRequired['float | None'],
+        'late': Required['int'],
+        'met': Required['int'],
+        'overdue_end': Required['int'],
+    },
+    total=False,
+)
+
+SlaBreach = TypedDict(
+    'SlaBreach',
+    {
+        'asset_value': NotRequired['str | None'],
+        'due_at': Required['str'],
+        'finding_id': Required['str'],
+        'overdue_hours': Required['float'],
+        'severity': Required['str'],
+        'team': Required['str'],
+        'title': Required['str'],
     },
     total=False,
 )
@@ -1706,6 +2516,35 @@ SlaPolicyPatch = TypedDict(
     'SlaPolicyPatch',
     {
         'hours': Required['int'],
+    },
+    total=False,
+)
+
+SlaRow = TypedDict(
+    'SlaRow',
+    {
+        'breached_open': Required['int'],
+        'compliance_pct': NotRequired['float | None'],
+        'late': Required['int'],
+        'met': Required['int'],
+        'open_within_sla': Required['int'],
+        'overdue_end': Required['int'],
+        'policy_hours': NotRequired['int | None'],
+        'severity': Required['str'],
+    },
+    total=False,
+)
+
+StatusHistoryOut = TypedDict(
+    'StatusHistoryOut',
+    {
+        'accepted_until': Required['str | None'],
+        'actor': Required['str'],
+        'at': Required['str'],
+        'from_status': Required['str | None'],
+        'id': Required['str'],
+        'reason': Required['str | None'],
+        'to_status': Required['str'],
     },
     total=False,
 )
@@ -1739,6 +2578,56 @@ SupplyChainRiskPage = TypedDict(
     total=False,
 )
 
+SuppressionIn = TypedDict(
+    'SuppressionIn',
+    {
+        'apply_existing': NotRequired['bool'],
+        'asset_pattern': NotRequired['str | None'],
+        'enabled': NotRequired['bool'],
+        'expires_at': NotRequired['str | None'],
+        'name': NotRequired['str | None'],
+        'reason': Required['str'],
+        'rule_id': NotRequired['str | None'],
+        'rule_source': NotRequired['str | None'],
+        'tag': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+SuppressionOut = TypedDict(
+    'SuppressionOut',
+    {
+        'active': Required['bool'],
+        'asset_pattern': Required['str | None'],
+        'author': Required['str'],
+        'created_at': Required['str'],
+        'enabled': Required['bool'],
+        'expires_at': Required['str | None'],
+        'id': Required['str'],
+        'last_matched_at': Required['str | None'],
+        'match_count': Required['int'],
+        'name': Required['str | None'],
+        'reason': Required['str'],
+        'rule_id': Required['str | None'],
+        'rule_source': Required['str | None'],
+        'suppressed_now': NotRequired['int'],
+        'tag': Required['str | None'],
+        'updated_at': Required['str'],
+    },
+    total=False,
+)
+
+SuppressionPatch = TypedDict(
+    'SuppressionPatch',
+    {
+        'enabled': NotRequired['bool | None'],
+        'expires_at': NotRequired['str | None'],
+        'name': NotRequired['str | None'],
+        'reason': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 SurfaceChangeOut = TypedDict(
     'SurfaceChangeOut',
     {
@@ -1758,11 +2647,68 @@ SurfaceChangeOut = TypedDict(
     total=False,
 )
 
+SurfaceChanges = TypedDict(
+    'SurfaceChanges',
+    {
+        'by_type': Required['list[ChangeRow]'],
+        'new_assets_by_kind': Required['dict[str, int]'],
+        'notable': Required['list[ChangeBrief]'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
 SurfaceGraphOut = TypedDict(
     'SurfaceGraphOut',
     {
         'edges': Required['list[GraphEdgeOut]'],
         'nodes': Required['list[GraphNodeOut]'],
+    },
+    total=False,
+)
+
+SyncNowOut = TypedDict(
+    'SyncNowOut',
+    {
+        'counts': NotRequired['dict[str, Any]'],
+        'detail': NotRequired['str | None'],
+        'run_id': NotRequired['int | None'],
+        'status': Required['str'],
+    },
+    total=False,
+)
+
+SyncRunOut = TypedDict(
+    'SyncRunOut',
+    {
+        'counts': NotRequired['dict[str, Any]'],
+        'detail': NotRequired['str | None'],
+        'finished_at': NotRequired['str | None'],
+        'id': Required['int'],
+        'integration_id': Required['str'],
+        'started_at': Required['str'],
+        'status': Required['str'],
+        'trigger': Required['str'],
+    },
+    total=False,
+)
+
+SyncStatusOut = TypedDict(
+    'SyncStatusOut',
+    {
+        'enabled': Required['bool'],
+        'integration_id': Required['str'],
+        'kind': Required['str'],
+        'last_run': NotRequired['SyncRunOut | None'],
+        'name': Required['str'],
+    },
+    total=False,
+)
+
+TestIn = TypedDict(
+    'TestIn',
+    {
+        'mode': NotRequired["Literal['deliver', 'health']"],
     },
     total=False,
 )
@@ -2062,6 +3008,27 @@ TlsGradeSummary = TypedDict(
     total=False,
 )
 
+TransitionOut = TypedDict(
+    'TransitionOut',
+    {
+        'finding': Required['FindingLifecycleOut'],
+        'from_status': Required['str'],
+        'propagated_to': NotRequired['int'],
+        'suppression_id': NotRequired['str | None'],
+        'to_status': Required['str'],
+    },
+    total=False,
+)
+
+TrendPoint = TypedDict(
+    'TrendPoint',
+    {
+        'at': Required['str'],
+        'value': Required['int'],
+    },
+    total=False,
+)
+
 UsageLimitState = TypedDict(
     'UsageLimitState',
     {
@@ -2137,10 +3104,105 @@ VerifierSummary = TypedDict(
     total=False,
 )
 
+VerifyIn = TypedDict(
+    'VerifyIn',
+    {
+        'approver': NotRequired['str | None'],
+        'loa_ref': NotRequired['str | None'],
+        'method': NotRequired["Literal['dns_txt', 'http_file', 'attestation'] | None"],
+        'valid_until': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+VerifyOut = TypedDict(
+    'VerifyOut',
+    {
+        'check': Required['CheckOut'],
+        'proof': Required['ScopeProofOut'],
+        'scope_entry_id': Required['int'],
+    },
+    total=False,
+)
+
+WhyFactor = TypedDict(
+    'WhyFactor',
+    {
+        'key': Required['str'],
+        'label': Required['str'],
+        'weight': Required['int'],
+    },
+    total=False,
+)
+
+Window = TypedDict(
+    'Window',
+    {
+        'days': Required['int'],
+        'end': Required['str'],
+        'label': Required['str'],
+        'prev_start': Required['str'],
+        'start': Required['str'],
+    },
+    total=False,
+)
+
+app__reports__models__FindingBrief = TypedDict(
+    'app__reports__models__FindingBrief',
+    {
+        'asset_kind': NotRequired['str | None'],
+        'asset_value': NotRequired['str | None'],
+        'first_seen': Required['str'],
+        'id': Required['str'],
+        'rule_id': Required['str'],
+        'rule_source': Required['str'],
+        'severity': Required['str'],
+        'status': Required['str'],
+        'team': NotRequired['str | None'],
+        'title': Required['str'],
+    },
+    total=False,
+)
+
+app__routers__devices__FindingBrief = TypedDict(
+    'app__routers__devices__FindingBrief',
+    {
+        'cvss': NotRequired['float | None'],
+        'description': NotRequired['str | None'],
+        'first_seen': Required['str'],
+        'id': Required['str'],
+        'last_seen': Required['str'],
+        'metadata': NotRequired['dict[str, Any]'],
+        'rule_id': Required['str'],
+        'rule_source': Required['str'],
+        'severity': Required['str'],
+        'status': Required['str'],
+        'title': Required['str'],
+    },
+    total=False,
+)
+
 # name -> (method, path, paginated)
 OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'healthz': ('GET', '/healthz', False),
     'readyz': ('GET', '/readyz', False),
+    'list_groups': ('GET', '/scim/v2/Groups', False),
+    'create_group': ('POST', '/scim/v2/Groups', False),
+    'get_group': ('GET', '/scim/v2/Groups/{group_id}', False),
+    'replace_group': ('PUT', '/scim/v2/Groups/{group_id}', False),
+    'patch_group': ('PATCH', '/scim/v2/Groups/{group_id}', False),
+    'delete_group': ('DELETE', '/scim/v2/Groups/{group_id}', False),
+    'resource_types': ('GET', '/scim/v2/ResourceTypes', False),
+    'resource_type': ('GET', '/scim/v2/ResourceTypes/{name}', False),
+    'schemas': ('GET', '/scim/v2/Schemas', False),
+    'schema': ('GET', '/scim/v2/Schemas/{schema_id}', False),
+    'service_provider_config': ('GET', '/scim/v2/ServiceProviderConfig', False),
+    'list_users': ('GET', '/scim/v2/Users', False),
+    'create_user': ('POST', '/scim/v2/Users', False),
+    'get_user': ('GET', '/scim/v2/Users/{user_id}', False),
+    'replace_user': ('PUT', '/scim/v2/Users/{user_id}', False),
+    'patch_user': ('PATCH', '/scim/v2/Users/{user_id}', False),
+    'delete_user': ('DELETE', '/scim/v2/Users/{user_id}', False),
     'list_alert_rules': ('GET', '/v1/alert-rules', True),
     'create_alert_rule': ('POST', '/v1/alert-rules', False),
     'patch_alert_rule': ('PATCH', '/v1/alert-rules/{rule_id}', False),
@@ -2160,12 +3222,30 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'attack_catalog': ('GET', '/v1/attack/catalog', False),
     'attack_coverage': ('GET', '/v1/attack/coverage', False),
     'list_audit': ('GET', '/v1/audit', True),
+    'anchor_audit': ('POST', '/v1/audit/anchor', False),
     'verify_audit': ('GET', '/v1/audit/verify', False),
     'list_apikeys': ('GET', '/v1/auth/apikeys', False),
     'create_apikey': ('POST', '/v1/auth/apikeys', False),
     'revoke_apikey': ('DELETE', '/v1/auth/apikeys/{key_id}', False),
     'login': ('POST', '/v1/auth/login', False),
     'me': ('GET', '/v1/auth/me', False),
+    'admin_list_providers': ('GET', '/v1/auth/sso/admin/providers', False),
+    'admin_create_provider': ('POST', '/v1/auth/sso/admin/providers', False),
+    'admin_get_provider': ('GET', '/v1/auth/sso/admin/providers/{provider_id}', False),
+    'admin_update_provider': ('PATCH', '/v1/auth/sso/admin/providers/{provider_id}', False),
+    'admin_delete_provider': ('DELETE', '/v1/auth/sso/admin/providers/{provider_id}', False),
+    'admin_test_provider': ('POST', '/v1/auth/sso/admin/providers/{provider_id}/test', False),
+    'admin_list_scim_tokens': ('GET', '/v1/auth/sso/admin/scim-tokens', False),
+    'admin_create_scim_token': ('POST', '/v1/auth/sso/admin/scim-tokens', False),
+    'admin_revoke_scim_token': ('DELETE', '/v1/auth/sso/admin/scim-tokens/{token_id}', False),
+    'admin_get_settings': ('GET', '/v1/auth/sso/admin/settings', False),
+    'admin_put_settings': ('PUT', '/v1/auth/sso/admin/settings', False),
+    'exchange': ('POST', '/v1/auth/sso/exchange', False),
+    'public_providers': ('GET', '/v1/auth/sso/providers', False),
+    'saml_acs': ('POST', '/v1/auth/sso/{slug}/acs', False),
+    'oidc_callback': ('GET', '/v1/auth/sso/{slug}/callback', False),
+    'saml_metadata': ('GET', '/v1/auth/sso/{slug}/metadata', False),
+    'sso_start': ('GET', '/v1/auth/sso/{slug}/start', False),
     'list_chains': ('GET', '/v1/chains', True),
     'create_chain': ('POST', '/v1/chains', False),
     'list_changes': ('GET', '/v1/changes', True),
@@ -2179,11 +3259,19 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_device': ('GET', '/v1/devices/{device_id}', False),
     'bulk_edges': ('POST', '/v1/edges/bulk', False),
     'events_sse': ('GET', '/v1/events', False),
+    'export_findings_ocsf': ('GET', '/v1/export/findings.ocsf', False),
+    'export_sarif': ('GET', '/v1/export/sarif', False),
+    'export_sbom': ('GET', '/v1/export/sbom', False),
+    'export_vex': ('GET', '/v1/export/vex', False),
     'list_findings_paged': ('GET', '/v1/findings', True),
     'bulk_upsert_findings': ('POST', '/v1/findings/bulk', False),
     'list_findings_legacy': ('GET', '/v1/findings/list', True),
+    'recompute_identity': ('POST', '/v1/findings/recompute-identity', False),
     'get_finding': ('GET', '/v1/findings/{finding_id}', False),
     'patch_finding': ('PATCH', '/v1/findings/{finding_id}', False),
+    'accept_finding': ('POST', '/v1/findings/{finding_id}/accept', False),
+    'mark_false_positive': ('POST', '/v1/findings/{finding_id}/false-positive', False),
+    'reopen_finding': ('POST', '/v1/findings/{finding_id}/reopen', False),
     'finding_techniques': ('GET', '/v1/findings/{finding_id}/techniques', False),
     'list_actions': ('GET', '/v1/fleet/actions', True),
     'propose_action': ('POST', '/v1/fleet/actions', False),
@@ -2194,16 +3282,40 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'list_agents': ('GET', '/v1/fleet/agents', False),
     'get_agent': ('GET', '/v1/fleet/agents/{agent_id}', False),
     'enroll': ('POST', '/v1/fleet/enroll', False),
+    'list_network_actions': ('GET', '/v1/fleet/network-actions', True),
+    'propose': ('POST', '/v1/fleet/network-actions', False),
+    'propose_from_finding': ('POST', '/v1/fleet/network-actions/from-finding', False),
+    'execute': ('POST', '/v1/fleet/network-actions/{action_id}/execute', False),
     'heartbeat': ('POST', '/v1/fleet/{agent_id}/heartbeat', False),
     'post_inventory': ('POST', '/v1/fleet/{agent_id}/inventory', False),
     'graph_neighborhood': ('GET', '/v1/graph/neighborhood/{asset_id}', False),
     'graph_paths': ('GET', '/v1/graph/paths', False),
+    'import_lockfiles': ('POST', '/v1/import/lockfiles', False),
+    'import_sbom': ('POST', '/v1/import/sbom', False),
+    'sync_status': ('GET', '/v1/integration-sync', False),
+    'sync_now': ('POST', '/v1/integration-sync/{integration_id}', False),
+    'sync_runs': ('GET', '/v1/integration-sync/{integration_id}/runs', False),
+    'list_integrations': ('GET', '/v1/integrations', False),
+    'create_integration': ('POST', '/v1/integrations', False),
+    'catalog': ('GET', '/v1/integrations/catalog', False),
+    'health': ('GET', '/v1/integrations/health', False),
+    'get_integration': ('GET', '/v1/integrations/{integration_id}', False),
+    'update_integration': ('PATCH', '/v1/integrations/{integration_id}', False),
+    'delete_integration': ('DELETE', '/v1/integrations/{integration_id}', False),
+    'list_deliveries': ('GET', '/v1/integrations/{integration_id}/deliveries', True),
+    'retry_delivery': ('POST', '/v1/integrations/{integration_id}/deliveries/{delivery_id}/retry', False),
+    'disable_integration': ('POST', '/v1/integrations/{integration_id}/disable', False),
+    'enable_integration': ('POST', '/v1/integrations/{integration_id}/enable', False),
+    'integration_inbound': ('POST', '/v1/integrations/{integration_id}/inbound', False),
+    'test_integration': ('POST', '/v1/integrations/{integration_id}/test', False),
     'get_license': ('GET', '/v1/license', False),
     'upload_license': ('POST', '/v1/license', False),
     'remove_license': ('DELETE', '/v1/license', False),
     'get_active_models': ('GET', '/v1/ml/model', False),
     'retrain': ('POST', '/v1/ml/retrain', False),
     'list_ml_risk': ('GET', '/v1/ml/risk', True),
+    'get_onboarding': ('GET', '/v1/onboarding', False),
+    'put_onboarding': ('PUT', '/v1/onboarding', False),
     'list_objects': ('GET', '/v1/ontology/objects', True),
     'get_object': ('GET', '/v1/ontology/objects/{object_id}', False),
     'search_objects': ('GET', '/v1/ontology/search', True),
@@ -2217,8 +3329,14 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'record_provenance': ('POST', '/v1/provenance', False),
     'backfill_provenance': ('POST', '/v1/provenance/backfill', False),
     'list_remediations': ('GET', '/v1/remediation', True),
-    'propose': ('POST', '/v1/remediation/propose', False),
+    'propose_remediation': ('POST', '/v1/remediation/propose', False),
     'get_remediation': ('GET', '/v1/remediation/{rid}', False),
+    'compliance_frameworks': ('GET', '/v1/reports/compliance', False),
+    'compliance_pack': ('GET', '/v1/reports/compliance/{framework}', False),
+    'digest_preview': ('GET', '/v1/reports/digest/preview', False),
+    'digest_send': ('POST', '/v1/reports/digest/send', False),
+    'digest_history': ('GET', '/v1/reports/digests', False),
+    'executive_report': ('GET', '/v1/reports/executive', False),
     'list_components': ('GET', '/v1/sbom/components', True),
     'get_component': ('GET', '/v1/sbom/components/{component_id}', False),
     'list_projects': ('GET', '/v1/sbom/projects', True),
@@ -2239,10 +3357,19 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'add_scope': ('POST', '/v1/scope', False),
     'check_scope': ('POST', '/v1/scope/check', False),
     'deactivate_scope': ('DELETE', '/v1/scope/{entry_id}', False),
+    'issue_challenge': ('POST', '/v1/scope/{entry_id}/challenge', False),
     'list_scope_decisions': ('GET', '/v1/scope/{entry_id}/decisions', True),
+    'get_scope_proof': ('GET', '/v1/scope/{entry_id}/proof', False),
+    'verify_scope': ('POST', '/v1/scope/{entry_id}/verify', False),
     'list_sla_policies': ('GET', '/v1/sla-policies', False),
     'patch_sla_policy': ('PATCH', '/v1/sla-policies/{severity}', False),
     'list_supply_chain_risks': ('GET', '/v1/supply-chain-risks', True),
+    'list_suppressions': ('GET', '/v1/suppressions', True),
+    'create_suppression': ('POST', '/v1/suppressions', False),
+    'get_suppression': ('GET', '/v1/suppressions/{sup_id}', False),
+    'patch_suppression': ('PATCH', '/v1/suppressions/{sup_id}', False),
+    'delete_suppression': ('DELETE', '/v1/suppressions/{sup_id}', False),
+    'services_status': ('GET', '/v1/system/services', False),
     'list_feeds': ('GET', '/v1/ti/feeds', False),
     'create_feed': ('POST', '/v1/ti/feeds', False),
     'delete_feed': ('DELETE', '/v1/ti/feeds/{feed_id}', False),
@@ -2277,6 +3404,91 @@ class GeneratedOperations:
         """GET /readyz -- Readyz
         """
         return self._request('GET', '/readyz')
+
+    def list_groups(self, *, filter: str | None = None, startIndex: int | None = None, count: int | None = None, excludedAttributes: str | None = None, attributes: str | None = None) -> Any:
+        """GET /scim/v2/Groups -- List Groups
+        """
+        return self._request('GET', '/scim/v2/Groups', query={'filter': filter, 'startIndex': startIndex, 'count': count, 'excludedAttributes': excludedAttributes, 'attributes': attributes})
+
+    def create_group(self) -> Any:
+        """POST /scim/v2/Groups -- Create Group
+        """
+        return self._request('POST', '/scim/v2/Groups')
+
+    def get_group(self, group_id: str, *, excludedAttributes: str | None = None, attributes: str | None = None) -> Any:
+        """GET /scim/v2/Groups/{group_id} -- Get Group
+        """
+        return self._request('GET', '/scim/v2/Groups/{group_id}', path_params={'group_id': group_id}, query={'excludedAttributes': excludedAttributes, 'attributes': attributes})
+
+    def replace_group(self, group_id: str) -> Any:
+        """PUT /scim/v2/Groups/{group_id} -- Replace Group
+        """
+        return self._request('PUT', '/scim/v2/Groups/{group_id}', path_params={'group_id': group_id})
+
+    def patch_group(self, group_id: str) -> Any:
+        """PATCH /scim/v2/Groups/{group_id} -- Patch Group
+        """
+        return self._request('PATCH', '/scim/v2/Groups/{group_id}', path_params={'group_id': group_id})
+
+    def delete_group(self, group_id: str) -> Any:
+        """DELETE /scim/v2/Groups/{group_id} -- Delete Group
+        """
+        return self._request('DELETE', '/scim/v2/Groups/{group_id}', path_params={'group_id': group_id})
+
+    def resource_types(self) -> Any:
+        """GET /scim/v2/ResourceTypes -- Resource Types
+        """
+        return self._request('GET', '/scim/v2/ResourceTypes')
+
+    def resource_type(self, name: str) -> Any:
+        """GET /scim/v2/ResourceTypes/{name} -- Resource Type
+        """
+        return self._request('GET', '/scim/v2/ResourceTypes/{name}', path_params={'name': name})
+
+    def schemas(self) -> Any:
+        """GET /scim/v2/Schemas -- Schemas
+        """
+        return self._request('GET', '/scim/v2/Schemas')
+
+    def schema(self, schema_id: str) -> Any:
+        """GET /scim/v2/Schemas/{schema_id} -- Schema
+        """
+        return self._request('GET', '/scim/v2/Schemas/{schema_id}', path_params={'schema_id': schema_id})
+
+    def service_provider_config(self) -> Any:
+        """GET /scim/v2/ServiceProviderConfig -- Service Provider Config
+        """
+        return self._request('GET', '/scim/v2/ServiceProviderConfig')
+
+    def list_users(self, *, filter: str | None = None, startIndex: int | None = None, count: int | None = None) -> Any:
+        """GET /scim/v2/Users -- List Users
+        """
+        return self._request('GET', '/scim/v2/Users', query={'filter': filter, 'startIndex': startIndex, 'count': count})
+
+    def create_user(self) -> Any:
+        """POST /scim/v2/Users -- Create User
+        """
+        return self._request('POST', '/scim/v2/Users')
+
+    def get_user(self, user_id: str) -> Any:
+        """GET /scim/v2/Users/{user_id} -- Get User
+        """
+        return self._request('GET', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id})
+
+    def replace_user(self, user_id: str) -> Any:
+        """PUT /scim/v2/Users/{user_id} -- Replace User
+        """
+        return self._request('PUT', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id})
+
+    def patch_user(self, user_id: str) -> Any:
+        """PATCH /scim/v2/Users/{user_id} -- Patch User
+        """
+        return self._request('PATCH', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id})
+
+    def delete_user(self, user_id: str) -> Any:
+        """DELETE /scim/v2/Users/{user_id} -- Delete User
+        """
+        return self._request('DELETE', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id})
 
     def list_alert_rules(self, *, enabled: bool | None = None, limit: int | None = None, offset: int | None = None) -> list[AlertRuleOut]:
         """GET /v1/alert-rules -- List Alert Rules
@@ -2413,6 +3625,11 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/audit', query={'actor': actor, 'action': action, 'resource_type': resource_type, 'from': from_, 'to': to, 'limit': limit, 'offset': offset})
 
+    def anchor_audit(self) -> AuditAnchorOut:
+        """POST /v1/audit/anchor -- Anchor Audit
+        """
+        return self._request('POST', '/v1/audit/anchor')
+
     def verify_audit(self) -> AuditVerifyOut:
         """GET /v1/audit/verify -- Verify Audit
         """
@@ -2442,6 +3659,93 @@ class GeneratedOperations:
         """GET /v1/auth/me -- Me
         """
         return self._request('GET', '/v1/auth/me')
+
+    def admin_list_providers(self) -> list[ProviderOut]:
+        """GET /v1/auth/sso/admin/providers -- Admin List Providers
+        """
+        return self._request('GET', '/v1/auth/sso/admin/providers')
+
+    def admin_create_provider(self, body: ProviderIn | dict[str, Any]) -> ProviderOut:
+        """POST /v1/auth/sso/admin/providers -- Admin Create Provider
+        """
+        return self._request('POST', '/v1/auth/sso/admin/providers', body=body)
+
+    def admin_get_provider(self, provider_id: str) -> ProviderOut:
+        """GET /v1/auth/sso/admin/providers/{provider_id} -- Admin Get Provider
+        """
+        return self._request('GET', '/v1/auth/sso/admin/providers/{provider_id}', path_params={'provider_id': provider_id})
+
+    def admin_update_provider(self, provider_id: str, body: ProviderPatch | dict[str, Any]) -> ProviderOut:
+        """PATCH /v1/auth/sso/admin/providers/{provider_id} -- Admin Update Provider
+        """
+        return self._request('PATCH', '/v1/auth/sso/admin/providers/{provider_id}', path_params={'provider_id': provider_id}, body=body)
+
+    def admin_delete_provider(self, provider_id: str) -> None:
+        """DELETE /v1/auth/sso/admin/providers/{provider_id} -- Admin Delete Provider
+        """
+        return self._request('DELETE', '/v1/auth/sso/admin/providers/{provider_id}', path_params={'provider_id': provider_id})
+
+    def admin_test_provider(self, provider_id: str) -> Any:
+        """POST /v1/auth/sso/admin/providers/{provider_id}/test -- Admin Test Provider
+
+        Connectivity / configuration check. OIDC: run discovery + fetch JWKS.
+        """
+        return self._request('POST', '/v1/auth/sso/admin/providers/{provider_id}/test', path_params={'provider_id': provider_id})
+
+    def admin_list_scim_tokens(self) -> list[ScimTokenOut]:
+        """GET /v1/auth/sso/admin/scim-tokens -- Admin List Scim Tokens
+        """
+        return self._request('GET', '/v1/auth/sso/admin/scim-tokens')
+
+    def admin_create_scim_token(self, body: ScimTokenIn | dict[str, Any]) -> ScimTokenCreateOut:
+        """POST /v1/auth/sso/admin/scim-tokens -- Admin Create Scim Token
+        """
+        return self._request('POST', '/v1/auth/sso/admin/scim-tokens', body=body)
+
+    def admin_revoke_scim_token(self, token_id: str) -> ScimTokenOut:
+        """DELETE /v1/auth/sso/admin/scim-tokens/{token_id} -- Admin Revoke Scim Token
+        """
+        return self._request('DELETE', '/v1/auth/sso/admin/scim-tokens/{token_id}', path_params={'token_id': token_id})
+
+    def admin_get_settings(self) -> IdentitySettingsOut:
+        """GET /v1/auth/sso/admin/settings -- Admin Get Settings
+        """
+        return self._request('GET', '/v1/auth/sso/admin/settings')
+
+    def admin_put_settings(self, body: IdentitySettingsIn | dict[str, Any]) -> IdentitySettingsOut:
+        """PUT /v1/auth/sso/admin/settings -- Admin Put Settings
+        """
+        return self._request('PUT', '/v1/auth/sso/admin/settings', body=body)
+
+    def exchange(self, body: ExchangeIn | dict[str, Any]) -> ExchangeOut:
+        """POST /v1/auth/sso/exchange -- Exchange
+        """
+        return self._request('POST', '/v1/auth/sso/exchange', body=body)
+
+    def public_providers(self) -> PublicProvidersOut:
+        """GET /v1/auth/sso/providers -- Public Providers
+        """
+        return self._request('GET', '/v1/auth/sso/providers')
+
+    def saml_acs(self, slug: str) -> Any:
+        """POST /v1/auth/sso/{slug}/acs -- Saml Acs
+        """
+        return self._request('POST', '/v1/auth/sso/{slug}/acs', path_params={'slug': slug})
+
+    def oidc_callback(self, slug: str, *, code: str | None = None, state: str | None = None, error: str | None = None) -> Any:
+        """GET /v1/auth/sso/{slug}/callback -- Oidc Callback
+        """
+        return self._request('GET', '/v1/auth/sso/{slug}/callback', path_params={'slug': slug}, query={'code': code, 'state': state, 'error': error})
+
+    def saml_metadata(self, slug: str) -> Any:
+        """GET /v1/auth/sso/{slug}/metadata -- Saml Metadata
+        """
+        return self._request('GET', '/v1/auth/sso/{slug}/metadata', path_params={'slug': slug})
+
+    def sso_start(self, slug: str, *, return_to: str | None = None, spa_challenge: str | None = None) -> Any:
+        """GET /v1/auth/sso/{slug}/start -- Sso Start
+        """
+        return self._request('GET', '/v1/auth/sso/{slug}/start', path_params={'slug': slug}, query={'return_to': return_to, 'spa_challenge': spa_challenge})
 
     def list_chains(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, anchor_asset_id: str | None = None, limit: int | None = None, offset: int | None = None) -> list[ChainOut]:
         """GET /v1/chains -- List Chains
@@ -2542,34 +3846,101 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/events', query={'since': since})
 
-    def list_findings_paged(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None) -> FindingPage:
-        """GET /v1/findings -- List Findings Paged
-        """
-        return self._request('GET', '/v1/findings', query={'severity': severity, 'status': status, 'asset_id': asset_id, 'rule_source': rule_source, 'kev': kev, 'q': q, 'limit': limit, 'offset': offset})
+    def export_findings_ocsf(self, *, severity: list[Literal['info', 'low', 'medium', 'high', 'critical']] | None = None, min_severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: list[Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted']] | None = None, rule_source: list[Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel']] | None = None, since: str | None = None, limit: int | None = None) -> Any:
+        """GET /v1/export/findings.ocsf -- Export Findings Ocsf
 
-    def bulk_upsert_findings(self, body: FindingBulkIn | dict[str, Any]) -> FindingBulkOut:
+        Args:
+            severity: repeatable
+            status: repeatable
+            rule_source: repeatable
+            since: only findings with last_seen >= since
+        """
+        return self._request('GET', '/v1/export/findings.ocsf', query={'severity': severity, 'min_severity': min_severity, 'status': status, 'rule_source': rule_source, 'since': since, 'limit': limit})
+
+    def export_sarif(self, *, project: str | None = None, min_severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, include_sca: bool | None = None, include_suppressed: bool | None = None, strip_prefix: str | None = None, limit: int | None = None) -> Any:
+        """GET /v1/export/sarif -- Export Sarif
+
+        Args:
+            project: project id (uuid) or name
+            include_sca: include dependency vulnerabilities
+            include_suppressed: emit accepted/false-positive results with SARIF suppressions
+            strip_prefix: path prefix to strip so URIs are repo-relative
+        """
+        return self._request('GET', '/v1/export/sarif', query={'project': project, 'min_severity': min_severity, 'include_sca': include_sca, 'include_suppressed': include_suppressed, 'strip_prefix': strip_prefix, 'limit': limit})
+
+    def export_sbom(self, *, project: str, format: Literal['cyclonedx', 'spdx'] | None = None) -> Any:
+        """GET /v1/export/sbom -- Export Sbom
+
+        Args:
+            project: project id (uuid) or name
+        """
+        return self._request('GET', '/v1/export/sbom', query={'project': project, 'format': format})
+
+    def export_vex(self, *, project: str, format: Literal['cyclonedx', 'openvex'] | None = None) -> Any:
+        """GET /v1/export/vex -- Export Vex
+
+        Args:
+            project: project id (uuid) or name
+        """
+        return self._request('GET', '/v1/export/vex', query={'project': project, 'format': format})
+
+    def list_findings_paged(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, sla_breached: bool | None = None, fingerprint: str | None = None, sort: str | None = None, limit: int | None = None, offset: int | None = None) -> FindingLifecyclePage:
+        """GET /v1/findings -- List Findings Paged
+
+        Args:
+            suppressed: exclude (default) | include | only
+            include_duplicates: also return findings collapsed into a primary
+        """
+        return self._request('GET', '/v1/findings', query={'severity': severity, 'status': status, 'asset_id': asset_id, 'rule_source': rule_source, 'kev': kev, 'q': q, 'suppressed': suppressed, 'include_duplicates': include_duplicates, 'sla_breached': sla_breached, 'fingerprint': fingerprint, 'sort': sort, 'limit': limit, 'offset': offset})
+
+    def bulk_upsert_findings(self, body: FindingBulkIn | dict[str, Any]) -> FindingBulkLifecycleOut:
         """POST /v1/findings/bulk -- Bulk Upsert
         """
         return self._request('POST', '/v1/findings/bulk', body=body)
 
-    def list_findings_legacy(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None) -> list[FindingOut]:
+    def list_findings_legacy(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, limit: int | None = None, offset: int | None = None) -> list[FindingLifecycleOut]:
         """GET /v1/findings/list -- List Findings Legacy
 
         Legacy bare-list response for pre-pagination clients.
         """
-        return self._request('GET', '/v1/findings/list', query={'severity': severity, 'status': status, 'asset_id': asset_id, 'rule_source': rule_source, 'kev': kev, 'q': q, 'limit': limit, 'offset': offset})
+        return self._request('GET', '/v1/findings/list', query={'severity': severity, 'status': status, 'asset_id': asset_id, 'rule_source': rule_source, 'kev': kev, 'q': q, 'suppressed': suppressed, 'include_duplicates': include_duplicates, 'limit': limit, 'offset': offset})
 
-    def get_finding(self, finding_id: str) -> FindingDetailOut:
+    def recompute_identity(self) -> Any:
+        """POST /v1/findings/recompute-identity -- Recompute Identity
+
+        Admin: stamp dedupe identity on rows that predate schema 019 (or were
+        inserted directly) and collapse duplicates among them.
+        """
+        return self._request('POST', '/v1/findings/recompute-identity')
+
+    def get_finding(self, finding_id: str) -> FindingLifecycleDetailOut:
         """GET /v1/findings/{finding_id} -- Get Finding
 
-        Finding + its asset + any chain it participates in.
+        Finding + its asset + any chain it participates in (+ lifecycle).
         """
         return self._request('GET', '/v1/findings/{finding_id}', path_params={'finding_id': finding_id})
 
-    def patch_finding(self, finding_id: str, body: FindingPatch | dict[str, Any]) -> FindingOut:
+    def patch_finding(self, finding_id: str, body: FindingPatch | dict[str, Any]) -> FindingLifecycleOut:
         """PATCH /v1/findings/{finding_id} -- Patch Finding
         """
         return self._request('PATCH', '/v1/findings/{finding_id}', path_params={'finding_id': finding_id}, body=body)
+
+    def accept_finding(self, finding_id: str, body: DismissIn | dict[str, Any]) -> TransitionOut:
+        """POST /v1/findings/{finding_id}/accept -- Accept Finding
+
+        Risk accepted. A fixed finding cannot be accepted (reopen it first).
+        """
+        return self._request('POST', '/v1/findings/{finding_id}/accept', path_params={'finding_id': finding_id}, body=body)
+
+    def mark_false_positive(self, finding_id: str, body: DismissIn | dict[str, Any]) -> TransitionOut:
+        """POST /v1/findings/{finding_id}/false-positive -- Mark False Positive
+        """
+        return self._request('POST', '/v1/findings/{finding_id}/false-positive', path_params={'finding_id': finding_id}, body=body)
+
+    def reopen_finding(self, finding_id: str, body: ReopenIn | None | dict[str, Any] | None = None) -> TransitionOut:
+        """POST /v1/findings/{finding_id}/reopen -- Reopen Finding
+        """
+        return self._request('POST', '/v1/findings/{finding_id}/reopen', path_params={'finding_id': finding_id}, body=body)
 
     def finding_techniques(self, finding_id: str) -> list[FindingTechniqueOut]:
         """GET /v1/findings/{finding_id}/techniques -- Finding Techniques
@@ -2646,6 +4017,37 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/fleet/enroll', body=body)
 
+    def list_network_actions(self, *, status: str | None = None, limit: int | None = None, offset: int | None = None) -> ActionPage:
+        """GET /v1/fleet/network-actions -- List Network Actions
+        """
+        return self._request('GET', '/v1/fleet/network-actions', query={'status': status, 'limit': limit, 'offset': offset})
+
+    def propose(self, body: NetworkProposeIn | dict[str, Any]) -> ActionOut:
+        """POST /v1/fleet/network-actions -- Propose
+
+        Propose a quarantine/release of one device. Always dry_run + proposed.
+        """
+        return self._request('POST', '/v1/fleet/network-actions', body=body)
+
+    def propose_from_finding(self, body: FromFindingIn | dict[str, Any]) -> ActionOut:
+        """POST /v1/fleet/network-actions/from-finding -- Propose From Finding
+
+        Turn a Sentry lateral-scan finding into a quarantine PROPOSAL (never an apply).
+        """
+        return self._request('POST', '/v1/fleet/network-actions/from-finding', body=body)
+
+    def execute(self, action_id: str, body: ExecuteIn | dict[str, Any]) -> ExecuteOut:
+        """POST /v1/fleet/network-actions/{action_id}/execute -- Execute
+
+        Run an APPROVED network action through its ACTION integration.
+
+        dry_run rows (approved without ``apply_for_real``) only produce a preview
+        and stay ``approved``; real rows become ``applied`` (with a revert plan)
+        or ``failed``. A ``revert`` row releases the device its original action
+        quarantined and marks that original ``reverted``.
+        """
+        return self._request('POST', '/v1/fleet/network-actions/{action_id}/execute', path_params={'action_id': action_id}, body=body)
+
     def heartbeat(self, agent_id: str, body: HeartbeatIn | dict[str, Any]) -> HeartbeatOut:
         """POST /v1/fleet/{agent_id}/heartbeat -- Heartbeat
         """
@@ -2669,6 +4071,106 @@ class GeneratedOperations:
         Proxy shortest exploit-weighted paths from graphsync.
         """
         return self._request('GET', '/v1/graph/paths', query={'source': source, 'target': target, 'max': max})
+
+    def import_lockfiles(self) -> Any:
+        """POST /v1/import/lockfiles -- Import Lockfiles
+
+        Upload a repo's lockfiles: ``{"project": "...", "files": {"path": "content"},
+        "source_ref": "..."}``. Unsupported file names are ignored (and listed).
+        """
+        return self._request('POST', '/v1/import/lockfiles')
+
+    def import_sbom(self, *, project: str | None = None, replace: bool | None = None) -> Any:
+        """POST /v1/import/sbom -- Import Sbom
+
+        Args:
+            project: project name (default: the SBOM's root component / document name)
+            replace: delete project components that are not in this SBOM
+        """
+        return self._request('POST', '/v1/import/sbom', query={'project': project, 'replace': replace})
+
+    def sync_status(self) -> list[SyncStatusOut]:
+        """GET /v1/integration-sync -- Sync Status
+        """
+        return self._request('GET', '/v1/integration-sync')
+
+    def sync_now(self, integration_id: str) -> SyncNowOut:
+        """POST /v1/integration-sync/{integration_id} -- Sync Now
+        """
+        return self._request('POST', '/v1/integration-sync/{integration_id}', path_params={'integration_id': integration_id})
+
+    def sync_runs(self, integration_id: str, *, limit: int | None = None) -> list[SyncRunOut]:
+        """GET /v1/integration-sync/{integration_id}/runs -- Sync Runs
+        """
+        return self._request('GET', '/v1/integration-sync/{integration_id}/runs', path_params={'integration_id': integration_id}, query={'limit': limit})
+
+    def list_integrations(self, *, kind: str | None = None) -> dict[str, Any]:
+        """GET /v1/integrations -- List Integrations
+        """
+        return self._request('GET', '/v1/integrations', query={'kind': kind})
+
+    def create_integration(self, body: IntegrationIn | dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/integrations -- Create Integration
+        """
+        return self._request('POST', '/v1/integrations', body=body)
+
+    def catalog(self) -> dict[str, Any]:
+        """GET /v1/integrations/catalog -- Catalog
+        """
+        return self._request('GET', '/v1/integrations/catalog')
+
+    def health(self) -> dict[str, Any]:
+        """GET /v1/integrations/health -- Health
+        """
+        return self._request('GET', '/v1/integrations/health')
+
+    def get_integration(self, integration_id: str) -> dict[str, Any]:
+        """GET /v1/integrations/{integration_id} -- Get Integration
+        """
+        return self._request('GET', '/v1/integrations/{integration_id}', path_params={'integration_id': integration_id})
+
+    def update_integration(self, integration_id: str, body: IntegrationPatch | dict[str, Any]) -> dict[str, Any]:
+        """PATCH /v1/integrations/{integration_id} -- Update Integration
+        """
+        return self._request('PATCH', '/v1/integrations/{integration_id}', path_params={'integration_id': integration_id}, body=body)
+
+    def delete_integration(self, integration_id: str) -> dict[str, Any]:
+        """DELETE /v1/integrations/{integration_id} -- Delete Integration
+        """
+        return self._request('DELETE', '/v1/integrations/{integration_id}', path_params={'integration_id': integration_id})
+
+    def list_deliveries(self, integration_id: str, *, status: str | None = None, limit: int | None = None, offset: int | None = None) -> dict[str, Any]:
+        """GET /v1/integrations/{integration_id}/deliveries -- List Deliveries
+        """
+        return self._request('GET', '/v1/integrations/{integration_id}/deliveries', path_params={'integration_id': integration_id}, query={'status': status, 'limit': limit, 'offset': offset})
+
+    def retry_delivery(self, integration_id: str, delivery_id: int) -> dict[str, Any]:
+        """POST /v1/integrations/{integration_id}/deliveries/{delivery_id}/retry -- Retry Delivery
+        """
+        return self._request('POST', '/v1/integrations/{integration_id}/deliveries/{delivery_id}/retry', path_params={'integration_id': integration_id, 'delivery_id': delivery_id})
+
+    def disable_integration(self, integration_id: str) -> dict[str, Any]:
+        """POST /v1/integrations/{integration_id}/disable -- Disable Integration
+        """
+        return self._request('POST', '/v1/integrations/{integration_id}/disable', path_params={'integration_id': integration_id})
+
+    def enable_integration(self, integration_id: str) -> dict[str, Any]:
+        """POST /v1/integrations/{integration_id}/enable -- Enable Integration
+        """
+        return self._request('POST', '/v1/integrations/{integration_id}/enable', path_params={'integration_id': integration_id})
+
+    def integration_inbound(self, integration_id: str, *, token: str | None = None) -> Any:
+        """POST /v1/integrations/{integration_id}/inbound -- Integration Inbound
+
+        Args:
+            token: The integration's inbound token
+        """
+        return self._request('POST', '/v1/integrations/{integration_id}/inbound', path_params={'integration_id': integration_id}, query={'token': token})
+
+    def test_integration(self, integration_id: str, body: TestIn | None | dict[str, Any] | None = None) -> dict[str, Any]:
+        """POST /v1/integrations/{integration_id}/test -- Test Integration
+        """
+        return self._request('POST', '/v1/integrations/{integration_id}/test', path_params={'integration_id': integration_id}, body=body)
 
     def get_license(self) -> LicenseOut:
         """GET /v1/license -- Get License
@@ -2717,6 +4219,16 @@ class GeneratedOperations:
         Joined in one query (no N+1).
         """
         return self._request('GET', '/v1/ml/risk', query={'limit': limit, 'offset': offset})
+
+    def get_onboarding(self) -> OnboardingOut:
+        """GET /v1/onboarding -- Get Onboarding
+        """
+        return self._request('GET', '/v1/onboarding')
+
+    def put_onboarding(self, body: OnboardingPatch | dict[str, Any]) -> OnboardingOut:
+        """PUT /v1/onboarding -- Put Onboarding
+        """
+        return self._request('PUT', '/v1/onboarding', body=body)
 
     def list_objects(self, *, type: str | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None) -> OntologyObjectPage:
         """GET /v1/ontology/objects -- List Objects
@@ -2801,7 +4313,7 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/remediation', query={'status': status, 'limit': limit, 'offset': offset})
 
-    def propose(self, body: ProposeIn | dict[str, Any]) -> dict[str, Any]:
+    def propose_remediation(self, body: ProposeIn | dict[str, Any]) -> dict[str, Any]:
         """POST /v1/remediation/propose -- Propose
 
         Forward a propose request to the remediation service.
@@ -2816,6 +4328,42 @@ class GeneratedOperations:
         """GET /v1/remediation/{rid} -- Get Remediation
         """
         return self._request('GET', '/v1/remediation/{rid}', path_params={'rid': rid})
+
+    def compliance_frameworks(self) -> list[FrameworkSummary]:
+        """GET /v1/reports/compliance -- Compliance Frameworks
+        """
+        return self._request('GET', '/v1/reports/compliance')
+
+    def compliance_pack(self, framework: str, *, format: Literal['json', 'html', 'pdf'] | None = None, download: bool | None = None) -> CompliancePack:
+        """GET /v1/reports/compliance/{framework} -- Compliance Pack
+        """
+        return self._request('GET', '/v1/reports/compliance/{framework}', path_params={'framework': framework}, query={'format': format, 'download': download})
+
+    def digest_preview(self, *, period: str | None = None, format: Literal['json', 'text', 'html'] | None = None) -> Any:
+        """GET /v1/reports/digest/preview -- Digest Preview
+
+        What the next digest would say, at the digest clearance (never above yours).
+        """
+        return self._request('GET', '/v1/reports/digest/preview', query={'period': period, 'format': format})
+
+    def digest_send(self, *, period: str | None = None) -> DigestRunOut:
+        """POST /v1/reports/digest/send -- Digest Send
+        """
+        return self._request('POST', '/v1/reports/digest/send', query={'period': period})
+
+    def digest_history(self, *, limit: int | None = None) -> list[DigestRunOut]:
+        """GET /v1/reports/digests -- Digest History
+        """
+        return self._request('GET', '/v1/reports/digests', query={'limit': limit})
+
+    def executive_report(self, *, period: str | None = None, format: Literal['json', 'html', 'pdf'] | None = None, end: str | None = None, download: bool | None = None) -> ReportData:
+        """GET /v1/reports/executive -- Executive Report
+
+        Args:
+            period: Window length, e.g. 7d, 30d, 90d, 12w
+            end: Window end (default now)
+        """
+        return self._request('GET', '/v1/reports/executive', query={'period': period, 'format': format, 'end': end, 'download': download})
 
     def list_components(self, *, project: str | None = None, vulnerable: bool | None = None, ecosystem: str | None = None, limit: int | None = None, offset: int | None = None) -> SbomComponentPage:
         """GET /v1/sbom/components -- List Components
@@ -2918,7 +4466,7 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/schedules/{schedule_id}/run-now', path_params={'schedule_id': schedule_id})
 
-    def list_scope(self, *, limit: int | None = None, offset: int | None = None, active_only: bool | None = None) -> list[ScopeEntryOut]:
+    def list_scope(self, *, limit: int | None = None, offset: int | None = None, active_only: bool | None = None) -> list[ScopeEntryWithProofOut]:
         """GET /v1/scope -- List Scope
         """
         return self._request('GET', '/v1/scope', query={'limit': limit, 'offset': offset, 'active_only': active_only})
@@ -2938,12 +4486,37 @@ class GeneratedOperations:
         """
         return self._request('DELETE', '/v1/scope/{entry_id}', path_params={'entry_id': entry_id})
 
+    def issue_challenge(self, entry_id: int) -> ChallengeOut:
+        """POST /v1/scope/{entry_id}/challenge -- Issue Challenge
+
+        Issue (or return the existing) ownership challenge for a domain entry.
+
+        Publish EITHER the DNS TXT record or (exact domains only) the HTTPS file,
+        then call ``POST /v1/scope/{id}/verify``. IP ranges and ASNs cannot be
+        checked automatically; record an attestation via ``/verify`` instead.
+        """
+        return self._request('POST', '/v1/scope/{entry_id}/challenge', path_params={'entry_id': entry_id})
+
     def list_scope_decisions(self, entry_id: int, *, limit: int | None = None, offset: int | None = None) -> list[ScopeDecisionOut]:
         """GET /v1/scope/{entry_id}/decisions -- List Scope Decisions
 
         Return the most recent `scope_decisions` rows for a scope entry.
         """
         return self._request('GET', '/v1/scope/{entry_id}/decisions', path_params={'entry_id': entry_id}, query={'limit': limit, 'offset': offset})
+
+    def get_scope_proof(self, entry_id: int) -> ScopeEntryWithProofOut:
+        """GET /v1/scope/{entry_id}/proof -- Get Scope Proof
+
+        One scope entry with its proof-of-control status.
+        """
+        return self._request('GET', '/v1/scope/{entry_id}/proof', path_params={'entry_id': entry_id})
+
+    def verify_scope(self, entry_id: int, body: VerifyIn | None | dict[str, Any] | None = None) -> VerifyOut:
+        """POST /v1/scope/{entry_id}/verify -- Verify Scope
+
+        Check ownership now (domains) or record an attestation (IP ranges/ASN).
+        """
+        return self._request('POST', '/v1/scope/{entry_id}/verify', path_params={'entry_id': entry_id}, body=body)
 
     def list_sla_policies(self) -> list[SlaPolicyOut]:
         """GET /v1/sla-policies -- List Sla Policies
@@ -2963,6 +4536,36 @@ class GeneratedOperations:
             project: project id (uuid) or name
         """
         return self._request('GET', '/v1/supply-chain-risks', query={'type': type, 'severity': severity, 'project': project, 'limit': limit, 'offset': offset})
+
+    def list_suppressions(self, *, active: bool | None = None, limit: int | None = None, offset: int | None = None) -> list[SuppressionOut]:
+        """GET /v1/suppressions -- List Suppressions
+        """
+        return self._request('GET', '/v1/suppressions', query={'active': active, 'limit': limit, 'offset': offset})
+
+    def create_suppression(self, body: SuppressionIn | dict[str, Any]) -> SuppressionOut:
+        """POST /v1/suppressions -- Create Suppression
+        """
+        return self._request('POST', '/v1/suppressions', body=body)
+
+    def get_suppression(self, sup_id: str) -> SuppressionOut:
+        """GET /v1/suppressions/{sup_id} -- Get Suppression
+        """
+        return self._request('GET', '/v1/suppressions/{sup_id}', path_params={'sup_id': sup_id})
+
+    def patch_suppression(self, sup_id: str, body: SuppressionPatch | dict[str, Any]) -> SuppressionOut:
+        """PATCH /v1/suppressions/{sup_id} -- Patch Suppression
+        """
+        return self._request('PATCH', '/v1/suppressions/{sup_id}', path_params={'sup_id': sup_id}, body=body)
+
+    def delete_suppression(self, sup_id: str) -> None:
+        """DELETE /v1/suppressions/{sup_id} -- Delete Suppression
+        """
+        return self._request('DELETE', '/v1/suppressions/{sup_id}', path_params={'sup_id': sup_id})
+
+    def services_status(self) -> ServicesOut:
+        """GET /v1/system/services -- Services Status
+        """
+        return self._request('GET', '/v1/system/services')
 
     def list_feeds(self) -> list[TiFeedOut]:
         """GET /v1/ti/feeds -- List Feeds
