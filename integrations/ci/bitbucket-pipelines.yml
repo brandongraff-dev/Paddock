@@ -1,0 +1,28 @@
+# Paddock for Bitbucket Pipelines. Merge into bitbucket-pipelines.yml.
+#
+# Repository variables (Repository settings > Pipelines > Repository variables, "Secured"):
+#   PADDOCK_URL, PADDOCK_INGEST_TOKEN   (PADDOCK_API_KEY only for lockfiles/gate)
+# Pin PADDOCK_CI_REF to a tag or commit SHA in production.
+image: atlassian/default-image:4
+
+definitions:
+  steps:
+    - step: &paddock
+        name: Paddock scan
+        image: aquasec/trivy:0.58.1
+        script:
+          - apk add --no-cache -q bash curl jq
+          - export PADDOCK_CI_REF="${PADDOCK_CI_REF:-main}"
+          - curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh" -o /usr/local/bin/paddock-ci
+          - chmod +x /usr/local/bin/paddock-ci
+          - trivy fs --quiet --format json --output trivy.json .
+          - paddock-ci ingest trivy.json
+          # Optional gate (needs PADDOCK_API_KEY):
+          # - paddock-ci lockfiles && paddock-ci gate --fail-on high
+
+pipelines:
+  default:
+    - step: *paddock
+  branches:
+    main:
+      - step: *paddock

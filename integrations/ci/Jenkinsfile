@@ -1,0 +1,31 @@
+// Paddock for Jenkins (declarative pipeline). Needs Docker on the agent, or swap the
+// agent for one that has trivy (or semgrep, ...), bash, curl and jq.
+//
+// Credentials (Manage Jenkins > Credentials, type "Secret text"):
+//   paddock-url, paddock-ingest-token   (paddock-api-key only for lockfiles/gate)
+// Pin PADDOCK_CI_REF to a tag or commit SHA in production.
+pipeline {
+  agent {
+    docker { image 'aquasec/trivy:0.58.1'; args '--entrypoint=' ; reuseNode true }
+  }
+  environment {
+    PADDOCK_URL          = credentials('paddock-url')
+    PADDOCK_INGEST_TOKEN = credentials('paddock-ingest-token')
+    PADDOCK_CI_REF       = 'main'
+  }
+  stages {
+    stage('Paddock') {
+      steps {
+        // single-quoted so Jenkins never interpolates the secrets into the command line
+        sh '''
+          set -eu
+          apk add --no-cache -q bash curl jq
+          curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh" -o paddock-ci
+          chmod +x paddock-ci
+          trivy fs --quiet --format json --output trivy.json .
+          ./paddock-ci ingest trivy.json
+        '''
+      }
+    }
+  }
+}

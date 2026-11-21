@@ -1,0 +1,30 @@
+# Paddock for CircleCI. Merge into .circleci/config.yml.
+#
+# Project environment variables: PADDOCK_URL, PADDOCK_INGEST_TOKEN
+# (PADDOCK_API_KEY only for lockfiles/gate). Pin PADDOCK_CI_REF in production.
+version: 2.1
+
+jobs:
+  paddock:
+    docker:
+      - image: aquasec/trivy:0.58.1
+        entrypoint: [""]
+    steps:
+      - checkout
+      - run:
+          name: Install helper
+          command: |
+            apk add --no-cache -q bash curl jq
+            curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF:-main}/integrations/ci/paddock-ci.sh" \
+              -o /usr/local/bin/paddock-ci
+            chmod +x /usr/local/bin/paddock-ci
+      - run:
+          name: Scan and send to Paddock
+          command: |
+            trivy fs --quiet --format json --output trivy.json .
+            paddock-ci ingest trivy.json
+
+workflows:
+  security:
+    jobs:
+      - paddock
