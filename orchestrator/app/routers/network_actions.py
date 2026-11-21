@@ -338,3 +338,46 @@ async def execute(action_id: UUID, body: ExecuteIn, request: Request, pool=Depen
                            actor_role=principal.role,
                            details={"by_revert_action": str(action_id), "network": True})
     return ExecuteOut(action=_row(new), ok=res.ok, dry_run=dry_run, detail=detail, planned=planned)
+
+
+class EvidenceOut(BaseModel):
+    action_id: UUID
+    finding: dict[str, Any] | None = None
+    device: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/{action_id}/evidence", response_model=EvidenceOut)
+async def action_evidence(action_id: UUID, pool=Depends(get_pool)):
+    """What the approver needs to decide: the Sentry finding behind a proposal
+    (rule, severity, evidence JSON) and the device it points at. Read-only."""
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            f"SELECT {_COLS} FROM agent_actions WHERE id = $1 AND integration_id IS NOT NULL",
+            action_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="network action not found")
+        f = None
+        if row["finding_id"] is not None:
+            f = await con.fetchrow(
+                """
+                SELECT f.id, f.rule_id, f.severity, f.status, f.title, f.description, f.evidence,
+                       f.first_seen, f.last_seen, a.kind AS asset_kind, a.value AS asset_value,
+                       a.metadata AS asset_md
+                  FROM findings f JOIN assets a ON a.id = f.asset_id WHERE f.id = $1
+                """, row["finding_id"])
+    res = fleet._as_dict(row["result"])
+    finding = None
+    device: dict[str, Any] = {"mac": row["target"], "name": res.get("device")}
+    if f is not None:
+        md = fleet._as_dict(f["asset_md"])
+        finding = {"id": str(f["id"]), "rule_id": f["rule_id"], "severity": f["severity"],
+                   "status": f["status"], "title": f["title"], "description": f["description"],
+                   "evidence": fleet._as_dict(f["evidence"]),
+                   "first_seen": f["first_seen"].isoformat() if f["first_seen"] else None,
+                   "last_seen": f["last_seen"].isoformat() if f["last_seen"] else None}
+        is_dev = f["asset_kind"] in ("iot_device", "ot_device")
+        device.update({"asset_kind": f["asset_kind"], "asset_value": f["asset_value"],
+                       "vendor": md.get("vendor"), "type": md.get("type"),
+                       "ips": md.get("ips") or ([f["asset_value"]] if is_dev else [])})
+    return EvidenceOut(action_id=action_id, finding=finding,
+                       device={k: v for k, v in device.items() if v not in (None, [], "")})

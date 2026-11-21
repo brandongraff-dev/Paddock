@@ -10,13 +10,15 @@ connectors pull **context** from systems you already run, and let a human
 | `microsoft_defender` | SOURCE | Defender for Endpoint devices (OS/build, exposure, risk, sensor health) + Intune (managed, compliant, primary user) | **never** |
 | `crowdstrike` | SOURCE | Falcon hosts + prevention-policy status | **never** |
 | `servicenow_cmdb` | SOURCE | CIs, owner, support group, business service, criticality (crown jewels) | **never** |
+| `gcp` | SOURCE | Cloud Asset Inventory: VMs with external IPs, external load balancers, Cloud SQL public IPs, buckets with public IAM, Cloud Run / Functions URLs, DNS zones, world-open firewall rules | **never** |
+| `azure` | SOURCE | Resource Graph: public IPs, VMs, App Services, storage with public blob access, NSGs open to the internet, DNS zones, AKS public API servers | **never** |
 | `unifi` | ACTION | block a client / move it to a quarantine network, and release it | only after a human approves |
 | `meraki` | ACTION | apply a quarantine group policy (or `Blocked`) to a client, and restore it | only after a human approves |
 
 Code: `orchestrator/app/integrations/connectors/` (one module each),
 `orchestrator/app/integrations/{ingest,runtime}.py`,
 `orchestrator/app/routers/{integration_sync,network_actions}.py`,
-`schema/025_context_connectors.sql`.
+`schema/025_context_connectors.sql`, `schema/031_cloud_connectors.sql`.
 
 All connectors follow the shared contract (`app/integrations/base.py`):
 secrets are stored AES-GCM encrypted and never logged or returned; every
@@ -48,10 +50,42 @@ Paddock (status code + what was being done), never copied from a response.
 Endpoints:
 
 ```
-GET  /v1/integration-sync                 latest run per SOURCE integration
+GET  /v1/integration-sync                 latest run per SOURCE integration (+ interval, next_run_at, pending_suggestions)
 GET  /v1/integration-sync/{id}/runs       history
 POST /v1/integration-sync/{id}            sync now (admin)
+GET  /v1/integration-sync/suggestions     scope suggestions (?status=pending|accepted|dismissed|all)
+POST /v1/integration-sync/suggestions/{id}/accept    admin: add to scope through the normal scope add
+POST /v1/integration-sync/suggestions/{id}/dismiss   admin
 ```
+
+A sync that landed but lost part of the inventory (one asset type or query
+failed) is recorded `ok` with `counts.warnings > 0` and a `partial: ...`
+detail; the dashboard shows it as **Degraded**. A sync where nothing could be
+read (bad credential, every call refused) is `error`.
+
+### Scope suggestions (never scope by themselves)
+
+A cloud inventory sees the internet edge: public IPs, load balancers, public
+DNS zones. The `gcp` and `azure` connectors put those in
+`SourceBatch.scope_suggestions`; ingest stores them as `pending` rows in
+`scope_suggestions` (schema 031, unique per integration + kind + value) and
+**never** touches `scope_entries`.
+
+* A human accepts one with `POST .../suggestions/{id}/accept`. That calls the
+  ordinary `POST /v1/scope` handler, so it gets the same validation (too-broad
+  CIDRs, public-suffix wildcards and protected ranges are refused with the same
+  422, leaving the suggestion pending), the same audit and cache invalidation.
+  The new entry still needs **proof of control** (`/v1/scope/{id}/challenge` +
+  `/verify`) before any scan runs; the accept response includes the entry's
+  proof status.
+* Dismissing keeps the row, so the next sync does not raise it again. A value
+  that is already active scope is never suggested.
+* Suggested kinds: `ipv4_cidr` / `ipv6_cidr` (`/32`, `/128`, public addresses
+  only) and `domain` (public DNS zones and custom hostnames). Provider-owned
+  hostnames (`*.run.app`, `*.cloudfunctions.net`, `*.azurewebsites.net`,
+  `*.blob.core.windows.net`, `*.azmk8s.io`, `*.cloudapp.azure.com`) become
+  assets but are **not** suggested: nobody can prove control of them.
+* Turn suggestions off per integration with `suggest_scope: false`.
 
 `PADDOCK_SOURCE_SYNC=0` pauses scheduled pulls. Per-integration options:
 `sync_interval_minutes`, `sync_timeout_sec` (default 900).
@@ -353,10 +387,114 @@ plan; release restores it (or `Normal`). `test()` only reads the network.
 
 ---
 
-## 7. Not done yet (honest list)
+## 7. Google Cloud (GCP)
 
-* GCP and Azure connectors; AWS Lambda, EKS, API Gateway, CloudFront, NAT and
-  peering paths; S3 bucket policies that grant other principals; SG-to-SG
+**Auth.** A service-account key, pasted as the `service_account_json` secret.
+Paddock signs a JWT (RS256, the `cryptography` package, no Google SDK) and
+exchanges it at `https://oauth2.googleapis.com/token`. The key file's own
+`token_uri` is ignored (a hostile key cannot redirect the signed assertion);
+the token is cached until 5 minutes before expiry and refreshed once on a 401.
+Grant the service account **`roles/cloudasset.viewer`** on the project, folder
+or organization and nothing else. Every call is a `GET` of the Cloud Asset
+`listAssets` API.
+
+**Config.** `parents` (`projects/<id>`, `folders/<n>`, `organizations/<n>`; a
+bare project id works; defaults to the key's `project_id`), `admin_ports`,
+`suggest_scope`, `sync_interval_minutes`.
+
+**Pulls** (one listing per asset type and parent, so one failing type is a
+warning, not a failed sync): `compute Instance`, `ForwardingRule`, `Firewall`,
+`sqladmin Instance`, `storage Bucket` (resource + IAM policy), `run Service`,
+`cloudfunctions CloudFunction`, `dns ManagedZone`. Pages of 1000 are followed
+through `nextPageToken`; 429/503 honour `Retry-After`.
+
+**Graph.** `ipv4 --attached_to--> instance | forwarding rule | Cloud SQL`,
+`subdomain --routes_to--> Cloud Run / Function`. An instance is `public: true`
+only when it has an external IP **and** an enabled ingress firewall rule open
+to `0.0.0.0/0` / `::/0` applies to it (same network, matching target tags):
+GCP denies ingress by default. Rules scoped by service account are not
+evaluated and count as not applying. Buckets and Cloud SQL get
+`sensitive: true`. Only `EXTERNAL*` load balancers, public DNS zones and
+Cloud Run / Functions with open ingress are imported.
+
+**Findings:** `gcp.firewall.admin_port_open_to_world` (high),
+`gcp.compute.admin_port_open_to_internet` (high),
+`gcp.sql.public_ip_open_to_world` (high, `0.0.0.0/0` authorized network) and
+`gcp.sql.public_ip` (medium), `gcp.storage.bucket_public` (high: `allUsers` or
+`allAuthenticatedUsers` bound and public access prevention not enforced).
+
+**Suggestions:** external IPs (instances, load balancers, Cloud SQL) as `/32`,
+public DNS zones as `domain`.
+
+---
+
+## 8. Microsoft Azure
+
+**Auth.** An Entra app registration, client credentials (`tenant_id`,
+`client_id` in config, `client_secret` secret), scope
+`https://management.azure.com/.default`. Give it the built-in **Reader** role
+on the subscriptions (or a management group). Sovereign clouds: set
+`authority_host` and `management_host`. The token is cached and refreshed once
+on a 401.
+
+**Config.** `subscriptions` (default: every subscription the app can read),
+`admin_ports`, `suggest_scope`, `sync_interval_minutes`.
+
+**Pulls.** Read-only KQL posted to Azure Resource Graph
+(`POST /providers/Microsoft.ResourceGraph/resources`, `$top` 1000, paged with
+`$skipToken`, 429 retried with `Retry-After`), one query each: public IPs, NICs,
+VMs, VNet subnets, App Services, storage accounts, NSGs, DNS zones, AKS
+clusters. A failing query is a warning; if every query fails the sync fails.
+
+**Graph.** `ipv4 --attached_to--> VM | load balancer | app gateway`,
+`subdomain --routes_to--> App Service | AKS`. A VM is `public: true` only when
+it has a public IP **and** an NSG on its NIC or subnet has an inbound Allow rule
+whose source is `*`, `Internet`, `Any`, `0.0.0.0/0` or `::/0`. NSG evaluation is a
+conservative over-approximation: a higher-priority Deny that shadows the Allow
+is not evaluated. Storage accounts get `sensitive: true`.
+
+**Findings:** `azure.nsg.admin_port_open_to_internet` (high),
+`azure.compute.admin_port_open_to_internet` (high),
+`azure.storage.public_blob_access` (high: `allowBlobPublicAccess` on and the
+account firewall not denying by default), `azure.aks.api_server_public` (high:
+public API server without authorized IP ranges),
+`azure.appservice.http_allowed` (low).
+
+**Suggestions:** public IPs as `/32`, public DNS zones and custom App Service
+hostnames as `domain` (not `*.azurewebsites.net` and other provider names).
+
+---
+
+## 9. Dashboard screens
+
+* **Context sync** (`/context`, Govern): every SOURCE integration with status
+  (Healthy / Degraded / Failing / Not synced), last sync, items imported (assets,
+  edges, findings, new or refreshed), the error or partial-failure detail, next
+  run, and **Sync now** (admin). Below it, the pending scope suggestions with
+  **Accept** (optional authorization reference, then a link to Scope to complete
+  proof of control) and **Dismiss**.
+* **Network actions** (`/network-actions`, Operate): the approval queue for
+  quarantine / release proposals from UniFi and Meraki. Each proposal shows the
+  device (MAC, name), reason, proposer, integration and, on demand, the Sentry
+  finding behind it (`GET /v1/fleet/network-actions/{id}/evidence`).
+  Approve and Reject are admin-only and need a written reason, which is sent as
+  the `note` and lands in the audit log. **Dry run is the default**: the form
+  says so and approving only authorises a read-only preview; "Apply for real"
+  is an explicit checkbox that flips the button to *Approve live quarantine*.
+  Approved rows get **Run dry-run preview** or **Execute live quarantine**.
+  The history table shows mode (DRY RUN / LIVE), outcome and who decided, with
+  **Release** for applied quarantines. The "reason is required" rule is
+  enforced by the screen; the API itself keeps `note` optional because host
+  actions share the endpoint.
+
+---
+
+## 10. Not done yet (honest list)
+
+* AWS Lambda, EKS, API Gateway, CloudFront, NAT and
+  peering paths; GCP VPC-SC / org-policy checks, load-balancer backends to
+  instances, Azure application-gateway backend pools, Azure DNS record sets
+  (zones only) and NSG priority shadowing; S3 bucket policies that grant other principals; SG-to-SG
   reachability beyond instance → RDS.
 * Resources that disappear are not deleted; they simply stop refreshing
   `last_seen`.

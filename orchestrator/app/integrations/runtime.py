@@ -162,7 +162,8 @@ async def run_source_sync(pool, redis, integration_id: UUID | str, *, trigger: s
         async with (http_factory or default_http)(config) as http:
             conn = cls(config, secrets, http)
             batch = await asyncio.wait_for(conn.pull(), timeout=timeout)
-            counts = await apply_source_batch(pool, redis, batch, source=f"integration:{row['kind']}")
+            counts = await apply_source_batch(pool, redis, batch, source=f"integration:{row['kind']}",
+                                              integration_id=row["id"])
             warnings = list(getattr(conn, "last_warnings", []) or [])
         if warnings:
             counts["warnings"] = len(warnings)
