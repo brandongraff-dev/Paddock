@@ -1,0 +1,130 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "planned_values": {"root_module": {}},
+  "resource_changes": [
+    {
+      "address": "aws_security_group_rule.db_from_app",
+      "mode": "managed",
+      "type": "aws_security_group_rule",
+      "name": "db_from_app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "type": "ingress",
+          "from_port": 5432,
+          "to_port": 5432,
+          "protocol": "tcp",
+          "cidr_blocks": ["10.9.0.0/24"],
+          "ipv6_cidr_blocks": null,
+          "security_group_id": "sg-db",
+          "source_security_group_id": null,
+          "self": false,
+          "description": "postgres from app tier"
+        },
+        "after_unknown": {"id": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_security_group_rule.legacy_ssh",
+      "mode": "managed",
+      "type": "aws_security_group_rule",
+      "name": "legacy_ssh",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "type": "ingress",
+          "from_port": 22,
+          "to_port": 22,
+          "protocol": "tcp",
+          "cidr_blocks": ["0.0.0.0/0"],
+          "security_group_id": "sg-bastion",
+          "self": false
+        },
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": false
+      }
+    },
+    {
+      "address": "aws_network_acl_rule.deny_telnet",
+      "mode": "managed",
+      "type": "aws_network_acl_rule",
+      "name": "deny_telnet",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "network_acl_id": "acl-0abc",
+          "rule_number": 90,
+          "egress": false,
+          "protocol": "6",
+          "rule_action": "deny",
+          "cidr_block": "192.168.50.0/24",
+          "from_port": 23,
+          "to_port": 23
+        },
+        "after_unknown": {"id": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_vpc_security_group_ingress_rule.web_unknown_src",
+      "mode": "managed",
+      "type": "aws_vpc_security_group_ingress_rule",
+      "name": "web_unknown_src",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "cidr_ipv4": null,
+          "cidr_ipv6": null,
+          "from_port": 443,
+          "to_port": 443,
+          "ip_protocol": "tcp",
+          "security_group_id": "sg-web"
+        },
+        "after_unknown": {"cidr_ipv4": true, "id": true, "arn": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_s3_bucket.logs",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "logs",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"bucket": "paddock-synthetic-logs", "force_destroy": false},
+        "after_unknown": {"id": true, "arn": true},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_security_group_rule.untouched",
+      "mode": "managed",
+      "type": "aws_security_group_rule",
+      "name": "untouched",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["no-op"],
+        "before": {"type": "ingress", "from_port": 80, "to_port": 80, "protocol": "tcp", "cidr_blocks": ["10.0.0.0/8"], "security_group_id": "sg-web"},
+        "after": {"type": "ingress", "from_port": 80, "to_port": 80, "protocol": "tcp", "cidr_blocks": ["10.0.0.0/8"], "security_group_id": "sg-web"},
+        "after_unknown": {}
+      }
+    }
+  ]
+}
