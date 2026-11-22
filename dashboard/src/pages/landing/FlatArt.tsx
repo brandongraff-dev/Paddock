@@ -80,7 +80,28 @@ function Farrier() {
   );
 }
 
+/** A rider on horseback, built from flat facets: cream horse, rust cloak streaming back, ochre sun. */
+function Outrider() {
+  return (
+    <>
+      <circle cx="86" cy="66" r="15" fill={OCH} />
+      <path d="M100 252 H320" stroke={INK} strokeWidth="3" strokeLinecap="round" />
+      <path d="M270 126 C304 130 318 170 302 208 C298 176 288 156 266 146 Z" fill={INK} />
+      <path d="M172 178 L184 178 L180 212 L194 230 L188 240 L170 226 Z" fill={INK} opacity={0.62} />
+      <path d="M112 88 L118 78 L136 58 L140 38 L150 54 L170 72 L190 108 L252 112 L274 126 L272 152 L262 170 L262 206 L266 250 L254 250 L252 214 L242 180 L208 182 L204 214 L208 250 L196 250 L190 212 L182 180 L166 134 L146 106 L128 98 Z" fill={INK} />
+      <path d="M150 54 L170 74 L190 110 M156 64 L172 92" fill="none" stroke={PANEL} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="132" cy="70" r="2.6" fill={PANEL} />
+      <path d="M190 158 H240" stroke={PANEL} strokeWidth="2" strokeLinecap="round" opacity={0.6} />
+      <path d="M204 112 L220 108 L226 76 L212 72 Z" fill={DEEP} stroke={INK} strokeWidth="2" strokeLinejoin="round" />
+      <circle cx="219" cy="62" r="10" fill={INK} />
+      <path d="M212 76 L242 78 L304 98 L290 120 L266 112 L246 132 L224 112 Z" fill={CLAY} />
+      <path d="M244 82 L290 100 M240 96 L276 112" stroke="#8f3f28" strokeWidth="2" strokeLinecap="round" fill="none" />
+    </>
+  );
+}
+
 const ART: Record<string, { node: React.ReactNode; seed: number }> = {
+  outrider: { node: <Outrider />, seed: 5 },
   warden: { node: <Warden />, seed: 4 },
   herald: { node: <Herald />, seed: 9 },
   farrier: { node: <Farrier />, seed: 17 },
@@ -91,11 +112,7 @@ export default function FlatArt({ name }: { name: string }) {
   return (
     <div className="flat-art">
       <PixelConstellation className="flat-px" variant="card" cell={7} />
-      {key === "outrider" ? (
-        <img className="flat-horse" src="/agents/outrider-horse.png" alt="" loading="lazy" decoding="async" />
-      ) : (
-        <svg viewBox="60 0 280 272" preserveAspectRatio="xMidYMid meet" aria-hidden="true">{ART[key]?.node}</svg>
-      )}
+      <svg viewBox="60 0 280 272" preserveAspectRatio="xMidYMid meet" aria-hidden="true">{ART[key]?.node}</svg>
     </div>
   );
 }
