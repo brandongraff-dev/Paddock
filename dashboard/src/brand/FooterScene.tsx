@@ -126,9 +126,25 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
       // ---- solid art: a tall generated cliff with a rider, anchored right at full height ----
       const ri = riderImg.current;
       if (ri && ri.complete && ri.naturalWidth) {
-        const ih = h * (phone ? 0.92 : 0.93);
+        // cropped in: the rider is large, the ruins and bottom of the cliff run off the frame
+        const ih = h * (phone ? 1.35 : 1.6);
         const iw = (ih * ri.naturalWidth) / ri.naturalHeight;
-        ctx.drawImage(ri, w - iw * (phone ? 0.97 : 1.0), h - ih, iw, ih);
+        const ix = phone ? w * 0.62 - 0.4 * iw : w - iw * 0.78;
+        const iy = h * (phone ? 0.3 : 0.33) - 0.14 * ih;
+        // tone the illustration down on its own layer so it sits in the scene
+        const layer = document.createElement("canvas");
+        layer.width = Math.ceil(iw); layer.height = Math.ceil(ih);
+        const lc = layer.getContext("2d");
+        if (lc) {
+          lc.drawImage(ri, 0, 0, layer.width, layer.height);
+          lc.globalCompositeOperation = "source-atop";
+          lc.fillStyle = "rgba(10, 7, 5, 0.34)"; lc.fillRect(0, 0, layer.width, layer.height);       // overall dim
+          const fade = lc.createLinearGradient(0, 0, 0, layer.height);
+          fade.addColorStop(0, "rgba(10,7,5,0)"); fade.addColorStop(1, "rgba(8,6,5,0.5)");           // deeper toward the base
+          lc.fillStyle = fade; lc.fillRect(0, 0, layer.width, layer.height);
+          lc.fillStyle = "rgba(60, 30, 16, 0.10)"; lc.fillRect(0, 0, layer.width, layer.height);     // warm the shadows a touch
+          ctx.drawImage(layer, ix, iy);
+        } else ctx.drawImage(ri, ix, iy, iw, ih);
       }
     };
     const im = new Image();
