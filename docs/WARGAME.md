@@ -418,17 +418,29 @@ Python, no new deps, ~390 tests). Built so far:
   flows / imported hops) — `ingest.py`.
 - **Auditor evidence packs** (hash-chained PCI Req 1 / 12.5.2 / 11.4.x and
   NERC CIP-005 items; 11.4.x only met with a probe) — `compliance.py`.
+- **Twin-range eval harness** with a measured false-"closed" rate of 0.0
+  on the library — `ranges.py`.
+- **OT/ICS conduit model** (industrial protocols, Modbus/DNP3/S7 function
+  classes, L3/L4-can't-restrict-function-codes honesty) — `ot.py`.
+- **Read-only config sources** (In-Memory / File / AWS-API, describe-only)
+  that feed the parsers — `connectors.py`.
+- **Persistence + product API**: schema `039_wargame.sql`, the correlation
+  writer `store.py`, the orchestrator read API `routers/wargame.py`
+  (`/v1/wargame/...`, mirroring attack-paths), and the
+  `/compute-wargame` endpoint that runs an assessment from the asset graph
+  and persists it. OpenAPI + Python/TypeScript SDKs regenerated.
 - Runnable demos: `python -m app.engine.wargame.demo`,
   `… .demo_changegate`, and `… .demo_assess` (model → routes → fix →
   evidence, end to end).
 
-Not yet built: live connector wiring (the read-only API clients that feed
-the parsers and ingest from real tenants), probe deployment mode, the
-sandbox runner behind `replica.ReplicaRunner`, twin ranges with a
-published false-"closed" rate, and the dashboard. A known gap: Terraform
-rule ids (resource addresses) don't match the AWS parser's ids, so
-remove/modify across the two needs an id-mapping layer (add composes
-today).
+Not yet built: the rule-aware twin pipeline (persisting parsed firewall/
+cloud rules so `/compute-wargame` assesses a *config-proved* model rather
+than the all-inferred legacy asset graph), probe deployment mode, the
+sandbox runner behind `replica.ReplicaRunner`, and the dashboard. Known
+gaps: `/compute-wargame` currently builds an all-INFERRED environment from
+the legacy asset graph (no firewall rules in it yet); and Terraform rule
+ids (resource addresses) don't match the AWS parser's ids, so remove/
+modify across the two needs an id-mapping layer (add composes today).
 
 | Exists today | Needs building |
 |---|---|
