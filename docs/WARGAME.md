@@ -427,20 +427,29 @@ Python, no new deps, ~390 tests). Built so far:
 - **Persistence + product API**: schema `039_wargame.sql`, the correlation
   writer `store.py`, the orchestrator read API `routers/wargame.py`
   (`/v1/wargame/...`, mirroring attack-paths), and the
-  `/compute-wargame` endpoint that runs an assessment from the asset graph
-  and persists it. OpenAPI + Python/TypeScript SDKs regenerated.
+  `/compute-wargame` endpoint. OpenAPI + Python/TypeScript SDKs regenerated.
+- **Rule-aware twin pipeline**: schema `040_wargame_twin.sql`, the twin
+  store `twin_store.py` (persist/load rule sets + topology), config ingest
+  (`/ingest-config`, `/set-topology`) and the orchestrator twin API
+  (`POST /v1/wargame/twin/config`, `/twin/topology`, `GET /v1/wargame/twin`).
+  `/compute-wargame` now assesses the persisted twin when present —
+  **config-proved routes with signed certificates for closed boundaries**
+  (`assess.py`) — and falls back to the all-inferred asset graph otherwise.
 - Runnable demos: `python -m app.engine.wargame.demo`,
   `… .demo_changegate`, and `… .demo_assess` (model → routes → fix →
   evidence, end to end).
 
-Not yet built: the rule-aware twin pipeline (persisting parsed firewall/
-cloud rules so `/compute-wargame` assesses a *config-proved* model rather
-than the all-inferred legacy asset graph), probe deployment mode, the
-sandbox runner behind `replica.ReplicaRunner`, and the dashboard. Known
-gaps: `/compute-wargame` currently builds an all-INFERRED environment from
-the legacy asset graph (no firewall rules in it yet); and Terraform rule
-ids (resource addresses) don't match the AWS parser's ids, so remove/
-modify across the two needs an id-mapping layer (add composes today).
+Not yet built: the dashboard; probe deployment mode; the sandbox runner
+behind `replica.ReplicaRunner`. Known gaps / follow-ups: the orchestrator
+Redis fallback for twin ingest (`twin_ingest_config` / `twin_set_topology`
+jobs carrying a payload) is not yet consumed by correlation's stream
+handler — the sync path works and is tried first; certificates are signed
+with a documented demo key (`assess.DEMO_SIGNING_KEY`) pending real
+per-tenant key wiring; the compute-side agreement uses model reachability
+as its probe source when no live probe/flow exists (disclosed via the
+certificate's sensor-absent assumption); and Terraform rule ids don't
+match the AWS parser's ids, so remove/modify across the two needs an
+id-mapping layer (add composes today).
 
 | Exists today | Needs building |
 |---|---|
