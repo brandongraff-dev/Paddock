@@ -25,6 +25,13 @@ evasion. Every outbound request is scope-checked and audit-logged. See the
 > ⚠️ **Authorized use only.** Point this only at assets you own or are
 > explicitly, documentedly authorized to assess. [Jump to the notice.](#authorized-use-only)
 
+<p align="center">
+  <!-- LAUNCH VIDEO: edit this file on github.com, drag paddock-launch-punch.mp4 into the editor,
+       and replace VIDEO_URL below with the https://github.com/user-attachments/... link it creates.
+       Hosted by GitHub, so it is not stored in the repo and forks don't download it. -->
+  <a href="VIDEO_URL"><img src="docs/assets/launch-poster.jpg" alt="Paddock launch film (20s) - click to watch" width="720"></a>
+</p>
+
 ---
 
 ## What it does
