@@ -3,8 +3,8 @@
 **Requirements:** Docker + Docker Compose.
 
 ```bash
-git clone https://github.com/brandongraff-dev/cybersec
-cd cybersec
+git clone https://github.com/brandongraff-dev/Paddock
+cd Paddock
 
 make quickstart        # = cp .env.example .env + docker compose up -d --build + make demo
 ```

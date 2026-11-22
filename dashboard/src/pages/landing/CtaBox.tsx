@@ -4,7 +4,22 @@ import { useAuth } from "../../state/auth";
 import { BRAND_ICONS } from "../../brand/brandIcons";
 
 const DOCS = "https://paddock-docs.vercel.app";
-const CMD = "make quickstart";
+const REPO_URL = "https://github.com/brandongraff-dev/Paddock";
+/** What the "Paste into your agent" pill copies: a self-contained setup brief for a coding agent. */
+export const AGENT_PROMPT = `Set up Paddock (open-source, self-hosted attack surface management) on this machine and walk me through it.
+
+1. Check that Docker and Docker Compose are installed and running. If not, tell me and stop.
+2. Clone ${REPO_URL} and cd into it.
+3. Run \`make quickstart\`. It creates .env, builds and starts the stack, and seeds a demo graph. It can take a few minutes the first time.
+4. When it finishes, confirm the dashboard answers at http://localhost:3000 and the API docs at http://localhost:8080/docs, then tell me to open the Graph page.
+5. Read docs/getting-started.md in the repo. Do not point Paddock at anything yet.
+
+Rules you must follow:
+- Paddock is defensive only. Never scan, probe or add as scope anything I have not told you I own or am explicitly authorised to assess.
+- Do not change .env secrets or commit anything.
+- If a step fails, show me the exact error and the fix you propose before you try it.
+
+When the demo works, ask me which domain I own and want to map. Then use the "Point it at your own surface" steps in docs/getting-started.md (paddockctl scope add, then a scan), and remind me that ownership has to be proven before it counts as in scope.`;
 export const PENDING_DOMAIN_KEY = "paddock.cta.domain";
 
 /**
@@ -27,7 +42,7 @@ export default function CtaBox({ className }: { className?: string }) {
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(CMD); } catch { /* clipboard unavailable */ }
+    try { await navigator.clipboard.writeText(AGENT_PROMPT); } catch { /* clipboard unavailable */ }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
@@ -48,7 +63,7 @@ export default function CtaBox({ className }: { className?: string }) {
         <button type="submit">Start mapping</button>
       </form>
       <div className="cta-row">
-        <button type="button" className="cta-cmd" onClick={copy} aria-label={`Copy command: ${CMD}`}>
+        <button type="button" className="cta-cmd" onClick={copy} aria-label="Copy a setup prompt to paste into your coding agent" title="Copies a setup prompt for Cursor, ChatGPT or Claude">
           <span className="cta-dots" aria-hidden="true">
             {(["cursor", "openai", "claude"] as const).map((k) => (
               <i key={k} className={`cta-${k}`}>
@@ -56,7 +71,7 @@ export default function CtaBox({ className }: { className?: string }) {
               </i>
             ))}
           </span>
-          <span>{copied ? "Copied to clipboard" : "Self-host in one command"}</span>
+          <span>{copied ? "Copied. Paste it into your agent" : "Paste into your agent to set up"}</span>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
             {copied ? <path d="M3 8.5l3.2 3L13 4.5" /> : (<><rect x="5.5" y="5.5" width="8" height="8" rx="1.8" /><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" /></>)}
           </svg>

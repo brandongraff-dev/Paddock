@@ -11,8 +11,8 @@
 site_name: Paddock
 site_description: Defensive attack-surface management — attack paths, SCA, threat intel and IoT/OT discovery.
 site_url: https://paddock-docs.vercel.app/
-repo_url: https://github.com/brandongraff-dev/cybersec
-repo_name: brandongraff-dev/cybersec
+repo_url: https://github.com/brandongraff-dev/Paddock
+repo_name: brandongraff-dev/Paddock
 edit_uri: edit/main/docs/
 copyright: Paddock is free software under the GNU AGPL-3.0.
 

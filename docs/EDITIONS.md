@@ -37,7 +37,7 @@ in the catalogue below; existing features are never moved behind a license.
 | Air-gapped bundles (`air_gapped`), federation (`federation`), deep OT protocols (`ot_deep_protocols`) | — | — | — | ✅ |
 
 The authoritative feature list is `FEATURES` in
-[`orchestrator/app/licensing.py`](https://github.com/brandongraff-dev/cybersec/blob/main/orchestrator/app/licensing.py);
+[`orchestrator/app/licensing.py`](https://github.com/brandongraff-dev/Paddock/blob/main/orchestrator/app/licensing.py);
 `GET /v1/license` returns it with an `enabled` flag per feature.
 
 ## Pricing metric

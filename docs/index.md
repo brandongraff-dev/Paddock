@@ -38,9 +38,9 @@ paths an attacker would actually take.
 
 ## Project
 
-- Source: [github.com/brandongraff-dev/cybersec](https://github.com/brandongraff-dev/cybersec)
-- License: [AGPL-3.0](https://github.com/brandongraff-dev/cybersec/blob/main/LICENSE),
+- Source: [github.com/brandongraff-dev/Paddock](https://github.com/brandongraff-dev/Paddock)
+- License: [AGPL-3.0](https://github.com/brandongraff-dev/Paddock/blob/main/LICENSE),
   with commercial licenses available ([Editions](EDITIONS.md)).
-- Contributing: [CONTRIBUTING.md](https://github.com/brandongraff-dev/cybersec/blob/main/CONTRIBUTING.md)
-  and the [CLA](https://github.com/brandongraff-dev/cybersec/blob/main/CLA.md).
-- Security reports: [SECURITY.md](https://github.com/brandongraff-dev/cybersec/blob/main/SECURITY.md).
+- Contributing: [CONTRIBUTING.md](https://github.com/brandongraff-dev/Paddock/blob/main/CONTRIBUTING.md)
+  and the [CLA](https://github.com/brandongraff-dev/Paddock/blob/main/CLA.md).
+- Security reports: [SECURITY.md](https://github.com/brandongraff-dev/Paddock/blob/main/SECURITY.md).

@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: brandongraff-dev/cybersec/.github/actions/paddock-scan@main   # pin a SHA in production
+      - uses: brandongraff-dev/Paddock/.github/actions/paddock-scan@main   # pin a SHA in production
         with:
           paddock-url: https://paddock.example.com
           api-key: ${{ secrets.PADDOCK_API_KEY }}
@@ -140,7 +140,7 @@ To upload the SARIF yourself, for example to merge it with other tools:
 
 ```yaml
       - id: paddock
-        uses: brandongraff-dev/cybersec/.github/actions/paddock-scan@main
+        uses: brandongraff-dev/Paddock/.github/actions/paddock-scan@main
         with:
           paddock-url: https://paddock.example.com
           api-key: ${{ secrets.PADDOCK_API_KEY }}

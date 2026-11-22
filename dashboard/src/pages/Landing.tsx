@@ -11,7 +11,6 @@ import PixelConstellation from "../brand/PixelConstellation";
 import PixelSprite from "../brand/PixelSprite";
 import type { SpriteName } from "../brand/spriteData";
 import Faq from "./landing/Faq";
-import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
 import HowItWorks from "./landing/HowItWorks";
@@ -78,7 +77,7 @@ const AGENTS: Agent[] = [
   },
 ];
 
-const REPO = "https://github.com/brandongraff-dev/cybersec";
+const REPO = "https://github.com/brandongraff-dev/Paddock";
 const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
   { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["How it works", "#how"], ["Principles", "#principles"], ["FAQ", "#faq"], ["Console", "/login"]] },
   { title: "Project", links: [["Source", REPO], ["Documentation", "https://paddock-docs.vercel.app"], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
@@ -155,7 +154,6 @@ export default function Landing() {
         <CtaBox className="cta-strip" />
       </section>
 
-      <DitherRule className="lp-rule-dither" rows={5} />
       <section className="lp-agents" id="agents">
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Defensive agents</span>
@@ -183,10 +181,8 @@ export default function Landing() {
         </div>
       </section>
 
-      <DitherRule className="lp-rule-dither" />
       <Showcase />
       <HowItWorks />
-      <DitherRule className="lp-rule-dither" rows={5} />
 
 
       <section className="lp-principles scene" id="principles">
@@ -207,7 +203,6 @@ export default function Landing() {
       </section>
 
 
-      <DitherRule className="lp-rule-dither" rows={5} />
       <Faq />
       </div>
 

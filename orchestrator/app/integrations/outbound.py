@@ -21,7 +21,7 @@ from . import netsafety
 from .base import DeliveryResult
 from .settings import isettings
 
-USER_AGENT = "Paddock-Integrations/1.0 (+https://github.com/brandongraff-dev/cybersec)"
+USER_AGENT = "Paddock-Integrations/1.0 (+https://github.com/brandongraff-dev/Paddock)"
 
 
 class GuardedAsyncClient(httpx.AsyncClient):

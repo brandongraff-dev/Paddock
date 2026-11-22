@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const REPO = "brandongraff-dev/cybersec";
+const REPO = "brandongraff-dev/Paddock";
 const KEY = "paddock.stars.v1";
 
 function fmt(n: number): string {

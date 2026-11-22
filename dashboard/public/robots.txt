@@ -4,4 +4,4 @@ Disallow: /login
 Disallow: /setup
 Disallow: /sso/
 
-Sitemap: https://paddock-zeta-rose.vercel.app/sitemap.xml
+Sitemap: https://www.openpaddock.dev/sitemap.xml

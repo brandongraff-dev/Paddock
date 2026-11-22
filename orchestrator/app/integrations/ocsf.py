@@ -197,7 +197,7 @@ def _product() -> dict[str, Any]:
         "name": "Paddock",
         "vendor_name": "Paddock",
         "version": __version__,
-        "url_string": "https://github.com/brandongraff-dev/cybersec",
+        "url_string": "https://github.com/brandongraff-dev/Paddock",
     }
 
 

@@ -16,7 +16,7 @@ from urllib.parse import quote, unquote
 from . import __version__
 
 TOOL_NAME = "Paddock"
-TOOL_URI = "https://github.com/brandongraff-dev/cybersec"
+TOOL_URI = "https://github.com/brandongraff-dev/Paddock"
 
 # --------------------------------------------------------------------------- #
 # shared helpers

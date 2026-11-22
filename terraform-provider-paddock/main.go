@@ -8,7 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"github.com/brandongraff-dev/cybersec/terraform-provider-paddock/internal/provider"
+	"github.com/brandongraff-dev/Paddock/terraform-provider-paddock/internal/provider"
 )
 
 // version is set by the release build (-ldflags "-X main.version=...").
