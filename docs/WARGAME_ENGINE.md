@@ -797,10 +797,18 @@ Still missing:
   would produce real probe results.
 - **The replica sandbox runner** behind `replica.ReplicaRunner` (only the
   precondition checks exist).
-- **A consumer for the Redis fallback jobs.** The orchestrator queues twin
-  ingest (and recompute) jobs to Redis when correlation is unreachable, but
-  correlation's stream handler does not consume them; only the synchronous
-  path (tried first) works.
+- **Redis fallback consumer: built, with limits.** Correlation's
+  `app/jobs.py` consumes the `queue:correlate` stream (consumer group
+  `correlation`, created at id `0` so jobs queued during an outage are still
+  read) and handles `recompute_paths`, `recompute_wargame`,
+  `twin_ingest_config` and `twin_set_topology`. Each job runs inside its own
+  `tenant_id` (a job with none is rejected and acked, even when
+  `TENANCY_STRICT` is off, never run cross-tenant) and calls the same function
+  as the sync endpoint. Ack happens only after success. Poison jobs (bad JSON,
+  invalid payload, a 4xx from the shared code, unknown `op`) are logged and
+  acked. Transient failures stay pending, are re-claimed after 30 s, and after
+  5 deliveries are copied to `queue:correlate:dead` and acked. Not covered: no
+  tooling reads or replays the dead-letter stream.
 - **`scripts/install.sh` does not generate `WARGAME_SIGNING_KEY`**, so an
   install without it signs with the labelled public development key
   (`unsigned-dev`).

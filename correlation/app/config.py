@@ -48,6 +48,7 @@ class Settings:
     consumer_group: str
     consumer_name: str
     events_stream: str
+    queue_correlate: str
     env: str
     attack_map_enabled: bool
     fusion_enabled: bool
@@ -91,6 +92,7 @@ class Settings:
                 "CONSUMER_NAME", f"correlation-{os.getpid()}"
             ),
             events_stream=os.environ.get("EVENTS_STREAM", "stream:events"),
+            queue_correlate=os.environ.get("QUEUE_CORRELATE", "queue:correlate"),
             env=os.environ.get("ENV", "dev"),
             attack_map_enabled=_bool_env("ATTACK_MAP_ENABLED", True),
             fusion_enabled=_bool_env("FUSION_ENABLED", True),

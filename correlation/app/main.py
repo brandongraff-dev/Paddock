@@ -26,7 +26,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import tenancy
+from . import jobs, tenancy
 from .config import settings
 from .db import Database
 from .engine.attack_mapping import (
@@ -167,6 +167,9 @@ class Service:
             self._bg_tasks.append(
                 asyncio.create_task(self._consume_events(), name="events")
             )
+            self._bg_tasks.append(
+                asyncio.create_task(self._consume_jobs(), name="jobs")
+            )
         except Exception:
             log.exception("redis unavailable; running without event stream")
 
@@ -262,6 +265,17 @@ class Service:
                             log.warning(
                                 "xack failed for %s", msg_id
                             )
+
+    async def _consume_jobs(self) -> None:
+        """Consume the orchestrator's Redis fallback jobs (``queue:correlate``)."""
+        assert self._redis is not None
+        await jobs.consume(
+            self._redis,
+            stream=self.cfg.queue_correlate,
+            group=self.cfg.consumer_group,
+            consumer=self.cfg.consumer_name,
+            handlers=_job_handlers(self),
+        )
 
     async def _handle_event(self, fields: dict[str, Any]) -> None:
         # Fields may arrive as a single "json" key or as flat kv.
@@ -827,6 +841,14 @@ async def ingest_config(req: IngestConfigRequest) -> dict[str, int]:
     provenance."""
     if not service._ready:
         raise HTTPException(status_code=503, detail="not ready")
+    return await do_ingest_config(req)
+
+
+async def do_ingest_config(req: IngestConfigRequest) -> dict[str, int]:
+    """Shared body of ``/ingest-config`` and the ``twin_ingest_config`` queue
+    job (runs in whatever tenant context the caller bound). 4xx
+    ``HTTPException`` means the input is bad (the job consumer treats it as a
+    poison message)."""
     if req.vendor not in available_vendors():
         raise HTTPException(
             status_code=422,
@@ -869,6 +891,11 @@ async def set_topology(req: SetTopologyRequest) -> dict[str, int]:
     spec types; a malformed or duplicate segment/edge is a 422."""
     if not service._ready:
         raise HTTPException(status_code=503, detail="not ready")
+    return await do_set_topology(req)
+
+
+async def do_set_topology(req: SetTopologyRequest) -> dict[str, int]:
+    """Shared body of ``/set-topology`` and the ``twin_set_topology`` queue job."""
     try:
         segments = [_segment_spec(d) for d in req.segments]
         edges = [_edge_spec(d) for d in req.edges]
@@ -883,6 +910,38 @@ async def set_topology(req: SetTopologyRequest) -> dict[str, int]:
         raise HTTPException(status_code=422, detail=f"duplicate segment id {dup!r}")
     await twin_store.persist_topology(service.db, segments, edges)
     return {"segments": len(segments), "edges": len(edges)}
+
+
+def _job_handlers(svc: "Service") -> dict[str, Any]:
+    """``op`` -> handler for the Redis fallback jobs. Every handler runs inside
+    the job's tenant context (bound by ``jobs.process``) and calls the SAME
+    function as the synchronous endpoint. A malformed ``payload`` is a
+    ``jobs.PoisonJob``."""
+
+    def _model(cls: Any, payload: Any) -> Any:
+        try:
+            return cls.model_validate(payload)
+        except Exception as exc:  # pydantic ValidationError / bad shape
+            raise jobs.PoisonJob(f"invalid payload: {type(exc).__name__}") from None
+
+    async def recompute_paths(_p: Any) -> Any:
+        return await svc.run_pathcompute_scoped()
+
+    async def recompute_wargame(_p: Any) -> Any:
+        return await svc.run_wargame_scoped()
+
+    async def twin_ingest_config(p: Any) -> Any:
+        return await do_ingest_config(_model(IngestConfigRequest, p))
+
+    async def twin_set_topology(p: Any) -> Any:
+        return await do_set_topology(_model(SetTopologyRequest, p))
+
+    return {
+        "recompute_paths": recompute_paths,
+        "recompute_wargame": recompute_wargame,
+        "twin_ingest_config": twin_ingest_config,
+        "twin_set_topology": twin_set_topology,
+    }
 
 
 # ----------------------------------------------------------------------------

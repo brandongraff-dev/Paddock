@@ -442,8 +442,8 @@ Python, no new deps, ~390 tests). Built so far:
 Not yet built: the dashboard; probe deployment mode; the sandbox runner
 behind `replica.ReplicaRunner`. Known gaps / follow-ups: the orchestrator
 Redis fallback for twin ingest (`twin_ingest_config` / `twin_set_topology`
-jobs carrying a payload) is not yet consumed by correlation's stream
-handler — the sync path works and is tried first; certificates are signed
+jobs carrying a payload) is consumed by correlation's `app/jobs.py`
+(tenant-scoped, bounded retry, dead-letter `queue:correlate:dead`); certificates are signed
 with a documented demo key (`assess.DEMO_SIGNING_KEY`) pending real
 per-tenant key wiring; the compute-side agreement uses model reachability
 as its probe source when no live probe/flow exists (disclosed via the
