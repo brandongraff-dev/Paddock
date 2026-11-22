@@ -3,6 +3,7 @@ import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
+import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
 import Faq from "./landing/Faq";
@@ -204,7 +205,7 @@ export default function Landing() {
       </div>
 
       <footer className="lp-footer">
-        <PixelField className="lp-footer-px" cell={6} maxDpr={1} animate={false} wake={{ x: 1.08, y: 1.02 }} />
+        <FooterScene className="lp-footer-px" />
         <div className="lp-footer-in">
           <div className="lp-footer-cta">
             <h2>Close the paths before they&apos;re walked.</h2>

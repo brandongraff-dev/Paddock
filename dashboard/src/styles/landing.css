@@ -596,3 +596,19 @@
 @media (max-width: 720px) { .lp-card-body p { font-size: 14.5px; } }
 .lp-card-body h3 { text-transform: none; }
 .lp-card-body p { text-wrap: balance; }
+
+/* footer scene: the canvas is the footer's backdrop; text stays on the left, the cliff on the right */
+.lp-footer { min-height: 760px; }
+.lp-footer-px { opacity: 1; }
+.lp-footer::before { display: none; }
+@media (min-width: 900px) { .lp-footer-in { max-width: none; width: min(1360px, calc(100% - var(--lp-gut) * 2)); } .lp-footer-cta, .lp-footer-grid { max-width: 62%; } .lp-footer-grid { grid-template-columns: 1.3fr repeat(3, 1fr); } }
+@media (max-width: 899px) { .lp-footer { min-height: 0; } .lp-footer-in { padding-bottom: 300px; } .lp-footer-px { top: auto; bottom: 0; height: 360px; } }
+/* keep the left text column readable over the glow */
+.lp-footer-cta, .lp-footer-grid { position: relative; }
+.lp-footer-in::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 62%; z-index: -1; pointer-events: none; background: linear-gradient(90deg, rgba(14, 12, 10, 0.82) 0%, rgba(14, 12, 10, 0.6) 70%, transparent 100%); }
+.lp-footer-in { position: relative; }
+.lp-footer nav a, .lp-footer-brand p, .cta-note { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.8); }
+@media (max-width: 899px) { .lp-footer-in::before { width: 100%; background: linear-gradient(180deg, rgba(14,12,10,.7), transparent); } }
+
+
+@media (max-width: 899px) { .lp-footer-in { padding-bottom: 470px; } .lp-footer-px { height: 560px; } }
