@@ -1,395 +1,482 @@
 # Paddock Wargame: the version people pay for
 
 > **Paddock Wargame answers one question with evidence: can anyone reach what
-> you care about, and is the door proven shut?** It works backward from your
-> crown jewels over a model of your environment, proves every hop it claims,
-> proves every closed route it claims, and never runs an exploit against
-> anything.
+> you care about, and is the door shut?** It works backward from your crown
+> jewels over a model of your environment, labels every hop with the evidence
+> behind it, tells your change board what each change opens and breaks before
+> it ships, and never runs an exploit against anything.
 
 This document turns the Wargame row in [VISION.md §5](VISION.md) into a
-product spec and a business case. It stays inside the hard rules in
+product spec and business case. It stays inside the hard rules in
 [SECURITY.md §6](../SECURITY.md), [README](../README.md) and
 [CONTRIBUTING](../CONTRIBUTING.md). Where an idea would cross them, it is
-listed under [Decisions for the owner](#11-decisions-for-the-owner) rather
+listed under [Decisions for the owner](#12-decisions-for-the-owner) rather
 than assumed.
 
-Market facts below came from secondary sources gathered in November 2026.
-Anything marked *(verify)* needs a primary source before it goes in a pitch.
+**How this version was made.** It was drafted from the repo's rules and a
+market scan from November 2026. It was then reviewed adversarially by four
+personas who would have to say yes: a hospital CISO, a PCI QSA, a utility OT
+lead and a Series A investor. Every change below answers an objection one of
+them raised. Market facts come from secondary sources; anything marked
+*(verify)* needs a primary source before it goes in a pitch.
 
 ---
 
-## 0. What changed from the first draft, and why
+## 0. The idea, sharpened
 
-| First draft | This version | Why |
+| Original idea | This version | Why |
 |---|---|---|
-| Run the real exploit on a sandboxed replica | **Replica verification**: prove the exploit's *preconditions* on a replica, then prove the fix removes them **and doesn't break the service** | Running PoCs breaks SECURITY.md §6, CONTRIBUTING and the PR safety gate. Preconditions give buyers most of the proof value. "The patch won't take down the infusion-pump gateway" is what hospital and plant change boards actually block on. |
-| Solver proves "no path" | Solver proof **plus a certificate, stated assumptions and an expiry**, re-proved on every change | A proof without assumptions is the credibility trap the first draft warned about. Make the assumptions part of the artifact. |
-| Sentry cross-checks the solver | **Impossible traffic**: any flow the model says can't exist is a top-severity alert | Turns the twin's biggest weakness (drift, missed devices) into its sharpest detection, and it heals the model. |
-| Continuous, against a twin | Also **before** changes: a gate on firewall changes and IaC PRs | PCI 11.4.5 requires a segmentation test *after every segmentation change*. Prevention is what network and cloud teams pay for. |
-| Minimal set of fixes | **Cost-weighted** minimal cut with compensating controls for what can't be patched | A PLC can't be patched on Tuesday, but its conduit rule can change. |
-| "Share of paths proven closed" | **Crown-Jewel Closure** reported next to **Model Coverage** | A closure number without a coverage number is the stat that gets you sued. |
-| Sell to CISOs | Sell **evidence artifacts** to the people who have to produce them: QSAs, OT and network engineers, change boards, insurers | A dashboard is optional. An auditor-accepted segmentation report is a line item. |
+| Run the real exploit on a sandboxed replica | **Change-impact proof** leads. **Replica verification** (preconditions, never payloads) is a later tier for rebuildable components | Running PoCs breaks SECURITY.md §6. Clinical and OT devices can't be rebuilt anyway. What change boards block on is "what will this change open, and what will it break?", and config plus observed flows answers that for every device. |
+| Solver proves "no path" | Solver proof **plus safe-check probes** across each boundary, reconciled against **observed flows**, in a three-way agreement report | "No packets sent" proves what the config *intends*. A QSA needs to see the boundary *operating*. TCP-connect probes inside the existing safe-check envelope supply that, with no exploitation. |
+| A Sentry sensor everywhere | **Ingest-first**: read-only flows and assets from the tools customers already own (firewall logs, NetFlow, Zeek, Dragos, Claroty, Armis). Sentry is optional | Plants and hospitals veto new SPAN ports. Ingest gets a first route map in days, not months. |
+| "Share of paths proven closed" | **Per-boundary pass/fail** for auditors; Crown-Jewel Closure for boards, always shown with a coverage figure that's honest about where the sensors are | Segmentation passes or fails per boundary, so "91% closed" reads to an auditor as a failure. |
+| Minimal set of fixes | **Minimum-cost fix set** (a hitting-set problem, solved with an ILP) over (entry, jewel) pairs, with customer-chosen cost classes | Counting enumerated paths explodes combinatorially, and invented weights don't survive a change board. |
+| Sell to CISOs | Sell **auditor-formatted evidence for review-type requirements**, through the pentest and QSA-aligned firms that sign the reports | Review requirements (PCI 1.2.5, 1.2.7, 12.5.2; NERC CIP-005, CIP-010) accept tool output as evidence. The partner holds the relationship and the signature. |
 
-The positioning line stays, made concrete:
+The positioning line, made concrete:
 
 > Strix tells you an app has holes. Paddock tells you whether anyone can reach
-> what you care about, **proves each step without exploiting anything, proves
-> the fix before it ships, and alarms the moment reality disagrees with the
-> proof.**
+> what you care about, shows the evidence behind every step, tells your change
+> board what a change opens and breaks before it ships, and alarms when the
+> network stops matching the proof. Nothing is ever exploited.
 
 ---
 
-## 1. The ethics decision on Part 2: replica verification, not replica exploitation
+## 1. The ethics decision on Part 2: no exploit code, ever, including on replicas
 
 **Recommendation: Paddock never executes exploit code, not even against its
-own replicas.** Replicas are used to prove the conditions an exploit needs,
-and to prove a fix.
+own replicas.**
 
-Why hold the line when nothing real is touched:
-
-1. **It's the moat, not a handicap.** SECURITY.md §6 says it: "A detector that
-   cannot be turned into a weapon has a dramatically smaller blast radius if
-   it is itself compromised." Wargame already produces a ranked map of routes
-   to the crown jewels. Pair that with a working exploit runner and you've
-   built the attacker's kit, one compromise away from being used for real.
-2. **Buyers in regulated sectors can approve it.** Hospital and utility
-   security reviews ask "can this tool attack?" A plain *no* closes the deal
-   faster than "only in a sandbox".
-3. **The proof value is mostly in the preconditions.** A CVE is exploitable on
-   a hop when the version is in range, the vulnerable feature is enabled, the
-   vulnerable code is reachable from the exposed interface, and the interface
-   is reachable from the previous hop. Paddock can prove each of these without
-   a payload. Assessor already does version and config proof, and
-   `codeanalysis/` already does call-graph reachability.
-4. **Real exploit evidence can still enter the graph**, labelled with its
-   source. A customer's pentest firm, their own Strix runs, or their red team
-   can import results through the existing SARIF and universal ingest. Paddock
-   records the evidence and never runs it.
-
-### What replica verification does
-
-For each suspect hop whose component can be rebuilt (container image, SBOM
-plus IaC, the customer's own code):
-
-1. **Rebuild** the component in an isolated sandbox with no network egress,
-   from the customer's own artifacts: same image digest, same config, secrets
-   replaced by synthetic values. No production data goes in.
-2. **Prove the preconditions** with the existing safe-check envelope (GET,
-   HEAD, TLS handshake, TCP connect, banner read) plus inspection of the
-   filesystem and package DB: the version is in range, the flag is on, the
-   endpoint is exposed, the vulnerable function is reachable.
-3. **Apply the proposed fix to the replica** (Farrier's diff).
-4. **Prove two things:** the preconditions are gone, and the service still
-   passes its health and smoke checks (the customer's own, or ones generated
-   from observed traffic shapes).
-5. **Record** the replica's digest, the checks run and the results as
-   evidence, hash-chained like every other ledger entry.
-
-Step 4 is the selling point the first draft missed. Hospitals and plants
-mostly know what's vulnerable. They don't patch because they can't prove the
-patch is safe. "This fix closes the route and the service still works" gets a
-change approved.
+1. **It's the moat.** As SECURITY.md §6 puts it: "A detector that cannot be
+   turned into a weapon has a dramatically smaller blast radius if it is
+   itself compromised." Wargame produces a ranked map of routes to the crown
+   jewels. A map plus an exploit runner is an attacker's kit.
+2. **Regulated buyers can approve it.** "Can this tool attack?" gets a plain
+   *no*, and that's what a hospital security committee wants to hear.
+3. **The proof buyers need doesn't require it.** Change boards need
+   change-impact proof (§2.3). Auditors need boundary evidence (§2.2).
+   Neither involves a payload.
+4. **Demonstrated-exploit evidence can still come in**, labelled *Imported*:
+   pentest-firm results, the customer's own Strix runs, red-team reports, via
+   the existing SARIF and universal ingest. Paddock records them and never
+   runs them.
 
 ---
 
-## 2. The product: six capabilities
+## 2. The product: what it does, in the order it sells
 
-### 2.1 Backward search from crown jewels → the minimal cut
+### 2.1 Backward from crown jewels → the minimum-cost fix set
 
 - **Crown jewels** come from what exists today (`metadata.crown_jewel`,
   cloud tags, ServiceNow criticality, data-store classification) plus a
-  required onboarding step. In the first session the customer names up to 10
-  jewels and why each one matters (cardholder data, patient records, safety
-  PLC, signing keys).
-- **Search runs backward** over a **directed, rule-aware** graph: from each
-  jewel, find every predecessor that can reach it. Entry points include
-  identities and third parties as well as network edges: vendor VPN
-  accounts, remote-support tools, shared admin credentials (detected, never
-  tested), and guest and IoT segments.
-- **Output: the cost-weighted minimum cut.** Each candidate fix carries a cost
-  (change risk, downtime, team, whether a patch is even possible). The
-  solver returns the cheapest set of changes that severs every route:
-  "these 3 changes close 41 of 44 routes to the CDE, and the other 3 need a
-  vendor patch." In OT and medical environments it prefers compensating
-  controls (a conduit rule, an allowlist, a Sentry watch) over patches.
-- Everything off a route to a jewel is shown as *not on a crown-jewel route*.
-  It's still findable, but it no longer competes for attention.
+  required onboarding step: name up to 10, and say why.
+- **Search runs backward** over a **directed, rule-aware** graph. Entry points
+  include identities and third parties, not just network edges: vendor VPNs,
+  remote-support tools, shared admin credentials (detected by fingerprint,
+  never tested), guest and IoT segments, dual-homed hosts.
+- **The unit is the (entry, jewel) pair and the boundary**, not enumerated
+  paths.
+- **The fix set** is a minimum-cost hitting set solved with an ILP: a fix is a
+  rule change that removes many edges at once. Costs come from classes the
+  customer sets (*rule change on a non-clinical VLAN* = low, *firmware patch
+  on a clinical device* = needs vendor). Paddock doesn't invent risk weights.
+  It prefers compensating controls where patches aren't possible.
+- Anything off a route to a jewel is marked *not on a crown-jewel route*. It's
+  still visible; it just stops competing for attention.
 
-### 2.2 Prove each hop: the evidence ladder
+### 2.2 Boundary evidence: config proof, probes and observation, reconciled
 
-Every edge and every route carries exactly one label. The labels are strict
-and shown everywhere, including reports and the API.
+Each crown-jewel boundary (CDE, PHI zone, an IEC 62443 conduit) gets three
+independent kinds of evidence:
 
-| Label | Meaning | Source |
+1. **Config proof (no packets).** A solver over full rule semantics: priority,
+   deny, object and security-group references, NAT, route tables, NACLs. The
+   approach follows Batfish and AWS Tiros. Some features are runtime state
+   and can't be proved from config: App-ID and User-ID, FQDN objects, dynamic
+   address groups, EDLs, SD-WAN, Kubernetes NetworkPolicy and service mesh.
+   Rules that depend on them are labelled **Conditional**, never *closed*.
+2. **Safe-check probes (packets, inside the rules).** A small probe agent sits
+   on each out-of-scope segment. It's a deployment of the existing active
+   worker, not Sentry, which stays listen-only. It runs **TCP connect and
+   banner read only** against in-scope, proof-of-control-verified ranges on
+   the far side, rate-capped, through the existing scope gate, egress wrapper
+   and ledger. It's on by default for IT and PCI estates. It's opt-in per
+   segment for OT and clinical networks, and never pointed at device ranges
+   the customer marks fragile.
+3. **Observed flows.** Firewall allow and deny logs, NetFlow, Zeek, Sentry,
+   or the customer's Dragos, Claroty or Armis.
+
+The **three-way agreement report** is the core artifact. For every boundary
+and port class it says whether config, probe and observation agree, and if
+not, which one disagrees and why. Disagreement is where the real findings
+are.
+
+### 2.3 Change-impact proof: the change board's attachment
+
+This is the headline capability. It works for every device, rebuildable or
+not.
+
+- **Input:** a proposed firewall, ACL, NAC or security-group change, from a
+  ServiceNow or Jira change ticket, or a Terraform or CloudFormation plan in
+  CI.
+- **Output, attached to the ticket or PR before the change is applied:**
+  - **Routes it opens or closes** to each crown jewel, from the solver, before
+    and after.
+  - **Live flows it would break**, from 30 days of observed flows: *"This ACL
+    would block 3 of 41,000 flows seen in 30 days, including the pump →
+    drug-library sync at 02:00 nightly."*
+  - Which regulatory boundaries it touches (CDE, ESP, zone/conduit).
+- It's advisory by default and blocking by policy. It never applies anything.
+
+This answers the question that actually stalls hospital, plant and PCI
+change boards, and it's also the evidence PCI expects after a segmentation
+change. Tufin and AlgoSec sell pre-change risk checks. Paddock adds crown-jewel
+routes and the flows-it-breaks proof.
+
+### 2.4 The evidence ladder
+
+A hop can carry **several labels**: it can be Observed *and* Proved (config).
+Strength is shown explicitly. Seeing traffic proves reachability, not
+exploitability.
+
+| Label | Means | Proves |
 |---|---|---|
-| **Observed** | Traffic on this hop was seen | Sentry / `can_reach_observed` |
-| **Proved (config)** | The solver shows the rules permit it | Firewall, cloud and route model |
-| **Proved (replica)** | Exploit preconditions confirmed on a rebuilt copy | Replica verification |
-| **Proved (live safe check)** | Preconditions confirmed on the in-scope asset with the safe-check envelope | Assessor |
-| **Imported** | A third party demonstrated it | Pentest or red-team result via ingest, attributed |
-| **Inferred** | The graph suggests it; nothing has proved it | Heuristics, fingerprints |
-| **Unknown** | The model can't see this part | Coverage gap |
+| **Proved (config)** | The solver shows the rules permit this hop | Reachability per config |
+| **Tested (probe)** | A safe-check TCP connect crossed the boundary | Reachability in operation |
+| **Observed** | Traffic on this hop was seen, with a completed handshake or a destination-side view | Reachability in use |
+| **Proved (live safe check)** | Exploit preconditions confirmed on the in-scope asset (Assessor: version, config, exposure) | Vulnerable-and-reachable |
+| **Proved (replica)** | Preconditions confirmed on a rebuilt copy (§2.7) | Vulnerable-and-reachable, for rebuildable components |
+| **Imported** | A third party demonstrated exploitation, with attribution | Exploited, by someone else |
+| **Conditional** | Depends on runtime state the model can't prove | — |
+| **Inferred** | The graph suggests it | Nothing yet |
+| **Unknown** | Outside the model | — |
 
-A route is only as strong as its weakest hop, and the UI says so: "Proved
-except hop 3 (inferred: proprietary PLC firmware)."
+Every route shows its weakest hop: "Proved except hop 3 (inferred:
+proprietary PLC firmware)."
 
-### 2.3 Prove closed routes stay closed: certificates, not claims
+### 2.5 Impossible traffic, made quiet enough to trust
 
-- **The solver** works over the full rule semantics (priority, deny, CIDR and
-  security-group references, NACLs, route tables, NAT), not the current
-  "world-open" summaries. The approach follows AWS's Tiros/Zelkova and
-  Batfish: SMT/Datalog over the parsed config, no packets sent.
-- **Each "closed" verdict ships as a certificate** containing:
-  - the claim (*no route from guest Wi-Fi to the CDE on any port*),
-  - the exact config snapshot hashes it was proved against,
-  - the **stated assumptions** (*no unmodelled links; physical and serial
-    paths out of model; no compromised firewall; identity paths modelled only
-    for listed IdPs*),
-  - the **corroboration window** (*Sentry observed 0 flows across this
-    boundary in 30 days on 3 sensors*),
-  - an **expiry**: it re-proves on every config change and at least daily, and
-    a lapsed certificate shows as lapsed.
-- Certificates are signed and hash-chained using the existing audit anchoring,
-  so an auditor or insurer can check one without access to Paddock.
+If a flow crosses a boundary that config and probes say is closed, the model
+is wrong, a rule isn't enforcing, or something is bypassing controls.
 
-### 2.4 Impossible traffic: when reality disagrees with the proof
-
-If Sentry sees a flow across a boundary the solver proved closed, one of
-three things is true: the model is missing something, a rule isn't doing what
-its config says, or someone is bypassing controls. All three deserve top
-priority.
-
-- It's raised as one alert with the certificate it contradicts attached. It
-  goes in as a new `behavior.py` detector alongside `iot_crosses_segment`.
-- The certificate is downgraded to *contradicted* until it's resolved.
-- Resolving it adds the missing device or link, so **the twin corrects itself
-  from its own contradictions.** That is the answer to "one missed device
-  sinks your credibility": the missed device announces itself.
-
-No forward-searching exploit tool can make this alert, because none of them
-holds a proof to contradict.
-
-### 2.5 The change gate: prove it before it ships
-
-- **IaC:** a CI check on Terraform and CloudFormation plans. "This PR opens a
-  route from `subnet-guest` to `rds-payments` on 5432. Here's the route." It
-  uses the same solver against the planned state.
-- **Firewall changes:** a ServiceNow or Jira change-ticket integration
-  attaches a before/after proof to every rule change. That gives you PCI
-  11.4.5's "after any change to segmentation controls" evidence at the moment
-  of the change.
-- The gate is advisory by default and blocking by policy. It runs before the
-  change is applied, so it touches nothing.
+To keep the alert quiet:
+- **It only fires on** a completed handshake, a destination-side observation,
+  or a firewall *allow* log. A source-side SYN the firewall dropped proves the
+  boundary works.
+- **Suppressed:** ARP, mDNS, DHCP and other L2 broadcast; load-balancer health
+  checks; the firewall's own management plane; known NAT and VPN
+  encapsulation.
+- **A human resolves it, with a cited reason.** Paddock never auto-adds the
+  edge to "heal" the model, because that could legitimise an attacker's
+  tunnel. The resolution options are: *missing asset added*, *rule defect
+  confirmed*, or *escalated as an incident*.
+- It's a new `behavior.py` detector next to `iot_crosses_segment`. For
+  utilities it's emitted as CIP-015 INSM anomaly evidence.
 
 ### 2.6 "Are we exposed?" in minutes
 
-When a new KEV entry lands or an EPSS score spikes, Herald re-runs Wargame
-for the affected components. The answer is a route list, not a CVE count:
-"This CVE is on 14 hosts, and 2 sit on a route to a crown jewel. Here's the
-cut." A board asks this question after every headline vulnerability, and
-today it takes a team a week.
+When a KEV entry lands or an EPSS score spikes, Herald re-runs the affected
+routes. The answer: "This CVE is on 14 hosts; 2 sit on a route to a crown
+jewel, and here's the fix set." Boards ask this after every headline
+vulnerability.
+
+### 2.7 Replica verification (later tier, rebuildable components only)
+
+For components built from container images, the customer's own code or open
+source:
+- **Rebuild** in a no-egress microVM or gVisor sandbox from the customer's
+  artifacts (same digest and config). Secrets are replaced by synthetic
+  values. No production data or captured traffic payloads go in, so no PAN or
+  PHI enters the sandbox.
+- **Prove preconditions** with the safe-check envelope plus filesystem and
+  package-DB inspection. **Apply the fix**, then show the preconditions are
+  gone and the customer-supplied health checks still pass.
+- **Scope is deliberately limited.** Many services won't boot without their
+  database, licence server or IdP, so they're marked *not rebuildable* rather
+  than faked. Precondition content covers KEV entries on crown-jewel routes
+  only, to avoid a Nessus-style plugin treadmill.
 
 ---
 
-## 3. The numbers: Crown-Jewel Closure and Model Coverage
+## 3. The numbers
 
-Report two numbers together, never one alone:
+- **For auditors: per-boundary verdicts.** *Pass* means config, probe and
+  observation all agree the boundary is closed. Otherwise the verdict is
+  *fail* (with the route), *conditional*, or *insufficient evidence*. These
+  are binary and dated.
+- **For boards: Crown-Jewel Closure.** Proved-closed (entry, jewel) pairs ÷
+  all pairs in model, broken down by label.
+- **Next to every closure figure: sensor coverage**, with its limits stated:
+  - Which boundaries have an observation point on the *protected* side. Zero
+    flows seen from the source side alone is absence of evidence, and is
+    labelled that way.
+  - Asset reconciliation: twin assets versus CMDB, DHCP leases, NAC and the
+    customer's IoT tool.
+  - A named list of known blind spots (serial links, cellular modems,
+    out-of-band management, sites with no observation point).
+- **Measured accuracy.** Every release is scored on seeded **twin ranges**
+  (synthetic orgs with known open and closed routes) in `hardening/evals/`.
+  The false-"closed" rate is published per release. Nobody should trust a
+  certificate until that number exists.
 
-- **Crown-Jewel Closure** = proved-closed (entry, jewel) pairs ÷ all
-  (entry, jewel) pairs in model. It's broken down by label: *proved closed /
-  open-proved / open-inferred / unknown*.
-- **Model Coverage** = share of observed devices and flows the model explains,
-  plus a list of known blind spots (serial links, out-of-band management,
-  sites with no sensor).
-
-Board line: *"91% of routes to cardholder data are proved closed, over a model
-that explains 97% of observed traffic. The remaining 4 open routes have
-scheduled fixes, and 2 are proved on replicas."* That sentence is the product.
-The trend line is what a CISO shows the board each quarter, and what an
-insurer asks for at renewal.
-
----
-
-## 4. Who pays, for what
-
-Ranked by how fast they pay. "Trigger" is the event that unlocks budget.
-"Artifact" is the thing they'd hold up in a meeting.
-
-| # | Buyer | Trigger | Artifact they pay for | Today's alternative |
-|---|---|---|---|---|
-| 1 | **PCI service providers and multi-site retail and hospitality** (network or compliance lead; QSA is the influencer) | 11.4.5 annual segmentation test, 11.4.6 every 6 months for service providers, plus re-tests after every segmentation change | Continuous segmentation certificates per CDE boundary, change-gate proofs per change, and an evidence pack for the QSA | Manual segmentation pentest, roughly $12–25k per engagement *(verify)*, stale the day after |
-| 2 | **Hospitals and health systems** (CISO, clinical engineering, change board) | Flat networks full of unpatchable medical IoT; the proposed HIPAA rule adds segmentation and annual testing *(not final)*; ransomware | Routes from guest and clinical Wi-Fi to the EHR and PACS; fixes proved on replicas not to break; impossible-traffic alerts | Passive asset tools that show devices but not routes; production pentests they won't allow near devices |
-| 3 | **Utilities, water and manufacturing** (OT security lead, plant engineer) | IEC 62443 zones and conduits, NERC CIP-005 and CIP-015 INSM, TSA directives, insurer segmentation questions | Conduit-holds certificates per zone pair; impossible-traffic alerts across zones; Edge deployment, air-gapped | Config-file segmentation review (Dragos/Network Perception NP-View), OT twin pentest simulation (Frenos) |
-| 4 | **Cyber insurers and brokers** (as a channel, not first buyer) | Underwriting is moving from self-attestation to verified evidence | Signed certificates checked without vendor access; the closure and coverage trend | Questionnaires |
-| 5 | **MSPs** | Want a premium managed service | "Proven segmentation" as a monthly line item per client, via the existing MSP console | Quarterly scans |
-
-**Lead with #1.** It has a recurring, mandated, already-budgeted test, a
-named influencer (the QSA) and a clear before/after. A narrow scope (one CDE,
-a handful of firewalls and a cloud account) fits a 30-day pilot. #2 and #3
-share almost all of the same engine and add Sentry, which is Paddock's
-strongest differentiator.
-
-One caution from the research: PCI and DORA language still assumes a human or
-production test. Position Wargame as **continuous evidence between and after
-required tests, and the thing that makes the required test pass first
-time**, not a replacement for it, until a QSA confirms otherwise.
+Board line: *"All 3 cardholder-data boundaries passed this quarter; config,
+probes and observed traffic agree. 2 of 14 routes to the EHR are open, both
+with fixes approved by the change board and scheduled."*
 
 ---
 
-## 5. Where this sits against the field
+## 4. Who pays, for what, in what order
 
-| Vendor (research, Nov 2026) | What they do | What Paddock Wargame does that they don't |
+### Wedge: PCI service providers, sold through pentest and QSA-aligned firms
+
+**Why this buyer:** a mandate with a fast cadence, and someone else already
+holding the relationship and the signature. Service providers must test
+segmentation every 6 months (11.4.6) and confirm scope every 6 months
+(12.5.2.1).
+
+**What they buy (continuous, auditor-formatted, hash-chained):**
+
+| PCI DSS 4.0 requirement | Type | Paddock artifact |
 |---|---|---|
-| Horizon3 NodeZero, Pentera, XBOW, RunSybil | Autonomous exploitation against **production** | Nothing real is exploited; proves closed routes; a regulated buyer can switch it on |
-| Strix (open source) | App-level agentic pentest with PoCs | Environment-level reachability; imports Strix results as *Imported* hops |
-| XM Cyber, Wiz attack paths | Graph-based attack paths, simulated | Per-hop evidence labels, replica-proven fixes, solver certificates, impossible-traffic alerts |
-| Frenos (OT twin + AI simulated pentest), TopHat | OT digital twin and simulated attacks | Backward from jewels, minimum cut, replica fix proof, live passive cross-check with Sentry, IT+cloud+OT in one model |
-| Dragos/Network Perception NP-View | OT firewall-config segmentation review | Continuous, sensor-corroborated, change-gated, signed certificates, IT and cloud too |
-| Forward Networks, Batfish, AWS Reachability | Formal network reachability | Crown-jewel framing, vulnerability and identity hops, the fix and its proof, observation of drift |
-| Tufin, AlgoSec | Firewall policy management | Proof per crown jewel rather than per rule; the attacker's view |
+| **1.2.5** allowed services, protocols and ports identified, approved, justified | Review | Every allowed flow into the CDE, with the rule, its observed use and an owner justification field |
+| **1.2.7** NSC configurations reviewed at least every 6 months | Review | Continuous config review with diffs, signed per period |
+| **1.3.1 / 1.3.2** inbound and outbound CDE traffic restricted | Review | Solver proof plus observed traffic per boundary |
+| **12.5.2 / 12.5.2.1** scope confirmed (every 6 months for service providers) | Review | Asset reconciliation and observed flows that touch the CDE, which surfaces systems that are in scope but undocumented |
+| **11.4.5 / 11.4.6** segmentation testing | Test | **Expansion:** the three-way agreement report in the testing-procedure format, which the partner tester reviews, extends and signs |
 
-The lesson of Skybox (model-and-path platform, shut down February 2025 after
-raising over $330M): a modelling product that produces *findings* loses. A
-product that produces **evidence someone is required to have** survives. Every
-capability above ends in an artifact that lands in an audit, a change ticket
-or a renewal.
+**Why sell through partners:** pentest firms run segmentation tests
+manually. Paddock cuts their labour per engagement and gives them a
+recurring evidence product to resell. The QSA-acceptance question is answered
+by the partner signing, not by Paddock claiming. Lead with the review
+requirements, where tool evidence is normal, and earn 11.4.5/11.4.6 through
+the partner.
+
+### Second motion: hospitals, ingest-only, change-impact first
+
+- **Product:** change-impact proof (§2.3) plus routes from guest and clinical
+  Wi-Fi to the EHR and PACS. It's built on flows and assets read from the
+  medical IoT tool they already own (Armis, Claroty/Medigate, Ordr, Cynerio),
+  so there's no new sensor. Probes are opt-in and kept off clinical-device
+  ranges.
+- **Mapping:** output maps to HHS 405(d) HICP practices *(verify the mapping
+  scope)*. The HIPAA segmentation rule is a stalled proposal, so it's not
+  part of the pitch.
+- **Deployment:** Paddock Edge on-prem. The route map never leaves the site,
+  and the keys are customer-held.
+- **Price** per health system, not per site.
+- **Prerequisites Paddock must clear first:** a BAA, SOC 2 Type II, a
+  third-party pentest of Paddock itself, and a published Paddock SBOM.
+
+### Third, deferred: utilities and OT
+
+Wait until Dragos and Claroty ingest exists and these evidence packs ship:
+- **NERC CIP-005 R1:** electronic security perimeter and access-point
+  permissions.
+- **CIP-010 R1:** baseline change, with change-impact proof before the
+  change.
+- **CIP-015:** impossible-traffic events as INSM anomaly evidence.
+- **IEC 62443-3-2:** a zone and conduit assessment that models industrial
+  protocol function codes (for example, Modbus or S7 *write*) wherever DPI
+  firewalls enforce them.
+
+Air-gapped Edge with offline updates is assumed. Frenos and Dragos NP-View
+are entrenched here, so Paddock enters with IT, cloud and OT in one model
+plus the change gate, not as a fourth OT console.
+
+### Channel later: insurers and MSPs
+
+- **Insurers** get the per-boundary verdicts and coverage trend. A signature
+  proves origin and integrity, not truth, so the insurer's trust rests on the
+  published accuracy rate and the partner's signature.
+- **MSPs** resell boundary evidence per client through the existing MSP
+  console.
 
 ---
 
-## 6. Pricing hypotheses (to test, not to publish)
+## 5. The 60-minute "aha" (the demo that sells)
 
-Pricing follows the thing being protected, not the asset count. That makes it
-predictable, and it scales with the value the buyer gets.
+1. The prospect uploads exports for 3 firewalls and grants read-only access
+   to one cloud account. No sensors are needed.
+2. Within the hour, the screen shows their CDE, every (entry, jewel) pair
+   reaching it, and the single rule that opens the worst route. For example:
+   *guest Wi-Fi → a smart fridge on the corporate VLAN → the POS controller →
+   the payment database*.
+3. The presenter edits that rule in a mock change ticket. The change-impact
+   proof shows the route closing, and lists the 2 live flows the edit would
+   break.
+
+That's time to value in an hour, and it doesn't depend on replicas or new
+hardware.
+
+---
+
+## 6. Where this sits against the field
+
+| Vendor (research, Nov 2026) | What they do | Paddock's difference |
+|---|---|---|
+| Horizon3 NodeZero, Pentera, XBOW, RunSybil | Autonomous exploitation against production | Nothing exploited; boundary evidence an auditor can use; change-impact proof |
+| Strix (open source) | App-level agentic pentest with PoCs | Environment-level reachability; imports Strix results as *Imported* hops |
+| XM Cyber (choke points), Wiz attack paths | Graph attack paths; choke points are close to a fix set | Probe- and flow-reconciled boundaries, change-impact proof, auditor packs |
+| Tufin, AlgoSec | Policy management, pre-change risk checks | Crown-jewel routes and the live-flows-it-breaks proof on every change |
+| Frenos (OT twin + AI simulated pentest), TopHat | OT twin and simulated attacks | IT, cloud and OT in one model; observed-flow reconciliation; change gate |
+| Dragos/Network Perception NP-View | OT firewall-config segmentation review | Continuous, probe- and flow-corroborated, change-gated, plus IT and cloud |
+| Forward Networks, Batfish, AWS Reachability and Network Access Analyzer | Formal network reachability; AWS's is free in-cloud | Crown-jewel framing, multi-vendor on-prem, vulnerability and identity hops, audit packs |
+
+**The Skybox lesson, stated correctly.** Skybox *did* sell PCI and
+change-management evidence, and it still shut down in February 2025 after
+raising over $330M. Evidence alone isn't enough. What killed model-and-path
+products was the cost of multi-vendor parser fidelity against a broad,
+direct-sales motion. Paddock answers that in four ways:
+- Parsers capped at the 3 vendors the beachhead runs.
+- One buyer.
+- Sales through partners who already own the relationship.
+- An accuracy rate measured on twin ranges, rather than promised.
+
+---
+
+## 7. Pricing hypotheses (to test, not to publish)
 
 | Package | Unit | Hypothesis | Anchor |
 |---|---|---|---|
-| **Segmentation Proof** | per scoped boundary (one CDE, one PHI zone) per year | $15–30k | 1–2 manual segmentation tests per year plus re-tests after changes |
-| **Wargame Site** | per site with Sentry, per year | $40–90k | OT and hospital assessments; Horizon3 tiers reportedly $25–42.5k for 500 assets *(verify)* |
-| **Change Gate** | per gated repo or firewall estate | Bundled into either | Opens the door with network and platform teams |
-| **MSP** | per client boundary, monthly | Wholesale of Segmentation Proof | Existing MSP console |
+| **Boundary Evidence** (PCI Req 1 + 12.5.2 + change gate) | per service-provider estate, per year, wholesale to partners | $20–40k list, partner margin 30–40% | Partner labour saved on two segmentation tests and two scope confirmations a year. Segmentation is often bundled into the annual pentest, so the pitch is "cheaper and continuous", not an extra line item *(verify with 3 partners)* |
+| **Segmentation test assist** (11.4.5/11.4.6 report) | per test, to partners | per-engagement fee | Partner hours saved |
+| **Health system** | per health system, per year | test in pilots | Change-board time saved; incident risk |
+| **OT site** | per site, later | test in pilots | CIP and 62443 assessment cost |
 
-All of this sits in Enterprise and Edge as a new gated capability, via
+All of these sit in Enterprise and Edge as new gated capability via
 `orchestrator/app/licensing.py`, as EDITIONS.md allows. Nothing that's free
 today gets gated.
 
 ---
 
-## 7. Guardrails specific to Wargame
+## 8. Guardrails specific to Wargame
 
-The routes Wargame outputs are the most sensitive data Paddock holds: a ranked
-map to the customer's crown jewels. Treat them like key material.
+The route map is the most sensitive thing Paddock holds. Treat it like key
+material.
 
-1. **No exploit execution, anywhere.** Replicas get the safe-check envelope
-   and filesystem inspection only. The existing narrative rule and
-   reject-token list (`attackpath.py`, `policy.py`) apply unchanged to route
-   narratives: impact and fix only, never steps or commands.
-2. **Replica isolation.** A replica runs with no network egress in an
-   ephemeral microVM or gVisor sandbox. It's built only from the customer's
-   own artifacts, with secrets replaced by synthetic values and no production
-   data, and it's destroyed after verification. Replica builds are
-   scope-checked like targets: the artifact must belong to an in-scope
-   asset.
-3. **The route map is classified.** Routes inherit the highest classification
-   on them (the existing ABAC). Full route exports need four-eyes approval and
-   are audited. Reports for auditors and insurers carry certificates and
-   counts, not topology.
-4. **Read-only inputs.** Firewall, cloud and IdP connectors stay read-only.
-   The change gate comments and blocks; it never applies a change.
-5. **Honest outputs.** Every "closed" carries its assumptions and expiry.
-   Every route shows its weakest label. Anything that can't be proved says
-   *inferred* or *unknown*, never *closed*. This follows VERIFICATION.md's
-   "No false 'fixed'".
-6. **Warden watches Wargame.** The agent may only call the solver, read the
-   twin, request replica verification, and request live safe checks through
-   Assessor under the normal scope and proof-of-control rules. It has no other
-   tools. Unsafe-action attempts are scored in evals and must be zero.
+1. **No exploit execution, anywhere.** Probes are TCP connect and banner read
+   inside the existing safe-check envelope. Replicas get the same envelope
+   plus filesystem inspection. The narrative rule and reject-token list
+   (`attackpath.py`, `policy.py`) apply unchanged: impact and fix only, never
+   steps or commands.
+2. **Sentry stays listen-only.** Probing is a separate, visible, opt-in
+   deployment of the active worker, under the scope invariant
+   (SECURITY.md §3) and proof-of-control.
+3. **Fragile ranges are untouchable.** The customer marks clinical and OT
+   device ranges as *no-probe*. A probe aimed at one is a hard failure, the
+   same way out-of-scope is.
+4. **The route map is classified.**
+   - Routes inherit the highest classification on them (existing ABAC).
+   - Full exports need four-eyes approval and are audited.
+   - Edge keeps the map on-site with customer-held keys.
+   - Auditors see config snapshots in a controlled, logged review session,
+     not in a shared file.
+5. **Read-only inputs.** Firewall, cloud, IdP and IoT-tool connectors are
+   read-only. The change gate comments and blocks; it never applies a
+   change.
+6. **Humans resolve contradictions.** The model is never changed
+   automatically to explain away an impossible-traffic alert.
+7. **Honest outputs.** Every route shows its weakest label. Runtime-dependent
+   rules are *Conditional*. Anything unproved says *inferred* or *unknown*,
+   never *closed*. This follows VERIFICATION.md's "No false 'fixed'".
+8. **Warden watches Wargame.** The agent may only read the twin, call the
+   solver and request probes or safe checks through Assessor under the normal
+   scope rules. Unsafe-action attempts are scored in evals and must be zero.
 
 ---
 
-## 8. What it's built from
+## 9. What it's built from, and in what order
 
 | Exists today | Needs building |
 |---|---|
-| Attack-path engine (`correlation/app/engine/attackpath.py`): forward Dijkstra, undirected | **Directed, rule-aware graph, backward search, cost-weighted min-cut** |
-| Cloud connectors (`aws.py`, `gcp.py`, `azure.py`) reduce rules to world-open summaries | **Full rule models** (priority, deny, references, NACLs, routes) and on-prem firewall parsers (Palo Alto, Fortinet, pfSense/OPNsense first) |
-| None | **Solver** (SMT or Datalog) with certificates, assumptions and expiry |
-| Sentry `can_reach_observed`, `behavior.py` detectors | **Impossible-traffic detector** against certificates |
-| Assessor version, config and reachability proof; safe checks; verification ledger | **Replica verification** sandbox and runner; health and smoke checks after fix |
-| Farrier remediation, gate and GitHub PR | Fix applied to replica before PR; change-gate CI check and ticket integration |
-| Provenance (`provenance.py`), audit anchoring | Evidence-ladder labels on edges and routes; signed certificates |
-| Crown-jewel heuristics, CMDB criticality | Required crown-jewel onboarding |
-| SARIF and universal ingest | Map third-party pentest results to *Imported* hops |
-| Eval harness (`hardening/evals/`) | **Digital-twin ranges**: synthetic orgs with known open and closed routes, so closure claims are measured before they're sold |
+| Attack-path engine (`attackpath.py`): forward Dijkstra, undirected | Directed, rule-aware graph; backward search; ILP fix set over (entry, jewel) pairs |
+| Cloud connectors reduce rules to world-open summaries | Full rule models; on-prem parsers for **Fortinet, Cisco ASA/FTD, Palo Alto (L3/L4)** first, then Check Point |
+| None | Solver with *Conditional* handling for runtime features |
+| Active worker, safe checks, scope gate, egress wrapper, ledger | Probe deployment mode for out-of-scope segments; *no-probe* ranges |
+| Sentry, `behavior.py`, 21 connectors | Flow ingest (firewall logs, NetFlow, Zeek) and IoT-tool ingest (Armis, Claroty, Dragos); impossible-traffic detector with handshake and allow-log gating |
+| Remediation gate, GitHub PR, ServiceNow and Jira connectors | Change-impact proof on tickets and IaC plans |
+| Provenance, audit anchoring, report control catalogues (PCI DSS 4.0, IEC 62443 exist) | Multi-label evidence ladder; auditor-formatted packs for 1.2.5, 1.2.7, 1.3.x, 12.5.2, 11.4.5/6 |
+| Eval harness (`hardening/evals/`) | **Twin ranges** with known open and closed routes; a published false-"closed" rate |
+| Assessor, verification ledger | Replica verification (last) |
 
-**Build order** (each step ships something sellable):
+**Build order.** Each step is sellable on its own:
 
-1. Rule models, solver and certificates for **one cloud plus one firewall
-   vendor** → Segmentation Proof for buyer #1.
-2. Change gate for Terraform and firewall tickets.
-3. Backward search, min-cut and the evidence ladder over the existing graph.
-4. Impossible-traffic detection with Sentry → buyers #2 and #3.
-5. Replica verification for containers and the customer's own code.
+1. Firewall parsers (3 vendors) plus one cloud, the solver, and the
+   Requirement 1 and 12.5.2 packs → the 60-minute demo and the partner
+   product.
+2. Change-impact proof (solver plus flow ingest) on ServiceNow and Jira and
+   in Terraform CI.
+3. Probe mode and the three-way agreement report → the 11.4.5/11.4.6
+   expansion.
+4. Backward search, the fix set and the evidence ladder over the full graph.
+5. IoT-tool ingest and impossible traffic → hospitals.
 6. "Are we exposed?" via Herald.
+7. CIP and 62443 packs → OT.
+8. Replica verification.
 
 ---
 
-## 9. How we get from "should sell" to "certain it sells"
+## 10. How we get from "should sell" to "certain it sells"
 
-Certainty doesn't come from a document. It comes from design partners paying.
-The test, run with the 3–5 pilots already planned in READINESS.md:
+A document can't make it certain. Paying design partners can. Run this with
+the pilots planned in READINESS.md, recruiting **2 pentest or QSA-aligned
+firms** as the first partners:
 
 **Pass (build on):**
-- At least **2 of 5** partners convert to paid at the hypothesis price within
-  60 days.
-- At least **1 QSA** accepts the certificate pack as supporting evidence for
-  11.4.5 or 11.4.6.
-- The change gate catches **at least 1 real route-opening change** in a pilot.
-- Impossible-traffic alerts are useful: at least 1 finds a real unmodelled
-  device or rule bypass, and false positives stay under 1 per site per week
-  once tuned.
+- **2 QSAs on record** accept the Requirement 1 and 12.5.2 packs as evidence.
+- **At least 2 partners** resell to paying service providers within 90 days.
+- The change gate flags at least 1 real route-opening change, and the change
+  board says the flows-it-breaks list changed a decision.
+- The three-way report finds at least 1 real disagreement per pilot estate:
+  a rule that doesn't enforce, or an undocumented system that's in scope.
+- The false-"closed" rate on twin ranges is under an agreed bound, and
+  published.
 
 **Kill or reshape:**
-- Partners like the demo but won't pay without a human tester's signature →
-  sell through pentest firms as their continuous-evidence layer.
-- Twin coverage stays under ~90% after 30 days on a site → the certificates
-  can't be trusted there. Narrow to cloud-only Segmentation Proof, where the
-  model *is* the config.
-- Replica builds succeed for under half of suspect hops in practice → drop
-  replica verification to a later tier and lead with solver plus Sentry.
+- Partners won't resell → sell Boundary Evidence direct to service providers'
+  compliance teams as a Requirement 1 tool. That's a smaller product, but it
+  still has a mandate.
+- Parser fidelity against real configs stays poor after 2 vendors → narrow to
+  cloud plus one firewall vendor. In cloud-only, compete on audit packs and
+  change-impact proof, not on reachability itself; AWS's is free.
+- Impossible-traffic stays noisy after gating → ship it as a weekly review
+  queue rather than an alert.
 
 ---
 
-## 10. Honest limits
+## 11. Honest limits
 
-- **Proofs are about the model.** Every certificate states its assumptions,
-  and Model Coverage sits next to every closure number. Impossible-traffic
-  alerts shrink the gap; they don't remove it.
-- **Replicas only exist for what can be rebuilt**: containers, open source,
-  the customer's own code. Proprietary PLCs, infusion pumps and appliances stay
-  *inferred* for their internal flaws. Their *reachability* can still be
-  proved by solver and sensor, and that is usually what matters.
-- **Preconditions aren't exploitation.** A hop proved on a replica means "every
-  condition the exploit needs is present", not "we watched it work". Say so
-  in the UI. Buyers who need demonstrated exploitation can import it from a
+- **Proofs are about the model.** Coverage, blind spots and the measured
+  false-"closed" rate sit next to every claim.
+- **Config can't prove runtime features** (App-ID, FQDN objects, dynamic
+  groups, mesh). Those rules are *Conditional*, and probes and observation
+  carry the evidence for them.
+- **Probes prove reachability, not exploitability.** Preconditions aren't
+  exploitation. Buyers who need demonstrated exploitation import it from a
   human tester.
-- **Identity and physical paths** (stolen sessions, serial links, a USB stick)
-  are partly or wholly out of model. List them as assumptions, never as
-  closed.
-- **Competition is real.** Frenos (with a Claroty partnership) and Dragos's
-  NP-View are close in OT. Win on IT, cloud and OT in one model, on
-  certificates plus sensor corroboration, and on the change gate. Don't win on
-  "AI attacker" alone.
+- **OT's real routes** (dual-homed workstations, cellular modems, serial
+  converters, USB) are often outside the model. They're listed as blind
+  spots, never closed.
+- **Replicas cover a minority of components.** That's why they're the last
+  tier, not the pitch.
+- **Paddock holding a crown-jewel route map is a risk in itself.** Edge
+  deployment, customer-held keys, SOC 2 Type II and a third-party pentest of
+  Paddock are prerequisites for the hospital and OT segments, not
+  nice-to-haves.
 
 ---
 
-## 11. Decisions for the owner
+## 12. Decisions for the owner
 
-1. **Confirm the Part 2 stance:** replica *verification*, not exploitation,
-   which keeps SECURITY.md §6 as written. If you want replica exploitation, it
-   needs an explicit amendment to SECURITY.md §6, README, CONTRIBUTING and the
-   PR safety gate. Section 1 explains why this doc recommends against it.
-2. **Lead wedge:** PCI Segmentation Proof first (recommended), or OT first.
-3. **Landing page:** Wargame would be a fifth agent card and the copy says
+1. **Confirm the Part 2 stance:** no exploit execution, including on replicas.
+   This keeps SECURITY.md §6 as written.
+2. **Approve probe mode:** the active worker deployed on out-of-scope segments
+   to TCP-connect into in-scope ranges. It's within today's safe-check
+   envelope and scope rules, but it's a new deployment shape and changes what
+   "active" means in a customer network.
+3. **Wedge:** PCI service providers through pentest and QSA-aligned partners
+   (recommended).
+4. **Landing page:** Wargame would be a fifth agent card, and the copy says
    "Four agents". The landing UI is owner-protected, so nothing has been
    changed there.
-4. **Pricing hypotheses** in §6, to take into pilots.
+5. **Pricing hypotheses** in §7, to test with partners.
