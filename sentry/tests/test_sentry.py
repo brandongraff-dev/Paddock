@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import io
 import json
@@ -123,6 +124,8 @@ class _Server:
         class H(BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802
                 body = self.rfile.read(int(self.headers["Content-Length"]))
+                if self.headers.get("Content-Encoding") == "gzip":
+                    body = gzip.decompress(body)
                 outer.posts.append((self.path, self.headers.get("Authorization"), json.loads(body)))
                 self.send_response(outer.status)
                 self.end_headers()
@@ -154,12 +157,14 @@ def test_shipper_posts_with_token_and_sensor_envelope(server):
 
 
 def test_outage_spools_to_disk_then_drains_in_order(tmp_path, server):
+    now = [0.0]
     sh = Shipper("http://127.0.0.1:9", "t", sensor_id="s", outbox=tmp_path, retries=1, timeout=0.5,
-                 sleep=lambda s: None)
+                 sleep=lambda s: None, clock=lambda: now[0])
     assert not sh.send({"observations": [{"n": 1}]})
     assert not sh.send({"observations": [{"n": 2}]})
     assert len(list(tmp_path.glob("*.json.gz"))) == 2
     sh.url = server.url + "/ingest"  # network is back
+    now[0] += 3600  # ...and the backoff has elapsed
     assert sh.send({"observations": [{"n": 3}]})
     assert [p[2]["observations"][0]["n"] for p in server.posts] == [3, 1, 2]
     assert list(tmp_path.glob("*.json.gz")) == []

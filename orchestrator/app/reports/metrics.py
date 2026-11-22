@@ -17,7 +17,9 @@ Definitions (also in docs/REPORTS.md):
   (critical 10, high 5, medium 2, low 1, info 0); same formula the Overview
   page shows. The trend is `start` plus one point per day of the window.
 * **verified fix** -- the asset was re-observed more than 60s after the fix and
-  the finding was not; **regressed** -- the finding was re-observed after it.
+  the finding was not, OR a safe-check re-verification (schema 026,
+  ``findings.fix_verified_at``) could not reproduce it after the fix;
+  **regressed** -- the finding was re-observed after it.
 * **SLA due** -- the ticket's `sla_due`, else `first_seen + sla_policies.hours`.
   *met/late*: fixed in the window before/after due; *breached_open*: still
   open at the window end with its due time inside the window. Compliance =
@@ -145,7 +147,7 @@ CREATE TEMP TABLE _rpt_fl ON COMMIT DROP AS
 SELECT x.*, CASE WHEN x.closed_raw IS NOT NULL THEN GREATEST(x.closed_raw, x.first_seen) END AS closed_at
   FROM (
     SELECT f.id, f.asset_id, f.severity, f.status, f.title, f.rule_id, f.rule_source,
-           f.first_seen, f.last_seen,
+           f.first_seen, f.last_seen, f.fix_verified_at,
            CASE WHEN f.status IN ('open', 'triaged') THEN NULL
                 ELSE COALESCE(r.resolved_at, t.closed_at, f.last_seen) END AS closed_raw,
            COALESCE(NULLIF(t.owner_team, ''), NULLIF(f.assigned_to, ''), 'Unassigned') AS team,
@@ -285,7 +287,8 @@ async def _resolutions(con, w: Window) -> Resolutions:
         SELECT status, severity, COUNT(*) AS n,
                COUNT(*) FILTER (WHERE last_seen > closed_at + $3) AS regressed,
                COUNT(*) FILTER (WHERE last_seen <= closed_at + $3
-                                  AND asset_last_seen > closed_at + $3) AS verified
+                                  AND (asset_last_seen > closed_at + $3
+                                       OR fix_verified_at >= closed_at)) AS verified
           FROM _rpt_fl
          WHERE closed_at >= $1 AND closed_at < $2
          GROUP BY status, severity

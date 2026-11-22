@@ -268,11 +268,13 @@ async def emit_digest(pool, event) -> tuple[str, str | None]:
 async def list_workspaces(pool) -> list[tuple[str, str | None]]:
     """(workspace, tenant_id) pairs to digest.
 
-    Paddock is single-tenant today, so this is one ``default`` workspace. It is
-    the seam a multi-tenant (MSP) deployment overrides: data scoping per
-    tenant must land in the report queries before more workspaces are added.
+    One ``default`` workspace PER ACTIVE TENANT. ``send_digest`` binds the
+    tenant for the whole run, so RLS scopes the report queries and the claim
+    row; before this a multi-tenant install digested only the default tenant.
     """
-    return [("default", None)]
+    from .. import tenancy
+
+    return [("default", tid) for tid in await tenancy.list_tenant_ids(pool)]
 
 
 def current_slot(now: datetime) -> datetime:
@@ -297,6 +299,15 @@ async def send_digest(
 ) -> DigestRunOut | None:
     """Build, record and emit one digest. For kind='weekly' the slot is claimed
     atomically; returns None when another run already claimed it."""
+    if tenant_id is not None:
+        from .. import tenancy
+
+        with tenancy.tenant_context(tenant_id):
+            return await _send_digest(pool, workspace, tenant_id, kind, slot, days)
+    return await _send_digest(pool, workspace, tenant_id, kind, slot, days)
+
+
+async def _send_digest(pool, workspace, tenant_id, kind, slot, days) -> DigestRunOut | None:
     end = slot or datetime.now(timezone.utc)
     days = days or report_settings.digest_period_days
     start = end - timedelta(days=days)
@@ -304,7 +315,7 @@ async def send_digest(
         row_id = await con.fetchval(
             """INSERT INTO report_digests (workspace, kind, period_start, period_end)
                VALUES ($1, $2, $3, $4)
-               ON CONFLICT (workspace, kind, period_end) WHERE kind = 'weekly' DO NOTHING
+               ON CONFLICT (tenant_id, workspace, kind, period_end) WHERE kind = 'weekly' DO NOTHING
                RETURNING id""",
             workspace,
             kind,

@@ -17,6 +17,16 @@ export interface OperationRequest {
   options?: RequestOptions;
 }
 
+export interface AcceptIn {
+  auth_doc_ref?: string | null;
+  notes?: string | null;
+}
+
+export interface AcceptOut {
+  scope_entry: Record<string, unknown>;
+  suggestion: SuggestionOut;
+}
+
 export interface ActionOut {
   action_type: string;
   agent_id?: string | null;
@@ -116,6 +126,14 @@ export interface AlertRulePatch {
   target?: string | null;
 }
 
+export interface AlertRuleT {
+  channel: "log" | "webhook" | "slack";
+  enabled?: boolean;
+  match?: Record<string, unknown>;
+  name: string;
+  target?: string | null;
+}
+
 export interface AnomalyOut {
   acknowledged: boolean;
   detected_at: string;
@@ -169,6 +187,10 @@ export interface ApiKeyOut {
   user_id: string | null;
 }
 
+export interface ApplyIn {
+  customer_ids: string[];
+}
+
 export interface ApproveIn {
   apply_for_real?: boolean;
   note?: string | null;
@@ -177,6 +199,14 @@ export interface ApproveIn {
 export interface AskIn {
   asked_by?: string | null;
   question: string;
+}
+
+export interface AssessmentOut {
+  changes: Record<string, unknown>;
+  created_at: string;
+  grade: string;
+  id: string;
+  score: number;
 }
 
 export interface AssetBulkIn {
@@ -348,6 +378,53 @@ export interface AuditVerifyOut {
   tenant_id?: string | null;
 }
 
+export interface BillingOut {
+  /**
+   * A Stripe customer exists, so the Customer Portal can be opened.
+   */
+  can_manage: boolean;
+  cancel_at_period_end: boolean;
+  current_period_end: string | null;
+  downgraded: boolean;
+  dunning: boolean;
+  edition: string;
+  enabled: boolean;
+  enforcement: boolean;
+  features: string[];
+  grace_ends_at: string | null;
+  limits: Record<string, number | null>;
+  plan: string | null;
+  plans: PlanOut[];
+  /**
+   * Downgraded to Community limits AND over one of them: growth is refused.
+   */
+  read_only: boolean;
+  source: string;
+  status: string;
+  trial_days_left: number | null;
+  trial_ends_at: string | null;
+  upgrade_url: string;
+  usage: Record<string, QuotaOut>;
+}
+
+export interface BulkVerifyIn {
+  finding_ids: string[];
+}
+
+export interface BulkVerifyItem {
+  finding_id: string;
+  outcome: "queued" | "already_in_flight" | "refused" | "not_found" | "error";
+  reason?: string | null;
+  verification_id?: string | null;
+}
+
+export interface BulkVerifyOut {
+  items: BulkVerifyItem[];
+  queued: number;
+  refused: number;
+  requested: number;
+}
+
 export interface ChainIn {
   anchor_asset_id?: string | null;
   blast_radius_score?: number | null;
@@ -428,6 +505,15 @@ export interface CheckOut {
   ok: boolean;
 }
 
+export interface CheckoutIn {
+  plan: string;
+}
+
+export interface ClaimIn {
+  batch_id: string;
+  client_ip?: string | null;
+}
+
 export interface ClusterOut {
   created_at: string;
   engine: string;
@@ -478,7 +564,7 @@ export interface CompliancePack {
 
 export interface ControlOut {
   attestation?: string | null;
-  evidence: EvidenceOut[];
+  evidence: app__reports__models__EvidenceOut[];
   family: string;
   id: string;
   max_status: "satisfied" | "partial";
@@ -510,6 +596,17 @@ export interface CoverageKind {
   seen_7d: number;
   stale: number;
   total: number;
+}
+
+export interface Cta {
+  text: string;
+  url: string;
+}
+
+export interface CustomerIn {
+  invite_label?: string | null;
+  name: string;
+  slug: string;
 }
 
 export interface DenyIn {
@@ -591,10 +688,10 @@ export interface DigestRunOut {
   workspace: string;
 }
 
-export interface DismissIn {
-  accepted_until?: string | null;
-  reason: string;
-  suppress?: boolean;
+export interface DoneIn {
+  batch_id: string;
+  flows?: number;
+  ok?: boolean;
 }
 
 export interface EdgeBulkIn {
@@ -621,43 +718,6 @@ export interface EdgeIn {
   src_kind?: string | null;
 }
 
-export interface EnrollIn {
-  agent_version?: string | null;
-  capabilities?: string[];
-  hostname: string;
-  labels?: string[];
-  /**
-   * linux | windows | macos
-   */
-  platform: string;
-  /**
-   * enrollment bootstrap token
-   */
-  token: string;
-}
-
-export interface EnrollOut {
-  /**
-   * shown ONCE; store it securely on the host
-   */
-  agent_token: string;
-  capabilities: string[];
-  hostname: string;
-  id: string;
-  platform: string | null;
-  status: string;
-  token_prefix: string;
-}
-
-export interface EvidenceOut {
-  detail: string;
-  key: string;
-  metrics?: Record<string, unknown>;
-  rows?: Record<string, unknown>[];
-  status: "pass" | "partial" | "fail" | "none";
-  title: string;
-}
-
 export interface ExchangeIn {
   code: string;
   verifier?: string | null;
@@ -682,6 +742,34 @@ export interface ExecuteOut {
   dry_run: boolean;
   ok: boolean;
   planned?: string[];
+}
+
+export interface ExposureReportIn {
+  captcha_token?: string | null;
+  consent?: boolean;
+  domain: string;
+  email?: string | null;
+}
+
+export interface ExposureReportOut {
+  created_at: string;
+  cta?: Cta | null;
+  domain: string;
+  error?: string | null;
+  finished_at?: string | null;
+  id: string;
+  passive_notice?: string;
+  status: "queued" | "running" | "done" | "failed";
+  summary?: Record<string, unknown> | null;
+  teaser?: Record<string, unknown> | null;
+}
+
+export interface ExposureSubmitOut {
+  cached: boolean;
+  domain: string;
+  email_stored: boolean;
+  id: string;
+  status: "queued" | "running" | "done" | "failed";
 }
 
 export interface ExposureTrend {
@@ -756,12 +844,15 @@ export interface FindingLifecycleOut {
   duplicate_of?: string | null;
   epss: number | null;
   evidence: Record<string, unknown>;
+  exploitability?: string;
   fingerprint?: string | null;
   first_seen: string;
+  fix_verified_at?: string | null;
   id: string;
   impact: string | null;
   kev?: boolean | null;
   last_seen: string;
+  last_verified_at?: string | null;
   metadata: Record<string, unknown>;
   owner?: string | null;
   priority_score?: number | null;
@@ -839,6 +930,16 @@ export interface FromFindingIn {
   reason?: string | null;
 }
 
+export interface GrantIn {
+  clearance?: "public" | "internal" | "confidential" | "restricted";
+  /**
+   * null = every current and future customer
+   */
+  customer_id?: string | null;
+  role: "viewer" | "analyst" | "admin";
+  user_id: string;
+}
+
 export interface GraphEdgeOut {
   dst_id: string;
   id: string;
@@ -861,12 +962,31 @@ export interface HTTPValidationError {
   detail?: ValidationError[];
 }
 
-export interface HeartbeatIn {
-  agent_version?: string | null;
+/**
+ * The ONLY telemetry a sensor sends: counters about itself, never traffic.
+ */
+export interface HealthIn {
   /**
-   * agent-reported health note
+   * evicted by the buffer cap
    */
-  status?: string | null;
+  batches_dropped?: number | null;
+  buffer_batches?: number | null;
+  buffer_bytes?: number | null;
+  buffer_fill_pct?: number | null;
+  flows_dropped?: number | null;
+  iface?: string | null;
+  last_upload_ok?: boolean | null;
+  last_upload_ts?: number | null;
+  /**
+   * kernel drops at capture
+   */
+  packets_dropped?: number | null;
+  packets_seen?: number | null;
+  /**
+   * sensor wall clock (epoch s), for skew
+   */
+  sent_at?: number | null;
+  uptime_s?: number | null;
 }
 
 export interface HeartbeatOut {
@@ -934,6 +1054,25 @@ export interface IntegrationPatch {
   secrets?: (Record<string, string | null>) | null;
 }
 
+export interface IntegrationT {
+  allow_private?: boolean;
+  config?: Record<string, unknown>;
+  enabled?: boolean;
+  events?: string[];
+  filters?: Record<string, unknown>;
+  kind: string;
+  min_severity?: string;
+  name: string;
+  secrets?: Record<string, string | null>;
+}
+
+export interface InterfaceIn {
+  mac?: string | null;
+  name: string;
+  speed_mbps?: number | null;
+  up?: boolean | null;
+}
+
 export interface InventoryIn {
   listeners?: Record<string, unknown>[];
   os_info?: Record<string, unknown>;
@@ -954,6 +1093,10 @@ export interface InventorySnapshot {
   os_info: Record<string, unknown>;
   packages: Record<string, unknown>[];
   posture: Record<string, unknown>;
+}
+
+export interface InviteIn {
+  label?: string | null;
 }
 
 export interface LicenseLimits {
@@ -1087,6 +1230,11 @@ export interface OIDCConfig {
   allow_private?: boolean;
   client_id: string;
   extra_auth_params?: Record<string, string>;
+  graph_base_url?: string;
+  graph_login_url?: string;
+  graph_mode?: "delegated" | "app";
+  graph_overage?: "auto" | "off";
+  graph_tenant_id?: string | null;
   issuer: string;
   scopes?: string[];
   token_auth_method?: "client_secret_basic" | "client_secret_post" | "none";
@@ -1270,6 +1418,19 @@ export interface PendingAction {
   target: string;
 }
 
+export interface PlanOut {
+  assets: number | null;
+  edition: string;
+  key: string;
+  name: string;
+  /**
+   * True when a Stripe price id is configured for this plan.
+   */
+  purchasable: boolean;
+  seats: number | null;
+  sites: number | null;
+}
+
 export interface ProposeIn {
   created_by?: string | null;
   finding_id: string;
@@ -1308,7 +1469,9 @@ export interface ProviderIn {
   default_role?: "viewer" | "analyst" | "admin" | "auditor";
   display_name: string;
   enabled?: boolean;
+  graph_client_secret?: string | null;
   groups_claim?: string;
+  idp_metadata_url?: string | null;
   jit_provisioning?: boolean;
   kind: "oidc" | "saml";
   oidc?: OIDCConfig | null;
@@ -1318,6 +1481,7 @@ export interface ProviderIn {
   saml?: SAMLConfig | null;
   saml_metadata_xml?: string | null;
   slug: string;
+  sp_private_key?: string | null;
   sync_roles?: boolean;
 }
 
@@ -1332,6 +1496,8 @@ export interface ProviderOut {
   enabled: boolean;
   groups_claim: string;
   has_client_secret: boolean;
+  has_graph_client_secret?: boolean;
+  has_sp_private_key?: boolean;
   id: string;
   jit_provisioning: boolean;
   kind: string;
@@ -1342,6 +1508,7 @@ export interface ProviderOut {
   saml_acs_url?: string | null;
   saml_entity_id?: string | null;
   saml_metadata_url?: string | null;
+  saml_sls_url?: string | null;
   slug: string;
   sync_roles: boolean;
   updated_at: string;
@@ -1357,7 +1524,9 @@ export interface ProviderPatch {
   default_role?: ("viewer" | "analyst" | "admin" | "auditor") | null;
   display_name?: string | null;
   enabled?: boolean | null;
+  graph_client_secret?: string | null;
   groups_claim?: string | null;
+  idp_metadata_url?: string | null;
   jit_provisioning?: boolean | null;
   oidc?: OIDCConfig | null;
   preset?: ("generic" | "okta" | "entra" | "google" | "auth0" | "keycloak") | null;
@@ -1365,6 +1534,7 @@ export interface ProviderPatch {
   role_mappings?: RoleMapping[] | null;
   saml?: SAMLConfig | null;
   saml_metadata_xml?: string | null;
+  sp_private_key?: string | null;
   sync_roles?: boolean | null;
 }
 
@@ -1381,6 +1551,12 @@ export interface PublicProvidersOut {
   sso_required: boolean;
 }
 
+export interface QuotaOut {
+  limit: number | null;
+  over: boolean;
+  used: number | null;
+}
+
 /**
  * Result of POST /v1/attack-paths/recompute.
  *
@@ -1393,6 +1569,14 @@ export interface RecomputeOut {
   computed?: number | null;
   queued: boolean;
   reason?: string | null;
+}
+
+export interface RedeemIn {
+  display_name?: string | null;
+  email?: string | null;
+  password: string;
+  token: string;
+  username: string;
 }
 
 export interface RemediationDetail {
@@ -1414,6 +1598,10 @@ export interface RemediationDetail {
   verified_at?: string | null;
   verifier?: VerifierSummary;
   verifier_report?: Record<string, unknown>;
+}
+
+export interface RemediationMergedIn {
+  pr_url?: string | null;
 }
 
 export interface RemediationPage {
@@ -1474,12 +1662,6 @@ export interface Resolutions {
   wontfix: number;
 }
 
-export interface ResultIn {
-  output?: Record<string, unknown>;
-  revert?: Record<string, unknown> | null;
-  status: "applied" | "failed";
-}
-
 export interface RevertIn {
   note?: string | null;
 }
@@ -1505,12 +1687,21 @@ export interface RoleMapping {
 
 export interface SAMLConfig {
   email_attribute?: string | null;
+  graph_base_url?: string;
+  graph_client_id?: string | null;
+  graph_login_url?: string;
+  graph_overage?: "auto" | "off";
+  graph_tenant_id?: string | null;
   groups_attribute?: string | null;
   idp_entity_id: string;
+  idp_slo_url?: string | null;
   idp_sso_url: string;
   idp_x509_cert: string;
   name_attribute?: string | null;
   name_id_format?: string;
+  require_encrypted_assertions?: boolean;
+  sign_authn_requests?: boolean;
+  sp_x509_cert?: string | null;
   want_messages_signed?: boolean;
 }
 
@@ -1718,6 +1909,7 @@ export interface ScopeCheckOut {
   matched_entry_metadata?: Record<string, unknown>;
   normalized: string;
   reason: string;
+  resolved_ips?: string[];
 }
 
 export interface ScopeDecisionOut {
@@ -1789,6 +1981,12 @@ export interface ScopeProofOut {
   verified_at?: string | null;
 }
 
+export interface ScopeSuggestionT {
+  kind: "domain" | "subdomain_wildcard" | "ipv4_cidr" | "ipv6_cidr" | "asn";
+  notes?: string | null;
+  value: string;
+}
+
 export interface SegmentOut {
   canonical: string;
   classification?: string | null;
@@ -1797,6 +1995,37 @@ export interface SegmentOut {
   internet_facing?: boolean;
   metadata?: Record<string, unknown>;
   value: string;
+}
+
+export interface SensorOut {
+  batches_total: number;
+  duplicates_total: number;
+  enrolled_at: string;
+  flows_total: number;
+  health: Record<string, unknown>;
+  hostname: string | null;
+  id: string;
+  interfaces: Record<string, unknown>[];
+  last_heartbeat_at: string | null;
+  last_seen_at: string | null;
+  last_upload_at: string | null;
+  name: string;
+  offline_since: string | null;
+  silent_after_s: number;
+  site: string;
+  /**
+   * online | degraded | offline | revoked
+   */
+  state: string;
+  status: string;
+  version: string | null;
+  warnings: string[];
+}
+
+export interface SensorPatch {
+  name?: string | null;
+  silent_after_s?: number | null;
+  site?: string | null;
 }
 
 export interface ServiceStatus {
@@ -1851,6 +2080,22 @@ export interface SlaRow {
   severity: string;
 }
 
+export interface SourceIn {
+  allowed_formats?: string[];
+  default_project?: string | null;
+  description?: string | null;
+  name: string;
+  rate_limit_per_min?: number;
+}
+
+export interface SourcePatch {
+  allowed_formats?: string[] | null;
+  default_project?: string | null;
+  description?: string | null;
+  enabled?: boolean | null;
+  rate_limit_per_min?: number | null;
+}
+
 export interface StatusHistoryOut {
   accepted_until: string | null;
   actor: string;
@@ -1859,6 +2104,73 @@ export interface StatusHistoryOut {
   id: string;
   reason: string | null;
   to_status: string;
+}
+
+export interface SuggestionOut {
+  decided_at?: string | null;
+  decided_by?: string | null;
+  evidence?: Record<string, unknown>;
+  first_seen: string;
+  id: number;
+  integration_id: string;
+  integration_name?: string | null;
+  kind: string;
+  last_seen: string;
+  scope_entry_id?: number | null;
+  source: string;
+  status: string;
+  value: string;
+}
+
+export interface SupplierDetail {
+  created_at: string;
+  criticality: string;
+  domain: string;
+  enabled: boolean;
+  findings: Record<string, unknown>[];
+  history: AssessmentOut[];
+  id: string;
+  interval_hours: number;
+  last_assessed_at?: string | null;
+  last_error?: string | null;
+  last_grade?: string | null;
+  last_score?: number | null;
+  name: string;
+  next_run_at: string;
+  notes?: string | null;
+  summary?: Record<string, unknown> | null;
+}
+
+export interface SupplierIn {
+  criticality?: "low" | "medium" | "high" | "critical";
+  domain: string;
+  interval_hours?: number;
+  name?: string | null;
+  notes?: string | null;
+}
+
+export interface SupplierOut {
+  created_at: string;
+  criticality: string;
+  domain: string;
+  enabled: boolean;
+  id: string;
+  interval_hours: number;
+  last_assessed_at?: string | null;
+  last_error?: string | null;
+  last_grade?: string | null;
+  last_score?: number | null;
+  name: string;
+  next_run_at: string;
+  notes?: string | null;
+}
+
+export interface SupplierPatch {
+  criticality?: ("low" | "medium" | "high" | "critical") | null;
+  enabled?: boolean | null;
+  interval_hours?: number | null;
+  name?: string | null;
+  notes?: string | null;
 }
 
 export interface SupplyChainRiskOut {
@@ -1968,9 +2280,20 @@ export interface SyncRunOut {
 export interface SyncStatusOut {
   enabled: boolean;
   integration_id: string;
+  interval_minutes?: number | null;
   kind: string;
   last_run?: SyncRunOut | null;
   name: string;
+  next_run_at?: string | null;
+  pending_suggestions?: number;
+}
+
+export interface TemplateIn {
+  alert_rules?: AlertRuleT[];
+  description?: string | null;
+  integrations?: IntegrationT[];
+  name: string;
+  scope_suggestions?: ScopeSuggestionT[];
 }
 
 export interface TestIn {
@@ -2185,6 +2508,49 @@ export interface TlsGradeSummary {
   total?: number;
 }
 
+export interface TokenCreateIn {
+  label?: string | null;
+  /**
+   * site / location name
+   */
+  site: string;
+  ttl_minutes?: number;
+}
+
+export interface TokenCreated {
+  created_at: string;
+  created_by: string | null;
+  expires_at: string;
+  id: string;
+  label: string | null;
+  site: string;
+  /**
+   * pending | used | expired | revoked
+   */
+  state: string;
+  /**
+   * the enrollment token; shown ONCE
+   */
+  token: string;
+  token_prefix: string;
+  used_by_sensor?: string | null;
+}
+
+export interface TokenOut {
+  created_at: string;
+  created_by: string | null;
+  expires_at: string;
+  id: string;
+  label: string | null;
+  site: string;
+  /**
+   * pending | used | expired | revoked
+   */
+  state: string;
+  token_prefix: string;
+  used_by_sensor?: string | null;
+}
+
 export interface TransitionOut {
   finding: FindingLifecycleOut;
   from_status: string;
@@ -2196,6 +2562,56 @@ export interface TransitionOut {
 export interface TrendPoint {
   at: string;
   value: number;
+}
+
+export interface TrustLinkCreated {
+  created_at: string;
+  created_by?: string | null;
+  expires_at: string;
+  id: string;
+  label: string;
+  last_viewed_at?: string | null;
+  password_protected: boolean;
+  path: string;
+  period_days: number;
+  revoked_at?: string | null;
+  sections: string[];
+  status: "active" | "expired" | "revoked";
+  token: string;
+  token_hint: string;
+  view_count: number;
+}
+
+export interface TrustLinkIn {
+  expires_in_days?: number;
+  label: string;
+  password?: string | null;
+  period_days?: number;
+  sections?: Array<"grade" | "verified_fixes" | "sla" | "compliance" | "coverage">;
+}
+
+export interface TrustLinkOut {
+  created_at: string;
+  created_by?: string | null;
+  expires_at: string;
+  id: string;
+  label: string;
+  last_viewed_at?: string | null;
+  password_protected: boolean;
+  period_days: number;
+  revoked_at?: string | null;
+  sections: string[];
+  status: "active" | "expired" | "revoked";
+  token_hint: string;
+  view_count: number;
+}
+
+export interface TrustUnlockIn {
+  password?: string | null;
+}
+
+export interface UrlOut {
+  url: string;
 }
 
 export interface UsageLimitState {
@@ -2247,6 +2663,37 @@ export interface ValidationError {
   type: string;
 }
 
+export interface VerificationHistoryOut {
+  exploitability: "unverified" | "confirmed" | "not_reproducible" | "inconclusive";
+  finding_id: string;
+  fix_verified_at?: string | null;
+  items: VerificationOut[];
+  last_verified_at?: string | null;
+}
+
+export interface VerificationOut {
+  already_in_flight?: boolean;
+  check_id?: string | null;
+  checked_at?: string | null;
+  completed_at?: string | null;
+  dispatched_at?: string | null;
+  evidence?: Record<string, unknown>;
+  finding_id: string;
+  id: string;
+  purpose: "exploitability" | "fix";
+  reason?: string | null;
+  requested_at: string;
+  requested_by: string;
+  run_after?: string | null;
+  scan_id?: string | null;
+  scope_entry_id?: number | null;
+  scope_proof?: string | null;
+  status: "scheduled" | "queued" | "done" | "refused" | "unsupported" | "error" | "cancelled";
+  target?: string | null;
+  trigger: string;
+  verdict?: ("confirmed" | "not_reproducible" | "inconclusive") | null;
+}
+
 export interface VerifierSummary {
   gate_ok?: boolean | null;
   pr_opened?: boolean | null;
@@ -2254,13 +2701,6 @@ export interface VerifierSummary {
   summary?: string | null;
   verdict?: string | null;
   verify_ok?: boolean | null;
-}
-
-export interface VerifyIn {
-  approver?: string | null;
-  loa_ref?: string | null;
-  method?: ("dns_txt" | "http_file" | "attestation") | null;
-  valid_until?: string | null;
 }
 
 export interface VerifyOut {
@@ -2281,6 +2721,15 @@ export interface Window {
   label: string;
   prev_start: string;
   start: string;
+}
+
+export interface app__reports__models__EvidenceOut {
+  detail: string;
+  key: string;
+  metrics?: Record<string, unknown>;
+  rows?: Record<string, unknown>[];
+  status: "pass" | "partial" | "fail" | "none";
+  title: string;
 }
 
 export interface app__reports__models__FindingBrief {
@@ -2310,12 +2759,126 @@ export interface app__routers__devices__FindingBrief {
   title: string;
 }
 
+export interface app__routers__fleet__EnrollIn {
+  agent_version?: string | null;
+  capabilities?: string[];
+  hostname: string;
+  labels?: string[];
+  /**
+   * linux | windows | macos
+   */
+  platform: string;
+  /**
+   * enrollment bootstrap token
+   */
+  token: string;
+}
+
+export interface app__routers__fleet__EnrollOut {
+  /**
+   * shown ONCE; store it securely on the host
+   */
+  agent_token: string;
+  capabilities: string[];
+  hostname: string;
+  id: string;
+  platform: string | null;
+  status: string;
+  token_prefix: string;
+}
+
+export interface app__routers__fleet__HeartbeatIn {
+  agent_version?: string | null;
+  /**
+   * agent-reported health note
+   */
+  status?: string | null;
+}
+
+export interface app__routers__fleet__ResultIn {
+  output?: Record<string, unknown>;
+  revert?: Record<string, unknown> | null;
+  status: "applied" | "failed";
+}
+
+export interface app__routers__integration_sync__DismissIn {
+  reason?: string | null;
+}
+
+export interface app__routers__lifecycle__DismissIn {
+  accepted_until?: string | null;
+  reason: string;
+  suppress?: boolean;
+}
+
+export interface app__routers__network_actions__EvidenceOut {
+  action_id: string;
+  device?: Record<string, unknown>;
+  finding?: Record<string, unknown> | null;
+}
+
+export interface app__routers__sensors__EnrollIn {
+  hostname?: string | null;
+  interfaces?: InterfaceIn[];
+  name?: string | null;
+  token: string;
+  version?: string | null;
+}
+
+export interface app__routers__sensors__EnrollOut {
+  /**
+   * per-sensor credential; shown ONCE, store 0600
+   */
+  credential: string;
+  credential_prefix: string;
+  heartbeat_interval_s: number;
+  name: string;
+  sensor_id: string;
+  site: string;
+}
+
+export interface app__routers__sensors__HeartbeatIn {
+  health?: HealthIn;
+  interfaces?: InterfaceIn[] | null;
+  version?: string | null;
+}
+
+export interface app__scope_proof__VerifyIn {
+  approver?: string | null;
+  loa_ref?: string | null;
+  method?: ("dns_txt" | "http_file" | "attestation") | null;
+  valid_until?: string | null;
+}
+
+/**
+ * What the worker reports back for one verification job.
+ */
+export interface app__verification__models__ResultIn {
+  check_id?: string | null;
+  checked_at?: string | null;
+  evidence?: Record<string, unknown>;
+  reason?: string | null;
+  status: "done" | "refused" | "unsupported" | "error";
+  verdict?: ("confirmed" | "not_reproducible" | "inconclusive") | null;
+}
+
+/**
+ * Optional body for POST /v1/findings/{id}/verify.
+ */
+export interface app__verification__models__VerifyIn {
+  /**
+   * why (recorded on the ledger)
+   */
+  reason?: string | null;
+}
+
 /** name -> [method, path, paginated] */
 export const OPERATIONS = {
   healthz: ["GET", "/healthz", false],
   readyz: ["GET", "/readyz", false],
   listGroups: ["GET", "/scim/v2/Groups", false],
   createGroup: ["POST", "/scim/v2/Groups", false],
+  searchGroups: ["POST", "/scim/v2/Groups/.search", false],
   getGroup: ["GET", "/scim/v2/Groups/{group_id}", false],
   replaceGroup: ["PUT", "/scim/v2/Groups/{group_id}", false],
   patchGroup: ["PATCH", "/scim/v2/Groups/{group_id}", false],
@@ -2327,10 +2890,12 @@ export const OPERATIONS = {
   serviceProviderConfig: ["GET", "/scim/v2/ServiceProviderConfig", false],
   listUsers: ["GET", "/scim/v2/Users", false],
   createUser: ["POST", "/scim/v2/Users", false],
+  searchUsers: ["POST", "/scim/v2/Users/.search", false],
   getUser: ["GET", "/scim/v2/Users/{user_id}", false],
   replaceUser: ["PUT", "/scim/v2/Users/{user_id}", false],
   patchUser: ["PATCH", "/scim/v2/Users/{user_id}", false],
   deleteUser: ["DELETE", "/scim/v2/Users/{user_id}", false],
+  publicStatus: ["GET", "/status", false],
   listAlertRules: ["GET", "/v1/alert-rules", true],
   createAlertRule: ["POST", "/v1/alert-rules", false],
   patchAlertRule: ["PATCH", "/v1/alert-rules/{rule_id}", false],
@@ -2362,6 +2927,7 @@ export const OPERATIONS = {
   adminGetProvider: ["GET", "/v1/auth/sso/admin/providers/{provider_id}", false],
   adminUpdateProvider: ["PATCH", "/v1/auth/sso/admin/providers/{provider_id}", false],
   adminDeleteProvider: ["DELETE", "/v1/auth/sso/admin/providers/{provider_id}", false],
+  adminGenerateSpKeypair: ["POST", "/v1/auth/sso/admin/providers/{provider_id}/saml-sp-keypair", false],
   adminTestProvider: ["POST", "/v1/auth/sso/admin/providers/{provider_id}/test", false],
   adminListScimTokens: ["GET", "/v1/auth/sso/admin/scim-tokens", false],
   adminCreateScimToken: ["POST", "/v1/auth/sso/admin/scim-tokens", false],
@@ -2369,11 +2935,17 @@ export const OPERATIONS = {
   adminGetSettings: ["GET", "/v1/auth/sso/admin/settings", false],
   adminPutSettings: ["PUT", "/v1/auth/sso/admin/settings", false],
   exchange: ["POST", "/v1/auth/sso/exchange", false],
+  ssoLogout: ["POST", "/v1/auth/sso/logout", false],
   publicProviders: ["GET", "/v1/auth/sso/providers", false],
   samlAcs: ["POST", "/v1/auth/sso/{slug}/acs", false],
   oidcCallback: ["GET", "/v1/auth/sso/{slug}/callback", false],
   samlMetadata: ["GET", "/v1/auth/sso/{slug}/metadata", false],
+  samlSls: ["GET", "/v1/auth/sso/{slug}/sls", false],
   ssoStart: ["GET", "/v1/auth/sso/{slug}/start", false],
+  getBilling: ["GET", "/v1/billing", false],
+  createCheckout: ["POST", "/v1/billing/checkout", false],
+  createPortal: ["POST", "/v1/billing/portal", false],
+  stripeWebhook: ["POST", "/v1/billing/webhook", false],
   listChains: ["GET", "/v1/chains", true],
   createChain: ["POST", "/v1/chains", false],
   listChanges: ["GET", "/v1/changes", true],
@@ -2395,12 +2967,15 @@ export const OPERATIONS = {
   bulkUpsertFindings: ["POST", "/v1/findings/bulk", false],
   listFindingsLegacy: ["GET", "/v1/findings/list", true],
   recomputeIdentity: ["POST", "/v1/findings/recompute-identity", false],
+  verifyBulk: ["POST", "/v1/findings/verify/bulk", false],
   getFinding: ["GET", "/v1/findings/{finding_id}", false],
   patchFinding: ["PATCH", "/v1/findings/{finding_id}", false],
   acceptFinding: ["POST", "/v1/findings/{finding_id}/accept", false],
   markFalsePositive: ["POST", "/v1/findings/{finding_id}/false-positive", false],
   reopenFinding: ["POST", "/v1/findings/{finding_id}/reopen", false],
   findingTechniques: ["GET", "/v1/findings/{finding_id}/techniques", false],
+  listVerifications: ["GET", "/v1/findings/{finding_id}/verifications", false],
+  verifyFinding: ["POST", "/v1/findings/{finding_id}/verify", false],
   listActions: ["GET", "/v1/fleet/actions", true],
   proposeAction: ["POST", "/v1/fleet/actions", false],
   approveAction: ["POST", "/v1/fleet/actions/{action_id}/approve", false],
@@ -2413,6 +2988,7 @@ export const OPERATIONS = {
   listNetworkActions: ["GET", "/v1/fleet/network-actions", true],
   propose: ["POST", "/v1/fleet/network-actions", false],
   proposeFromFinding: ["POST", "/v1/fleet/network-actions/from-finding", false],
+  actionEvidence: ["GET", "/v1/fleet/network-actions/{action_id}/evidence", false],
   execute: ["POST", "/v1/fleet/network-actions/{action_id}/execute", false],
   heartbeat: ["POST", "/v1/fleet/{agent_id}/heartbeat", false],
   postInventory: ["POST", "/v1/fleet/{agent_id}/inventory", false],
@@ -2420,7 +2996,18 @@ export const OPERATIONS = {
   graphPaths: ["GET", "/v1/graph/paths", false],
   importLockfiles: ["POST", "/v1/import/lockfiles", false],
   importSbom: ["POST", "/v1/import/sbom", false],
+  ingest: ["POST", "/v1/ingest", false],
+  formats: ["GET", "/v1/ingest/formats", false],
+  ingestLog: ["GET", "/v1/ingest/log", true],
+  listSources: ["GET", "/v1/ingest/sources", false],
+  createSource: ["POST", "/v1/ingest/sources", false],
+  patchSource: ["PATCH", "/v1/ingest/sources/{source_id}", false],
+  revokeSource: ["DELETE", "/v1/ingest/sources/{source_id}", false],
+  rotateSource: ["POST", "/v1/ingest/sources/{source_id}/rotate", false],
   syncStatus: ["GET", "/v1/integration-sync", false],
+  listSuggestions: ["GET", "/v1/integration-sync/suggestions", false],
+  acceptSuggestion: ["POST", "/v1/integration-sync/suggestions/{suggestion_id}/accept", false],
+  dismissSuggestion: ["POST", "/v1/integration-sync/suggestions/{suggestion_id}/dismiss", false],
   syncNow: ["POST", "/v1/integration-sync/{integration_id}", false],
   syncRuns: ["GET", "/v1/integration-sync/{integration_id}/runs", false],
   listIntegrations: ["GET", "/v1/integrations", false],
@@ -2442,6 +3029,25 @@ export const OPERATIONS = {
   getActiveModels: ["GET", "/v1/ml/model", false],
   retrain: ["POST", "/v1/ml/retrain", false],
   listMlRisk: ["GET", "/v1/ml/risk", true],
+  listCustomers: ["GET", "/v1/msp/customers", true],
+  createCustomer: ["POST", "/v1/msp/customers", false],
+  newInvite: ["POST", "/v1/msp/customers/{customer_id}/invites", false],
+  reactivateCustomer: ["POST", "/v1/msp/customers/{customer_id}/reactivate", false],
+  suspendCustomer: ["POST", "/v1/msp/customers/{customer_id}/suspend", false],
+  switchCustomer: ["POST", "/v1/msp/customers/{customer_id}/switch", false],
+  listGrants: ["GET", "/v1/msp/grants", false],
+  setGrant: ["POST", "/v1/msp/grants", false],
+  revokeGrant: ["DELETE", "/v1/msp/grants/{grant_id}", false],
+  redeemInvite: ["POST", "/v1/msp/invites/redeem", false],
+  mspMe: ["GET", "/v1/msp/me", false],
+  customersSummary: ["GET", "/v1/msp/summary", false],
+  listTemplates: ["GET", "/v1/msp/templates", false],
+  createTemplate: ["POST", "/v1/msp/templates", false],
+  updateTemplate: ["PUT", "/v1/msp/templates/{template_id}", false],
+  deleteTemplate: ["DELETE", "/v1/msp/templates/{template_id}", false],
+  applyTemplate: ["POST", "/v1/msp/templates/{template_id}/apply", false],
+  usage: ["GET", "/v1/msp/usage", false],
+  usageSnapshot: ["POST", "/v1/msp/usage/snapshot", false],
   getOnboarding: ["GET", "/v1/onboarding", false],
   putOnboarding: ["PUT", "/v1/onboarding", false],
   listObjects: ["GET", "/v1/ontology/objects", true],
@@ -2456,8 +3062,13 @@ export const OPERATIONS = {
   getProvenance: ["GET", "/v1/provenance", false],
   recordProvenance: ["POST", "/v1/provenance", false],
   backfillProvenance: ["POST", "/v1/provenance/backfill", false],
+  createReport: ["POST", "/v1/public/exposure-report", false],
+  getReport: ["GET", "/v1/public/exposure-report/{report_id}", false],
+  publicViewGet: ["GET", "/v1/public/trust/{token}", false],
+  publicViewPost: ["POST", "/v1/public/trust/{token}", false],
   listRemediations: ["GET", "/v1/remediation", true],
   proposeRemediation: ["POST", "/v1/remediation/propose", false],
+  remediationMerged: ["POST", "/v1/remediation/{remediation_id}/merged", false],
   getRemediation: ["GET", "/v1/remediation/{rid}", false],
   complianceFrameworks: ["GET", "/v1/reports/compliance", false],
   compliancePack: ["GET", "/v1/reports/compliance/{framework}", false],
@@ -2489,8 +3100,25 @@ export const OPERATIONS = {
   listScopeDecisions: ["GET", "/v1/scope/{entry_id}/decisions", true],
   getScopeProof: ["GET", "/v1/scope/{entry_id}/proof", false],
   verifyScope: ["POST", "/v1/scope/{entry_id}/verify", false],
+  listSensors: ["GET", "/v1/sensors", false],
+  enrollSensors: ["POST", "/v1/sensors/enroll", false],
+  heartbeatSensors: ["POST", "/v1/sensors/heartbeat", false],
+  ingestClaim: ["POST", "/v1/sensors/ingest/claim", false],
+  ingestDone: ["POST", "/v1/sensors/ingest/done", false],
+  listTokens: ["GET", "/v1/sensors/tokens", false],
+  createToken: ["POST", "/v1/sensors/tokens", false],
+  revokeToken: ["DELETE", "/v1/sensors/tokens/{token_id}", false],
+  getSensor: ["GET", "/v1/sensors/{sensor_id}", false],
+  patchSensor: ["PATCH", "/v1/sensors/{sensor_id}", false],
+  revokeSensor: ["POST", "/v1/sensors/{sensor_id}/revoke", false],
   listSlaPolicies: ["GET", "/v1/sla-policies", false],
   patchSlaPolicy: ["PATCH", "/v1/sla-policies/{severity}", false],
+  listSuppliers: ["GET", "/v1/suppliers", false],
+  addSupplier: ["POST", "/v1/suppliers", false],
+  getSupplier: ["GET", "/v1/suppliers/{supplier_id}", false],
+  patchSupplier: ["PATCH", "/v1/suppliers/{supplier_id}", false],
+  deleteSupplier: ["DELETE", "/v1/suppliers/{supplier_id}", false],
+  assessNow: ["POST", "/v1/suppliers/{supplier_id}/assess", false],
   listSupplyChainRisks: ["GET", "/v1/supply-chain-risks", true],
   listSuppressions: ["GET", "/v1/suppressions", true],
   createSuppression: ["POST", "/v1/suppressions", false],
@@ -2503,7 +3131,7 @@ export const OPERATIONS = {
   deleteFeed: ["DELETE", "/v1/ti/feeds/{feed_id}", false],
   pollFeed: ["POST", "/v1/ti/feeds/{feed_id}/poll", false],
   listIndicators: ["GET", "/v1/ti/indicators", true],
-  ingest: ["POST", "/v1/ti/ingest", false],
+  ingestThreatIntel: ["POST", "/v1/ti/ingest", false],
   listMatches: ["GET", "/v1/ti/matches", true],
   summary: ["GET", "/v1/ti/summary", false],
   listTickets: ["GET", "/v1/tickets", true],
@@ -2514,9 +3142,14 @@ export const OPERATIONS = {
   listGrades: ["GET", "/v1/tls-grades", true],
   bulkUpsertGrades: ["POST", "/v1/tls-grades/bulk", false],
   gradesSummary: ["GET", "/v1/tls-grades/summary", false],
+  listLinks: ["GET", "/v1/trust-links", false],
+  createLink: ["POST", "/v1/trust-links", false],
+  listSections: ["GET", "/v1/trust-links/sections", false],
+  revokeLink: ["DELETE", "/v1/trust-links/{link_id}", false],
   getUsage: ["GET", "/v1/usage", false],
   takeSnapshot: ["POST", "/v1/usage/snapshot", false],
   listSnapshots: ["GET", "/v1/usage/snapshots", false],
+  postResultVerification: ["POST", "/v1/verifications/{verification_id}/result", false],
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -2551,6 +3184,13 @@ export abstract class GeneratedOperations {
    */
   createGroup(options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("POST", "/scim/v2/Groups", { options });
+  }
+
+  /**
+   * POST /scim/v2/Groups/.search — Search Groups
+   */
+  searchGroups(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/scim/v2/Groups/.search", { options });
   }
 
   /**
@@ -2619,7 +3259,7 @@ export abstract class GeneratedOperations {
   /**
    * GET /scim/v2/Users — List Users
    */
-  listUsers(query?: { filter?: string | null; startIndex?: number; count?: number }, options?: RequestOptions): Promise<unknown> {
+  listUsers(query?: { filter?: string | null; startIndex?: number; count?: number; attributes?: string | null; excludedAttributes?: string | null }, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("GET", "/scim/v2/Users", { query, options });
   }
 
@@ -2631,10 +3271,17 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /scim/v2/Users/.search — Search Users
+   */
+  searchUsers(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/scim/v2/Users/.search", { options });
+  }
+
+  /**
    * GET /scim/v2/Users/{user_id} — Get User
    */
-  getUser(userId: string, options?: RequestOptions): Promise<unknown> {
-    return this._request<unknown>("GET", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, options });
+  getUser(userId: string, query?: { attributes?: string | null; excludedAttributes?: string | null }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, query, options });
   }
 
   /**
@@ -2656,6 +3303,13 @@ export abstract class GeneratedOperations {
    */
   deleteUser(userId: string, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("DELETE", "/scim/v2/Users/{user_id}", { pathParams: { user_id: userId }, options });
+  }
+
+  /**
+   * GET /status — Public Status
+   */
+  publicStatus(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/status", { options });
   }
 
   /**
@@ -2913,6 +3567,18 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/auth/sso/admin/providers/{provider_id}/saml-sp-keypair — Admin Generate Sp Keypair
+   *
+   * Generate (or rotate) the SAML SP signing/encryption key pair. The
+   * private key is stored encrypted and never returned; the certificate is
+   * saved in the provider config and returned for the IdP (it is also in the
+   * SP metadata).
+   */
+  adminGenerateSpKeypair(providerId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/auth/sso/admin/providers/{provider_id}/saml-sp-keypair", { pathParams: { provider_id: providerId }, options });
+  }
+
+  /**
    * POST /v1/auth/sso/admin/providers/{provider_id}/test — Admin Test Provider
    *
    * Connectivity / configuration check. OIDC: run discovery + fetch JWKS.
@@ -2964,10 +3630,24 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/auth/sso/logout — Sso Logout
+   *
+   * End the caller's session(s) everywhere Paddock controls: every JWT
+   * issued so far stops working (session watermark) and pending SSO exchange
+   * codes are deleted. If the user signed in through SAML and the IdP has a
+   * single-logout URL, ``idp_logout_url`` is the (signed) LogoutRequest
+   * redirect the SPA should navigate to so the IdP session ends too; for OIDC
+   * it is the IdP's ``end_session_endpoint`` when it has one.
+   */
+  ssoLogout(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/auth/sso/logout", { options });
+  }
+
+  /**
    * GET /v1/auth/sso/providers — Public Providers
    */
-  publicProviders(options?: RequestOptions): Promise<PublicProvidersOut> {
-    return this._request<PublicProvidersOut>("GET", "/v1/auth/sso/providers", { options });
+  publicProviders(query?: { tenant?: string | null }, options?: RequestOptions): Promise<PublicProvidersOut> {
+    return this._request<PublicProvidersOut>("GET", "/v1/auth/sso/providers", { query, options });
   }
 
   /**
@@ -2992,10 +3672,53 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/auth/sso/{slug}/sls — Saml Sls
+   *
+   * SAML SingleLogoutService (HTTP-Redirect). Handles (a) the IdP's
+   * LogoutResponse to a logout WE started and (b) an IdP-initiated
+   * LogoutRequest. Both must be signed by the pinned IdP certificate.
+   */
+  samlSls(slug: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/auth/sso/{slug}/sls", { pathParams: { slug: slug }, options });
+  }
+
+  /**
    * GET /v1/auth/sso/{slug}/start — Sso Start
    */
   ssoStart(slug: string, query?: { return_to?: string | null; spa_challenge?: string | null }, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("GET", "/v1/auth/sso/{slug}/start", { pathParams: { slug: slug }, query, options });
+  }
+
+  /**
+   * GET /v1/billing — Get Billing
+   */
+  getBilling(options?: RequestOptions): Promise<BillingOut> {
+    return this._request<BillingOut>("GET", "/v1/billing", { options });
+  }
+
+  /**
+   * POST /v1/billing/checkout — Create Checkout
+   */
+  createCheckout(body: CheckoutIn, options?: RequestOptions): Promise<UrlOut> {
+    return this._request<UrlOut>("POST", "/v1/billing/checkout", { body, options });
+  }
+
+  /**
+   * POST /v1/billing/portal — Create Portal
+   */
+  createPortal(options?: RequestOptions): Promise<UrlOut> {
+    return this._request<UrlOut>("POST", "/v1/billing/portal", { options });
+  }
+
+  /**
+   * POST /v1/billing/webhook — Stripe Webhook
+   *
+   * Stripe -> Paddock. Public route: the ``Stripe-Signature`` header is the
+   * authentication (HMAC-SHA256 over ``timestamp.body``, tolerance window,
+   * replay protection by event id). Always answers fast; 5xx makes Stripe retry.
+   */
+  stripeWebhook(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/billing/webhook", { options });
   }
 
   /**
@@ -3145,7 +3868,7 @@ export abstract class GeneratedOperations {
   /**
    * GET /v1/findings — List Findings Paged
    */
-  listFindingsPaged(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; sla_breached?: boolean | null; fingerprint?: string | null; sort?: string; limit?: number; offset?: number }, options?: RequestOptions): Promise<FindingLifecyclePage> {
+  listFindingsPaged(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; sla_breached?: boolean | null; fingerprint?: string | null; sort?: string; limit?: number; offset?: number; exploitability?: string | null; fix_verified?: boolean | null }, options?: RequestOptions): Promise<FindingLifecyclePage> {
     return this._request<FindingLifecyclePage>("GET", "/v1/findings", { query, options });
   }
 
@@ -3176,6 +3899,13 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/findings/verify/bulk — Verify Bulk
+   */
+  verifyBulk(body: BulkVerifyIn, options?: RequestOptions): Promise<BulkVerifyOut> {
+    return this._request<BulkVerifyOut>("POST", "/v1/findings/verify/bulk", { body, options });
+  }
+
+  /**
    * GET /v1/findings/{finding_id} — Get Finding
    *
    * Finding + its asset + any chain it participates in (+ lifecycle).
@@ -3196,14 +3926,14 @@ export abstract class GeneratedOperations {
    *
    * Risk accepted. A fixed finding cannot be accepted (reopen it first).
    */
-  acceptFinding(findingId: string, body: DismissIn, options?: RequestOptions): Promise<TransitionOut> {
+  acceptFinding(findingId: string, body: app__routers__lifecycle__DismissIn, options?: RequestOptions): Promise<TransitionOut> {
     return this._request<TransitionOut>("POST", "/v1/findings/{finding_id}/accept", { pathParams: { finding_id: findingId }, body, options });
   }
 
   /**
    * POST /v1/findings/{finding_id}/false-positive — Mark False Positive
    */
-  markFalsePositive(findingId: string, body: DismissIn, options?: RequestOptions): Promise<TransitionOut> {
+  markFalsePositive(findingId: string, body: app__routers__lifecycle__DismissIn, options?: RequestOptions): Promise<TransitionOut> {
     return this._request<TransitionOut>("POST", "/v1/findings/{finding_id}/false-positive", { pathParams: { finding_id: findingId }, body, options });
   }
 
@@ -3221,6 +3951,23 @@ export abstract class GeneratedOperations {
    */
   findingTechniques(findingId: string, options?: RequestOptions): Promise<FindingTechniqueOut[]> {
     return this._request<FindingTechniqueOut[]>("GET", "/v1/findings/{finding_id}/techniques", { pathParams: { finding_id: findingId }, options });
+  }
+
+  /**
+   * GET /v1/findings/{finding_id}/verifications — List Verifications
+   */
+  listVerifications(findingId: string, query?: { limit?: number }, options?: RequestOptions): Promise<VerificationHistoryOut> {
+    return this._request<VerificationHistoryOut>("GET", "/v1/findings/{finding_id}/verifications", { pathParams: { finding_id: findingId }, query, options });
+  }
+
+  /**
+   * POST /v1/findings/{finding_id}/verify — Verify Finding
+   *
+   * Queue a safe check for this finding. 202 with the ledger row; 403 with the
+   * refusal reason (and a ledger row) when scope or proof-of-control says no.
+   */
+  verifyFinding(findingId: string, body?: app__verification__models__VerifyIn | null, options?: RequestOptions): Promise<VerificationOut> {
+    return this._request<VerificationOut>("POST", "/v1/findings/{finding_id}/verify", { pathParams: { finding_id: findingId }, body, options });
   }
 
   /**
@@ -3269,7 +4016,7 @@ export abstract class GeneratedOperations {
    * ``dry_run = false``. A dry-run can never mutate, so it can never be
    * ``applied`` here.
    */
-  postResult(actionId: string, body: ResultIn, options?: RequestOptions): Promise<ActionOut> {
+  postResult(actionId: string, body: app__routers__fleet__ResultIn, options?: RequestOptions): Promise<ActionOut> {
     return this._request<ActionOut>("POST", "/v1/fleet/actions/{action_id}/result", { pathParams: { action_id: actionId }, body, options });
   }
 
@@ -3305,8 +4052,8 @@ export abstract class GeneratedOperations {
    * Enroll a host agent. Validates the bootstrap token, mints an agent id +
    * a one-time credential (only its sha256 is stored), upserts by hostname.
    */
-  enroll(body: EnrollIn, options?: RequestOptions): Promise<EnrollOut> {
-    return this._request<EnrollOut>("POST", "/v1/fleet/enroll", { body, options });
+  enroll(body: app__routers__fleet__EnrollIn, options?: RequestOptions): Promise<app__routers__fleet__EnrollOut> {
+    return this._request<app__routers__fleet__EnrollOut>("POST", "/v1/fleet/enroll", { body, options });
   }
 
   /**
@@ -3335,6 +4082,16 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/fleet/network-actions/{action_id}/evidence — Action Evidence
+   *
+   * What the approver needs to decide: the Sentry finding behind a proposal
+   * (rule, severity, evidence JSON) and the device it points at. Read-only.
+   */
+  actionEvidence(actionId: string, options?: RequestOptions): Promise<app__routers__network_actions__EvidenceOut> {
+    return this._request<app__routers__network_actions__EvidenceOut>("GET", "/v1/fleet/network-actions/{action_id}/evidence", { pathParams: { action_id: actionId }, options });
+  }
+
+  /**
    * POST /v1/fleet/network-actions/{action_id}/execute — Execute
    *
    * Run an APPROVED network action through its ACTION integration.
@@ -3351,7 +4108,7 @@ export abstract class GeneratedOperations {
   /**
    * POST /v1/fleet/{agent_id}/heartbeat — Heartbeat
    */
-  heartbeat(agentId: string, body: HeartbeatIn, options?: RequestOptions): Promise<HeartbeatOut> {
+  heartbeat(agentId: string, body: app__routers__fleet__HeartbeatIn, options?: RequestOptions): Promise<HeartbeatOut> {
     return this._request<HeartbeatOut>("POST", "/v1/fleet/{agent_id}/heartbeat", { pathParams: { agent_id: agentId }, body, options });
   }
 
@@ -3398,10 +4155,93 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/ingest — Ingest
+   */
+  ingest(query?: { format?: string | null; project?: string | null; asset?: string | null; asset_kind?: string | null; source?: string | null; dry_run?: boolean; strict?: boolean; token?: string | null }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/ingest", { query, options });
+  }
+
+  /**
+   * GET /v1/ingest/formats — Formats
+   */
+  formats(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/ingest/formats", { options });
+  }
+
+  /**
+   * GET /v1/ingest/log — Ingest Log
+   */
+  ingestLog(query?: { source_id?: string | null; status?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/ingest/log", { query, options });
+  }
+
+  /**
+   * GET /v1/ingest/sources — List Sources
+   */
+  listSources(query?: { include_revoked?: boolean }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/ingest/sources", { query, options });
+  }
+
+  /**
+   * POST /v1/ingest/sources — Create Source
+   */
+  createSource(body: SourceIn, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/ingest/sources", { body, options });
+  }
+
+  /**
+   * PATCH /v1/ingest/sources/{source_id} — Patch Source
+   */
+  patchSource(sourceId: string, body: SourcePatch, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("PATCH", "/v1/ingest/sources/{source_id}", { pathParams: { source_id: sourceId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/ingest/sources/{source_id} — Revoke Source
+   */
+  revokeSource(sourceId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("DELETE", "/v1/ingest/sources/{source_id}", { pathParams: { source_id: sourceId }, options });
+  }
+
+  /**
+   * POST /v1/ingest/sources/{source_id}/rotate — Rotate Source
+   */
+  rotateSource(sourceId: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/ingest/sources/{source_id}/rotate", { pathParams: { source_id: sourceId }, options });
+  }
+
+  /**
    * GET /v1/integration-sync — Sync Status
    */
   syncStatus(options?: RequestOptions): Promise<SyncStatusOut[]> {
     return this._request<SyncStatusOut[]>("GET", "/v1/integration-sync", { options });
+  }
+
+  /**
+   * GET /v1/integration-sync/suggestions — List Suggestions
+   */
+  listSuggestions(query?: { status?: string; integration_id?: string | null; limit?: number }, options?: RequestOptions): Promise<SuggestionOut[]> {
+    return this._request<SuggestionOut[]>("GET", "/v1/integration-sync/suggestions", { query, options });
+  }
+
+  /**
+   * POST /v1/integration-sync/suggestions/{suggestion_id}/accept — Accept Suggestion
+   *
+   * Add the suggested value to scope through the normal scope add. The entry
+   * still needs proof-of-control (``/v1/scope/{id}/challenge`` + ``/verify``)
+   * before anything is scanned.
+   */
+  acceptSuggestion(suggestionId: number, body: AcceptIn, options?: RequestOptions): Promise<AcceptOut> {
+    return this._request<AcceptOut>("POST", "/v1/integration-sync/suggestions/{suggestion_id}/accept", { pathParams: { suggestion_id: suggestionId }, body, options });
+  }
+
+  /**
+   * POST /v1/integration-sync/suggestions/{suggestion_id}/dismiss — Dismiss Suggestion
+   *
+   * Dismiss: the suggestion stays recorded (so the next sync does not re-raise it).
+   */
+  dismissSuggestion(suggestionId: number, body: app__routers__integration_sync__DismissIn, options?: RequestOptions): Promise<SuggestionOut> {
+    return this._request<SuggestionOut>("POST", "/v1/integration-sync/suggestions/{suggestion_id}/dismiss", { pathParams: { suggestion_id: suggestionId }, body, options });
   }
 
   /**
@@ -3570,6 +4410,144 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/msp/customers — List Customers
+   */
+  listCustomers(query?: { q?: string | null; sort?: string; order?: "asc" | "desc"; limit?: number; offset?: number; refresh?: boolean }, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/msp/customers", { query, options });
+  }
+
+  /**
+   * POST /v1/msp/customers — Create Customer
+   */
+  createCustomer(body: CustomerIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/customers", { body, options });
+  }
+
+  /**
+   * POST /v1/msp/customers/{customer_id}/invites — New Invite
+   */
+  newInvite(customerId: string, body: InviteIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/customers/{customer_id}/invites", { pathParams: { customer_id: customerId }, body, options });
+  }
+
+  /**
+   * POST /v1/msp/customers/{customer_id}/reactivate — Reactivate Customer
+   */
+  reactivateCustomer(customerId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/customers/{customer_id}/reactivate", { pathParams: { customer_id: customerId }, options });
+  }
+
+  /**
+   * POST /v1/msp/customers/{customer_id}/suspend — Suspend Customer
+   */
+  suspendCustomer(customerId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/customers/{customer_id}/suspend", { pathParams: { customer_id: customerId }, options });
+  }
+
+  /**
+   * POST /v1/msp/customers/{customer_id}/switch — Switch Customer
+   */
+  switchCustomer(customerId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/customers/{customer_id}/switch", { pathParams: { customer_id: customerId }, options });
+  }
+
+  /**
+   * GET /v1/msp/grants — List Grants
+   */
+  listGrants(query?: { user_id?: string | null }, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/msp/grants", { query, options });
+  }
+
+  /**
+   * POST /v1/msp/grants — Set Grant
+   */
+  setGrant(body: GrantIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/grants", { body, options });
+  }
+
+  /**
+   * DELETE /v1/msp/grants/{grant_id} — Revoke Grant
+   */
+  revokeGrant(grantId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("DELETE", "/v1/msp/grants/{grant_id}", { pathParams: { grant_id: grantId }, options });
+  }
+
+  /**
+   * POST /v1/msp/invites/redeem — Redeem Invite
+   *
+   * Public. The invite token is the credential; it is single use, expires,
+   * and only works while the customer is active.
+   */
+  redeemInvite(body: RedeemIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/invites/redeem", { body, options });
+  }
+
+  /**
+   * GET /v1/msp/me — Msp Me
+   */
+  mspMe(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/msp/me", { options });
+  }
+
+  /**
+   * GET /v1/msp/summary — Customers Summary
+   */
+  customersSummary(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/msp/summary", { options });
+  }
+
+  /**
+   * GET /v1/msp/templates — List Templates
+   */
+  listTemplates(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/msp/templates", { options });
+  }
+
+  /**
+   * POST /v1/msp/templates — Create Template
+   */
+  createTemplate(body: TemplateIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/templates", { body, options });
+  }
+
+  /**
+   * PUT /v1/msp/templates/{template_id} — Update Template
+   */
+  updateTemplate(templateId: string, body: TemplateIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("PUT", "/v1/msp/templates/{template_id}", { pathParams: { template_id: templateId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/msp/templates/{template_id} — Delete Template
+   */
+  deleteTemplate(templateId: string, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("DELETE", "/v1/msp/templates/{template_id}", { pathParams: { template_id: templateId }, options });
+  }
+
+  /**
+   * POST /v1/msp/templates/{template_id}/apply — Apply Template
+   */
+  applyTemplate(templateId: string, body: ApplyIn, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/templates/{template_id}/apply", { pathParams: { template_id: templateId }, body, options });
+  }
+
+  /**
+   * GET /v1/msp/usage — Usage
+   */
+  usage(query?: { month?: string | null; format?: "json" | "csv" }, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/msp/usage", { query, options });
+  }
+
+  /**
+   * POST /v1/msp/usage/snapshot — Usage Snapshot
+   *
+   * Record today's per-customer usage (cron-able). Idempotent per day.
+   */
+  usageSnapshot(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("POST", "/v1/msp/usage/snapshot", { options });
+  }
+
+  /**
    * GET /v1/onboarding — Get Onboarding
    */
   getOnboarding(options?: RequestOptions): Promise<OnboardingOut> {
@@ -3683,6 +4661,34 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/public/exposure-report — Create Report
+   */
+  createReport(body: ExposureReportIn, options?: RequestOptions): Promise<ExposureSubmitOut> {
+    return this._request<ExposureSubmitOut>("POST", "/v1/public/exposure-report", { body, options });
+  }
+
+  /**
+   * GET /v1/public/exposure-report/{report_id} — Get Report
+   */
+  getReport(reportId: string, options?: RequestOptions): Promise<ExposureReportOut> {
+    return this._request<ExposureReportOut>("GET", "/v1/public/exposure-report/{report_id}", { pathParams: { report_id: reportId }, options });
+  }
+
+  /**
+   * GET /v1/public/trust/{token} — Public View Get
+   */
+  publicViewGet(token: string, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/public/trust/{token}", { pathParams: { token: token }, options });
+  }
+
+  /**
+   * POST /v1/public/trust/{token} — Public View Post
+   */
+  publicViewPost(token: string, body: TrustUnlockIn, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/public/trust/{token}", { pathParams: { token: token }, body, options });
+  }
+
+  /**
    * GET /v1/remediation — List Remediations
    */
   listRemediations(query?: { status?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<RemediationPage> {
@@ -3700,6 +4706,16 @@ export abstract class GeneratedOperations {
    */
   proposeRemediation(body: ProposeIn, options?: RequestOptions): Promise<Record<string, unknown>> {
     return this._request<Record<string, unknown>>("POST", "/v1/remediation/propose", { body, options });
+  }
+
+  /**
+   * POST /v1/remediation/{remediation_id}/merged — Remediation Merged
+   *
+   * Record that a remediation PR was merged; if its finding is marked fixed, a
+   * safe re-check is scheduled (after the PR deploy delay).
+   */
+  remediationMerged(remediationId: string, body?: RemediationMergedIn | null, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/remediation/{remediation_id}/merged", { pathParams: { remediation_id: remediationId }, body, options });
   }
 
   /**
@@ -3946,8 +4962,92 @@ export abstract class GeneratedOperations {
    *
    * Check ownership now (domains) or record an attestation (IP ranges/ASN).
    */
-  verifyScope(entryId: number, body?: VerifyIn | null, options?: RequestOptions): Promise<VerifyOut> {
+  verifyScope(entryId: number, body?: app__scope_proof__VerifyIn | null, options?: RequestOptions): Promise<VerifyOut> {
     return this._request<VerifyOut>("POST", "/v1/scope/{entry_id}/verify", { pathParams: { entry_id: entryId }, body, options });
+  }
+
+  /**
+   * GET /v1/sensors — List Sensors
+   */
+  listSensors(query?: { include_revoked?: boolean }, options?: RequestOptions): Promise<SensorOut[]> {
+    return this._request<SensorOut[]>("GET", "/v1/sensors", { query, options });
+  }
+
+  /**
+   * POST /v1/sensors/enroll — Enroll
+   *
+   * Redeem an enrollment token. Authenticated by the token itself; rate
+   * limited per client, with a lockout after repeated failures.
+   */
+  enrollSensors(body: app__routers__sensors__EnrollIn, options?: RequestOptions): Promise<app__routers__sensors__EnrollOut> {
+    return this._request<app__routers__sensors__EnrollOut>("POST", "/v1/sensors/enroll", { body, options });
+  }
+
+  /**
+   * POST /v1/sensors/heartbeat — Heartbeat
+   */
+  heartbeatSensors(body: app__routers__sensors__HeartbeatIn, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/sensors/heartbeat", { body, options });
+  }
+
+  /**
+   * POST /v1/sensors/ingest/claim — Ingest Claim
+   */
+  ingestClaim(body: ClaimIn, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/sensors/ingest/claim", { body, options });
+  }
+
+  /**
+   * POST /v1/sensors/ingest/done — Ingest Done
+   */
+  ingestDone(body: DoneIn, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/sensors/ingest/done", { body, options });
+  }
+
+  /**
+   * GET /v1/sensors/tokens — List Tokens
+   */
+  listTokens(query?: { limit?: number }, options?: RequestOptions): Promise<TokenOut[]> {
+    return this._request<TokenOut[]>("GET", "/v1/sensors/tokens", { query, options });
+  }
+
+  /**
+   * POST /v1/sensors/tokens — Create Token
+   *
+   * Create a one-time enrollment token. The token is returned ONCE.
+   */
+  createToken(body: TokenCreateIn, options?: RequestOptions): Promise<TokenCreated> {
+    return this._request<TokenCreated>("POST", "/v1/sensors/tokens", { body, options });
+  }
+
+  /**
+   * DELETE /v1/sensors/tokens/{token_id} — Revoke Token
+   */
+  revokeToken(tokenId: string, options?: RequestOptions): Promise<void> {
+    return this._request<void>("DELETE", "/v1/sensors/tokens/{token_id}", { pathParams: { token_id: tokenId }, options });
+  }
+
+  /**
+   * GET /v1/sensors/{sensor_id} — Get Sensor
+   */
+  getSensor(sensorId: string, options?: RequestOptions): Promise<SensorOut> {
+    return this._request<SensorOut>("GET", "/v1/sensors/{sensor_id}", { pathParams: { sensor_id: sensorId }, options });
+  }
+
+  /**
+   * PATCH /v1/sensors/{sensor_id} — Patch Sensor
+   */
+  patchSensor(sensorId: string, body: SensorPatch, options?: RequestOptions): Promise<SensorOut> {
+    return this._request<SensorOut>("PATCH", "/v1/sensors/{sensor_id}", { pathParams: { sensor_id: sensorId }, body, options });
+  }
+
+  /**
+   * POST /v1/sensors/{sensor_id}/revoke — Revoke Sensor
+   *
+   * Revoke a sensor. Its credential stops working on the very next call.
+   */
+  revokeSensor(sensorId: string, options?: RequestOptions): Promise<SensorOut> {
+    return this._request<SensorOut>("POST", "/v1/sensors/{sensor_id}/revoke", { pathParams: { sensor_id: sensorId }, options });
   }
 
   /**
@@ -3962,6 +5062,50 @@ export abstract class GeneratedOperations {
    */
   patchSlaPolicy(severity: "info" | "low" | "medium" | "high" | "critical", body: SlaPolicyPatch, options?: RequestOptions): Promise<SlaPolicyOut> {
     return this._request<SlaPolicyOut>("PATCH", "/v1/sla-policies/{severity}", { pathParams: { severity: severity }, body, options });
+  }
+
+  /**
+   * GET /v1/suppliers — List Suppliers
+   */
+  listSuppliers(options?: RequestOptions): Promise<SupplierOut[]> {
+    return this._request<SupplierOut[]>("GET", "/v1/suppliers", { options });
+  }
+
+  /**
+   * POST /v1/suppliers — Add Supplier
+   */
+  addSupplier(body: SupplierIn, options?: RequestOptions): Promise<SupplierOut> {
+    return this._request<SupplierOut>("POST", "/v1/suppliers", { body, options });
+  }
+
+  /**
+   * GET /v1/suppliers/{supplier_id} — Get Supplier
+   */
+  getSupplier(supplierId: string, options?: RequestOptions): Promise<SupplierDetail> {
+    return this._request<SupplierDetail>("GET", "/v1/suppliers/{supplier_id}", { pathParams: { supplier_id: supplierId }, options });
+  }
+
+  /**
+   * PATCH /v1/suppliers/{supplier_id} — Patch Supplier
+   */
+  patchSupplier(supplierId: string, body: SupplierPatch, options?: RequestOptions): Promise<SupplierOut> {
+    return this._request<SupplierOut>("PATCH", "/v1/suppliers/{supplier_id}", { pathParams: { supplier_id: supplierId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/suppliers/{supplier_id} — Delete Supplier
+   */
+  deleteSupplier(supplierId: string, options?: RequestOptions): Promise<void> {
+    return this._request<void>("DELETE", "/v1/suppliers/{supplier_id}", { pathParams: { supplier_id: supplierId }, options });
+  }
+
+  /**
+   * POST /v1/suppliers/{supplier_id}/assess — Assess Now
+   *
+   * Queue an immediate re-assessment; the runner picks it up within seconds.
+   */
+  assessNow(supplierId: string, options?: RequestOptions): Promise<SupplierOut> {
+    return this._request<SupplierOut>("POST", "/v1/suppliers/{supplier_id}/assess", { pathParams: { supplier_id: supplierId }, options });
   }
 
   /**
@@ -4059,7 +5203,7 @@ export abstract class GeneratedOperations {
    * connection failure the response degrades to {ok:false, note:...} and a 200,
    * so the dashboard never sees a 5xx.
    */
-  ingest(body: Record<string, unknown>, options?: RequestOptions): Promise<Record<string, unknown>> {
+  ingestThreatIntel(body: Record<string, unknown>, options?: RequestOptions): Promise<Record<string, unknown>> {
     return this._request<Record<string, unknown>>("POST", "/v1/ti/ingest", { body, options });
   }
 
@@ -4140,6 +5284,36 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/trust-links — List Links
+   */
+  listLinks(options?: RequestOptions): Promise<TrustLinkOut[]> {
+    return this._request<TrustLinkOut[]>("GET", "/v1/trust-links", { options });
+  }
+
+  /**
+   * POST /v1/trust-links — Create Link
+   */
+  createLink(body: TrustLinkIn, options?: RequestOptions): Promise<TrustLinkCreated> {
+    return this._request<TrustLinkCreated>("POST", "/v1/trust-links", { body, options });
+  }
+
+  /**
+   * GET /v1/trust-links/sections — List Sections
+   */
+  listSections(options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("GET", "/v1/trust-links/sections", { options });
+  }
+
+  /**
+   * DELETE /v1/trust-links/{link_id} — Revoke Link
+   *
+   * Revoke (kept, with its view history, for the audit trail).
+   */
+  revokeLink(linkId: string, options?: RequestOptions): Promise<TrustLinkOut> {
+    return this._request<TrustLinkOut>("DELETE", "/v1/trust-links/{link_id}", { pathParams: { link_id: linkId }, options });
+  }
+
+  /**
    * GET /v1/usage — Get Usage
    */
   getUsage(options?: RequestOptions): Promise<UsageOut> {
@@ -4158,6 +5332,17 @@ export abstract class GeneratedOperations {
    */
   listSnapshots(query?: { days?: number }, options?: RequestOptions): Promise<UsageSnapshotOut[]> {
     return this._request<UsageSnapshotOut[]>("GET", "/v1/usage/snapshots", { query, options });
+  }
+
+  /**
+   * POST /v1/verifications/{verification_id}/result — Post Result
+   *
+   * Worker callback: only the service key, only for the dispatched job
+   * (``X-Paddock-Scan`` must be the scan the verification was queued as). A user
+   * or API key, even an admin's, can never post a verdict.
+   */
+  postResultVerification(verificationId: string, body: app__verification__models__ResultIn, options?: RequestOptions): Promise<VerificationOut> {
+    return this._request<VerificationOut>("POST", "/v1/verifications/{verification_id}/result", { pathParams: { verification_id: verificationId }, body, options });
   }
 
 }

@@ -37,8 +37,13 @@ jobs:
         with:
           path: site
 
+  # The docs site is served from Vercel. Publishing to GitHub Pages as well is
+  # opt-in: enable Pages (Settings -> Pages -> GitHub Actions) and set the
+  # repository variable DOCS_GITHUB_PAGES=true. Without it, deploying fails
+  # with a 404 on every push.
   deploy:
     needs: build
+    if: vars.DOCS_GITHUB_PAGES == 'true'
     runs-on: ubuntu-latest
     permissions:
       pages: write

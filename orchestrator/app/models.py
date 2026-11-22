@@ -59,6 +59,9 @@ class ScopeCheckOut(BaseModel):
     reason: str
     matched_entry: int | None = None
     matched_entry_metadata: dict[str, Any] = Field(default_factory=dict)
+    # Addresses the decision vetted (allow only). Workers connect to these and
+    # never re-resolve the hostname (DNS-rebinding defence).
+    resolved_ips: list[str] = Field(default_factory=list)
 
 
 class ScopeDecisionOut(BaseModel):

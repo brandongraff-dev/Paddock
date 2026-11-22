@@ -90,6 +90,10 @@ class FindingLifecycleOut(FindingOut):
     kev: bool | None = None
     priority_score: int | None = None
     why: list[WhyFactor] = Field(default_factory=list)
+    # schema 026: safe-check verification state ("is it real", "did the fix hold")
+    exploitability: str = "unverified"
+    last_verified_at: datetime | None = None
+    fix_verified_at: datetime | None = None
 
 
 class FindingLifecyclePage(BaseModel):
@@ -378,6 +382,13 @@ def is_breached(status: str, due_at: datetime | None, now: datetime | None = Non
 
 SEVERITY_WEIGHT = {"critical": 35, "high": 25, "medium": 14, "low": 6, "info": 1}
 
+# Safe-check verdicts (schema 026): (why key, label, weight).
+VERIFICATION_WEIGHT = {
+    "confirmed": ("verified_exploitable", "Verified exploitable", 15),
+    "not_reproducible": ("not_reproducible", "Not reproducible", -12),
+    "inconclusive": ("verification_inconclusive", "Verification inconclusive", 0),
+}
+
 
 def explain_priority(
     *,
@@ -394,12 +405,17 @@ def explain_priority(
     engines: Iterable[str] = (),
     sla_breached: bool = False,
     owner: str | None = None,
+    exploitability: str | None = None,
+    verified_at: datetime | None = None,
 ) -> tuple[int, list[WhyFactor]]:
     """Return ``(priority_score 0-100, why factors sorted by weight desc)``.
 
     Additive and deliberately simple so every point is attributable: the sum
-    of factor weights IS the score (capped at 100). Context-only factors
-    (owner) carry weight 0.
+    of factor weights IS the score (clamped to 0..100). Context-only factors
+    (owner) carry weight 0. A safe-check verdict (schema 026) is a factor like
+    any other: ``confirmed`` raises, ``not_reproducible`` lowers (negative
+    weight), ``inconclusive`` is shown but moves nothing. It never closes a
+    finding.
     """
     f: list[WhyFactor] = [WhyFactor(key="severity", label=f"severity: {severity}",
                                     weight=SEVERITY_WEIGHT.get(severity, 1))]
@@ -431,7 +447,11 @@ def explain_priority(
         f.append(WhyFactor(key="sla", label="SLA breached", weight=5))
     if owner:
         f.append(WhyFactor(key="owner", label=f"owner: {owner}", weight=0))
-    score = min(100, sum(x.weight for x in f))
+    if exploitability in VERIFICATION_WEIGHT:
+        when = f" on {verified_at.date().isoformat()}" if verified_at else ""
+        key, text, weight = VERIFICATION_WEIGHT[exploitability]
+        f.append(WhyFactor(key=key, label=f"{text}{when}", weight=weight))
+    score = max(0, min(100, sum(x.weight for x in f)))
     f.sort(key=lambda x: -x.weight)
     return score, f
 
@@ -464,6 +484,78 @@ async def _asset_for(con, asset_id: UUID, cache: dict[UUID, dict[str, Any]]) -> 
     return cache[asset_id]
 
 
+# The canonical (oldest) finding an upserted row duplicates: same asset key and
+# the same fingerprint OR a shared vulnerability key.
+#
+# Performance (hardening/tenant_load_test.py): the old single query
+# ``fingerprint = $3 OR vuln_keys && $4`` read EVERY finding of the asset for
+# each ingested row (a 20k-result SARIF of one repository = 20k x 20k row
+# visits, ~37 ms per row and growing). Two facts fix it without changing what it
+# returns:
+#   * ``&&`` / ``@>`` are not leakproof, so under row-level security Postgres
+#     applies the tenant policy FIRST and can never use the GIN index on
+#     vuln_keys for them -- only btree equality is index-assisted. So the
+#     fingerprint equality is its own, indexed branch
+#     (idx_findings_tenant_asset_fp);
+#   * a shared key can only differ from an equal fingerprint when an identity has
+#     SEVERAL keys, and only CVE / GHSA identities do (``vuln_keys`` returns
+#     ``rule:`` / ``cwe:`` keys alone). Every other row needs the fingerprint
+#     branch only.
+DUPLICATE_LOOKUP_FP_SQL = """
+SELECT id FROM findings
+ WHERE id <> $1 AND duplicate_of IS NULL AND asset_key = $2 AND fingerprint = $3
+   AND (first_seen < $4 OR (first_seen = $4 AND fingerprint IS NOT NULL))
+ ORDER BY first_seen, id LIMIT 1
+"""
+DUPLICATE_LOOKUP_SQL = """
+SELECT id FROM (
+    (SELECT id, first_seen FROM findings
+      WHERE id <> $1 AND duplicate_of IS NULL AND asset_key = $2 AND fingerprint = $3
+        AND (first_seen < $5 OR (first_seen = $5 AND fingerprint IS NOT NULL))
+      ORDER BY first_seen, id LIMIT 1)
+    UNION ALL
+    (SELECT id, first_seen FROM findings
+      WHERE id <> $1 AND duplicate_of IS NULL AND asset_key = $2 AND vuln_keys && $4::text[]
+        AND (first_seen < $5 OR (first_seen = $5 AND fingerprint IS NOT NULL))
+      ORDER BY first_seen, id LIMIT 1)
+) q ORDER BY first_seen, id LIMIT 1
+"""
+_MULTI_KEY_PREFIXES = ("cve:", "ghsa:")
+
+
+async def find_duplicate_of(con, fid, ident: dict[str, Any], first_seen) -> UUID | None:
+    if any(k.startswith(_MULTI_KEY_PREFIXES) for k in ident["vuln_keys"]):
+        return await con.fetchval(DUPLICATE_LOOKUP_SQL, fid, ident["asset_key"], ident["fingerprint"],
+                                  ident["vuln_keys"], first_seen)
+    return await con.fetchval(DUPLICATE_LOOKUP_FP_SQL, fid, ident["asset_key"], ident["fingerprint"], first_seen)
+
+
+_DUP_CACHE_KEY = "__dup_groups__"
+
+
+async def _duplicate_of_cached(con, finding: dict[str, Any], ident: dict[str, Any],
+                               batch_cache: dict[Any, Any]) -> UUID | None:
+    """``find_duplicate_of`` with a per-batch memo of the duplicate group.
+
+    A single-key identity (the SAST / secret / policy case, or one CVE) is equal
+    to another's iff their fingerprints are equal, so every later row of the same
+    (asset_key, fingerprint) group in the SAME batch resolves to the group's
+    canonical row without another query. A 20k-result SARIF has ~tens of groups,
+    not 20k lookups. Multi-key identities (several CVEs) can overlap across
+    different fingerprints and always ask the database.
+    """
+    cacheable = len(ident["vuln_keys"]) <= 1 and ident["fingerprint"] is not None
+    groups = batch_cache.setdefault(_DUP_CACHE_KEY, {})
+    ck = (ident["asset_key"], ident["fingerprint"])
+    if cacheable and ck in groups:
+        canonical = groups[ck]
+        return None if canonical == finding["id"] else canonical
+    dup = await find_duplicate_of(con, finding["id"], ident, finding["first_seen"])
+    if cacheable:
+        groups[ck] = dup or finding["id"]
+    return dup
+
+
 async def apply_ingest(con, finding: dict[str, Any], suppressions: list[dict[str, Any]],
                        asset_cache: dict[UUID, dict[str, Any]]) -> dict[str, Any]:
     """Stamp identity, collapse duplicates and apply suppressions to one
@@ -477,18 +569,7 @@ async def apply_ingest(con, finding: dict[str, Any], suppressions: list[dict[str
                      finding.get("metadata"), asset)
     duplicate_of = finding.get("duplicate_of")
     if duplicate_of is None:
-        duplicate_of = await con.fetchval(
-            """
-            SELECT id FROM findings
-             WHERE id <> $1 AND duplicate_of IS NULL AND asset_key = $2
-               AND (fingerprint = $3 OR vuln_keys && $4::text[])
-               AND (first_seen < $5 OR (first_seen = $5 AND fingerprint IS NOT NULL))
-             ORDER BY first_seen, id
-             LIMIT 1
-            """,
-            finding["id"], ident["asset_key"], ident["fingerprint"], ident["vuln_keys"],
-            finding["first_seen"],
-        )
+        duplicate_of = await _duplicate_of_cached(con, finding, ident, asset_cache)
     suppressed_by = finding.get("suppressed_by")
     if suppressed_by is None:
         hit = first_matching_suppression(suppressions, finding, asset)
@@ -576,16 +657,7 @@ async def backfill_identity(con) -> dict[str, int]:
         asset = {"kind": r["kind"], "value": r["value"], "canonical": r["canonical"],
                  "metadata": _j(r["asset_metadata"])}
         ident = identity(r["rule_source"], r["rule_id"], _j(r["evidence"]), _j(r["metadata"]), asset)
-        dup = await con.fetchval(
-            """
-            SELECT id FROM findings
-             WHERE id <> $1 AND duplicate_of IS NULL AND asset_key = $2
-               AND (fingerprint = $3 OR vuln_keys && $4::text[])
-               AND (first_seen < $5 OR (first_seen = $5 AND fingerprint IS NOT NULL))
-             ORDER BY first_seen, id LIMIT 1
-            """,
-            r["id"], ident["asset_key"], ident["fingerprint"], ident["vuln_keys"], r["first_seen"],
-        )
+        dup = await find_duplicate_of(con, r["id"], ident, r["first_seen"])
         await con.execute(
             "UPDATE findings SET asset_key = $2, vuln_keys = $3::text[], fingerprint = $4, "
             "duplicate_of = COALESCE(duplicate_of, $5) WHERE id = $1",
@@ -612,7 +684,7 @@ async def record_history(con, finding_id: UUID, from_status: str | None, to_stat
     )
 
 
-_last_sweep = 0.0
+_last_sweep: dict[str, float] = {}
 
 
 async def sweep_expired(pool, now: datetime | None = None) -> dict[str, int]:
@@ -671,12 +743,18 @@ async def sweep_expired(pool, now: datetime | None = None) -> dict[str, int]:
 
 
 async def maybe_sweep(pool, min_interval_s: float = 30.0) -> None:
-    """On-read sweep, throttled per process. Never raises."""
-    global _last_sweep
+    """On-read sweep, throttled per process AND per tenant (the sweep only sees
+    the current tenant's rows; one slot for all tenants let tenant A's read
+    starve tenant B's expiry sweep). Never raises."""
+    from . import tenancy
+
+    key = tenancy.current_tenant_key()
     t = time.monotonic()
-    if t - _last_sweep < min_interval_s:
+    if t - _last_sweep.get(key, 0.0) < min_interval_s:
         return
-    _last_sweep = t
+    if len(_last_sweep) > 4096:
+        _last_sweep.clear()
+    _last_sweep[key] = t
     try:
         await sweep_expired(pool)
     except Exception:  # noqa: BLE001
@@ -684,8 +762,7 @@ async def maybe_sweep(pool, min_interval_s: float = 30.0) -> None:
 
 
 def reset_sweep_throttle() -> None:
-    global _last_sweep
-    _last_sweep = 0.0
+    _last_sweep.clear()
 
 
 # =========================================================================== #
@@ -828,6 +905,7 @@ async def enrich(con, rows: list[dict[str, Any]], now: datetime | None = None) -
             blast_score=d.get("blast_score"), chain_title=chain_by_finding.get(d["id"]),
             engines=[s.rule_source for s in group] or [d["rule_source"]],
             sla_breached=breached, owner=owner,
+            exploitability=d.get("exploitability"), verified_at=d.get("last_verified_at"),
         )
         d.update(
             suppressed=d.get("suppressed_by") is not None,

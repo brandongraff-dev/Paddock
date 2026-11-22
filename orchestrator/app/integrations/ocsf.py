@@ -72,16 +72,22 @@ _EVENT_ACTIVITY: dict[str, int] = {
     "finding.reopened": ACTIVITY_UPDATE,
     "finding.accepted": ACTIVITY_UPDATE,
     "finding.resolved": ACTIVITY_CLOSE,
+    "finding.verified": ACTIVITY_UPDATE,
+    "finding.fix_verified": ACTIVITY_CLOSE,
+    "finding.fix_failed": ACTIVITY_UPDATE,
     "attack_path.opened": ACTIVITY_CREATE,
     "change.detected": ACTIVITY_CREATE,
     "asset.discovered": ACTIVITY_CREATE,
     "device.behavior": ACTIVITY_CREATE,
+    "sensor.offline": ACTIVITY_CREATE,
 }
 _EVENT_STATUS: dict[str, int] = {
     "finding.opened": 1,
     "finding.reopened": 1,
     "finding.accepted": 3,
     "finding.resolved": 4,
+    "finding.fix_verified": 4,
+    "finding.fix_failed": 1,
 }
 
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)

@@ -36,9 +36,10 @@ jobs:
   #
   # A Postgres 16 service container is provided to every leg and exposed as
   # TEST_DATABASE_URL. Most services' DB-backed suites opt in via that var
-  # and skip cleanly without it; the orchestrator instead spins up its own
-  # disposable databases with pytest-postgresql (needs the pg server
-  # binaries, installed below only for that leg).
+  # and skip cleanly without it. The orchestrator creates its own disposable
+  # databases on that same server (ORCH_TEST_PG, no local pg binaries), once
+  # as a superuser and once as the non-superuser RLS role (app_role), which
+  # is the run that proves tenant isolation.
   # --------------------------------------------------------------------- #
   python:
     name: py ${{ matrix.service }}
@@ -47,7 +48,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { service: orchestrator,    path: orchestrator,    extra: dev,  pg_bin: true }
+          - { service: orchestrator,    path: orchestrator,    extra: dev }
+          - { service: orchestrator (rls app role), path: orchestrator, extra: dev, app_role: "1" }
           - { service: correlation,     path: correlation,     extra: test }
           - { service: intel,           path: intel,           extra: dev }
           - { service: sca,             path: sca,             extra: test }
@@ -63,6 +65,9 @@ jobs:
           - { service: worker-active,   path: workers/active,  extra: dev }
           - { service: otdiscovery,     path: otdiscovery,     extra: test }
           - { service: sentry,          path: sentry,          extra: test }
+          - { service: remediation,     path: remediation,     extra: test }
+          - { service: agent,           path: agent,           extra: test }
+          - { service: mcp,             path: mcp,             extra: test }
 
     services:
       postgres:
@@ -71,6 +76,9 @@ jobs:
           POSTGRES_USER: asm
           POSTGRES_PASSWORD: asm
           POSTGRES_DB: asm_test
+          # test-only container: lets the orchestrator suite connect by user
+          # alone (ORCH_TEST_PG) to create its throwaway databases and roles
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U asm -d asm_test"
@@ -84,6 +92,9 @@ jobs:
       # suites apply schema and truncate tables.
       TEST_DATABASE_URL: postgresql://asm:asm@localhost:5432/asm_test
       DATABASE_URL: postgresql://asm:asm@localhost:5432/asm_test
+      # orchestrator: reuse the service container instead of local pg binaries
+      ORCH_TEST_PG: localhost:5432:asm
+      ORCH_TEST_APP_ROLE: ${{ matrix.app_role || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -92,14 +103,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Ensure Postgres 16 server binaries (orchestrator / pytest-postgresql)
-        if: ${{ matrix.pg_bin }}
+      # The services' DB-backed suites expect a migrated TEST_DATABASE_URL;
+      # the Postgres service starts empty. (The orchestrator legs build their
+      # own throwaway databases instead.)
+      - name: Apply schema to the test database
+        if: ${{ !startsWith(matrix.service, 'orchestrator') }}
         run: |
-          if [ ! -d /usr/lib/postgresql/16/bin ]; then
-            sudo apt-get update
-            sudo apt-get install -y postgresql-16 postgresql-client-16
-          fi
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          pip install -q asyncpg
+          python scripts/ci_apply_schema.py
 
       - name: Install ${{ matrix.service }} (+ ${{ matrix.extra }} extra)
         working-directory: ${{ matrix.path }}
@@ -307,3 +318,44 @@ jobs:
         run: python3 -c "import json; d=json.load(open('deploy/grafana/paddock-overview.json')); assert d['uid'] and d['panels']"
       - name: Backup/restore scripts parse
         run: bash -n scripts/backup.sh && bash -n scripts/restore.sh
+
+  # --------------------------------------------------------------------- #
+  # paddock CLI (cli/): stdlib-only developer tool built on the sca,
+  # codeanalysis, remediation and orchestrator-SARIF engines. Tests run on
+  # the oldest and newest supported Python; then the built wheel is
+  # installed into a clean venv and exercised away from the checkout, which
+  # proves the vendored engines are complete.
+  # --------------------------------------------------------------------- #
+  cli:
+    name: cli (paddock-cli, py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install pytest pyyaml
+      - name: Tests
+        working-directory: cli
+        run: python -m pytest -q
+      - name: Wheel installs and runs outside the checkout
+        run: |
+          pip wheel --no-deps -q -w "$RUNNER_TEMP/wheel" ./cli
+          python -m venv "$RUNNER_TEMP/clean"
+          "$RUNNER_TEMP/clean/bin/pip" install -q "$RUNNER_TEMP"/wheel/paddock_cli-*.whl
+          "$RUNNER_TEMP/clean/bin/pip" list --format=freeze | grep -v -E '^(pip|setuptools|paddock-cli)==' && exit 1 || true
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/clean/bin/paddock" --version
+          # offline, so CI never depends on OSV; the fixture has planted secret/taint/config bugs
+          set +e
+          "$RUNNER_TEMP/clean/bin/paddock" scan "$GITHUB_WORKSPACE/cli/tests/fixtures/vuln-repo" \
+            --offline --only secrets,code,config --fail-on high --sarif "$RUNNER_TEMP/out.sarif"
+          test $? -eq 1
+          python -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['version']=='2.1.0' and d['runs'][0]['results']" "$RUNNER_TEMP/out.sarif"
+      - name: Docker image builds
+        if: matrix.python == '3.13'
+        run: docker build -f cli/Dockerfile -t paddock-cli:ci . && docker run --rm paddock-cli:ci --version

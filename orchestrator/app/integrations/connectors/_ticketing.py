@@ -63,7 +63,10 @@ COMMENT_PREFIX = "[Paddock]"
 FINDING_EVENTS = frozenset({
     "finding.opened", "finding.updated", "finding.resolved",
     "finding.reopened", "finding.accepted",
+    "finding.verified", "finding.fix_verified", "finding.fix_failed",
 })
+# Verification results are commented on the existing ticket; they never create or move one.
+VERIFICATION_EVENTS = frozenset({"finding.verified", "finding.fix_verified", "finding.fix_failed"})
 # The statuses an InboundUpdate may carry (``app.integrations.ticketing``
 # degrades accepted/false_positive when the DB constraint lacks them).
 PADDOCK_STATUSES = frozenset({"open", "triaged", "fixed", "accepted", "false_positive"})
@@ -389,6 +392,20 @@ class TicketConnector(Connector):
                 return self._skip("change originated from this ticket", ref)
             action = ""
             t = event.type
+            if t in VERIFICATION_EVENTS:
+                if ref is None:
+                    return self._skip("no ticket for this finding")
+                verdict = (event.data or {}).get("verdict") or ""
+                text = {
+                    "finding.verified": f"{COMMENT_PREFIX} Safe check result: {verdict or 'recorded'}.",
+                    "finding.fix_verified": f"{COMMENT_PREFIX} Fix verified: the issue could no longer be reproduced.",
+                    "finding.fix_failed": f"{COMMENT_PREFIX} The fix did not hold: the issue was reproduced and the finding reopened.",
+                }[t]
+                await self._comment(ref, text)
+                await self._record_link(fv, ref)
+                return DeliveryResult(ok=True, status_code=200, external_id=ref.external_id,
+                                      external_url=ref.external_url, detail=f"commented {ref.display or ref.external_id}",
+                                      retryable=False)
             if t in ("finding.opened", "finding.updated"):
                 if ref is None:
                     ref, action = await self._create(fv, event), "created"

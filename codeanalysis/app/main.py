@@ -29,6 +29,7 @@ from aiohttp import web
 from . import config as config_module
 from . import reachability as reach
 from . import sast as sast_pkg
+from . import tenancy
 from .db import Database
 from .orchestrator import OrchestratorClient
 from .sast import normalize
@@ -304,7 +305,11 @@ class CodeAnalysisService:
         return web.json_response(result)
 
     def _make_app(self) -> web.Application:
-        app = web.Application(client_max_size=128 * 1024 * 1024)
+        # tenant = X-Paddock-Tenant from the orchestrator (needs the service key)
+        app = web.Application(
+            client_max_size=128 * 1024 * 1024,
+            middlewares=[tenancy.aiohttp_middleware()],
+        )
         app.add_routes([
             web.get("/healthz", self._handle_healthz),
             web.get("/readyz", self._handle_readyz),

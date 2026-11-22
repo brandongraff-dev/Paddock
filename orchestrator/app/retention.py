@@ -162,8 +162,11 @@ async def run_retention(
     from . import audit
     from .metrics import RETENTION_LAST_RUN, RETENTION_PURGED
 
+    from . import tenancy
+
     batch = int(batch_size or ops_settings.retention_batch_size)
     counts: dict[str, int] = {}
+    per_tenant: dict[str, dict[str, int]] = {}
     async with pool.acquire() as con:
         if not await con.fetchval("SELECT pg_try_advisory_lock($1)", RETENTION_LOCK_KEY):
             logger.info("retention_skipped_locked")
@@ -172,32 +175,41 @@ async def run_retention(
             pols = list(policies) if policies is not None else configured_policies()
             if policies is None:
                 pols += await _observation_policies(con, ops_settings.retention_observations_days)
-            for p in pols:
-                p.validate()  # refuses audit_log even if constructed directly
-                if p.days <= 0:
-                    continue
-                try:
-                    n = await _purge_one(con, p, batch, max_batches)
-                except Exception:  # noqa: BLE001 -- one bad table never stops the rest
-                    logger.exception("retention_purge_failed", extra={"table": p.table})
-                    continue
-                counts[p.table] = counts.get(p.table, 0) + n
-                if n:
-                    RETENTION_PURGED.labels(p.table).inc(n)
+            # RLS hides every other tenant's rows, so purge each tenant inside
+            # its own context (before this only the default tenant was ever
+            # purged and every other tenant's data was retained forever).
+            for tid in await tenancy.list_tenant_ids(pool):
+                with tenancy.tenant_context(tid):
+                    async with pool.acquire() as tcon:
+                        for p in pols:
+                            p.validate()  # refuses audit_log even if constructed directly
+                            if p.days <= 0:
+                                continue
+                            try:
+                                n = await _purge_one(tcon, p, batch, max_batches)
+                            except Exception:  # noqa: BLE001 -- one bad table never stops the rest
+                                logger.exception("retention_purge_failed", extra={"table": p.table})
+                                continue
+                            counts[p.table] = counts.get(p.table, 0) + n
+                            if n:
+                                per_tenant.setdefault(tid, {})[p.table] = n
+                                RETENTION_PURGED.labels(p.table).inc(n)
         finally:
             await con.execute("SELECT pg_advisory_unlock($1)", RETENTION_LOCK_KEY)
     RETENTION_LAST_RUN.set(time.time())
     if any(counts.values()):
         logger.info("retention_purged", extra={"counts": counts})
-        try:
-            await audit.record(
-                pool,
-                action="retention_purge",
-                actor="system:retention",
-                actor_role="system",
-                resource_type="retention",
-                details={"deleted": counts},
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("retention_audit_failed")
+        for tid, deleted in per_tenant.items():
+            try:
+                with tenancy.tenant_context(tid):
+                    await audit.record(
+                        pool,
+                        action="retention_purge",
+                        actor="system:retention",
+                        actor_role="system",
+                        resource_type="retention",
+                        details={"deleted": deleted},
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("retention_audit_failed")
     return counts

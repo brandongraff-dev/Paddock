@@ -47,6 +47,16 @@ class OIDCConfig(BaseModel):
     trust_unverified_email: bool = False
     allow_private: bool = False  # self-hosted Keycloak on the LAN, opt-in
     extra_auth_params: dict[str, str] = Field(default_factory=dict)
+    # Entra group overage (docs/SSO.md): when the token says "groups were
+    # omitted" (hasgroups / _claim_names), fetch them from Microsoft Graph.
+    #   delegated = the user's access token (add a Graph scope such as
+    #               User.Read to `scopes`); app = this app registration's
+    #               client credentials (GroupMember.Read.All application perm).
+    graph_overage: Literal["auto", "off"] = "auto"
+    graph_mode: Literal["delegated", "app"] = "delegated"
+    graph_tenant_id: str | None = Field(default=None, max_length=256)  # app mode; default: from issuer
+    graph_base_url: str = Field(default="https://graph.microsoft.com", pattern=r"^https://[^/\s]+$")
+    graph_login_url: str = Field(default="https://login.microsoftonline.com", pattern=r"^https://[^/\s]+$")
 
     @field_validator("scopes")
     @classmethod
@@ -78,6 +88,18 @@ class SAMLConfig(BaseModel):
     groups_attribute: str | None = None  # falls back to provider.groups_claim
     name_attribute: str | None = None
     want_messages_signed: bool = False   # assertions are ALWAYS required signed
+    # --- SP keys (the private key is stored encrypted, never in this config) ---
+    sp_x509_cert: str | None = Field(default=None, max_length=20000)  # PEM or base64
+    sign_authn_requests: bool = False    # needs sp_x509_cert + the SP private key
+    require_encrypted_assertions: bool = False  # refuse plaintext assertions
+    # --- single logout ---
+    idp_slo_url: str | None = Field(default=None, max_length=2048)  # IdP SLO (Redirect binding)
+    # --- Entra group overage (SAML groups.link claim) -> Graph, app credentials ---
+    graph_overage: Literal["auto", "off"] = "auto"
+    graph_tenant_id: str | None = Field(default=None, max_length=256)
+    graph_client_id: str | None = Field(default=None, max_length=256)  # secret: graph_client_secret
+    graph_base_url: str = Field(default="https://graph.microsoft.com", pattern=r"^https://[^/\s]+$")
+    graph_login_url: str = Field(default="https://login.microsoftonline.com", pattern=r"^https://[^/\s]+$")
 
 
 class ProviderIn(BaseModel):
@@ -90,7 +112,13 @@ class ProviderIn(BaseModel):
     saml: SAMLConfig | None = None
     # Paste IdP metadata XML instead of filling `saml` by hand.
     saml_metadata_xml: str | None = Field(default=None, max_length=500_000)
+    # ...or have Paddock fetch it (https only, DNS-pinned, size-capped).
+    idp_metadata_url: str | None = Field(default=None, max_length=2048)
     client_secret: str | None = Field(default=None, max_length=4096)
+    # SAML: PEM private key matching saml.sp_x509_cert (stored encrypted), and
+    # the Entra app secret for group overage. "" clears (patch).
+    sp_private_key: str | None = Field(default=None, max_length=20000)
+    graph_client_secret: str | None = Field(default=None, max_length=4096)
     allowed_domains: list[str] = Field(default_factory=list)
     jit_provisioning: bool = True
     sync_roles: bool = True
@@ -115,7 +143,10 @@ class ProviderPatch(BaseModel):
     oidc: OIDCConfig | None = None
     saml: SAMLConfig | None = None
     saml_metadata_xml: str | None = Field(default=None, max_length=500_000)
+    idp_metadata_url: str | None = Field(default=None, max_length=2048)
     client_secret: str | None = Field(default=None, max_length=4096)
+    sp_private_key: str | None = Field(default=None, max_length=20000)
+    graph_client_secret: str | None = Field(default=None, max_length=4096)
     allowed_domains: list[str] | None = None
     jit_provisioning: bool | None = None
     sync_roles: bool | None = None
@@ -140,6 +171,8 @@ class ProviderOut(BaseModel):
     enabled: bool
     config: dict[str, Any]
     has_client_secret: bool
+    has_sp_private_key: bool = False
+    has_graph_client_secret: bool = False
     allowed_domains: list[str]
     jit_provisioning: bool
     sync_roles: bool
@@ -156,6 +189,7 @@ class ProviderOut(BaseModel):
     saml_acs_url: str | None = None
     saml_entity_id: str | None = None
     saml_metadata_url: str | None = None
+    saml_sls_url: str | None = None
 
 
 class PublicProvider(BaseModel):

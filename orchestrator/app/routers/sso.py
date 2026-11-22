@@ -8,6 +8,9 @@ Public (the middleware treats these as unauthenticated routes):
 - ``POST /v1/auth/sso/{slug}/acs``         -- SAML assertion consumer service.
 - ``GET  /v1/auth/sso/{slug}/metadata``    -- SAML SP metadata (also the entity id).
 - ``POST /v1/auth/sso/exchange``           -- one-time code (+ SPA verifier) -> JWT.
+- ``GET  /v1/auth/sso/{slug}/sls``         -- SAML single-logout endpoint (signed IdP messages only).
+- ``POST /v1/auth/sso/logout``             -- (authenticated) end the caller's sessions; for a
+  SAML login with an IdP SLO URL, also returns the IdP LogoutRequest redirect.
 
 Token delivery: the callback never puts a token in a URL. It redirects the
 browser to ``<SSO_DASHBOARD_URL>/sso/callback?code=...`` with a 256-bit,
@@ -37,6 +40,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import UUID
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, ValidationError
@@ -44,10 +48,12 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import audit
 from .. import auth as auth_svc
+from .. import tenancy
 from ..auth import current_principal, require
+from ..billing import gate as billing_gate
 from ..config import settings
 from ..db import get_pool
-from ..identity import mapping, oidc, saml, scim_logic
+from ..identity import graph, mapping, oidc, saml, scim_logic
 from ..identity import store
 from ..identity.models import (
     ExchangeIn,
@@ -193,7 +199,8 @@ async def _login_failed(request: Request, provider, code: str, detail: str, acto
     return resp
 
 
-async def _login_succeeded(request: Request, provider, result: store.ProvisionResult, spa_challenge, return_to):
+async def _login_succeeded(request: Request, provider, result: store.ProvisionResult, spa_challenge, return_to,
+                           groups_error: str | None = None):
     pool = request.app.state.pool
     user = result.user
     code = await store.issue_exchange_code(
@@ -216,6 +223,8 @@ async def _login_succeeded(request: Request, provider, result: store.ProvisionRe
             "clearance": user["clearance"],
             "matched_group": result.role_decision.matched,
             "role_changed": result.role_changed,
+            "groups_unresolved": result.groups_unresolved,
+            **({"groups_error": groups_error} if groups_error else {}),
         },
     )
     params = {"code": code}
@@ -283,6 +292,10 @@ def identity_from_saml(provider, res: saml.SAMLResult) -> store.ExternalIdentity
         email_verified=bool(email),
         name=first(cfg.get("name_attribute")),
         groups=list(res.attributes.get(groups_attr) or []),
+        idp_session={
+            "name_id": res.name_id, "format": res.name_id_format, "nq": res.name_id_nq,
+            "spnq": res.name_id_spnq, "session_index": res.session_index,
+        },
     )
 
 
@@ -290,7 +303,10 @@ def _provider_out(row) -> ProviderOut:
     d = dict(row)
     d["config"] = store.provider_config(row)
     d["role_mappings"] = store.provider_mappings(row)
-    d["has_client_secret"] = bool(store.provider_secrets(row).get("client_secret")) if row["secrets"] else False
+    secrets_ = store.provider_secrets(row) if row["secrets"] else {}
+    d["has_client_secret"] = bool(secrets_.get("client_secret"))
+    d["has_sp_private_key"] = bool(secrets_.get("sp_private_key"))
+    d["has_graph_client_secret"] = bool(secrets_.get("graph_client_secret"))
     d["allowed_domains"] = list(row["allowed_domains"] or [])
     if row["kind"] == "oidc":
         d["redirect_uri"] = _redirect_uri(row["slug"])
@@ -299,6 +315,7 @@ def _provider_out(row) -> ProviderOut:
         d["saml_acs_url"] = urls["acs_url"]
         d["saml_entity_id"] = urls["entity_id"]
         d["saml_metadata_url"] = urls["metadata_url"]
+        d["saml_sls_url"] = urls["sls_url"]
     return ProviderOut.model_validate(d)
 
 
@@ -307,13 +324,22 @@ def _provider_out(row) -> ProviderOut:
 # --------------------------------------------------------------------------- #
 
 @router.get("/providers", response_model=PublicProvidersOut)
-async def public_providers(pool=Depends(get_pool)):
-    async with pool.acquire() as con:
-        rows = await con.fetch(
-            "SELECT slug, kind, preset, display_name FROM identity_providers "
-            "WHERE enabled ORDER BY display_name"
-        )
-        s = await store.get_settings(con)
+async def public_providers(
+    tenant: str | None = Query(None, max_length=64, description="tenant slug or id (default: the default tenant)"),
+    pool=Depends(get_pool),
+):
+    tid = tenancy.DEFAULT_TENANT_ID
+    if tenant:
+        tid = await tenancy.resolve_tenant_ref(pool, tenant)
+        if tid is None:  # unknown tenant: same empty answer as a tenant without SSO
+            return PublicProvidersOut(providers=[], sso_required=False)
+    with tenancy.tenant_context(tid):
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                "SELECT slug, kind, preset, display_name FROM identity_providers "
+                "WHERE enabled ORDER BY display_name"
+            )
+            s = await store.get_settings(con)
     return PublicProvidersOut(
         providers=[
             PublicProvider(
@@ -338,8 +364,12 @@ async def sso_start(
     spa_challenge: str | None = Query(None, max_length=64),
     pool=Depends(get_pool),
 ):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    # Resolve the provider's tenant first; the whole flow runs inside it.
+    async with store.provider_scope(pool, slug) as provider:
+        return await _sso_start(slug, request, provider, return_to, spa_challenge, pool)
+
+
+async def _sso_start(slug, request, provider, return_to, spa_challenge, pool):
     if provider is None:
         raise HTTPException(status_code=404, detail="unknown identity provider")
     # Mandatory: binds the eventual one-time code to the tab that started the
@@ -387,7 +417,9 @@ async def sso_start(
     state = secrets.token_urlsafe(32)
     try:
         SAMLConfig.model_validate(cfg)
-        url, request_id = await run_in_threadpool(saml.start_login, slug, cfg, state)
+        url, request_id = await run_in_threadpool(
+            saml.start_login, slug, cfg, state, store.provider_secrets(provider).get("sp_private_key"),
+        )
     except (saml.SAMLError, ValidationError) as exc:
         return await _login_failed(request, provider, "provider_misconfigured", str(exc))
     await store.create_state(
@@ -412,8 +444,11 @@ async def oidc_callback(
     error: str | None = Query(None, max_length=256),
     pool=Depends(get_pool),
 ):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    async with store.provider_scope(pool, slug) as provider:
+        return await _oidc_callback(slug, request, provider, code, state, error, pool)
+
+
+async def _oidc_callback(slug, request, provider, code, state, error, pool):
     if provider is None or provider["kind"] != "oidc":
         return await _login_failed(request, None, "unknown_provider", f"no enabled OIDC provider {slug!r}")
     if not state:
@@ -471,11 +506,40 @@ async def oidc_callback(
         return await _login_failed(request, provider, "replay", "ID token nonce already used")
 
     ident = identity_from_oidc_claims(provider, claims)
+    if ocfg.graph_overage == "auto" and graph.oidc_overage(claims):
+        await _resolve_overage_oidc(provider, ocfg, claims, tokens, ident)
     try:
         result = await store.provision(pool, provider, ident)
     except store.ProvisionError as exc:
         return await _login_failed(request, provider, exc.code, exc.detail, actor=ident.email or "anonymous")
-    return await _login_succeeded(request, provider, result, row["spa_challenge"], row["return_to"])
+    return await _login_succeeded(request, provider, result, row["spa_challenge"], row["return_to"],
+                                  groups_error=ident.groups_error)
+
+
+async def _resolve_overage_oidc(provider, ocfg: OIDCConfig, claims: dict[str, Any], tokens: dict[str, Any],
+                                ident: store.ExternalIdentity) -> None:
+    """Entra omitted the groups from the token (hasgroups / _claim_names):
+    ask Microsoft Graph. On any failure the groups stay UNRESOLVED (no role
+    mapping is applied) -- see identity/graph.py."""
+    ident.groups = []  # never trust a partial list next to an overage marker
+    try:
+        gcfg = graph.GraphConfig(
+            mode=ocfg.graph_mode, base_url=ocfg.graph_base_url, login_url=ocfg.graph_login_url,
+            tenant_id=ocfg.graph_tenant_id or (str(claims["tid"]) if claims.get("tid") else None)
+            or graph.tenant_from_issuer(ocfg.issuer),
+            client_id=ocfg.client_id, client_secret=store.provider_secrets(provider).get("client_secret"),
+            allow_private=ocfg.allow_private,
+        )
+        oid = str(claims["oid"]) if claims.get("oid") else None
+        ident.groups = await graph.resolve_groups(
+            gcfg, cache_scope=str(provider["id"]), subject=str(claims["sub"]), oid=oid,
+            access_token=str(tokens["access_token"]) if tokens.get("access_token") else None,
+        )
+        ident.groups_source = "graph"
+    except graph.GraphError as exc:
+        ident.groups_unresolved, ident.groups_error = True, exc.code
+        logger.warning("sso_graph_overage_failed",
+                       extra={"provider": provider["slug"], "code": exc.code, "detail": exc.detail[:200]})
 
 
 # --------------------------------------------------------------------------- #
@@ -484,15 +548,23 @@ async def oidc_callback(
 
 @router.post("/{slug}/acs")
 async def saml_acs(slug: str, request: Request, pool=Depends(get_pool)):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    async with store.provider_scope(pool, slug) as provider:
+        return await _saml_acs(slug, request, provider, pool)
+
+
+async def _saml_acs(slug, request, provider, pool):
     if provider is None or provider["kind"] != "saml":
         return await _login_failed(request, None, "unknown_provider", f"no enabled SAML provider {slug!r}")
     if not saml.SAML_AVAILABLE:
         raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
-    raw = await request.body()
-    if len(raw) > _MAX_SAML_RESPONSE * 2:
-        return await _login_failed(request, provider, "invalid_assertion", "SAMLResponse too large")
+    # Public and unauthenticated: stop reading at the cap instead of buffering an
+    # arbitrarily large body first and measuring it afterwards.
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > _MAX_SAML_RESPONSE * 2:
+            return await _login_failed(request, provider, "invalid_assertion", "SAMLResponse too large")
+    raw = bytes(buf)
     form = parse_qs(raw.decode("latin-1"), max_num_fields=8)
     saml_response = (form.get("SAMLResponse") or [""])[0]
     relay_state = (form.get("RelayState") or [""])[0]
@@ -505,10 +577,12 @@ async def saml_acs(slug: str, request: Request, pool=Depends(get_pool)):
     if row is None:
         return await _login_failed(request, provider, "state_mismatch", "unknown, expired or reused RelayState")
     cfg = store.provider_config(provider)
+    psecrets = store.provider_secrets(provider)
     try:
         res = await run_in_threadpool(
             saml.process_response, slug, cfg,
             saml_response=saml_response, relay_state=relay_state, request_id=row["nonce"],
+            sp_private_key=psecrets.get("sp_private_key"),
         )
     except saml.SAMLError as exc:
         return await _login_failed(request, provider, exc.code, exc.detail)
@@ -523,26 +597,195 @@ async def saml_acs(slug: str, request: Request, pool=Depends(get_pool)):
         return await _login_failed(request, provider, "replay", "SAML assertion already consumed")
 
     ident = identity_from_saml(provider, res)
+    if cfg.get("graph_overage", "auto") == "auto" and graph.saml_overage(res.attributes):
+        await _resolve_overage_saml(provider, cfg, psecrets, res, ident)
     try:
         result = await store.provision(pool, provider, ident)
     except store.ProvisionError as exc:
         return await _login_failed(request, provider, exc.code, exc.detail, actor=ident.email or "anonymous")
-    return await _login_succeeded(request, provider, result, row["spa_challenge"], row["return_to"])
+    return await _login_succeeded(request, provider, result, row["spa_challenge"], row["return_to"],
+                                  groups_error=ident.groups_error)
+
+
+async def _resolve_overage_saml(provider, cfg: dict[str, Any], psecrets: dict[str, str], res: saml.SAMLResult,
+                                ident: store.ExternalIdentity) -> None:
+    """SAML groups.link claim: the assertion carries a link instead of groups.
+    The link is legacy and untrusted; we call Graph with the app credentials."""
+    ident.groups = []
+    try:
+        gcfg = graph.GraphConfig(
+            mode="app", base_url=cfg.get("graph_base_url") or graph.DEFAULT_GRAPH,
+            login_url=cfg.get("graph_login_url") or graph.DEFAULT_LOGIN,
+            tenant_id=cfg.get("graph_tenant_id"), client_id=cfg.get("graph_client_id"),
+            client_secret=psecrets.get("graph_client_secret"),
+        )
+        ident.groups = await graph.resolve_groups(
+            gcfg, cache_scope=str(provider["id"]), subject=res.name_id, oid=graph.saml_object_id(res.attributes),
+        )
+        ident.groups_source = "graph"
+    except graph.GraphError as exc:
+        ident.groups_unresolved, ident.groups_error = True, exc.code
+        logger.warning("sso_graph_overage_failed",
+                       extra={"provider": provider["slug"], "code": exc.code, "detail": exc.detail[:200]})
 
 
 @router.get("/{slug}/metadata")
 async def saml_metadata(slug: str, pool=Depends(get_pool)):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    async with store.provider_scope(pool, slug) as provider:
+        return await _saml_metadata(provider)
+
+
+async def _saml_metadata(provider):
+    slug = provider["slug"] if provider is not None else ""
     if provider is None or provider["kind"] != "saml":
         raise HTTPException(status_code=404, detail="unknown SAML provider")
     if not saml.SAML_AVAILABLE:
         raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
     try:
-        xml = await run_in_threadpool(saml.sp_metadata, slug, store.provider_config(provider))
+        xml = await run_in_threadpool(
+            saml.sp_metadata, slug, store.provider_config(provider),
+            store.provider_secrets(provider).get("sp_private_key"))
     except saml.SAMLError as exc:
         raise HTTPException(status_code=500, detail=exc.code) from exc
     return Response(xml, media_type="application/samlmetadata+xml")
+
+
+# --------------------------------------------------------------------------- #
+# Single logout
+# --------------------------------------------------------------------------- #
+
+@router.get("/{slug}/sls")
+async def saml_sls(slug: str, request: Request, pool=Depends(get_pool)):
+    """SAML SingleLogoutService (HTTP-Redirect). Handles (a) the IdP's
+    LogoutResponse to a logout WE started and (b) an IdP-initiated
+    LogoutRequest. Both must be signed by the pinned IdP certificate."""
+    async with store.provider_scope(pool, slug) as provider:
+        return await _saml_sls(slug, request, provider, pool)
+
+
+async def _saml_sls(slug, request, provider, pool):
+    if provider is None or provider["kind"] != "saml":
+        raise HTTPException(status_code=404, detail="unknown SAML provider")
+    if not saml.SAML_AVAILABLE:
+        raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
+    cfg = store.provider_config(provider)
+    query = request.url.query
+    if len(query) > 64_000:
+        raise HTTPException(status_code=414, detail="logout message too large")
+    request_id = None
+    relay = (parse_qs(query).get("RelayState") or [""])[0]
+    if "SAMLResponse=" in query:
+        # a response to OUR LogoutRequest: its RelayState is single-use state
+        # carrying the request id the response must answer (InResponseTo).
+        st = await store.consume_state(pool, provider_id=provider["id"], state=relay) if relay else None
+        if st is None:
+            await _audit(request, action="logout", actor="anonymous", actor_role=None, resource_type="sso",
+                         resource_id=slug, status_code=400,
+                         details={"outcome": "failure", "reason": "state_mismatch"})
+            raise HTTPException(status_code=400, detail="unknown, expired or reused logout state")
+        request_id = st["nonce"]
+    try:
+        res = await run_in_threadpool(
+            saml.process_sls, slug, cfg, query_string=query, request_id=request_id,
+            sp_private_key=store.provider_secrets(provider).get("sp_private_key"),
+        )
+    except saml.SAMLError as exc:
+        await _audit(request, action="logout", actor="anonymous", actor_role=None, resource_type="sso",
+                     resource_id=slug, status_code=400,
+                     details={"outcome": "failure", "reason": exc.code, "detail": exc.detail[:200]})
+        raise HTTPException(status_code=400, detail="invalid logout message") from exc
+
+    if res.kind == "response":
+        resp = RedirectResponse(settings.sso_dashboard_url.rstrip("/") + "/", status_code=status.HTTP_303_SEE_OTHER)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    # IdP-initiated LogoutRequest: end the matching user's sessions.
+    revoked = 0
+    async with pool.acquire() as con:
+        async with con.transaction():
+            row = await con.fetchrow(
+                "SELECT i.user_id, i.idp_session FROM user_identities i "
+                "WHERE i.provider_id = $1 AND i.subject = $2",
+                provider["id"], res.name_id,
+            )
+            if row is not None:
+                sess = row["idp_session"]
+                if isinstance(sess, str):
+                    sess = json.loads(sess)
+                stored = (sess or {}).get("session_index")
+                if not res.session_indexes or not stored or stored in res.session_indexes:
+                    await store.revoke_user_sessions(con, row["user_id"], revoke_api_keys=False)
+                    revoked = 1
+    await _audit(request, action="logout", actor=res.name_id or "unknown", actor_role=None, resource_type="sso",
+                 resource_id=slug, status_code=302,
+                 details={"outcome": "success", "initiator": "idp", "sessions_revoked": bool(revoked)})
+    resp = RedirectResponse(res.redirect_url or "/", status_code=status.HTTP_302_FOUND)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@router.post("/logout")
+async def sso_logout(request: Request, pool=Depends(get_pool)):
+    """End the caller's session(s) everywhere Paddock controls: every JWT
+    issued so far stops working (session watermark) and pending SSO exchange
+    codes are deleted. If the user signed in through SAML and the IdP has a
+    single-logout URL, ``idp_logout_url`` is the (signed) LogoutRequest
+    redirect the SPA should navigate to so the IdP session ends too; for OIDC
+    it is the IdP's ``end_session_endpoint`` when it has one."""
+    p = current_principal(request)
+    if p.kind != "user" or not p.user_id:
+        raise HTTPException(status_code=400, detail="no interactive session to end (API keys are revoked in Settings)")
+    uid = UUID(p.user_id)
+    async with pool.acquire() as con:
+        async with con.transaction():
+            await store.revoke_user_sessions(con, uid, revoke_api_keys=False)
+            ident = await con.fetchrow(
+                "SELECT i.subject, i.idp_session, p.* FROM user_identities i "
+                "JOIN identity_providers p ON p.id = i.provider_id "
+                "WHERE i.user_id = $1 AND p.enabled ORDER BY i.last_login DESC NULLS LAST LIMIT 1",
+                uid,
+            )
+    idp_url: str | None = None
+    note: str | None = None
+    if ident is not None:
+        cfg = store.provider_config(ident)
+        try:
+            if ident["kind"] == "saml" and saml.SAML_AVAILABLE and saml.slo_supported(cfg):
+                sess = ident["idp_session"]
+                sess = json.loads(sess) if isinstance(sess, str) else (sess or {})
+                if sess.get("name_id"):
+                    relay = secrets.token_urlsafe(32)
+                    idp_url, req_id = await run_in_threadpool(
+                        saml.build_logout_request, ident["slug"], cfg, name_id=sess["name_id"],
+                        session_index=sess.get("session_index"), name_id_format=sess.get("format"),
+                        name_id_nq=sess.get("nq"), name_id_spnq=sess.get("spnq"), relay_state=relay,
+                        sp_private_key=store.provider_secrets(ident).get("sp_private_key"),
+                    )
+                    await store.create_state(
+                        pool, provider_id=ident["id"], nonce=req_id, code_verifier=None,
+                        spa_challenge=None, return_to="/", state=relay,
+                    )
+            elif ident["kind"] == "oidc":
+                ocfg = OIDCConfig.model_validate(cfg)
+                disc = await oidc.discover(ocfg.issuer, allow_private=ocfg.allow_private)
+                end = disc.get("end_session_endpoint")
+                if isinstance(end, str) and end:
+                    await oidc.check_url(end, allow_private=ocfg.allow_private)
+                    idp_url = end + ("&" if "?" in end else "?") + urlencode({
+                        "client_id": ocfg.client_id,
+                        "post_logout_redirect_uri": settings.sso_dashboard_url.rstrip("/") + "/",
+                    })
+        except (saml.SAMLError, oidc.OIDCError, ValidationError) as exc:
+            note = "idp_logout_unavailable"
+            logger.warning("sso_idp_logout_failed", extra={"provider": ident["slug"], "detail": str(exc)[:200]})
+    await _audit(request, action="logout", actor=p.actor, actor_role=p.role, resource_type="sso",
+                 resource_id=ident["slug"] if ident is not None else None, status_code=200,
+                 details={"outcome": "success", "initiator": "user", "idp_logout": bool(idp_url),
+                          **({"note": note} if note else {})})
+    resp = Response(json.dumps({"revoked": True, "idp_logout_url": idp_url}), media_type="application/json")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # --------------------------------------------------------------------------- #
@@ -561,6 +804,7 @@ async def exchange(body: ExchangeIn, request: Request, pool=Depends(get_pool)):
         raise HTTPException(status_code=400, detail="invalid, expired or already-used code")
     token, ttl = auth_svc.issue_jwt(
         user_id=str(user["id"]), username=user["username"], role=user["role"], clearance=user["clearance"],
+        tenant_id=str(user["tenant_id"]),
     )
     return ExchangeOut(
         access_token=token, role=user["role"], clearance=user["clearance"], expires_in=ttl,
@@ -583,7 +827,10 @@ def _require_secret_key() -> None:
         )
 
 
-async def _validated_config(kind: str, slug: str, oidc_cfg, saml_cfg, metadata_xml) -> dict[str, Any]:
+async def _validated_config(
+    kind: str, slug: str, oidc_cfg, saml_cfg, metadata_xml, metadata_url: str | None = None,
+    sp_private_key: str | None = None, existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if kind == "oidc":
         if oidc_cfg is None:
             raise HTTPException(status_code=422, detail="oidc settings are required for kind=oidc")
@@ -593,14 +840,19 @@ async def _validated_config(kind: str, slug: str, oidc_cfg, saml_cfg, metadata_x
         return oidc_cfg.model_dump()
     if not saml.SAML_AVAILABLE:
         raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
-    base: dict[str, Any] = {}
+    base: dict[str, Any] = dict(existing or {})   # PATCH: unspecified fields keep their value
     try:
+        if metadata_url and not metadata_xml:
+            # fetched through the DNS-pinned transport (https, public only)
+            metadata_xml = await saml.fetch_idp_metadata(metadata_url)
         if metadata_xml:
-            base = await run_in_threadpool(saml.parse_idp_metadata, metadata_xml)
+            base.update(await run_in_threadpool(saml.parse_idp_metadata, metadata_xml))
         if saml_cfg is not None:
-            base.update({k: v for k, v in saml_cfg.model_dump().items() if v is not None})
+            fields = saml_cfg.model_fields_set if existing else None
+            base.update({k: v for k, v in saml_cfg.model_dump().items()
+                         if v is not None and (fields is None or k in fields)})
         cfg = SAMLConfig.model_validate(base).model_dump()
-        await run_in_threadpool(saml.validate_config, slug, cfg)
+        await run_in_threadpool(saml.validate_config, slug, cfg, sp_private_key)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=f"saml settings invalid: {exc.errors()[:3]}") from exc
     except saml.SAMLError as exc:
@@ -636,30 +888,27 @@ async def admin_get_provider(provider_id: UUID, pool=Depends(get_pool)):
 async def admin_create_provider(body: ProviderIn, request: Request, pool=Depends(get_pool)):
     if body.slug in store.RESERVED_SLUGS:
         raise HTTPException(status_code=422, detail=f"slug {body.slug!r} is reserved")
-    cfg = await _validated_config(body.kind, body.slug, body.oidc, body.saml, body.saml_metadata_xml)
+    if body.kind == "saml":
+        await billing_gate.ensure_feature(request, "sso_saml")  # 402 on a plan without SAML
+    cfg = await _validated_config(
+        body.kind, body.slug, body.oidc, body.saml, body.saml_metadata_xml, body.idp_metadata_url,
+        body.sp_private_key,
+    )
     blob = None
-    if body.client_secret:
+    new_secrets = {"client_secret": body.client_secret, "sp_private_key": body.sp_private_key,
+                   "graph_client_secret": body.graph_client_secret}
+    if any(new_secrets.values()):
         _require_secret_key()
-        blob = secret_box.encrypt_secrets({"client_secret": body.client_secret})
+        blob = store.pack_secrets({}, new_secrets)
     actor, role = _actor(request)
     async with pool.acquire() as con:
         exists = await con.fetchval("SELECT 1 FROM identity_providers WHERE slug = $1", body.slug)
         if exists:
             raise HTTPException(status_code=409, detail="a provider with this slug exists")
-        row = await con.fetchrow(
-            """
-            INSERT INTO identity_providers
-                (slug, kind, preset, display_name, enabled, config, secrets, allowed_domains,
-                 jit_provisioning, sync_roles, require_mapping, default_role, default_clearance,
-                 groups_claim, role_mappings, created_by)
-            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::text[],$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
-            RETURNING *
-            """,
-            body.slug, body.kind, body.preset, body.display_name, body.enabled,
-            _json(cfg), blob, body.allowed_domains, body.jit_provisioning, body.sync_roles,
-            body.require_mapping, body.default_role, body.default_clearance, body.groups_claim,
-            _json([m.model_dump() for m in body.role_mappings]), actor,
-        )
+        try:
+            row = await _insert_provider(con, body, cfg, blob, actor)
+        except asyncpg.UniqueViolationError as exc:  # slug is global; another tenant may own it
+            raise HTTPException(status_code=409, detail="a provider with this slug exists") from exc
     await _audit(
         request, action="create", actor=actor, actor_role=role, resource_type="identity_provider",
         resource_id=str(row["id"]), status_code=201,
@@ -667,6 +916,23 @@ async def admin_create_provider(body: ProviderIn, request: Request, pool=Depends
                  "client_secret_set": bool(blob), "role_mappings": len(body.role_mappings)},
     )
     return _provider_out(row)
+
+
+async def _insert_provider(con, body, cfg, blob, actor):
+    return await con.fetchrow(
+        """
+        INSERT INTO identity_providers
+            (slug, kind, preset, display_name, enabled, config, secrets, allowed_domains,
+             jit_provisioning, sync_roles, require_mapping, default_role, default_clearance,
+             groups_claim, role_mappings, created_by)
+        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::text[],$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
+        RETURNING *
+        """,
+        body.slug, body.kind, body.preset, body.display_name, body.enabled,
+        _json(cfg), blob, body.allowed_domains, body.jit_provisioning, body.sync_roles,
+        body.require_mapping, body.default_role, body.default_clearance, body.groups_claim,
+        _json([m.model_dump() for m in body.role_mappings]), actor,
+    )
 
 
 @router.patch("/admin/providers/{provider_id}", response_model=ProviderOut, dependencies=_admin)
@@ -678,30 +944,40 @@ async def admin_update_provider(
     if cur is None:
         raise HTTPException(status_code=404, detail="provider not found")
     sets: dict[str, Any] = {}
-    changed = sorted(k for k in body.model_fields_set if k not in ("client_secret", "saml_metadata_xml"))
+    secret_fields = ("client_secret", "sp_private_key", "graph_client_secret")
+    changed = sorted(k for k in body.model_fields_set
+                     if k not in (*secret_fields, "saml_metadata_xml", "idp_metadata_url"))
+    cur_secrets = store.provider_secrets(cur) if cur["secrets"] else {}
+    key_after = (body.sp_private_key or None) if "sp_private_key" in body.model_fields_set \
+        else cur_secrets.get("sp_private_key")
     if cur["kind"] == "oidc" and body.oidc is not None:
         sets["config"] = _json(await _validated_config("oidc", cur["slug"], body.oidc, None, None))
-    if cur["kind"] == "saml" and (body.saml is not None or body.saml_metadata_xml):
-        # metadata (if pasted) is the base; explicit `saml` fields override it
+    if cur["kind"] == "saml" and (body.saml is not None or body.saml_metadata_xml or body.idp_metadata_url):
+        await billing_gate.ensure_feature(request, "sso_saml")  # reconfiguring SAML is a paid action
+        # metadata (if given) is the base; explicit `saml` fields override it
         sets["config"] = _json(
-            await _validated_config("saml", cur["slug"], None, body.saml, body.saml_metadata_xml)
+            await _validated_config("saml", cur["slug"], None, body.saml, body.saml_metadata_xml,
+                                    body.idp_metadata_url, key_after, store.provider_config(cur))
         )
         changed = sorted(set(changed) | {"saml"})
+    elif cur["kind"] == "saml" and "sp_private_key" in body.model_fields_set:
+        try:  # a rotated key must still match the configured SP certificate
+            await run_in_threadpool(saml.validate_config, cur["slug"], store.provider_config(cur), key_after)
+        except saml.SAMLError as exc:
+            raise HTTPException(status_code=422, detail=exc.detail) from exc
     for f in ("display_name", "enabled", "preset", "jit_provisioning", "sync_roles", "require_mapping",
               "default_role", "default_clearance", "groups_claim", "allowed_domains"):
         if f in body.model_fields_set and getattr(body, f) is not None:
             sets[f] = getattr(body, f)
     if body.role_mappings is not None:
         sets["role_mappings"] = _json([m.model_dump() for m in body.role_mappings])
-    secret_change = None
-    if "client_secret" in body.model_fields_set:
-        if body.client_secret:
+    secret_change: dict[str, str] = {}
+    updates = {f: getattr(body, f) for f in secret_fields if f in body.model_fields_set}
+    if updates:
+        if any(updates.values()):
             _require_secret_key()
-            sets["secrets"] = secret_box.encrypt_secrets({"client_secret": body.client_secret})
-            secret_change = "rotated"
-        else:
-            sets["secrets"] = None
-            secret_change = "cleared"
+        sets["secrets"] = store.pack_secrets(cur_secrets, updates)
+        secret_change = {f: ("rotated" if v else "cleared") for f, v in updates.items()}
     if not sets:
         return _provider_out(cur)
     casts = {"config": "::jsonb", "role_mappings": "::jsonb", "allowed_domains": "::text[]"}
@@ -716,7 +992,7 @@ async def admin_update_provider(
     await _audit(
         request, action="update", actor=actor, actor_role=role, resource_type="identity_provider",
         resource_id=str(provider_id), status_code=200,
-        details={"slug": cur["slug"], "changed": changed, "client_secret": secret_change},
+        details={"slug": cur["slug"], "changed": changed, "secrets": secret_change},
     )
     return _provider_out(row)
 
@@ -737,6 +1013,35 @@ async def admin_delete_provider(provider_id: UUID, request: Request, pool=Depend
         resource_id=str(provider_id), status_code=204, details={"slug": row["slug"], "kind": row["kind"]},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/admin/providers/{provider_id}/saml-sp-keypair", dependencies=_admin)
+async def admin_generate_sp_keypair(provider_id: UUID, request: Request, pool=Depends(get_pool)):
+    """Generate (or rotate) the SAML SP signing/encryption key pair. The
+    private key is stored encrypted and never returned; the certificate is
+    saved in the provider config and returned for the IdP (it is also in the
+    SP metadata)."""
+    async with pool.acquire() as con:
+        cur = await con.fetchrow("SELECT * FROM identity_providers WHERE id = $1", provider_id)
+    if cur is None or cur["kind"] != "saml":
+        raise HTTPException(status_code=404, detail="SAML provider not found")
+    if not saml.SAML_AVAILABLE:
+        raise HTTPException(status_code=501, detail="SAML support is not installed (see docs/SSO.md)")
+    await billing_gate.ensure_feature(request, "sso_saml")  # SAML reconfiguration is a paid action
+    _require_secret_key()
+    cert_pem, key_pem = await run_in_threadpool(saml.generate_sp_keypair, cur["slug"])
+    cfg = {**store.provider_config(cur), "sp_x509_cert": cert_pem}
+    blob = store.pack_secrets(store.provider_secrets(cur) if cur["secrets"] else {}, {"sp_private_key": key_pem})
+    async with pool.acquire() as con:
+        await con.execute(
+            "UPDATE identity_providers SET config = $2::jsonb, secrets = $3, updated_at = NOW() WHERE id = $1",
+            provider_id, _json(cfg), blob,
+        )
+    actor, role = _actor(request)
+    await _audit(request, action="update", actor=actor, actor_role=role, resource_type="identity_provider",
+                 resource_id=str(provider_id), status_code=200,
+                 details={"slug": cur["slug"], "changed": ["saml_sp_keypair"]})
+    return {"sp_x509_cert": cert_pem, "metadata_url": saml.sp_urls(cur["slug"])["metadata_url"]}
 
 
 @router.post("/admin/providers/{provider_id}/test", dependencies=_admin)
@@ -760,8 +1065,11 @@ async def admin_test_provider(provider_id: UUID, pool=Depends(get_pool)):
                 "jwks_keys": len(keys),
                 "has_client_secret": bool(store.provider_secrets(row).get("client_secret")),
             }
-        await run_in_threadpool(saml.validate_config, row["slug"], cfg)
-        return {"ok": True, "idp_entity_id": cfg.get("idp_entity_id"), "idp_sso_url": cfg.get("idp_sso_url")}
+        await run_in_threadpool(
+            saml.validate_config, row["slug"], cfg, store.provider_secrets(row).get("sp_private_key"))
+        return {"ok": True, "idp_entity_id": cfg.get("idp_entity_id"), "idp_sso_url": cfg.get("idp_sso_url"),
+                "idp_slo_url": cfg.get("idp_slo_url"), "signs_requests": bool(cfg.get("sign_authn_requests")),
+                "has_sp_private_key": bool(store.provider_secrets(row).get("sp_private_key"))}
     except (oidc.OIDCError, saml.SAMLError) as exc:
         return {"ok": False, "error": exc.code, "detail": exc.detail}
     except ValidationError as exc:
@@ -864,6 +1172,7 @@ async def admin_list_scim_tokens(pool=Depends(get_pool)):
     dependencies=_admin,
 )
 async def admin_create_scim_token(body: ScimTokenIn, request: Request, pool=Depends(get_pool)):
+    await billing_gate.ensure_feature(request, "scim")
     actor, role = _actor(request)
     full, prefix, token_hash = auth_svc.generate_scim_token()
     async with pool.acquire() as con:

@@ -21,7 +21,7 @@ import socket as _socket
 import threading
 from urllib.parse import urlsplit
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 PASSIVE_ONLY = True
 
 

@@ -28,6 +28,7 @@ import AssetChip from "./AssetChip";
 import { ClassificationChip } from "./Classification";
 import ProvenanceSection from "./Provenance";
 import Gate from "./Gate";
+import VerificationPanel, { ExploitabilityBadge, VerifiedFixedBadge } from "./Verification";
 
 const SENSITIVE_MARKERS = [
   /\bpayload:/i,
@@ -189,6 +190,8 @@ function FindingDetail({ id }: { id: string }) {
           <PriorityScore score={f.priority_score} large />
           <span className={`chip chip-status chip-status-${f.status}`}>{f.status}</span>
           <SlaBadge finding={f} />
+          <ExploitabilityBadge value={f.exploitability} />
+          <VerifiedFixedBadge at={f.fix_verified_at} />
           {f.suppressed && <span className="chip chip-status">suppressed</span>}
           {f.owner && <span style={{ color: "var(--text-2)", fontSize: 12 }}>owner · {f.owner}</span>}
         </div>
@@ -200,6 +203,8 @@ function FindingDetail({ id }: { id: string }) {
           <div style={{ marginTop: 6 }}><WhyChips why={f.why} /></div>
         </div>
       )}
+
+      <VerificationPanel finding={f} />
 
       <div className="section">
         <h3>Triage</h3>

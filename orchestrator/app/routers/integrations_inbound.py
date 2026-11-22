@@ -37,6 +37,7 @@ from ..db import get_pool
 from ..integrations import Capability, get_connector_class
 from ..integrations import connectors as _connectors
 from ..integrations import ticketing
+from ..integrations.pinned import pinned_client
 from ..integrations.secrets import decrypt_secrets
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ async def integration_inbound(
         return _err(503, "integration credentials unavailable")
 
     integration = {"id": str(iid), "kind": row["kind"], "name": row["name"], "config": config}
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as http:
+    async with pinned_client(allow_private=bool(row["allow_private"]), timeout=10.0) as http:
         conn = cls(config, secret_values, http)
         if hasattr(conn, "bind"):
             conn.bind(integration_id=iid, pool=pool, allow_private=bool(row["allow_private"]))
@@ -219,4 +220,12 @@ async def integration_inbound(
                 })
             except Exception:  # noqa: BLE001
                 logger.exception("publish_event_failed")
+    # A ticket closed as "fixed" is a claim: schedule the safe re-check that proves it.
+    from ..verification import service as verification_service
+
+    for ev in result.events:
+        if ev.data.get("status") == "fixed" and ev.data.get("finding_id"):
+            await verification_service.schedule_fix_check(
+                pool, redis, ev.data["finding_id"], trigger="fix_ticket",
+                actor=f"integration:{integration.get('kind') or 'ticket'}")
     return result.as_dict()

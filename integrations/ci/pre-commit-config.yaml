@@ -1,0 +1,22 @@
+# Paddock pre-commit hooks. Add to .pre-commit-config.yaml, then:
+#   pre-commit install --hook-type pre-commit --hook-type pre-push
+#
+# Needs PADDOCK_URL and PADDOCK_API_KEY (scan + read) in your shell environment.
+# Both hooks succeed quietly when those are not set or Paddock is unreachable, so
+# they never block an offline commit. (The gate hook only blocks when Paddock
+# answers and reports unsuppressed high+ findings.)
+repos:
+  - repo: https://github.com/brandongraff-dev/cybersec
+    rev: main            # pin a tag or commit SHA
+    hooks:
+      - id: paddock-lockfiles   # on commit: send changed lockfiles to Paddock
+      - id: paddock-gate        # on push: block while unsuppressed high+ findings exist
+
+  # The same thing as local hooks, if you vendor integrations/ci/paddock-ci.sh:
+  # - repo: local
+  #   hooks:
+  #     - id: paddock-lockfiles
+  #       name: Paddock lockfiles
+  #       entry: integrations/ci/paddock-ci.sh precommit
+  #       language: script
+  #       files: '(^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|requirements\.txt|poetry\.lock|Pipfile\.lock|Cargo\.lock|pom\.xml|Gemfile\.lock|go\.sum|go\.mod)$'

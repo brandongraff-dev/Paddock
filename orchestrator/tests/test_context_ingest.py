@@ -311,8 +311,13 @@ async def test_quarantine_flow_through_approve_gate(app, client, db_pool, self_a
                           json={"finding_id": fid, "integration_id": str(iid)})
     assert r.status_code == 409
 
+    # A network decision without a reason is refused (server-side, not just in the UI).
+    for verb in ("approve", "deny"):
+        r = await client.post(f"/v1/fleet/actions/{a['id']}/{verb}", json={"note": "  "})
+        assert r.status_code == 422 and "reason" in r.json()["detail"]
+
     # Approve WITHOUT apply_for_real -> execute is a read-only preview.
-    r = await client.post(f"/v1/fleet/actions/{a['id']}/approve", json={})
+    r = await client.post(f"/v1/fleet/actions/{a['id']}/approve", json={"note": "preview first"})
     assert r.status_code == 200 and r.json()["dry_run"] is True
     r = await client.post(f"/v1/fleet/network-actions/{a['id']}/execute", json={})
     assert r.status_code == 200, r.text
@@ -326,7 +331,8 @@ async def test_quarantine_flow_through_approve_gate(app, client, db_pool, self_a
                           json={"integration_id": str(iid), "mac": MAC, "finding_id": fid})
     assert r.status_code == 201, r.text
     real_id = r.json()["id"]
-    r = await client.post(f"/v1/fleet/actions/{real_id}/approve", json={"apply_for_real": True})
+    r = await client.post(f"/v1/fleet/actions/{real_id}/approve",
+                          json={"apply_for_real": True, "note": "rogue device on POS VLAN"})
     assert r.json()["dry_run"] is False
     r = await client.post(f"/v1/fleet/network-actions/{real_id}/execute", json={})
     out = r.json()
@@ -404,7 +410,8 @@ async def test_quarantine_guards(app, client, db_pool, self_approve, fake_dns):
     r = await client.post(p, json={"integration_id": str(unifi), "mac": MAC,
                                    "action_type": "release_device"})
     rid = r.json()["id"]
-    await client.post(f"/v1/fleet/actions/{rid}/approve", json={"apply_for_real": True})
+    await client.post(f"/v1/fleet/actions/{rid}/approve",
+                      json={"apply_for_real": True, "note": "cleared by owner"})
     r = await client.post(f"{p}/{rid}/execute", json={})
     assert r.json()["ok"] and r.json()["action"]["status"] == "applied"
     r = await client.post(f"/v1/fleet/actions/{rid}/revert", json={})

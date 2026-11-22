@@ -37,7 +37,7 @@ import logging
 import re
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -315,6 +315,11 @@ class ScopeDecision:
     normalized: str
     reason: str = ""
     matched_entry_id: int | None = None
+    # The addresses this decision VETTED (every one passed the HARD_DENY /
+    # internal-range guardrails). Only set when allow is True. A worker must
+    # connect to these and nowhere else: re-resolving the name would reopen
+    # the DNS-rebinding window this check closes.
+    resolved_ips: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -322,6 +327,8 @@ class ScopeDecision:
             "normalized": self.normalized,
             "reason": self.reason,
         }
+        if self.allow:
+            d["resolved_ips"] = list(self.resolved_ips)
         if self.matched_entry_id is not None:
             d["matched_entry"] = self.matched_entry_id
         return d
@@ -670,9 +677,17 @@ async def check(
         reason=decision_reason,
     )
 
+    vetted: list[str] = []
+    if allow:
+        if ip is not None:
+            vetted = [str(_unmap(ip))]
+        else:
+            vetted = sorted({str(a) for a in resolved})
+
     return ScopeDecision(
         allow=allow,
         normalized=normalized,
         matched_entry_id=matched_entry_id,
         reason=decision_reason,
+        resolved_ips=vetted,
     )

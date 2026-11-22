@@ -2,10 +2,13 @@
        (Sentry ingest). Each has a small HTTP server with /healthz. */ -}}
 {{- if .Values.intel.enabled }}
 {{- $v := .Values.intel -}}
+{{- $dbRole := "" -}}
+{{- if $.Values.secrets.serviceRoles }}{{- $dbRole = printf "- name: DATABASE_URL\n  valueFrom:\n    secretKeyRef:\n      name: %s\n      key: DATABASE_URL_INTEL\n- name: REQUIRE_RLS_ROLE\n  value: \"true\"" (include "paddock.secretName" $) -}}{{- end }}
 {{- $env := include "paddock.commonPythonEnv" . -}}
 {{- range $k, $val := $v.env }}
 {{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
 {{- end }}
+{{- if $dbRole }}{{- $env = printf "%s\n%s" $env $dbRole -}}{{- end }}
 {{ include "paddock.deployment" (dict
   "root" $ "component" "intel" "values" $v
   "env" $env
@@ -17,6 +20,8 @@
 {{- end }}
 {{- if .Values.correlation.enabled }}
 {{- $v := .Values.correlation -}}
+{{- $dbRole := "" -}}
+{{- if $.Values.secrets.serviceRoles }}{{- $dbRole = printf "- name: DATABASE_URL\n  valueFrom:\n    secretKeyRef:\n      name: %s\n      key: DATABASE_URL_CORRELATION\n- name: REQUIRE_RLS_ROLE\n  value: \"true\"" (include "paddock.secretName" $) -}}{{- end }}
 {{- $env := include "paddock.commonPythonEnv" . -}}
 {{- $env = printf "%s\n- name: POLICIES_DIR\n  value: /policies\n- name: HTTP_PORT\n  value: %s\n- name: HOME\n  value: /tmp" $env ($v.port | quote) -}}
 {{- range $k, $val := $v.env }}
@@ -27,6 +32,7 @@
 {{- $pol = printf "- name: policies\n  configMap:\n    name: %s" $v.policiesConfigMap -}}
 {{- end }}
 ---
+{{- if $dbRole }}{{- $env = printf "%s\n%s" $env $dbRole -}}{{- end }}
 {{ include "paddock.deployment" (dict
   "root" $ "component" "correlation" "values" $v
   "env" $env
@@ -38,6 +44,8 @@
 {{- end }}
 {{- if .Values.otdiscovery.enabled }}
 {{- $v := .Values.otdiscovery -}}
+{{- $dbRole := "" -}}
+{{- if $.Values.secrets.serviceRoles }}{{- $dbRole = printf "- name: DATABASE_URL\n  valueFrom:\n    secretKeyRef:\n      name: %s\n      key: DATABASE_URL_OTDISCOVERY\n- name: REQUIRE_RLS_ROLE\n  value: \"true\"" (include "paddock.secretName" $) -}}{{- end }}
 {{- $sel := dict "root" $ "component" "otdiscovery" -}}
 {{- $env := include "paddock.commonPythonEnv" . -}}
 {{- $env = printf "%s\n- name: OTDISCOVERY_HTTP_PORT\n  value: %s\n- name: REQUIRE_SENTRY_TOKEN\n  value: %s\n- name: BASELINE_PATH\n  value: /var/lib/otdiscovery/baselines.json" $env ($v.port | quote) ($v.requireSentryToken | quote) -}}
@@ -46,6 +54,7 @@
 {{- $env = printf "%s\n- name: %s\n  value: %s" $env $k ($val | quote) -}}
 {{- end }}
 ---
+{{- if $dbRole }}{{- $env = printf "%s\n%s" $env $dbRole -}}{{- end }}
 {{ include "paddock.deployment" (dict
   "root" $ "component" "otdiscovery" "values" $v
   "env" $env

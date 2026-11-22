@@ -10,6 +10,8 @@ from typing import Any, Optional
 
 import httpx
 
+from . import tenancy
+
 log = logging.getLogger(__name__)
 
 
@@ -21,6 +23,8 @@ class OrchestratorClient:
         self._client = httpx.AsyncClient(
             base_url=self._base, timeout=timeout,
             headers={"X-API-Key": key} if key else None,
+            # X-Paddock-Tenant from the tenant context on every request.
+            event_hooks={"request": [tenancy.httpx_request_hook]},
         )
 
     async def close(self) -> None:

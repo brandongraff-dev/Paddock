@@ -14,6 +14,8 @@ from typing import Any, AsyncIterator
 
 import asyncpg
 
+from . import tenancy
+
 log = logging.getLogger("brain.db")
 
 
@@ -49,6 +51,7 @@ class Database:
             init=_init_connection,
             command_timeout=60,
         )
+        await tenancy.check_role(self._pool)
         log.info("db: pool connected")
 
     async def close(self) -> None:
@@ -64,8 +67,20 @@ class Database:
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[asyncpg.Connection]:
+        """A pooled connection inside a transaction that carries the current
+        tenant (``set_config('app.tenant_id', ..., true)``): row-level security
+        pins every statement to it and nothing outlives the transaction."""
         async with self.pool.acquire() as conn:
-            yield conn
+            async with tenancy.scoped(conn):
+                yield conn
+
+    @asynccontextmanager
+    async def acquire_platform(self) -> AsyncIterator[asyncpg.Connection]:
+        """Like :meth:`acquire` but as the platform tenant: the only tenant
+        allowed to write global catalogues (``@paddock:global`` tables)."""
+        with tenancy.platform_context():
+            async with self.acquire() as conn:
+                yield conn
 
     async def ping(self) -> bool:
         try:
@@ -197,15 +212,23 @@ class Database:
         timeout, returning (columns, rows). The caller MUST have run the SQL
         through `guard.validate()` first — this method does no validation.
         """
-        async with self.acquire() as conn:
-            tr = conn.transaction(readonly=True)
-            await tr.start()
-            try:
+        if tenancy.current_tenant_id() is None:
+            # LLM-written SQL must never run without a tenant (strict mode, unbound).
+            raise PermissionError("no tenant bound: refusing to run NL-query SQL")
+        # A TOP-LEVEL read-only transaction (asyncpg ignores `readonly` on a
+        # nested one, so this must not go through acquire()) that also carries
+        # the tenant (SET LOCAL): the SQL below can only ever see this tenant's
+        # rows, with the service role's read-only grants on top.
+        async with self.pool.acquire() as conn:
+            async with tenancy.scoped(conn, readonly=True):
                 await conn.execute(f"SET LOCAL statement_timeout = {int(stmt_timeout_ms)}")
                 records = await conn.fetch(sql)
-            finally:
-                # Never commit — this path is strictly read-only.
-                await tr.rollback()
+                # Defence in depth behind guard.validate() (which denies
+                # set_config): if the statement managed to move the tenant GUC
+                # mid-flight, the rows it read may belong to another tenant --
+                # discard them instead of returning anything.
+                if await conn.fetchval("SELECT current_setting('app.tenant_id', true)") != tenancy.current_tenant_id():
+                    raise PermissionError("tenant context changed during NL-query; result discarded")
 
         if not records:
             return [], []

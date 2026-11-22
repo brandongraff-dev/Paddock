@@ -52,6 +52,14 @@ EVENT_TYPES: dict[str, str] = {
     "scan.failed": "A scan failed",
     "report.digest": "The scheduled digest is ready",
     "integration.test": "A test event sent from the Integrations page",
+    "finding.verified": "A safe check confirmed (or could not reproduce) a finding",
+    "finding.fix_verified": "A fix was verified: the finding could no longer be reproduced",
+    "finding.fix_failed": "A fix did not hold: the finding was reproduced and reopened",
+    "supplier.grade_changed": "A monitored supplier's passive security grade changed",
+    "supplier.dangling_dns": "A monitored supplier has a new dangling DNS record (possible takeover)",
+    "supplier.cert_expiring": "A monitored supplier has an expired or expiring certificate",
+    "sensor.offline": "A Sentry sensor stopped reporting",
+    "sensor.online": "A silent Sentry sensor is reporting again",
 }
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")
@@ -126,6 +134,10 @@ class SourceBatch:
     edges: list[dict[str, Any]] = field(default_factory=list)
     findings: list[dict[str, Any]] = field(default_factory=list)
     owners: list[dict[str, Any]] = field(default_factory=list)
+    # Additive (schema 031): internet-facing names/addresses the source saw that
+    # the customer may want in scope: {"kind", "value", "evidence"}. They are
+    # stored as PENDING suggestions; a source never adds scope itself.
+    scope_suggestions: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Connector(ABC):

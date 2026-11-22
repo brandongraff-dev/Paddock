@@ -17,13 +17,16 @@ is to other hosts and passes through untouched.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import active_probe_guard, pcap
 from .config import Config
 from . import behavior
+from . import tenancy
 from .cvematch import match_devices
 from .db import Database
 from .exposure import ExposureResult, analyze as analyze_exposure
@@ -144,6 +147,11 @@ def project_assets(
 # Engine
 # --------------------------------------------------------------------------- #
 
+def _flow_key(o: dict[str, Any]) -> tuple:
+    return (o.get("proto"), o.get("src_ip"), o.get("dst_ip"), o.get("src_mac"), o.get("dst_mac"),
+            o.get("dst_port"))
+
+
 class DiscoveryEngine:
     """Holds the passive observation store and runs ingest/analyze."""
 
@@ -153,12 +161,25 @@ class DiscoveryEngine:
         *,
         db: Optional[Database] = None,
         orch: Optional[OrchestratorClient] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         self.cfg = cfg
         self.db = db
         self.orch = orch
+        # One engine per tenant: observations, sensors, flows and behaviour
+        # baselines are in-memory state that must never mix across tenants.
+        self.tenant_id = tenancy.norm(tenant_id)
         self.observations: list[dict[str, Any]] = []
-        self.baselines = behavior.BaselineStore(cfg.baseline_path)
+        # One record per distinct flow (a sensor reports the same peer pair every
+        # 30 s window; storing each repeat made analysis O(flow events) per upload).
+        self._flow_index: dict[tuple, dict[str, Any]] = {}
+        self._lock = asyncio.Lock()
+        self._last_run_mono = 0.0
+        self._deferred: Optional[asyncio.Task] = None
+        path = cfg.baseline_path
+        if path and self.tenant_id and self.tenant_id != tenancy.DEFAULT_TENANT_ID:
+            path = f"{path}.{self.tenant_id}"  # per-tenant baseline file
+        self.baselines = behavior.BaselineStore(path)
         self.sensors: dict[str, dict[str, Any]] = {}
         self.last_segment_matrix: list[dict[str, Any]] = []
         self.last_inventory: list[Device] = []
@@ -190,15 +211,65 @@ class DiscoveryEngine:
     ) -> dict[str, Any]:
         parsed = parse_input(pcap_bytes=pcap_bytes, observations=observations)
         if replace:
-            self.observations = parsed
-        else:
-            self.observations.extend(parsed)
+            self.observations = []
+            self._flow_index = {}
+        self._store(parsed)
         self._prune()
         self.stats["ingests"] += 1
         self.stats["observations_stored"] = len(self.observations)
+        interval = self.cfg.analyze_interval_s
+        if interval > 0 and not replace:
+            # Coalesce: many uploads, one analysis per interval. The data is
+            # already stored; the next analysis posts everything it knows.
+            self._schedule_analysis(interval)
+            return {"observations_ingested": len(parsed), "analysis": "scheduled",
+                    "analysis_interval_s": interval, "orchestrator": {}}
         result = await self._run(self.observations)
         result["observations_ingested"] = len(parsed)
         return result
+
+    def _store(self, parsed: list[dict[str, Any]]) -> None:
+        for o in parsed:
+            if o.get("kind") != "flow":
+                self.observations.append(o)
+                continue
+            key = _flow_key(o)
+            cur = self._flow_index.get(key)
+            if cur is None:
+                self._flow_index[key] = o
+                self.observations.append(o)
+                continue
+            for f in ("packets", "bytes"):
+                if isinstance(o.get(f), (int, float)) and isinstance(cur.get(f), (int, float)):
+                    cur[f] = cur[f] + o[f]
+            try:
+                cur["last_seen"] = max(float(cur.get("last_seen") or 0), float(o.get("last_seen") or 0))
+                cur["first_seen"] = min(float(cur.get("first_seen") or o.get("first_seen") or 0),
+                                        float(o.get("first_seen") or cur.get("first_seen") or 0))
+            except (TypeError, ValueError):
+                pass
+            cur["tcp_syn"] = bool(cur.get("tcp_syn")) or bool(o.get("tcp_syn"))
+
+    def _schedule_analysis(self, interval: float) -> None:
+        if self._deferred is not None and not self._deferred.done():
+            return
+        wait = max(0.0, self._last_run_mono + interval - time.monotonic())
+
+        async def _later() -> None:
+            try:
+                await asyncio.sleep(wait)
+                await self._run(self.observations)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.exception("scheduled analysis failed; the next upload retries")
+
+        self._deferred = asyncio.get_running_loop().create_task(_later())
+
+    async def flush(self) -> None:
+        """Wait for a scheduled analysis (tests, shutdown)."""
+        if self._deferred is not None:
+            await self._deferred
 
     def note_sensor(self, sensor: dict[str, Any] | None) -> None:
         if not isinstance(sensor, dict) or not sensor.get("id"):
@@ -223,6 +294,7 @@ class DiscoveryEngine:
                 o for o in self.observations
                 if o.get("kind") != "flow" or float(o.get("last_seen") or 0) >= horizon
             ]
+        self._flow_index = {_flow_key(o): o for o in self.observations if o.get("kind") == "flow"}
         excess = len(self.observations) - self.cfg.max_observations
         if excess > 0:
             idx = [i for i, o in enumerate(self.observations) if o.get("kind") == "flow"][:excess]
@@ -230,18 +302,44 @@ class DiscoveryEngine:
             self.observations = [o for i, o in enumerate(self.observations) if i not in drop]
             if len(self.observations) > self.cfg.max_observations:
                 self.observations = self.observations[-self.cfg.max_observations:]
+            self._flow_index = {_flow_key(o): o for o in self.observations if o.get("kind") == "flow"}
 
     async def analyze(self) -> dict[str, Any]:
         self.stats["analyses"] += 1
         return await self._run(self.observations)
 
-    async def _run(self, observations: list[dict[str, Any]]) -> dict[str, Any]:
+    def _analyze_cpu(self, observations: list[dict[str, Any]]):  # type: ignore[no-untyped-def]
         devices = fingerprint_devices(observations)
         exposure = analyze_exposure(
             devices,
             v4_prefix=self.cfg.ipv4_segment_prefix,
             v6_prefix=self.cfg.ipv6_segment_prefix,
         )
+        flows = [o for o in observations if o.get("kind") == "flow"]
+        behav = behavior.analyze(
+            devices, flows,
+            params=behavior.BehaviorParams(
+                window_s=self.cfg.behavior_window_s, scan_hosts=self.cfg.scan_hosts,
+                scan_ports=self.cfg.scan_ports, learn_s=self.cfg.baseline_learn_s,
+                v4_prefix=self.cfg.ipv4_segment_prefix, v6_prefix=self.cfg.ipv6_segment_prefix,
+            ),
+            baselines=self.baselines,
+        )
+        return devices, exposure, behav
+
+    async def _run(self, observations: list[dict[str, Any]]) -> dict[str, Any]:
+        async with self._lock:
+            self._last_run_mono = time.monotonic()
+            if self.cfg.analyze_interval_s > 0:
+                # keep the event loop (heartbeats, uploads) responsive during the CPU work
+                devices, exposure, behav = await asyncio.to_thread(self._analyze_cpu, list(observations))
+            else:
+                devices, exposure, behav = self._analyze_cpu(observations)
+            result = await self._project(devices, exposure, behav)
+            self._last_run_mono = time.monotonic()
+            return result
+
+    async def _project(self, devices, exposure, behav) -> dict[str, Any]:  # type: ignore[no-untyped-def]
 
         # Every IP we discovered is forbidden as an active-connection target.
         device_ips: set[str] = set()
@@ -253,16 +351,6 @@ class DiscoveryEngine:
         edge_resp: dict[str, Any] = {}
         finding_resp: dict[str, Any] = {}
 
-        flows = [o for o in observations if o.get("kind") == "flow"]
-        behav = behavior.analyze(
-            devices, flows,
-            params=behavior.BehaviorParams(
-                window_s=self.cfg.behavior_window_s, scan_hosts=self.cfg.scan_hosts,
-                scan_ports=self.cfg.scan_ports, learn_s=self.cfg.baseline_learn_s,
-                v4_prefix=self.cfg.ipv4_segment_prefix, v6_prefix=self.cfg.ipv6_segment_prefix,
-            ),
-            baselines=self.baselines,
-        )
         self.last_segment_matrix = behav.segment_matrix
 
         with active_probe_guard(device_ips) as guard:

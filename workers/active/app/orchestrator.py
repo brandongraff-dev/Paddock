@@ -21,6 +21,7 @@ from tenacity import (
 )
 
 from app import USER_AGENT
+from app import tenancy
 from app.config import settings
 
 log = structlog.get_logger(__name__)
@@ -39,6 +40,9 @@ class OrchestratorClient:
         self._client = httpx.AsyncClient(
             base_url=self._base,
             timeout=httpx.Timeout(settings.http_timeout_sec),
+            # Echo the job's tenant + scan on EVERY callback (app/tenancy.py): the
+            # orchestrator verifies they match the job it issued.
+            event_hooks={"request": [tenancy.httpx_request_hook]},
             headers={
                 "User-Agent": USER_AGENT,
                 "X-Worker-Id": self._worker_id,
@@ -141,6 +145,23 @@ class OrchestratorClient:
         score, protocols, weak_ciphers, issues, cert_expires}, ...]}``
         """
         r = await self._request("POST", "/v1/tls-grades/bulk", json={"items": items})
+        r.raise_for_status()
+        return r.json()
+
+    # -------- verification (safe checks) ------------------------------------
+
+    async def verification_result(
+        self, verification_id: str, payload: dict[str, Any], tenant_id: str | None = None
+    ) -> dict:
+        """POST /v1/verifications/{id}/result: report a safe-check verdict.
+
+        The orchestrator owns every consequence (finding state, priority,
+        reopen on a failed fix, events); the worker only reports what it saw.
+        """
+        headers = {"X-Paddock-Tenant": tenant_id} if tenant_id else {}
+        r = await self._request(
+            "POST", f"/v1/verifications/{verification_id}/result", json=payload, headers=headers
+        )
         r.raise_for_status()
         return r.json()
 

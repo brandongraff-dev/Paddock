@@ -1,0 +1,4 @@
+paddock_cli/_vendor/
+build/
+dist/
+*.egg-info/

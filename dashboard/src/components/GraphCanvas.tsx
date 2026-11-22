@@ -2,8 +2,9 @@
  * GraphCanvas — the hero component.
  *
  * Renders the asset graph as a react-flow canvas with custom nodes.
- * Nodes are colored by kind, scaled by blast_score, and get a pulsing
- * ring if they carry an open high/critical finding.
+ * Nodes are uniform workflow-style cards coloured by kind; blast radius is
+ * on the card and in the tooltip, and open high/critical findings get a red
+ * rim and a count badge.
  *
  * We don't let react-flow decide layout — layoutGraph() in lib/graph.ts
  * assigns deterministic left-to-right positions, so the graph *reads*
@@ -32,10 +33,12 @@ import ReactFlow, {
 } from "reactflow";
 import type { Asset, AssetEdge, AssetKind, Finding, Severity } from "../api/types";
 import { distinctKinds, layoutGraph } from "../lib/graph";
-import { kindColor } from "../lib/color";
+import { canvasKindColor } from "../lib/color";
 import { useStore } from "../state/store";
 import NodeTooltip, { type NodeTooltipData } from "./graph/NodeTooltip";
+import KindIcon from "./graph/kindIcon";
 import "../styles/graph-extras.css";
+import "../styles/graph-nodes.css";
 
 /**
  * Local view of the extra fields the graph endpoint carries that aren't yet
@@ -52,30 +55,36 @@ interface Props {
   findings?: Finding[];
 }
 
+const KIND_LABEL: Partial<Record<AssetKind, string>> = {
+  ipv4: "IPv4", ipv6: "IPv6", org: "Org", secret_candidate: "Secret", cloud_account: "Cloud account",
+  cloud_resource: "Cloud resource",
+};
+/** Toolbar label for a kind: "Subdomain", "IPv4", ... */
+function kindLabel(k: AssetKind): string {
+  return KIND_LABEL[k] ?? k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, " ");
+}
+
+/** A workflow-canvas card: icon tile, value, "kind · blast" subtitle. */
 function AssetNode({ data }: NodeProps) {
   const a = data.asset as GraphAsset;
   const hot = !!data.hot;
-  const dimmed = !!data.dimmed;
   const color = data.color as string;
+  const blast = Math.round(a.blast_score ?? 0);
+  const openHigh = typeof a.open_high === "number" ? a.open_high : (a.open_high_crit_count ?? 0);
+  const cls = ["gnode", hot ? "hot" : "", data.dimmed ? "gx-dim" : "", data.faded ? "gx-fade" : ""]
+    .filter(Boolean).join(" ");
   return (
-    <div
-      className={`gn ${hot ? "hot" : ""} ${dimmed ? "gx-dim" : ""}`}
-      style={{
-        ["--kind-color" as any]: color,
-        transform: `scale(${data.scale ?? 1})`,
-        transformOrigin: "left center",
-      }}
-    >
-      {hot && <span className="gn-pulse" />}
+    <div className={cls} style={{ ["--kind-color" as any]: color }}>
       <Handle type="target" position={Position.Left} />
-      <div className="gn-kind">{a.kind}</div>
-      <div className="gn-value" title={a.value}>{a.value}</div>
-      <div className="gn-footer">
-        <span>blast {Math.round(a.blast_score ?? 0)}</span>
-        {typeof a.open_high === "number" && a.open_high > 0 && (
-          <span style={{ color: "var(--sev-crit)" }}>{a.open_high}!</span>
-        )}
+      <div className="gnode-icon"><KindIcon kind={a.kind} /></div>
+      <div className="gnode-text">
+        <div className="gnode-title" title={a.value}>{a.value}</div>
+        <div className="gnode-sub">
+          {a.kind.replace(/_/g, " ")}
+          {blast > 0 && <> · <span className="blast">blast {blast}</span></>}
+        </div>
       </div>
+      {openHigh > 0 && <span className="gnode-badge" title={`${openHigh} open high/critical`}>{openHigh}</span>}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -130,6 +139,11 @@ function InnerGraph({ assets, edges, findings }: Props) {
   }, [assets, findings, hotSet]);
 
   const allKinds = useMemo(() => distinctKinds(assets), [assets]);
+  const kindCounts = useMemo(() => {
+    const m = new Map<AssetKind, number>();
+    for (const a of assets) m.set(a.kind, (m.get(a.kind) ?? 0) + 1);
+    return m;
+  }, [assets]);
   const [enabledKinds, setEnabledKinds] = useState<Set<AssetKind>>(() => new Set(allKinds));
   const [kevOnly, setKevOnly] = useState(false);
 
@@ -162,25 +176,44 @@ function InnerGraph({ assets, edges, findings }: Props) {
     return keep;
   }, [kevOnly, kevSet, edges]);
 
+  // Hovering a node lights its own links and fades everything it isn't
+  // connected to (n8n-style focus), without recomputing the layout.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const focusKeep = useMemo(() => {
+    if (!focusId) return null;
+    const keep = new Set<string>([focusId]);
+    for (const e of baseEdges) {
+      if (e.source === focusId) keep.add(e.target);
+      if (e.target === focusId) keep.add(e.source);
+    }
+    return keep;
+  }, [focusId, baseEdges]);
+
   // Apply dimming without recomputing layout (cheap map over existing nodes).
   const displayNodes = useMemo<Node[]>(() => {
-    if (!kevKeep) return baseNodes;
-    return baseNodes.map((n) =>
-      kevKeep.has(n.id)
-        ? n
-        : { ...n, data: { ...n.data, dimmed: true } },
-    );
-  }, [baseNodes, kevKeep]);
+    if (!kevKeep && !focusKeep) return baseNodes;
+    return baseNodes.map((n) => {
+      const dimmed = !!kevKeep && !kevKeep.has(n.id);
+      const faded = !dimmed && !!focusKeep && !focusKeep.has(n.id);
+      return dimmed || faded ? { ...n, data: { ...n.data, dimmed, faded } } : n;
+    });
+  }, [baseNodes, kevKeep, focusKeep]);
 
   const displayEdges = useMemo<Edge[]>(() => {
-    if (!kevKeep) return baseEdges;
+    if (!kevKeep && !focusId) return baseEdges;
     return baseEdges.map((e) => {
-      const lit = kevKeep.has(e.source) && kevKeep.has(e.target);
-      return lit
-        ? e
-        : { ...e, style: { ...e.style, opacity: 0.05 }, label: undefined };
+      if (kevKeep && !(kevKeep.has(e.source) && kevKeep.has(e.target))) {
+        return { ...e, style: { ...e.style, opacity: 0.05 } };
+      }
+      if (focusId) {
+        const lit = e.source === focusId || e.target === focusId;
+        return lit
+          ? { ...e, className: "gx-edge-lit", zIndex: 1 }
+          : { ...e, style: { ...e.style, opacity: 0.25 } };
+      }
+      return e;
     });
-  }, [baseEdges, kevKeep]);
+  }, [baseEdges, kevKeep, focusId]);
 
   const onNodeClick = useCallback(
     (_: unknown, node: { id: string; data?: { dimmed?: boolean } }) => {
@@ -220,6 +253,7 @@ function InnerGraph({ assets, edges, findings }: Props) {
   const onNodeMouseEnter = useCallback(
     (ev: React.MouseEvent, node: Node) => {
       setHover(buildHover(ev, node));
+      setFocusId(node.id);
     },
     [buildHover],
   );
@@ -239,6 +273,7 @@ function InnerGraph({ assets, edges, findings }: Props) {
       raf.current = null;
     }
     setHover(null);
+    setFocusId(null);
   }, []);
 
   useEffect(() => () => {
@@ -247,29 +282,23 @@ function InnerGraph({ assets, edges, findings }: Props) {
 
   useEffect(() => {
     // Fit on first render, and when kinds toggled meaningfully.
-    const t = setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 60);
+    const t = setTimeout(() => fitView({ padding: 0.12, maxZoom: 1, duration: 300 }), 60);
     return () => clearTimeout(t);
   }, [fitView, baseNodes.length]);
 
   return (
     <div className="graph-wrap">
       <div className="graph-overlay filters">
-        {allKinds.map((k) => {
-          const on = enabledKinds.has(k);
-          return (
-            <label
-              key={k}
-              className={`checkchip ${on ? "on" : ""}`}
-              style={{
-                borderColor: on ? kindColor(k) : undefined,
-                color: on ? kindColor(k) : undefined,
-                background: on ? "rgba(255,255,255,0.03)" : undefined,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={on}
-                onChange={() => {
+        <div className="gfilter" role="group" aria-label="Show asset kinds">
+          {allKinds.map((k) => {
+            const on = enabledKinds.has(k);
+            return (
+              <button
+                key={k}
+                type="button"
+                className={`gchip ${on ? "on" : ""}`}
+                aria-pressed={on}
+                onClick={() => {
                   setEnabledKinds((prev) => {
                     const next = new Set(prev);
                     if (next.has(k)) next.delete(k);
@@ -277,48 +306,25 @@ function InnerGraph({ assets, edges, findings }: Props) {
                     return next;
                   });
                 }}
-              />
-              <span
-                className="dot"
-                style={{
-                  display: "inline-block",
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: kindColor(k),
-                }}
-              />
-              {k}
-            </label>
-          );
-        })}
-
-        <label
-          className={`checkchip ${kevOnly ? "on" : ""}`}
-          style={{
-            borderColor: kevOnly ? "var(--sev-crit)" : undefined,
-            color: kevOnly ? "var(--sev-crit)" : undefined,
-            background: kevOnly ? "rgba(213, 73, 60,0.1)" : undefined,
-          }}
-          title="Show only known-exploited (KEV) assets and their direct neighbours"
-        >
-          <input
-            type="checkbox"
-            checked={kevOnly}
-            onChange={() => setKevOnly((v) => !v)}
-          />
-          <span
-            className="dot"
-            style={{
-              display: "inline-block",
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "var(--sev-crit)",
-            }}
-          />
-          KEV only
-        </label>
+              >
+                <span className="sq" style={{ background: canvasKindColor(k) }} />
+                {kindLabel(k)}
+                <span className="n">{kindCounts.get(k) ?? 0}</span>
+              </button>
+            );
+          })}
+          <span className="gsep" aria-hidden="true" />
+          <button
+            type="button"
+            className={`gchip kev ${kevOnly ? "on" : ""}`}
+            aria-pressed={kevOnly}
+            onClick={() => setKevOnly((v) => !v)}
+            title="Show only known-exploited (KEV) assets and their direct neighbours"
+          >
+            <span className="sq" />
+            KEV only
+          </button>
+        </div>
       </div>
 
       <ReactFlow
@@ -333,6 +339,7 @@ function InnerGraph({ assets, edges, findings }: Props) {
         minZoom={0.1}
         maxZoom={2.5}
         fitView
+        fitViewOptions={{ padding: 0.12, maxZoom: 1 }}
         nodesDraggable
         panOnDrag
         selectionOnDrag={false}
@@ -341,14 +348,15 @@ function InnerGraph({ assets, edges, findings }: Props) {
       >
         <Background
           variant={BackgroundVariant.Dots}
-          gap={24}
-          size={1}
-          color="rgba(236,226,208,0.07)"
+          gap={20}
+          size={1.2}
+          color="rgba(236,226,208,0.09)"
         />
         <Controls showInteractive={false} />
         <MiniMap
           nodeColor={(n) => (n.data?.color as string) ?? "#9fc2d8"}
-          maskColor="rgba(10,13,18,0.75)"
+          nodeBorderRadius={6}
+          maskColor="rgba(14,12,10,0.72)"
           nodeStrokeColor="rgba(236,226,208,0.13)"
           nodeStrokeWidth={1}
           pannable
@@ -356,15 +364,6 @@ function InnerGraph({ assets, edges, findings }: Props) {
           style={{ height: 120, width: 180 }}
         />
       </ReactFlow>
-
-      <div className="graph-overlay legend">
-        {allKinds.map((k) => (
-          <span key={k} className="sw">
-            <span className="dot" style={{ background: kindColor(k) }} />
-            {k}
-          </span>
-        ))}
-      </div>
 
       {hover && <NodeTooltip data={hover.data} x={hover.x} y={hover.y} />}
     </div>

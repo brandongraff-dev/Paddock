@@ -85,7 +85,8 @@ RETURNING id, asset_id, rule_id, rule_source, severity, title, description,
           impact, remediation, evidence, cvss, epss, "references", status,
           first_seen, last_seen, assigned_to, metadata, (xmax = 0) AS was_inserted,
           status_reason, status_by, status_changed_at, accepted_until,
-          suppressed_by, suppressed_at, fingerprint, vuln_keys, duplicate_of
+          suppressed_by, suppressed_at, fingerprint, vuln_keys, duplicate_of,
+          exploitability, last_verified_at, fix_verified_at
 """
 
 
@@ -228,7 +229,9 @@ _FINDING_LIST_COLS = (
     'f.metadata, f.classification, '
     # lifecycle (schema 019)
     'f.status_reason, f.status_by, f.status_changed_at, f.accepted_until, '
-    'f.suppressed_by, f.suppressed_at, f.fingerprint, f.vuln_keys, f.duplicate_of'
+    'f.suppressed_by, f.suppressed_at, f.fingerprint, f.vuln_keys, f.duplicate_of, '
+    # verification (schema 026)
+    'f.exploitability, f.last_verified_at, f.fix_verified_at'
 )
 
 # ABAC: SQL expression comparing a finding's classification rank to the
@@ -279,6 +282,8 @@ def _build_find_where(
     q: str | None,
     sla_breached: bool | None = None,
     fingerprint: str | None = None,
+    exploitability: str | None = None,
+    fix_verified: bool | None = None,
 ) -> tuple[list[str], list[Any], bool]:
     clauses: list[str] = []
     args: list[Any] = []
@@ -318,6 +323,12 @@ def _build_find_where(
     if fingerprint:
         args.append(fingerprint)
         clauses.append(f"f.fingerprint = ${len(args)}")
+    if exploitability:
+        args.append(exploitability)
+        clauses.append(f"f.exploitability = ${len(args)}")
+    if fix_verified is not None:
+        clauses.append("f.fix_verified_at IS NOT NULL" if fix_verified
+                       else "f.fix_verified_at IS NULL")
     return clauses, args, needs_cve_join
 
 
@@ -356,11 +367,14 @@ async def _query_findings(
     fingerprint: str | None = None,
     sort: str = "last_seen",
     with_counts: bool = False,
+    exploitability: str | None = None,
+    fix_verified: bool | None = None,
 ) -> tuple[list[lifecycle.FindingLifecycleOut], int, int, int]:
     """Shared list query. Returns (items, total, suppressed_total, duplicates_total)."""
     await lifecycle.maybe_sweep(pool)
     base, args, _needs_join = _build_find_where(
-        severity, status, asset_id, rule_source, kev, q, sla_breached, fingerprint
+        severity, status, asset_id, rule_source, kev, q, sla_breached, fingerprint,
+        exploitability, fix_verified,
     )
     args.append(principal.clearance_rank)
     base.append(f"{_FINDING_ABAC}${len(args)}")
@@ -428,12 +442,17 @@ async def list_findings_paged(
     offset: int = Query(0, ge=0),
     pool=Depends(get_pool),
     principal: Principal = Depends(current_principal),
+    exploitability: str | None = Query(
+        None, pattern="^(unverified|confirmed|not_reproducible|inconclusive)$",
+        description="safe-check verdict (schema 026)"),
+    fix_verified: bool | None = Query(None, description="only findings proven fixed (or not)"),
 ):
     items, total, sup_total, dup_total = await _query_findings(
         pool, principal, severity=severity, status=status, asset_id=asset_id,
         rule_source=rule_source, kev=kev, q=q, limit=limit, offset=offset,
         suppressed=suppressed, include_duplicates=include_duplicates,
         sla_breached=sla_breached, fingerprint=fingerprint, sort=sort, with_counts=True,
+        exploitability=exploitability, fix_verified=fix_verified,
     )
     return lifecycle.FindingLifecyclePage(
         items=items, total=total, limit=limit, offset=offset,
@@ -564,6 +583,8 @@ async def patch_finding(
             )
         args.append(patch.status)
         set_parts.append(f"status = ${len(args)}")
+        # a changed status starts a new episode: an earlier "verified fixed" no longer holds
+        set_parts.append(f"fix_verified_at = CASE WHEN status = ${len(args)} THEN fix_verified_at END")
         args.append(reason or None)
         set_parts.append(f"status_reason = ${len(args)}")
         args.append(principal.actor)
@@ -590,7 +611,7 @@ async def patch_finding(
                "references", status, first_seen, last_seen, assigned_to,
                metadata, status_reason, status_by, status_changed_at,
                accepted_until, suppressed_by, suppressed_at, fingerprint,
-               vuln_keys, duplicate_of
+               vuln_keys, duplicate_of, exploitability, last_verified_at, fix_verified_at
     """
     async with pool.acquire() as con:
         async with con.transaction():
@@ -629,6 +650,12 @@ async def patch_finding(
             )
         except Exception:
             logger.exception("publish_event_failed")
+    if changed and patch.status == "fixed":
+        # Prove it: schedule a safe re-check of the finding (never fails the PATCH).
+        from ..verification import service as verification_service
+
+        await verification_service.schedule_fix_check(
+            pool, r, finding_id, trigger="fix_status", actor=principal.actor)
     d = _coerce_finding_row(row)
     d["suppressed"] = d.get("suppressed_by") is not None
     return lifecycle.FindingLifecycleOut.model_validate(d)

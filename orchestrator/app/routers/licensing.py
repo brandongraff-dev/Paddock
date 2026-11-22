@@ -24,6 +24,7 @@ from .. import licensing as lic_svc
 from ..auth import current_principal, require
 from ..config import settings
 from ..db import get_pool
+from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,7 @@ async def _otdiscovery_sites() -> tuple[int | None, int | None, str | None]:
         import httpx
 
         async with httpx.AsyncClient(timeout=_OTD_TIMEOUT) as http:
-            resp = await http.get(settings.otdiscovery_url.rstrip("/") + "/stats")
+            resp = await http.get(settings.otdiscovery_url.rstrip("/") + "/stats", headers=service_headers())
         if resp.status_code != 200:
             return None, None, f"otdiscovery /stats returned {resp.status_code}"
         sensors = (resp.json() or {}).get("sensors") or {}
@@ -268,7 +269,7 @@ async def write_snapshot(pool, usage: UsageOut, *, overwrite: bool) -> UsageSnap
             INSERT INTO usage_snapshots (day, monitored_assets, total_assets, sites, sensors,
                 fleet_agents, users, scans_month, integrations, edition, license_id, detail)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
-            ON CONFLICT (day) {conflict}
+            ON CONFLICT (tenant_id, day) {conflict}
             RETURNING {_SNAPSHOT_COLS}
             """,
             day, usage.monitored_assets, usage.total_assets, usage.sites, usage.sensors,

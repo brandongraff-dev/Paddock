@@ -179,7 +179,8 @@ async def _transition(
                 """
                 UPDATE findings
                    SET status = $2, status_reason = $3, status_by = $4,
-                       status_changed_at = NOW(), accepted_until = $5
+                       status_changed_at = NOW(), accepted_until = $5,
+                       fix_verified_at = NULL
                  WHERE id = $1
                 """,
                 finding_id, to_status, reason, principal.actor, accepted_until,
@@ -191,7 +192,8 @@ async def _transition(
                 """
                 UPDATE findings
                    SET status = $2, status_reason = $3, status_by = $4,
-                       status_changed_at = NOW(), accepted_until = $5
+                       status_changed_at = NOW(), accepted_until = $5,
+                       fix_verified_at = NULL
                  WHERE duplicate_of = $1 AND status IS DISTINCT FROM $2
              RETURNING id
                 """,

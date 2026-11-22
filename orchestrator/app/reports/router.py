@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from ..auth import Principal, current_principal, require
+from ..billing import gate as billing_gate
 from ..db import get_pool
 from . import compliance, digest, render
 from .metrics import build_report, parse_period
@@ -89,7 +90,10 @@ async def executive_report(
     return await _document(html, format, name, download)
 
 
-@router.get("/compliance", response_model=list[FrameworkSummary])
+@router.get(
+    "/compliance", response_model=list[FrameworkSummary],
+    dependencies=[Depends(billing_gate.require_paid("compliance_packs"))],
+)
 async def compliance_frameworks(
     request: Request,
     pool=Depends(get_pool),
@@ -99,7 +103,10 @@ async def compliance_frameworks(
     return await compliance.summaries(pool, clearance=principal.clearance)
 
 
-@router.get("/compliance/{framework}", response_model=CompliancePack)
+@router.get(
+    "/compliance/{framework}", response_model=CompliancePack,
+    dependencies=[Depends(billing_gate.require_paid("compliance_packs"))],
+)
 async def compliance_pack(
     framework: str,
     request: Request,

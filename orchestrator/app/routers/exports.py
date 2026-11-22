@@ -50,6 +50,7 @@ from ..auth import CLASS_RANK, Principal, classification_rank_sql, current_princ
 from ..db import get_pool
 from ..integrations import ocsf
 from ..models import FindingStatus, RuleSource, Severity
+from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
 export_router = APIRouter(prefix="/v1/export", tags=["export"])
@@ -525,7 +526,7 @@ def _check_project_name(name: Optional[str]) -> str:
 _UPSERT_PROJECT = """
     INSERT INTO sca_projects (name, source_ref, ecosystems, last_scanned)
     VALUES ($1, $2, $3::text[], NOW())
-    ON CONFLICT (name) DO UPDATE SET
+    ON CONFLICT (tenant_id, name) DO UPDATE SET
         source_ref   = COALESCE(EXCLUDED.source_ref, sca_projects.source_ref),
         ecosystems   = (SELECT ARRAY(SELECT DISTINCT unnest(sca_projects.ecosystems || EXCLUDED.ecosystems) ORDER BY 1)),
         last_scanned = NOW()
@@ -676,7 +677,8 @@ async def import_lockfiles(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=5.0)) as http:
             resp = await http.post(f"{_sca_url()}/scan", json={
-                "project_name": name, "files": accepted, "source_ref": source_ref})
+                "project_name": name, "files": accepted, "source_ref": source_ref},
+                headers=service_headers())
     except httpx.HTTPError as exc:
         logger.warning("sca proxy failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="SCA service unavailable") from None

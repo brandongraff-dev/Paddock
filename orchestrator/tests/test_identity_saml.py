@@ -3,9 +3,11 @@ python3-saml) and posts them to the ACS."""
 from __future__ import annotations
 
 import base64
+import json
 import uuid
+import zlib
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import pytest
 import pytest_asyncio
@@ -14,6 +16,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from app import auth as auth_svc
+from app.config import settings
 from app.identity import saml as saml_mod
 from app.routers import sso as sso_router
 
@@ -50,6 +54,35 @@ def _keypair(cn: str = "test-idp"):
     return key_pem, cert_pem
 
 
+SAML_NS = "urn:oasis:names:tc:SAML:2.0:assertion"
+
+
+def encrypt_assertion(assertion_xml: str, sp_cert_pem: str) -> str:
+    """Wrap + encrypt an (already signed) assertion for the SP's certificate
+    (AES-128-CBC session key, RSA-OAEP key transport), as an IdP would."""
+    import xmlsec
+    from lxml import etree
+
+    wrapper = etree.fromstring(
+        f'<saml:EncryptedAssertion xmlns:saml="{SAML_NS}">{assertion_xml}</saml:EncryptedAssertion>'.encode())
+    enc_data = xmlsec.template.encrypted_data_create(
+        wrapper, xmlsec.Transform.AES128, type=xmlsec.EncryptionType.ELEMENT, ns="xenc")
+    xmlsec.template.encrypted_data_ensure_cipher_value(enc_data)
+    key_info = xmlsec.template.encrypted_data_ensure_key_info(enc_data, ns="ds")
+    enc_key = xmlsec.template.add_encrypted_key(key_info, xmlsec.Transform.RSA_OAEP)
+    xmlsec.template.encrypted_data_ensure_cipher_value(enc_key)
+    manager = xmlsec.KeysManager()
+    manager.add_key(xmlsec.Key.from_memory(pem_of(sp_cert_pem), xmlsec.KeyFormat.CERT_PEM, None))
+    ctx = xmlsec.EncryptionContext(manager)
+    ctx.key = xmlsec.Key.generate(xmlsec.KeyData.AES, 128, xmlsec.KeyDataType.SESSION)
+    ctx.encrypt_xml(enc_data, wrapper[0])
+    return etree.tostring(wrapper).decode()
+
+
+def pem_of(cert: str) -> str:
+    return saml_mod.pem_cert(cert)
+
+
 def _ts(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -73,13 +106,21 @@ class FakeSamlIdP:
         not_on_or_after: datetime | None = None,
         tamper: bool = False,
         assertion_id: str | None = None,
+        session_index: str | None = None,
+        extra_attrs: dict[str, tuple[str, ...]] | None = None,
+        encrypt_for: str | None = None,
     ) -> str:
         now = datetime.now(timezone.utc)
         later = not_on_or_after or now + timedelta(minutes=5)
         aid = assertion_id or f"_a{uuid.uuid4().hex}"
-        attrs = "".join(
-            f'<saml:AttributeValue xsi:type="xs:string">{g}</saml:AttributeValue>' for g in groups
-        )
+        def _attr(name: str, values) -> str:
+            vals = "".join(f'<saml:AttributeValue xsi:type="xs:string">{v}</saml:AttributeValue>' for v in values)
+            return f'<saml:Attribute Name="{name}">{vals}</saml:Attribute>'
+
+        attr_xml = (_attr("groups", groups) if groups else "") + "".join(
+            _attr(k, v) for k, v in (extra_attrs or {}).items())
+        sidx = session_index or f"_s{uuid.uuid4().hex[:8]}"
+        self.last_session_index = sidx
         assertion = (
             '<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" '
             'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" '
@@ -94,12 +135,11 @@ class FakeSamlIdP:
             f'<saml:Conditions NotBefore="{_ts(now - timedelta(minutes=1))}" NotOnOrAfter="{_ts(later)}">'
             f"<saml:AudienceRestriction><saml:Audience>{audience}</saml:Audience></saml:AudienceRestriction>"
             "</saml:Conditions>"
-            f'<saml:AuthnStatement AuthnInstant="{_ts(now)}" SessionIndex="_s{uuid.uuid4().hex[:8]}">'
+            f'<saml:AuthnStatement AuthnInstant="{_ts(now)}" SessionIndex="{sidx}">'
             "<saml:AuthnContext><saml:AuthnContextClassRef>"
             "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
             "</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement>"
-            '<saml:AttributeStatement><saml:Attribute Name="groups">'
-            f"{attrs}</saml:Attribute></saml:AttributeStatement>"
+            f"<saml:AttributeStatement>{attr_xml}</saml:AttributeStatement>"
             "</saml:Assertion>"
         )
         if sign:
@@ -108,6 +148,8 @@ class FakeSamlIdP:
             assertion = assertion.split("?>", 1)[1] if assertion.startswith("<?xml") else assertion
         if tamper:
             assertion = assertion.replace(name_id, "mallory@corp.example")
+        if encrypt_for:
+            assertion = encrypt_assertion(assertion, encrypt_for)
         resp = (
             '<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" '
             'xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" '

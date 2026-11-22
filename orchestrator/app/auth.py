@@ -29,6 +29,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -41,7 +42,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from . import audit, tenancy
+from . import audit, job_binding, service_routes, tenancy
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,9 @@ class Principal:
     # The tenant every query of this principal is scoped to (Postgres RLS).
     # None = the context default (the default tenant unless TENANCY_STRICT).
     tenant_id: str | None = None
+    # Set only for an MSP user acting inside a customer tenant (app/msp): who
+    # is really acting and for which MSP. ``tenant_id`` is then the customer.
+    msp_delegation: dict[str, Any] | None = None
 
     @property
     def clearance_rank(self) -> int:
@@ -309,6 +313,8 @@ def _extract_credentials(request: Request) -> tuple[str | None, str | None]:
         bearer = auth[7:].strip()
         if bearer.startswith("pak_"):
             api_key = api_key or bearer
+        elif bearer.startswith("pdi_"):
+            pass  # per-source ingest token: checked by POST /v1/ingest itself, not a principal
         else:
             token = bearer
     return api_key, token
@@ -415,16 +421,29 @@ async def _principal_from_scim_token(request: Request, token: str) -> Principal:
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
         raise AuthError("auth backend unavailable")
-    async with pool.acquire() as con:
-        row = await con.fetchrow(
-            "SELECT id, name, expires_at, revoked FROM scim_tokens WHERE token_hash = $1",
-            hash_api_key(token),
-        )
-        if row is None or row["revoked"]:
-            raise AuthError("invalid SCIM token")
-        if row["expires_at"] is not None and row["expires_at"] <= datetime.now(timezone.utc):
-            raise AuthError("SCIM token expired")
-        await con.execute("UPDATE scim_tokens SET last_used = NOW() WHERE id = $1", row["id"])
+    # Like API keys: the tenant is unknown until the token row is read, so the
+    # lookup runs in auth-lookup mode (schema 036 adds a SELECT-only policy on
+    # scim_tokens for it). Before this the lookup ran in the DEFAULT tenant, so
+    # SCIM tokens of every other tenant were rejected, and the principal named
+    # no tenant at all.
+    with tenancy.auth_lookup():
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT s.id, s.name, s.expires_at, s.revoked, s.tenant_id, t.status AS tenant_status "
+                "  FROM scim_tokens s LEFT JOIN tenants t ON t.id = s.tenant_id "
+                " WHERE s.token_hash = $1",
+                hash_api_key(token),
+            )
+    if row is None or row["revoked"]:
+        raise AuthError("invalid SCIM token")
+    if row["tenant_status"] != "active":
+        raise AuthError("tenant suspended")
+    if row["expires_at"] is not None and row["expires_at"] <= datetime.now(timezone.utc):
+        raise AuthError("SCIM token expired")
+    tid = str(row["tenant_id"])
+    with tenancy.tenant_context(tid):
+        async with pool.acquire() as con:
+            await con.execute("UPDATE scim_tokens SET last_used = NOW() WHERE id = $1", row["id"])
     return Principal(
         actor=f"scim:{row['name']}",
         role="scim",
@@ -432,7 +451,17 @@ async def _principal_from_scim_token(request: Request, token: str) -> Principal:
         capabilities=frozenset({"scim"}),  # SCIM only -- never capabilities_for()
         kind="scim",
         api_key_id=str(row["id"]),
+        tenant_id=tid,
     )
+
+
+# Service-key routes whose tenant comes from a second credential, not from the
+# caller: otdiscovery brackets a managed sensor's upload with claim/done, and
+# the orchestrator resolves the tenant from the sensor's own credential
+# (X-Sensor-Token), then does all work inside that tenant. Under
+# TENANCY_STRICT these may omit X-Paddock-Tenant; every other service call
+# must still name one.
+_TENANTLESS_SERVICE_PATHS = re.compile(r"^/v1/sensors/ingest/(claim|done)$")
 
 
 async def resolve_principal(request: Request) -> Principal | None:
@@ -450,6 +479,10 @@ async def resolve_principal(request: Request) -> Principal | None:
         if svc and hmac.compare_digest(api_key.encode("utf-8"), svc.encode("utf-8")):
             ref = request.headers.get(tenancy.TENANT_HEADER)
             if not ref:
+                if settings.tenancy_strict and not _TENANTLESS_SERVICE_PATHS.match(request.url.path):
+                    # The service key is a fleet credential, not a tenant: in a
+                    # multi-tenant deployment every call must say whose it is.
+                    raise AuthError("service key requires X-Paddock-Tenant (TENANCY_STRICT)")
                 return service_principal()
             pool = getattr(request.app.state, "pool", None)
             tid = await tenancy.resolve_tenant_ref(pool, ref) if pool is not None else None
@@ -458,6 +491,10 @@ async def resolve_principal(request: Request) -> Principal | None:
             return service_principal(tid)
         return await _principal_from_api_key(request, api_key)
     if token:
+        from . import msp as msp_svc
+
+        if msp_svc.is_switch_token(token):  # MSP user acting in a customer (app/msp)
+            return await msp_svc.principal_from_switch_token(request, token)
         return await _principal_from_jwt(request, token)
     return None
 
@@ -466,7 +503,6 @@ async def resolve_principal(request: Request) -> Principal | None:
 # RBAC policy: (method, path) -> required capability
 # --------------------------------------------------------------------------- #
 
-import re  # noqa: E402
 
 # Ordered rules. First match wins. Patterns match the concrete request path
 # (with real ids). `None` capability means the route is public (no auth).
@@ -484,6 +520,10 @@ _rule("POST", r"/v1/auth/login", None)
 # Two-way ticket sync callbacks (Jira/ServiceNow/Linear). Authenticated by the
 # integration's inbound token / webhook signature inside the handler instead.
 _rule("POST", rf"/v1/integrations/{_ANY}/inbound", None)
+# Universal ingest: authenticated in the handler by a per-source ingest token
+# (scoped to ingest only) or an API key with `scan`. Management is admin-only.
+_rule("GET POST PATCH DELETE", r"/v1/ingest/(sources|log)(/.*)?", "admin")
+_rule("POST", r"/v1/ingest", None)
 
 # --- SSO (schema 020): admin config first, then the public login flow ------ #
 _rule("GET POST PUT PATCH DELETE", r"/v1/auth/sso/admin(/.*)?", "admin")
@@ -491,6 +531,10 @@ _rule("GET", r"/v1/auth/sso/providers", None)
 _rule("POST", r"/v1/auth/sso/exchange", None)
 _rule("GET", rf"/v1/auth/sso/{_ANY}/(start|callback|metadata)", None)
 _rule("POST", rf"/v1/auth/sso/{_ANY}/acs", None)
+# SAML single logout: IdP messages are verified (signature) inside the handler;
+# the SP-initiated logout needs a signed-in session.
+_rule("GET", rf"/v1/auth/sso/{_ANY}/sls", None)
+_rule("POST", r"/v1/auth/sso/logout", "read")
 
 # --- SCIM 2.0: only a SCIM token carries the `scim` capability -------------- #
 _rule("GET POST PUT PATCH DELETE", r"/scim/v2(/.*)?", "scim")
@@ -561,6 +605,37 @@ _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
 _rule("GET", r"/v1/export/(findings\.ocsf|sarif|sbom|vex)", "read")
 _rule("POST", r"/v1/import/(sbom|lockfiles)", "scan")
 
+# --- billing (schema 028): the Stripe webhook authenticates by signature ----- #
+_rule("POST", r"/v1/billing/webhook", None)
+# Public status page feed: fixed component names, up/degraded, nothing else.
+_rule("GET", r"/status", None)
+# --- verified findings (schema 026): safe checks are scans; the worker reports with `write` --- #
+_rule("POST", rf"/v1/findings/{_ANY}/verify", "scan")
+_rule("POST", r"/v1/findings/verify/bulk", "scan")
+_rule("POST", rf"/v1/verifications/{_ANY}/result", "write")
+_rule("POST", rf"/v1/remediation/{_ANY}/merged", "triage")
+# --- MSP console (app/msp): switching needs only read (the grant decides the
+# role inside the customer); invite redemption is public (the token is the
+# credential); every other mutating /v1/msp route falls through to admin. ---- #
+_rule("POST", rf"/v1/msp/customers/{_ANY}/switch", "read")
+_rule("POST", r"/v1/msp/invites/redeem", None)
+# --- growth (schema 032): public passive endpoints + admin management ------- #
+# Unauthenticated BY DESIGN: passive-only (DNS + CT), rate limited, aggregate
+# output. The handlers enforce their own abuse controls (app/growth/abuse.py).
+_rule("POST", r"/v1/public/exposure-report", None)
+_rule("GET", rf"/v1/public/exposure-report/{_ANY}", None)
+_rule("GET POST", rf"/v1/public/trust/{_ANY}", None)
+_rule("GET POST DELETE PATCH PUT", r"/v1/trust-links(/.*)?", "admin")
+# --- Sentry sensors (schema 034) -------------------------------------------- #
+# Sensor-facing: authenticated in-handler by the enrollment token / sensor
+# credential (rate limited, hashed at rest), not by a principal.
+_rule("POST", r"/v1/sensors/(enroll|heartbeat)", None)
+# otdiscovery (service key) brackets each upload with claim/done.
+_rule("POST", r"/v1/sensors/ingest/(claim|done)", "write")
+# Token metadata is admin-only; the rest of GET /v1/sensors falls to `read`,
+# every write to the deny-closed `admin` default.
+_rule("GET", r"/v1/sensors/tokens", "admin")
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.
@@ -619,7 +694,49 @@ def _resource_from_path(path: str) -> tuple[str | None, str | None]:
 
 # Non-GET routes that do not mutate state: no write-ahead audit record (they
 # are still audited after the fact, exactly as before).
-_NO_WRITE_AHEAD = frozenset({"/v1/scope/check"})
+_NO_WRITE_AHEAD = frozenset({"/v1/scope/check", "/v1/billing/webhook"})
+
+# Sentry data-plane calls: a heartbeat per sensor per minute and a claim/done
+# pair per upload (hundreds of thousands a day at fleet scale; measured with
+# hardening/sentry_scale.py, they were ~90% of audit_log growth). Successful
+# ones are not audited per request; rejected/denied ones still are, and the
+# lifecycle actions (token create/revoke, enroll, sensor revoke/update) are
+# audited by their handlers.
+_SENSOR_DATA_PLANE = re.compile(r"^/v1/sensors/(heartbeat|ingest/(claim|done))/?$")
+
+
+#: anonymous requests per client per minute on public routes (Stripe's webhook
+#: gets a larger bucket: it is signature-checked and arrives from few addresses).
+ANON_PUBLIC_PER_MIN = int(os.environ.get("PADDOCK_ANON_PUBLIC_PER_MIN", "240") or 240)
+ANON_WEBHOOK_PER_MIN = int(os.environ.get("PADDOCK_ANON_WEBHOOK_PER_MIN", "1200") or 1200)
+
+
+#: routes that read their own (larger) bodies with their own caps
+_ANON_OWN_BODY_CAP = re.compile(r"^/v1/(ingest|billing/webhook|integrations/|auth/sso/[^/]+/acs)")
+ANON_BODY_MAX = 256 * 1024
+
+
+def _anon_body_too_large(request: Request) -> bool:
+    """Declared body size for anonymous public routes whose payloads are tiny
+    JSON documents (exposure report, enrollment, invite redemption, trust unlock)."""
+    if _ANON_OWN_BODY_CAP.match(request.url.path):
+        return False
+    cl = request.headers.get("content-length")
+    return bool(cl and cl.isdigit() and int(cl) > ANON_BODY_MAX)
+
+
+def _anon_throttled(request: Request) -> bool:
+    from .netkey import SlidingWindowLimiter, client_key
+
+    state = request.app.state
+    lim = getattr(state, "anon_public_limiter", None)
+    if lim is None:
+        lim = state.anon_public_limiter = SlidingWindowLimiter(limit=1, window_s=60)
+    path = request.url.path.rstrip("/")
+    webhook = path == "/v1/billing/webhook"
+    lim.limit = ANON_WEBHOOK_PER_MIN if webhook else ANON_PUBLIC_PER_MIN
+    key = ("w:" if webhook else "p:") + client_key(client_ip(request))
+    return not lim.hit(key)
 
 
 class GovernanceMiddleware(BaseHTTPMiddleware):
@@ -671,7 +788,23 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
                     "unauthenticated requests. DO NOT run this way in production."
                 )
 
+        # 1b. Anonymous callers of public routes: a cheap per-client throttle BEFORE
+        #     anything is written. Without it every anonymous POST costs two audit
+        #     rows (write-ahead + outcome) ahead of the handler's own limits, so
+        #     the audit chain itself becomes the amplifier.
+        if principal is None and required is None and _anon_body_too_large(request):
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+        if principal is None and required is None and _anon_throttled(request):
+            resp = JSONResponse({"detail": "too many requests; slow down"}, status_code=429,
+                                headers={"Retry-After": "60"})
+            rid = getattr(request.state, "request_id", None)
+            if rid:
+                resp.headers["X-Request-ID"] = rid
+            return resp
+
         # 2. Bind the principal's tenant for everything below (RLS scoping).
+        #    (Only a service principal can pick its tenant, via X-Paddock-Tenant;
+        #    resolve_principal already validated that it exists and is active.)
         tenant_token = tenancy.set_tenant(principal.tenant_id if principal else None)
         try:
             return await self._handle(request, call_next, principal, required)
@@ -685,6 +818,15 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         principal: Principal | None,
         required: str | None,
     ) -> Response:
+        # 3a. An MSP user acting inside a customer has a narrower surface
+        #     (no key minting / SSO / SCIM / nested MSP routes): app/msp.
+        if principal is not None and principal.msp_delegation:
+            from . import msp as msp_svc
+
+            why = msp_svc.delegated_route_denied(principal, request.url.path, request.method)
+            if why:
+                return await self._deny(request, 403, why, principal)
+
         # 3. Authorize (RBAC, deny-closed) for non-public routes.
         if required is not None:
             if principal is None:
@@ -696,6 +838,26 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
 
         if principal is not None:
             request.state.principal = principal
+
+        # 3b. A worker callback must belong to the tenant of the job it answers.
+        if principal is not None and principal.kind == "service":
+            if settings.tenancy_strict and not service_routes.permitted(request.method, request.url.path):
+                # Strict mode: the fleet-wide key may only call the routes the
+                # fleet really calls (app/service_routes.py); everything else
+                # (users, keys, scope writes, integrations, audit, ...) is refused.
+                return await self._deny(
+                    request, 403,
+                    "the service key may not call this route under TENANCY_STRICT", principal,
+                )
+            pool = getattr(request.app.state, "pool", None)
+            if pool is not None:
+                try:
+                    mismatch = await job_binding.verify(request, pool, tenancy.current_tenant_id())
+                except Exception:  # noqa: BLE001 -- fail closed
+                    logger.exception("job_binding_check_failed")
+                    mismatch = "job/tenant check unavailable"
+                if mismatch:
+                    return await self._deny(request, 409, f"job_tenant_mismatch: {mismatch}", principal)
 
         # 4. Write-ahead audit for mutations (fail-closed).
         intent_id: int | None = None
@@ -730,9 +892,14 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
     def _needs_write_ahead(request: Request) -> bool:
         if not settings.audit_fail_closed:
             return False
-        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        # An MSP user inside a customer is audited write-ahead on EVERY request,
+        # reads included (the customer can see what its provider looked at).
+        delegated = bool(getattr(getattr(request.state, "principal", None), "msp_delegation", None))
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE") and not delegated:
             return False
         if (request.url.path.rstrip("/") or "/") in _NO_WRITE_AHEAD:
+            return False
+        if _SENSOR_DATA_PLANE.match(request.url.path):
             return False
         # No database -> the handler cannot mutate persistent state either.
         return getattr(request.app.state, "pool", None) is not None
@@ -775,7 +942,10 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         method = request.method
         mutating = method in ("POST", "PUT", "PATCH", "DELETE")
         restricted_read = bool(getattr(request.state, "audit_restricted", False))
-        if not (denied or mutating or restricted_read):
+        delegated = bool(principal is not None and principal.msp_delegation)
+        if not (denied or mutating or restricted_read or delegated):
+            return
+        if not denied and status_code < 400 and _SENSOR_DATA_PLANE.match(request.url.path):
             return
         try:
             await self._record(request, principal, status_code, denied=denied, details=details)
@@ -800,8 +970,31 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         ip = client_ip(request)
         if details is None:
             details = {"denied": True} if denied else {}
+        if principal is not None and principal.kind == "service":
+            # A shared service key acting in a tenant it named: record WHICH.
+            details = {**details, "via": "service_key",
+                       "acting_tenant": principal.tenant_id or tenancy.current_tenant_id(),
+                       "job": request.headers.get(job_binding.SCAN_HEADER)}
         # Anonymous / tenant-less events go to the default (platform) chain.
         tenant = (principal.tenant_id if principal else None) or tenancy.current_tenant_id()
+        if principal is not None and principal.msp_delegation:
+            # MSP user inside a customer: the MSP's own trail gets its record
+            # first (a failure here refuses a write-ahead request, fail-closed),
+            # then the customer's row below names the acting MSP user.
+            from . import msp as msp_svc
+
+            await msp_svc.mirror_to_msp_trail(
+                pool,
+                principal,
+                action=_action_for(request.method, denied),
+                method=request.method,
+                path=request.url.path,
+                status=status_code,
+                request_id=getattr(request.state, "request_id", None),
+                ip=ip,
+                details=details,
+            )
+            details = {**details, "msp": msp_svc.delegation_details(principal)}
         with tenancy.tenant_context(tenant or tenancy.DEFAULT_TENANT_ID):
             return await audit.record(
                 pool,

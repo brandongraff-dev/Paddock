@@ -13,6 +13,8 @@ from typing import Any
 
 import aiohttp
 
+from . import tenancy
+
 log = logging.getLogger("codeanalysis.orchestrator")
 
 
@@ -42,6 +44,9 @@ class OrchestratorClient:
         if self._session is None:
             self._session = aiohttp.ClientSession(
                 timeout=self._timeout,
+                # Stamps X-Paddock-Tenant from the tenant context on EVERY request, so a
+                # shared session stays correct across tenants (app/tenancy.py).
+                trace_configs=[tenancy.aiohttp_trace_config()],
                 headers={
                     "User-Agent": self._ua,
                     "Accept": "application/json",

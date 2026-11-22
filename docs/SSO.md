@@ -130,8 +130,9 @@ must be on the list (Google Workspace: the `hd` hosted-domain claim must be too)
    `roles` claim.
    *Alternative:* **Token configuration → Add groups claim → Security groups**
    emits group **object IDs** in `groups` (map on the GUIDs). Users in more than
-   200 groups get an "overage" pointer instead of the list, which Paddock does
-   not resolve; prefer app roles.
+   200 groups get an "overage" pointer instead of the list; Paddock resolves
+   it through Microsoft Graph (see *Group overage* below), or use app roles,
+   which never overflow.
 4. Optional: **Token configuration → Add optional claim → ID → email, upn**.
 5. Paddock → **Add provider** → *Microsoft Entra ID*:
    * Issuer: `https://login.microsoftonline.com/<tenant-id>/v2.0`
@@ -142,6 +143,45 @@ must be on the list (Google Workspace: the `hd` hosted-domain claim must be too)
 Entra users are linked by their immutable object ID (`oid`), never by email.
 If you also use SCIM (§7), set the SCIM `externalId` mapping to `objectId` so
 SSO and SCIM resolve to the same Paddock account.
+
+### Group overage (Entra, OIDC and SAML)
+
+When a user is in too many groups (200 in a JWT, 150 in a SAML assertion) Entra
+leaves the groups out and says so: `hasgroups: true` or `_claim_names.groups`
+in the ID token, or the attribute
+`http://schemas.microsoft.com/claims/groups.link` in the assertion. Paddock then
+asks Microsoft Graph (`transitiveMemberOf`, so nested groups count; paged,
+up to 50 pages) for the user's groups. Two ways, per provider:
+
+| Mode | How | Needs |
+|---|---|---|
+| `delegated` (OIDC default) | `GET /v1.0/me/transitiveMemberOf` with the user's own access token | Add a Graph scope such as `User.Read` to **scopes**; the app needs delegated permission to read the user's group memberships (`GroupMember.Read.All`) with admin consent |
+| `app` (OIDC option, **always** for SAML) | client-credentials token for an app registration, `GET /v1.0/users/{oid}/transitiveMemberOf` | **Application** permission `GroupMember.Read.All` with admin consent. OIDC reuses the provider's client ID/secret and the tenant from the issuer; SAML takes `graph_tenant_id`, `graph_client_id` and the write-only `graph_client_secret` |
+
+Set `oidc.graph_mode: "app"`, or for SAML the `saml.graph_*` fields. Setting
+`graph_overage: "off"` ignores the markers. The Graph base/login URLs default to
+the public cloud and can be changed for sovereign clouds (https only).
+
+* Only group **object IDs** are used (`$select=id`). Display names are not
+  unique in Entra and by default any user may create a group named
+  "Paddock Admins", so never map roles on display names for overage users.
+* The `endpoint` in `_claim_sources` / the `groups.link` URL is **never
+  followed** (it is token data and legacy `graph.windows.net`); Paddock calls the
+  configured Graph host only, and refuses a `@odata.nextLink` that leaves it.
+* Results are cached per user for `PADDOCK_GRAPH_GROUP_CACHE_SEC` (default 300,
+  `0` = off). Failures are never cached and a stale list is never served.
+* **Failure mode: deny, never grant.** If Graph cannot be used (no credentials,
+  403 consent missing, throttled, timeout, bad payload, internal address) the
+  user's groups are *unresolved*: no role mapping is applied (a partial `groups`
+  claim next to an overage marker is discarded too). A provider with *Deny
+  users with no matching group* refuses the sign-in with `groups_unavailable`;
+  otherwise a new user gets the provider's default role and an existing user keeps
+  the role they already have (it is neither raised nor reset, and their stored
+  groups are not blanked). The audit record carries `groups_unresolved` and the
+  `groups_error` code (`graph_forbidden`, `graph_throttled`, `graph_unreachable`,
+  `graph_not_configured`, `graph_no_user`, `graph_bad_response`, ...).
+* All Graph and token requests use the DNS-pinned transport
+  ([outbound safety](INTEGRATIONS.md#outbound-safety)).
 
 ## 4. OIDC: Google Workspace
 
@@ -217,9 +257,59 @@ the email attribute because the default NameID is the UPN.
 *SAML Signing Certificate:* signing option **Sign SAML assertion** (default)
 → download **Federation Metadata XML** and paste it into Paddock.
 
-Not supported (yet): encrypted assertions, SP-signed AuthnRequests,
-IdP-initiated sign-on (unsolicited responses are refused by design), single
-logout.
+### SP key pair: signed requests and encrypted assertions
+
+Generate a key pair for the provider (Paddock keeps the private key encrypted
+with `PADDOCK_SECRET_KEY`, never returns it, and puts the certificate in the SP
+metadata and the provider config):
+
+```
+POST /v1/auth/sso/admin/providers/{id}/saml-sp-keypair   -> {"sp_x509_cert": "-----BEGIN CERTIFICATE-----..."}
+```
+
+or supply your own: `saml.sp_x509_cert` (PEM) plus the write-only
+`sp_private_key` (PEM). Paddock checks that they match. Then, per provider:
+
+* `saml.sign_authn_requests: true`: AuthnRequests and LogoutRequests are signed
+  (RSA-SHA256, Redirect binding); give the IdP the certificate (it is in the SP
+  metadata as `AuthnRequestsSigned="true"`).
+* **Encrypted assertions** are decrypted with the same key whenever the IdP
+  sends them. `saml.require_encrypted_assertions: true` also refuses plaintext
+  assertions. An assertion encrypted for another key, or when no key is
+  configured, is rejected (`invalid_assertion`). Rotate by calling the keypair
+  endpoint again and uploading the new certificate to the IdP.
+* `idp_metadata_url` (instead of pasting XML) makes Paddock download the IdP
+  metadata: https only, public addresses only, no redirects, 512 KiB cap,
+  through the DNS-pinned transport.
+
+### Single logout
+
+Set the IdP's single-logout URL (`saml.idp_slo_url`, picked up from metadata)
+and give the IdP the SP's SLS endpoint, `https://paddock.example.com/v1/auth/sso/<slug>/sls`
+(HTTP-Redirect binding; also in the SP metadata).
+
+* **SP-initiated:** the dashboard calls `POST /v1/auth/sso/logout` with the
+  user's token. Every Paddock session of that user is revoked at once (JWT
+  watermark + pending exchange codes), and the response is
+  `{"revoked": true, "idp_logout_url": "<IdP SLO URL with a LogoutRequest>"}`;
+  navigate the browser there to end the IdP session too. The IdP's
+  LogoutResponse returns to `/sls` with the single-use `RelayState` and must
+  answer our request (`InResponseTo`). Without an SLO URL (or for non-SAML
+  logins) `idp_logout_url` is `null` (OIDC: the IdP's `end_session_endpoint`
+  when it advertises one).
+* **IdP-initiated:** a `LogoutRequest` at `/sls` revokes the matching user's
+  sessions (matched by NameID, and by SessionIndex when the request names one:
+  a different IdP session leaves ours alone) and is answered with a
+  LogoutResponse redirect. **Logout messages must be signed by the pinned IdP
+  certificate** (otherwise anyone could end any user's session); unsigned or
+  wrongly signed ones get `400` and change nothing. An unknown NameID is
+  answered like a known one (no user oracle).
+
+Every logout is audited (`action=logout`, `details.initiator` = `user` / `idp`).
+`logout` is a reserved provider slug.
+
+Not supported: IdP-initiated *sign-on* (unsolicited responses are refused by
+design), POST-binding logout, artifact binding.
 
 The SAML stack is OneLogin's `python3-saml` on `xmlsec`. Their wheels bundle
 libxml2, so `xmlsec` and `lxml` are pinned as a pair in
@@ -282,15 +372,37 @@ SSO just-in-time (which it adopts on first write). Local password accounts
 and break-glass accounts are invisible to SCIM, so a leaked SCIM token cannot
 disable your break-glass admin.
 
-Implemented: Users and Groups (`GET` list with `filter=<attr> eq "<value>"`
-[`and` …] on `userName`, `externalId`, `emails.value`, `displayName`, `id`,
-`active`; `startIndex`/`count` paging; `GET`/`POST`/`PUT`/`PATCH`/`DELETE`;
-`excludedAttributes=members`), `ServiceProviderConfig`, `ResourceTypes`,
-`Schemas`. PATCH accepts both Okta (`replace` with a value object, `members[value eq "…"]`
-removal) and Entra (capitalised ops, explicit paths, `"True"`/`"False"`
-strings, `emails[type eq "work"].value`, enterprise-extension attributes,
-which are accepted and ignored). Not implemented: bulk, sort, ETags, password
-changes, filters other than `eq`.
+Implemented (RFC 7644): Users and Groups with `GET` (list, one),
+`POST`, `PUT`, `PATCH`, `DELETE`, `POST /Users/.search` and `/Groups/.search`,
+`ServiceProviderConfig`, `ResourceTypes`, `Schemas`.
+
+* **Filters:** `eq ne co sw ew gt ge lt le pr`, `and` / `or` / `not (…)`,
+  parentheses and value paths (`emails[type eq "work" and value sw "a"]`,
+  `groups[value eq "<id>"]`, `members[value eq "<id>"]`). Attributes: users
+  `userName`, `externalId`, `displayName`, `name.givenName`, `name.familyName`,
+  `emails`, `emails.value`, `active`, `id`, `roles.value`, `groups.value`,
+  `meta.created`, `meta.lastModified`; groups `displayName`, `externalId`, `id`,
+  `members.value`, `meta.*`. Strings compare case-insensitively (not
+  `externalId` / `id`); dates take ISO 8601. Values are bound parameters; the
+  parser is bounded (1 KiB, depth 8, 20 terms). Anything else is
+  `400 invalidFilter`.
+* **Paging:** `startIndex` (< 1 → 1) and `count` (negative → 0, capped at 200),
+  true `totalResults` past the end. `attributes` / `excludedAttributes`
+  project responses (`id` and `schemas` always stay).
+* **ETags:** every resource carries `meta.version` and an `ETag` (weak). `GET`
+  honours `If-None-Match` (304); `PUT`/`PATCH`/`DELETE` honour `If-Match`
+  (`412` when stale; `*` and no header always work, which is what Okta and
+  Entra send). Group membership changes bump the version of both the group and
+  the affected users.
+* **PATCH** accepts Okta (`replace` with a value object and no path, e.g.
+  `{"active": false}`; `members[value eq "…"]` removal, with or without a
+  trailing `.value`) and Entra (capitalised ops, explicit paths, `"True"` /
+  `"False"` strings, `emails[type eq "work"].value`, `Remove` of `name.*`,
+  `members` add / replace / remove with a value array or no value, upper-cased
+  GUIDs, enterprise-extension attributes, which are accepted and ignored). Unknown
+  member ids are ignored; malformed operations are `400` and change nothing.
+
+Not implemented: bulk, sort (`sort.supported=false`), password changes.
 
 ---
 
@@ -324,8 +436,48 @@ the orchestrator log (`sso_login_failed`) and the audit log
 | `provisioning_disabled` | JIT is off and no account is linked or provisioned |
 | `account_conflict` | An account with that email exists but the IdP didn't assert a verified email, or the account is a break-glass account |
 | `user_disabled` | The Paddock account is deactivated (e.g. by SCIM) |
+| `groups_unavailable` | Entra group overage and Graph could not be used while *Deny users with no matching group* is on — see *Group overage* (consent, credentials, throttling) |
 
 Use the **Test** button on a provider to check discovery and the JWKS.
+
+---
+
+## 9a. Multi-tenant deployments (hosted / MSP)
+
+Providers, users, login state, SCIM tokens and the sign-in policy
+(`identity_settings`, including **Require SSO** and the break-glass list) all
+belong to one tenant; every tenant has its own, so tenant B can run SSO exactly
+like a single-tenant install. How the unauthenticated flow finds the right
+tenant:
+
+* **Provider slugs are globally unique** (they are part of the public
+  callback / ACS URL), so the slug identifies the tenant. The flow reads the
+  slug's owning tenant in `auth_lookup` mode (schema/038, a narrow SELECT-only
+  policy on `identity_providers`, selecting only `tenant_id`), then does
+  *everything else* (state / nonce / PKCE, JIT provisioning, role mapping,
+  identity links, exchange code, audit entries) inside that tenant under
+  normal RLS. A disabled provider, or one of a suspended tenant, is
+  "unknown".
+* **State is bound to its provider and tenant.** A callback / ACS /
+  logout `state` minted for another tenant's provider and presented to your
+  slug is refused (`state_mismatch`) and is not consumed.
+* **Exchange codes name their tenant** (`<tenant uuid hex>.<random>`), so the
+  SPA's `POST /v1/auth/sso/exchange` needs no tenant parameter; the issued JWT
+  carries the provider's `tid`.
+* **No cross-tenant takeover.** Linking by verified email, SCIM `externalId`
+  or existing identity only looks inside the provider's tenant. Usernames stay
+  globally unique, so JIT provisioning of a username that exists in another
+  tenant is refused with `account_conflict` ("already exists in another
+  organization"); nothing is created or linked. Use a different IdP username
+  or email for that user.
+* **Require SSO is per tenant.** Password sign-in is gated by the policy of
+  the tenant the username belongs to (an unknown username gets the default
+  tenant's policy). `GET /v1/auth/sso/providers?tenant=<slug|id>` returns that
+  tenant's providers and `sso_required` for its sign-in page; an unknown tenant
+  gets an empty answer.
+* Creating a provider with a slug another tenant already uses returns 409.
+* SCIM tokens already resolve their tenant (schema/036); SCIM users, groups
+  and role mappings in tenant B use tenant B's `identity_settings`.
 
 ---
 
@@ -335,20 +487,24 @@ Public (no credentials):
 
 | Method | Path | |
 |---|---|---|
-| GET | `/v1/auth/sso/providers` | Enabled providers for the sign-in page + `sso_required` |
+| GET | `/v1/auth/sso/providers[?tenant=<slug>]` | Enabled providers for the sign-in page + `sso_required` (of the default tenant, or of `tenant`) |
 | GET | `/v1/auth/sso/{slug}/start?spa_challenge=…&return_to=/path` | 302 to the IdP. `spa_challenge` = base64url(SHA-256(verifier)), required |
 | GET | `/v1/auth/sso/{slug}/callback` | OIDC redirect URI |
 | POST | `/v1/auth/sso/{slug}/acs` | SAML ACS |
 | GET | `/v1/auth/sso/{slug}/metadata` | SAML SP metadata |
+| GET | `/v1/auth/sso/{slug}/sls` | SAML single logout (signed LogoutRequest / LogoutResponse, Redirect binding) |
 | POST | `/v1/auth/sso/exchange` `{code, verifier}` | One-time code → Paddock JWT (`LoginOut` + `username`) |
+
+Signed in (any role): `POST /v1/auth/sso/logout` → `{"revoked": true, "idp_logout_url": …}`.
 
 Admin (capability `admin`):
 
 | Method | Path |
 |---|---|
 | GET, POST | `/v1/auth/sso/admin/providers` |
-| GET, PATCH, DELETE | `/v1/auth/sso/admin/providers/{id}` (`client_secret`: omit = keep, `""` = clear) |
+| GET, PATCH, DELETE | `/v1/auth/sso/admin/providers/{id}` (secrets `client_secret`, `sp_private_key`, `graph_client_secret`: omit = keep, `""` = clear; `saml` PATCH merges onto the stored config; `idp_metadata_url` fetches IdP metadata) |
 | POST | `/v1/auth/sso/admin/providers/{id}/test` |
+| POST | `/v1/auth/sso/admin/providers/{id}/saml-sp-keypair` (generate / rotate the SAML SP key pair) |
 | GET, PUT | `/v1/auth/sso/admin/settings` |
 | GET, POST | `/v1/auth/sso/admin/scim-tokens` |
 | DELETE | `/v1/auth/sso/admin/scim-tokens/{id}` |
@@ -356,7 +512,11 @@ Admin (capability `admin`):
 SCIM (SCIM token only): `/scim/v2/Users`, `/scim/v2/Groups`,
 `/scim/v2/ServiceProviderConfig`, `/scim/v2/ResourceTypes`, `/scim/v2/Schemas`.
 
-Schema: `schema/020_identity.sql`. Code: `orchestrator/app/identity/`,
+Schema: `schema/020_identity.sql`, `schema/030_identity_hardening.sql`
+(`user_identities.idp_session`, the SAML NameID / SessionIndex used for logout).
+Code: `orchestrator/app/identity/` (`graph.py` = Entra overage, `scim_filter.py` =
+SCIM filters),
 `orchestrator/app/routers/sso.py`, `orchestrator/app/routers/scim.py`.
-Tests: `orchestrator/tests/test_identity_{oidc,saml,scim}.py` (a fake OIDC
-provider and a self-signed SAML IdP), `dashboard/tests/identity.test.tsx`.
+Tests: `orchestrator/tests/test_identity_{oidc,saml,saml_hardening,scim,scim_rfc,graph,sessions}.py`
+(a fake OIDC provider, a self-signed SAML IdP, a fake Microsoft Graph),
+`dashboard/tests/identity.test.tsx`.

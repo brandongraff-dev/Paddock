@@ -14,6 +14,11 @@ replace, patch, delete), plus ServiceProviderConfig, ResourceTypes, Schemas.
   sessions (JWT watermark) and API keys.
 * Group membership drives role + clearance through the SCIM role mappings
   in identity settings (first match wins).
+* Filters (RFC 7644 3.4.2.2): eq ne co sw ew gt ge lt le pr, and/or/not and
+  parentheses, value paths (``emails[type eq "work"]``, ``groups[value eq ".."]``);
+  ``POST /Users/.search`` and ``/Groups/.search``; ``attributes`` /
+  ``excludedAttributes``; weak ETags (``meta.version`` + ``ETag``), with
+  ``If-Match`` on PUT/PATCH/DELETE (412) and ``If-None-Match`` on GET (304).
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ from fastapi.routing import APIRoute
 from .. import audit
 from .. import auth as auth_svc
 from ..auth import current_principal, require_scope
+from ..billing import gate as billing_gate
 from ..db import get_pool
 from ..identity import scim_logic as sl
 from ..identity.scim_logic import ScimError
@@ -40,7 +46,34 @@ SCIM_MEDIA = "application/scim+json"
 
 
 def scim_json(body: Any, status_code: int = 200, headers: dict[str, str] | None = None) -> JSONResponse:
-    return JSONResponse(body, status_code=status_code, media_type=SCIM_MEDIA, headers=headers)
+    h = dict(headers or {})
+    if isinstance(body, dict) and isinstance(body.get("meta"), dict) and body["meta"].get("version"):
+        h.setdefault("ETag", body["meta"]["version"])
+    return JSONResponse(body, status_code=status_code, media_type=SCIM_MEDIA, headers=h)
+
+
+def _etags(value: str | None) -> set[str]:
+    return {t.strip() for t in (value or "").split(",") if t.strip()}
+
+
+def _check_if_match(request: Request, version: str) -> None:
+    """RFC 7644 3.14: a stale ``If-Match`` must not overwrite (412)."""
+    want = request.headers.get("if-match")
+    if want is None or want.strip() == "*":
+        return
+    weak = lambda t: t[2:] if t.startswith("W/") else t  # noqa: E731 -- weak comparison
+    if weak(version) not in {weak(t) for t in _etags(want)}:
+        raise ScimError(412, "the resource changed: its version does not match If-Match")
+
+
+def _not_modified(request: Request, version: str) -> Response | None:
+    have = request.headers.get("if-none-match")
+    if have is None:
+        return None
+    weak = lambda t: t[2:] if t.startswith("W/") else t  # noqa: E731
+    if have.strip() == "*" or weak(version) in {weak(t) for t in _etags(have)}:
+        return Response(status_code=304, headers={"ETag": version})
+    return None
 
 
 class ScimRoute(APIRoute):
@@ -66,18 +99,14 @@ router = APIRouter(
     prefix="/scim/v2",
     tags=["scim"],
     route_class=ScimRoute,
-    dependencies=[Depends(require_scope("scim"))],
+    dependencies=[Depends(require_scope("scim")), Depends(billing_gate.require_paid("scim"))],
 )
 
 USER_COLS = (
     "id, username, external_id, given_name, family_name, display_name, email, active, "
     "role, clearance, created_at, updated_at, provisioned_by"
 )
-_USER_FILTERS = {
-    "username": "username", "externalid": "external_id", "emails.value": "email",
-    "emails": "email", "id": "id", "displayname": "display_name", "active": "active",
-}
-_GROUP_FILTERS = {"displayname": "display_name", "externalid": "external_id", "id": "id"}
+MAX_START = 1_000_000_000
 
 
 async def _body(request: Request) -> dict[str, Any]:
@@ -145,36 +174,28 @@ async def _user_groups(con, user_ids: list) -> dict[str, list[tuple[str, str]]]:
     return out
 
 
+async def _check_user_version(request: Request, con, row) -> None:
+    if request.headers.get("if-match") is None:
+        return
+    groups = await _user_groups(con, [row["id"]])
+    _check_if_match(request, sl.user_version(row, groups[str(row["id"])]))
+
+
 async def _render_user(con, uid) -> dict[str, Any]:
     row = await con.fetchrow(f"SELECT {USER_COLS} FROM app_users WHERE id = $1", uid)
     groups = await _user_groups(con, [uid])
     return sl.user_resource(row, groups[str(uid)])
 
 
-@router.get("/Users")
-async def list_users(
-    filter: str | None = Query(None, max_length=1024),  # noqa: A002 -- SCIM's name
-    startIndex: int = Query(1),  # noqa: N803
-    count: int = Query(100),
-    pool=Depends(get_pool),
-):
-    conds = sl.parse_filter(filter, _USER_FILTERS)
-    start = max(1, startIndex)
+async def _list_users(pool, flt, start_index, count, attributes, excluded) -> JSONResponse:
+    start = min(max(1, start_index), MAX_START)
     count = max(0, min(count, sl.MAX_COUNT))
     async with pool.acquire() as con:
         args: list[Any] = [await sl.break_glass(con)]
         where = [_visible()]
-        for col, val in conds:
-            args.append(val)
-            n = len(args)
-            if col in ("username", "email"):
-                where.append(f"lower(u.{col}) = lower(${n}::text)")
-            elif col == "id":
-                where.append(f"u.id::text = ${n}::text")
-            elif col == "active":
-                where.append(f"u.active = ${n}::boolean")
-            else:
-                where.append(f"u.{col} = ${n}::text")
+        extra = sl.filter_sql(flt, sl.USER_SPEC, args)
+        if extra:
+            where.append(extra)
         w = " AND ".join(where)
         total = await con.fetchval(f"SELECT count(*) FROM app_users u WHERE {w}", *args)
         rows = []
@@ -185,16 +206,62 @@ async def list_users(
                 *args,
             )
         groups = await _user_groups(con, [r["id"] for r in rows])
-    return scim_json(sl.list_response([sl.user_resource(r, groups[str(r["id"])]) for r in rows], total, start))
+    res = [sl.project(sl.user_resource(r, groups[str(r["id"])]), attributes, excluded) for r in rows]
+    return scim_json(sl.list_response(res, total, start))
+
+
+@router.get("/Users")
+async def list_users(
+    filter: str | None = Query(None),  # noqa: A002 -- SCIM's name
+    startIndex: int = Query(1),  # noqa: N803
+    count: int = Query(100),
+    attributes: str | None = Query(None, max_length=512),
+    excludedAttributes: str | None = Query(None, max_length=512),  # noqa: N803
+    pool=Depends(get_pool),
+):
+    return await _list_users(pool, filter, startIndex, count, attributes, excludedAttributes)
+
+
+async def _search_params(request: Request) -> dict[str, Any]:
+    """POST /.search body (RFC 7644 3.4.3) -> the same arguments as the GET."""
+    b = await _body(request)
+    try:
+        return {
+            "flt": b.get("filter") if isinstance(b.get("filter"), str) else None,
+            "start_index": int(b.get("startIndex", 1)),
+            "count": int(b.get("count", 100)),
+            "attributes": ",".join(b["attributes"]) if isinstance(b.get("attributes"), list) else b.get("attributes"),
+            "excluded": ",".join(b["excludedAttributes"]) if isinstance(b.get("excludedAttributes"), list)
+            else b.get("excludedAttributes"),
+        }
+    except (TypeError, ValueError) as exc:
+        raise ScimError(400, "startIndex and count must be integers", "invalidValue") from exc
+
+
+@router.post("/Users/.search")
+async def search_users(request: Request, pool=Depends(get_pool)):
+    p = await _search_params(request)
+    if p["flt"] and len(p["flt"]) > 1024:
+        raise ScimError(400, "filter too long", "invalidFilter")
+    return await _list_users(pool, **p)
 
 
 @router.get("/Users/{user_id}")
-async def get_user(user_id: str, pool=Depends(get_pool)):
+async def get_user(
+    user_id: str, request: Request,
+    attributes: str | None = Query(None, max_length=512),
+    excludedAttributes: str | None = Query(None, max_length=512),  # noqa: N803
+    pool=Depends(get_pool),
+):
     async with pool.acquire() as con:
         row = await _get_user(con, _uuid(user_id))
         if row is None:
             raise ScimError(404, "user not found")
-        return scim_json(await _render_user(con, row["id"]))
+        res = await _render_user(con, row["id"])
+    nm = _not_modified(request, res["meta"]["version"])
+    if nm is not None:
+        return nm
+    return scim_json(sl.project(res, attributes, excludedAttributes))
 
 
 @router.post("/Users")
@@ -281,6 +348,7 @@ async def replace_user(user_id: str, request: Request, pool=Depends(get_pool)):
             row = await _get_user(con, _uuid(user_id))
             if row is None:
                 raise ScimError(404, "user not found")
+            await _check_user_version(request, con, row)
             changes = await _persist_user(request, con, row, f)
             res = await _render_user(con, row["id"])
     await _audit(request, action="update", rtype="scim_user", rid=str(row["id"]), status=200,
@@ -296,6 +364,7 @@ async def patch_user(user_id: str, request: Request, pool=Depends(get_pool)):
             row = await _get_user(con, _uuid(user_id))
             if row is None:
                 raise ScimError(404, "user not found")
+            await _check_user_version(request, con, row)
             new = sl.apply_user_patch(_cur_user_fields(row), body.get("Operations"))
             changes = await _persist_user(request, con, row, new)
             res = await _render_user(con, row["id"])
@@ -311,6 +380,7 @@ async def delete_user(user_id: str, request: Request, pool=Depends(get_pool)):
             row = await _get_user(con, _uuid(user_id))
             if row is None:
                 raise ScimError(404, "user not found")
+            await _check_user_version(request, con, row)
             await sl.deactivate(con, row["id"])
             await con.execute("DELETE FROM scim_group_members WHERE user_id = $1", row["id"])
             await con.execute("DELETE FROM user_identities WHERE user_id = $1", row["id"])
@@ -373,41 +443,61 @@ def _wants_members(excluded: str | None, attributes: str | None) -> bool:
     return True
 
 
-@router.get("/Groups")
-async def list_groups(
-    filter: str | None = Query(None, max_length=1024),  # noqa: A002
-    startIndex: int = Query(1),  # noqa: N803
-    count: int = Query(100),
-    excludedAttributes: str | None = Query(None),  # noqa: N803
-    attributes: str | None = Query(None),
-    pool=Depends(get_pool),
-):
-    conds = sl.parse_filter(filter, _GROUP_FILTERS)
-    start = max(1, startIndex)
+async def _list_groups(pool, flt, start_index, count, attributes, excluded) -> JSONResponse:
+    start = min(max(1, start_index), MAX_START)
     count = max(0, min(count, sl.MAX_COUNT))
-    where, args = ["TRUE"], []
-    for col, val in conds:
-        args.append(val)
-        n = len(args)
-        if col == "display_name":
-            where.append(f"lower(display_name) = lower(${n}::text)")
-        elif col == "id":
-            where.append(f"id::text = ${n}::text")
-        else:
-            where.append(f"{col} = ${n}::text")
-    w = " AND ".join(where)
-    with_members = _wants_members(excludedAttributes, attributes)
+    args: list[Any] = []
+    extra = sl.filter_sql(flt, sl.GROUP_SPEC, args)
+    w = extra or "TRUE"
+    with_members = _wants_members(excluded, attributes)
     async with pool.acquire() as con:
-        total = await con.fetchval(f"SELECT count(*) FROM scim_groups WHERE {w}", *args)
+        total = await con.fetchval(f"SELECT count(*) FROM scim_groups g WHERE {w}", *args)
         rows = []
         if count:
             rows = await con.fetch(
-                f"SELECT {GROUP_COLS} FROM scim_groups WHERE {w} ORDER BY created_at, id "
+                f"SELECT g.id, g.display_name, g.external_id, g.created_at, g.updated_at "
+                f"FROM scim_groups g WHERE {w} ORDER BY g.created_at, g.id "
                 f"OFFSET {start - 1} LIMIT {count}",
                 *args,
             )
-        res = [sl.group_resource(r, await _group_members(con, r["id"]) if with_members else None) for r in rows]
+        # always load members: the version (ETag) covers them even when they are not returned
+        res = [sl.project(sl.group_resource(r, await _group_members(con, r["id"])), attributes, excluded)
+               if with_members else
+               sl.project(_group_without_members(r, await _group_members(con, r["id"])), attributes, excluded)
+               for r in rows]
     return scim_json(sl.list_response(res, total, start))
+
+
+def _group_without_members(row, members) -> dict[str, Any]:
+    res = sl.group_resource(row, members)
+    res.pop("members", None)
+    return res
+
+
+@router.get("/Groups")
+async def list_groups(
+    filter: str | None = Query(None),  # noqa: A002
+    startIndex: int = Query(1),  # noqa: N803
+    count: int = Query(100),
+    excludedAttributes: str | None = Query(None, max_length=512),  # noqa: N803
+    attributes: str | None = Query(None, max_length=512),
+    pool=Depends(get_pool),
+):
+    return await _list_groups(pool, filter, startIndex, count, attributes, excludedAttributes)
+
+
+@router.post("/Groups/.search")
+async def search_groups(request: Request, pool=Depends(get_pool)):
+    p = await _search_params(request)
+    if p["flt"] and len(p["flt"]) > 1024:
+        raise ScimError(400, "filter too long", "invalidFilter")
+    return await _list_groups(pool, **p)
+
+
+async def _check_group_version(request: Request, con, row) -> None:
+    if request.headers.get("if-match") is None:
+        return
+    _check_if_match(request, sl.group_version(row, await _group_members(con, row["id"])))
 
 
 async def _get_group(con, gid: UUID | None):
@@ -418,17 +508,23 @@ async def _get_group(con, gid: UUID | None):
 
 @router.get("/Groups/{group_id}")
 async def get_group(
-    group_id: str,
-    excludedAttributes: str | None = Query(None),  # noqa: N803
-    attributes: str | None = Query(None),
+    group_id: str, request: Request,
+    excludedAttributes: str | None = Query(None, max_length=512),  # noqa: N803
+    attributes: str | None = Query(None, max_length=512),
     pool=Depends(get_pool),
 ):
     async with pool.acquire() as con:
         row = await _get_group(con, _uuid(group_id))
         if row is None:
             raise ScimError(404, "group not found")
-        members = await _group_members(con, row["id"]) if _wants_members(excludedAttributes, attributes) else None
-    return scim_json(sl.group_resource(row, members))
+        members = await _group_members(con, row["id"])
+    res = sl.group_resource(row, members)
+    nm = _not_modified(request, res["meta"]["version"])
+    if nm is not None:
+        return nm
+    if not _wants_members(excludedAttributes, attributes):
+        res.pop("members", None)
+    return scim_json(sl.project(res, attributes, excludedAttributes))
 
 
 def _group_fields(body: dict[str, Any]) -> tuple[str, str | None, set[str]]:
@@ -473,6 +569,7 @@ async def replace_group(group_id: str, request: Request, pool=Depends(get_pool))
             row = await _get_group(con, _uuid(group_id))
             if row is None:
                 raise ScimError(404, "group not found")
+            await _check_group_version(request, con, row)
             await _name_clash(con, name, row["id"])
             await con.execute(
                 "UPDATE scim_groups SET display_name = $2, external_id = $3, updated_at = NOW() WHERE id = $1",
@@ -498,6 +595,7 @@ async def patch_group(group_id: str, request: Request, pool=Depends(get_pool)):
             row = await _get_group(con, _uuid(group_id))
             if row is None:
                 raise ScimError(404, "group not found")
+            await _check_group_version(request, con, row)
             cur_members = {m for m, _ in await _group_members(con, row["id"])}
             cur = {"display_name": row["display_name"], "external_id": row["external_id"]}
             new, members = sl.apply_group_patch(cur, cur_members, body.get("Operations"))
@@ -527,6 +625,7 @@ async def delete_group(group_id: str, request: Request, pool=Depends(get_pool)):
             row = await _get_group(con, _uuid(group_id))
             if row is None:
                 raise ScimError(404, "group not found")
+            await _check_group_version(request, con, row)
             members = [r["user_id"] for r in await con.fetch(
                 "SELECT user_id FROM scim_group_members WHERE group_id = $1", row["id"])]
             await con.execute("DELETE FROM scim_groups WHERE id = $1", row["id"])
@@ -549,7 +648,7 @@ def _spc() -> dict[str, Any]:
         "filter": {"supported": True, "maxResults": sl.MAX_COUNT},
         "changePassword": {"supported": False},
         "sort": {"supported": False},
-        "etag": {"supported": False},
+        "etag": {"supported": True},
         "authenticationSchemes": [{
             "type": "oauthbearertoken",
             "name": "OAuth Bearer Token",

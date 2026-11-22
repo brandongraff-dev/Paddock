@@ -15,6 +15,8 @@ from typing import Any, AsyncIterator
 
 import asyncpg
 
+from . import tenancy
+
 log = logging.getLogger(__name__)
 
 CURSOR_SOURCE = "neo4j_sync"
@@ -55,6 +57,7 @@ class Database:
             init=_init_connection,
             command_timeout=60,
         )
+        await tenancy.check_role(self._pool)
         log.info("db: pool connected (%s/%s)", self._min, self._max)
 
     async def close(self) -> None:
@@ -70,8 +73,25 @@ class Database:
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[asyncpg.Connection]:
+        """A pooled connection inside a transaction that carries the current
+        tenant (``set_config('app.tenant_id', ..., true)``): row-level security
+        pins every statement to it and nothing outlives the transaction."""
+        # graphsync mirrors ONE tenant -- the platform (default) tenant -- into
+        # a single Neo4j graph (no per-tenant isolation exists in Neo4j
+        # Community), so every Postgres access is pinned to it by construction:
+        # even a handler bug cannot make this service read another tenant.
         async with self.pool.acquire() as conn:
-            yield conn
+            with tenancy.platform_context():
+                async with tenancy.scoped(conn):
+                    yield conn
+
+    @asynccontextmanager
+    async def acquire_platform(self) -> AsyncIterator[asyncpg.Connection]:
+        """Like :meth:`acquire` but as the platform tenant: the only tenant
+        allowed to write global catalogues (``@paddock:global`` tables)."""
+        with tenancy.platform_context():
+            async with self.acquire() as conn:
+                yield conn
 
     async def ping(self) -> bool:
         try:
@@ -157,8 +177,8 @@ class Database:
     async def get_cursor(self) -> dict[str, Any] | None:
         async with self.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT source, last_synced, last_cursor, stats "
-                "FROM intel_cursors WHERE source = $1",
+                "SELECT key AS source, last_synced, last_cursor, stats "
+                "FROM service_cursors WHERE service = 'graphsync' AND key = $1",
                 CURSOR_SOURCE,
             )
         return dict(row) if row else None
@@ -171,11 +191,12 @@ class Database:
         async with self.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO intel_cursors (source, last_synced, stats)
-                VALUES ($1, $2, COALESCE($3, '{}'::jsonb))
-                ON CONFLICT (source) DO UPDATE SET
-                    last_synced = COALESCE(EXCLUDED.last_synced, intel_cursors.last_synced),
-                    stats       = intel_cursors.stats || COALESCE(EXCLUDED.stats, '{}'::jsonb)
+                INSERT INTO service_cursors (service, key, last_synced, stats)
+                VALUES ('graphsync', $1, $2, COALESCE($3, '{}'::jsonb))
+                ON CONFLICT (tenant_id, service, key) DO UPDATE SET
+                    last_synced = COALESCE(EXCLUDED.last_synced, service_cursors.last_synced),
+                    stats       = service_cursors.stats || COALESCE(EXCLUDED.stats, '{}'::jsonb),
+                    updated_at  = NOW()
                 """,
                 CURSOR_SOURCE,
                 last_synced or datetime.now(timezone.utc),

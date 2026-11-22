@@ -304,3 +304,74 @@ async def test_wait_for_until_file(empty_db):
     await _up(empty_db, schema_dir=SCHEMA_DIR)
     assert await waiter is True
     assert await migrate.wait_for(empty_db, "999_never.sql", timeout_sec=0.3, poll_sec=0.1) is False
+
+
+async def test_tables_added_after_tenancy_get_rls_on_upgrade(empty_db, schema_copy):
+    """An install that already ran 099_tenancy.sql must still isolate tables
+    created by later migrations: the runner re-asserts tenancy after them."""
+    await _up(empty_db, schema_dir=schema_copy)
+    (schema_copy / "026_zz_new_feature.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS zz_new_feature (id serial PRIMARY KEY, note text);\n"
+    )
+    res = await _up(empty_db, schema_dir=schema_copy)
+    assert res.applied == ["026_zz_new_feature.sql"]
+    assert res.reasserted == [migrate.TENANCY_FILE]
+    con = await asyncpg.connect(empty_db)
+    try:
+        rls = await con.fetchrow(
+            "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'zz_new_feature'"
+        )
+        assert rls["relrowsecurity"] and rls["relforcerowsecurity"]
+        assert await con.fetchval(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'zz_new_feature' AND column_name = 'tenant_id'"
+        )
+        assert await con.fetchval(
+            "SELECT 1 FROM pg_policies WHERE tablename = 'zz_new_feature' AND policyname = 'tenant_isolation'"
+        )
+    finally:
+        await con.close()
+    # nothing pending -> nothing re-asserted
+    res = await _up(empty_db, schema_dir=schema_copy)
+    assert res.applied == [] and res.reasserted == []
+
+
+async def test_startup_as_non_owner_role_checks_instead_of_migrating(empty_db, schema_copy, monkeypatch):
+    """The hardened stack connects the app as a role that may not run DDL. On
+    startup it must not try to migrate (that crashed it), but it must refuse
+    to serve against a schema that is behind."""
+    from app.opsconfig import ops_settings
+
+    await _up(empty_db, schema_dir=schema_copy)
+    role = f"nonowner_{uuid.uuid4().hex[:8]}"
+    con = await asyncpg.connect(empty_db)
+    try:
+        await con.execute(f'CREATE ROLE "{role}" LOGIN')
+        await con.execute(f'GRANT USAGE ON SCHEMA public TO "{role}"')
+    finally:
+        await con.close()
+    head, _, dbname = empty_db.rpartition("/")
+    scheme, _, rest = head.partition("://")
+    host = rest.rpartition("@")[2]
+    role_dsn = f"{scheme}://{role}@{host}/{dbname}"
+    monkeypatch.setattr(ops_settings, "schema_dir", str(schema_copy))
+
+    # can't even read schema_migrations: warn and carry on (the owner migrates)
+    assert (await migrate.run_startup_migrations(role_dsn)).applied == []
+    con = await asyncpg.connect(empty_db)
+    try:
+        await con.execute(f'GRANT SELECT ON schema_migrations TO "{role}"')
+    finally:
+        await con.close()
+    # up to date: fine, and nothing applied
+    assert (await migrate.run_startup_migrations(role_dsn)).applied == []
+    # a pending migration it may not apply: refuse to start
+    (schema_copy / "990_zz_pending.sql").write_text("CREATE TABLE zz_pending (id int);\n")
+    with pytest.raises(migrate.MigrationError, match="pending"):
+        await migrate.run_startup_migrations(role_dsn)
+    con = await asyncpg.connect(empty_db)
+    try:
+        assert await con.fetchval("SELECT to_regclass('zz_pending') IS NULL")
+        await con.execute(f'DROP OWNED BY "{role}"; DROP ROLE "{role}"')
+    finally:
+        await con.close()

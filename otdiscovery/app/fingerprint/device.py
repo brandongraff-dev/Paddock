@@ -9,6 +9,7 @@ hand -- no network, no probing.
 from __future__ import annotations
 
 import ipaddress
+from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -87,12 +88,19 @@ class Device:
 
 
 def _usable_ip(ip: Optional[str]) -> Optional[str]:
+    if not isinstance(ip, str):
+        return None
+    return _usable_ip_str(ip)
+
+
+@lru_cache(maxsize=65536)
+def _usable_ip_str(ip: str) -> Optional[str]:
     """Return a clean endpoint IP, or None for addresses that aren't a host.
 
     Drops the unspecified (0.0.0.0/::), broadcast, and multicast addresses a
     capture is full of -- they are never a device we would inventory.
     """
-    if not isinstance(ip, str) or not ip.strip():
+    if not ip.strip():
         return None
     s = ip.strip()
     try:

@@ -62,7 +62,8 @@ def call(method: str, url: str, body: dict | None = None, headers: dict | None =
 
 
 def wait_healthy(compose: list[str], timeout_s: int) -> None:
-    """Every container running, and healthy where it has a healthcheck."""
+    """Every container running (healthy where it has a healthcheck), or, for a
+    one-shot job, exited cleanly."""
     deadline = time.monotonic() + timeout_s
     last: list[str] = []
     while time.monotonic() < deadline:
@@ -75,13 +76,21 @@ def wait_healthy(compose: list[str], timeout_s: int) -> None:
                 continue
             parsed = json.loads(line)
             rows.extend(parsed if isinstance(parsed, list) else [parsed])
+        def settled(r: dict) -> bool:
+            # One-shot jobs (the `migrate` service) are meant to run to
+            # completion: exited with code 0 is their healthy end state.
+            if r.get("State") == "exited":
+                return r.get("ExitCode") == 0 and not r.get("Health")
+            return r.get("State") == "running" and r.get("Health") in ("", None, "healthy")
+
         bad = [
             f"{r['Service']}={r.get('State')}/{r.get('Health') or '-'}"
+            + (f"(exit {r.get('ExitCode')})" if r.get("State") == "exited" else "")
             for r in rows
-            if r.get("State") != "running" or r.get("Health") not in ("", None, "healthy")
+            if not settled(r)
         ]
         if rows and not bad:
-            ok(f"{len(rows)} containers running/healthy")
+            ok(f"{len(rows)} containers healthy (or one-shot jobs completed)")
             return
         if bad != last:
             print(f"  ..   waiting on: {', '.join(bad) or 'containers'}")

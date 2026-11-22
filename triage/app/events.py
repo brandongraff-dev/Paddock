@@ -14,6 +14,8 @@ import json
 import logging
 from typing import Any, Awaitable, Callable
 
+from . import tenancy
+
 log = logging.getLogger("triage.events")
 
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
@@ -87,7 +89,7 @@ class EventSubscriber:
             return
         try:
             await self._client.xadd(
-                self.stream, {"event": json.dumps(event, default=str)}
+                self.stream, {"event": json.dumps(tenancy.stamp_event(event), default=str)}
             )
         except Exception:  # pragma: no cover - defensive
             log.warning("publish failed for event %s", event.get("event"))

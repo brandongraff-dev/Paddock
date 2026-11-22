@@ -81,16 +81,25 @@ nav:
   - Product:
       - Vision: VISION.md
       - Sentry sensors: SENTRY.md
+      - Sentry kit (setup guide): SENTRY_KIT.md
       - Integrations: INTEGRATIONS.md
       - Single sign-on (SSO): SSO.md
       - Reports: REPORTS.md
+      - Verified findings: VERIFICATION.md
+      - Growth (exposure check, trust pages, suppliers): GROWTH.md
       - Editions & licensing: EDITIONS.md
+      - Billing (hosted edition): BILLING.md
+      - MSP console: MSP.md
+      - Isolation and load hardening: ISOLATION_HARDENING.md
+      - Connect anything in 60 seconds: CONNECT.md
   - Developers:
       - API: API.md
       - SDKs, CLI & Terraform: SDK.md
+      - paddock CLI (scan & fix): CLI.md
       - Service contracts: CONTRACTS.md
   - Operations:
       - Operations guide: OPERATIONS.md
+      - Running a status page: STATUS_PAGE.md
       - Readiness: READINESS.md
       - Cloud roadmap: CLOUD_ROADMAP.md
   - Trust: trust/

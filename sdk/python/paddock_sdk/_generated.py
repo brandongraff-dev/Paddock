@@ -9,6 +9,24 @@ from typing import Any, Literal, NotRequired, Required, TypedDict
 API_TITLE = 'paddock orchestrator'
 API_VERSION = '0.1.0'
 
+AcceptIn = TypedDict(
+    'AcceptIn',
+    {
+        'auth_doc_ref': NotRequired['str | None'],
+        'notes': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+AcceptOut = TypedDict(
+    'AcceptOut',
+    {
+        'scope_entry': Required['dict[str, Any]'],
+        'suggestion': Required['SuggestionOut'],
+    },
+    total=False,
+)
+
 ActionOut = TypedDict(
     'ActionOut',
     {
@@ -144,6 +162,18 @@ AlertRulePatch = TypedDict(
     total=False,
 )
 
+AlertRuleT = TypedDict(
+    'AlertRuleT',
+    {
+        'channel': Required["Literal['log', 'webhook', 'slack']"],
+        'enabled': NotRequired['bool'],
+        'match': NotRequired['dict[str, Any]'],
+        'name': Required['str'],
+        'target': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 AnomalyOut = TypedDict(
     'AnomalyOut',
     {
@@ -217,6 +247,14 @@ ApiKeyOut = TypedDict(
     total=False,
 )
 
+ApplyIn = TypedDict(
+    'ApplyIn',
+    {
+        'customer_ids': Required['list[str]'],
+    },
+    total=False,
+)
+
 ApproveIn = TypedDict(
     'ApproveIn',
     {
@@ -231,6 +269,18 @@ AskIn = TypedDict(
     {
         'asked_by': NotRequired['str | None'],
         'question': Required['str'],
+    },
+    total=False,
+)
+
+AssessmentOut = TypedDict(
+    'AssessmentOut',
+    {
+        'changes': Required['dict[str, Any]'],
+        'created_at': Required['str'],
+        'grade': Required['str'],
+        'id': Required['str'],
+        'score': Required['int'],
     },
     total=False,
 )
@@ -472,6 +522,63 @@ AuditVerifyOut = TypedDict(
     total=False,
 )
 
+BillingOut = TypedDict(
+    'BillingOut',
+    {
+        'can_manage': Required['bool'],
+        'cancel_at_period_end': Required['bool'],
+        'current_period_end': Required['str | None'],
+        'downgraded': Required['bool'],
+        'dunning': Required['bool'],
+        'edition': Required['str'],
+        'enabled': Required['bool'],
+        'enforcement': Required['bool'],
+        'features': Required['list[str]'],
+        'grace_ends_at': Required['str | None'],
+        'limits': Required['dict[str, int | None]'],
+        'plan': Required['str | None'],
+        'plans': Required['list[PlanOut]'],
+        'read_only': Required['bool'],
+        'source': Required['str'],
+        'status': Required['str'],
+        'trial_days_left': Required['int | None'],
+        'trial_ends_at': Required['str | None'],
+        'upgrade_url': Required['str'],
+        'usage': Required['dict[str, QuotaOut]'],
+    },
+    total=False,
+)
+
+BulkVerifyIn = TypedDict(
+    'BulkVerifyIn',
+    {
+        'finding_ids': Required['list[str]'],
+    },
+    total=False,
+)
+
+BulkVerifyItem = TypedDict(
+    'BulkVerifyItem',
+    {
+        'finding_id': Required['str'],
+        'outcome': Required["Literal['queued', 'already_in_flight', 'refused', 'not_found', 'error']"],
+        'reason': NotRequired['str | None'],
+        'verification_id': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+BulkVerifyOut = TypedDict(
+    'BulkVerifyOut',
+    {
+        'items': Required['list[BulkVerifyItem]'],
+        'queued': Required['int'],
+        'refused': Required['int'],
+        'requested': Required['int'],
+    },
+    total=False,
+)
+
 ChainIn = TypedDict(
     'ChainIn',
     {
@@ -588,6 +695,23 @@ CheckOut = TypedDict(
     total=False,
 )
 
+CheckoutIn = TypedDict(
+    'CheckoutIn',
+    {
+        'plan': Required['str'],
+    },
+    total=False,
+)
+
+ClaimIn = TypedDict(
+    'ClaimIn',
+    {
+        'batch_id': Required['str'],
+        'client_ip': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 ClusterOut = TypedDict(
     'ClusterOut',
     {
@@ -656,7 +780,7 @@ ControlOut = TypedDict(
     'ControlOut',
     {
         'attestation': NotRequired['str | None'],
-        'evidence': Required['list[EvidenceOut]'],
+        'evidence': Required['list[app__reports__models__EvidenceOut]'],
         'family': Required['str'],
         'id': Required['str'],
         'max_status': Required["Literal['satisfied', 'partial']"],
@@ -696,6 +820,25 @@ CoverageKind = TypedDict(
         'seen_7d': Required['int'],
         'stale': Required['int'],
         'total': Required['int'],
+    },
+    total=False,
+)
+
+Cta = TypedDict(
+    'Cta',
+    {
+        'text': Required['str'],
+        'url': Required['str'],
+    },
+    total=False,
+)
+
+CustomerIn = TypedDict(
+    'CustomerIn',
+    {
+        'invite_label': NotRequired['str | None'],
+        'name': Required['str'],
+        'slug': Required['str'],
     },
     total=False,
 )
@@ -811,12 +954,12 @@ DigestRunOut = TypedDict(
     total=False,
 )
 
-DismissIn = TypedDict(
-    'DismissIn',
+DoneIn = TypedDict(
+    'DoneIn',
     {
-        'accepted_until': NotRequired['str | None'],
-        'reason': Required['str'],
-        'suppress': NotRequired['bool'],
+        'batch_id': Required['str'],
+        'flows': NotRequired['int'],
+        'ok': NotRequired['bool'],
     },
     total=False,
 )
@@ -854,46 +997,6 @@ EdgeIn = TypedDict(
     total=False,
 )
 """An edge, either referenced by uuid or by (kind, canonical) pair."""
-
-EnrollIn = TypedDict(
-    'EnrollIn',
-    {
-        'agent_version': NotRequired['str | None'],
-        'capabilities': NotRequired['list[str]'],
-        'hostname': Required['str'],
-        'labels': NotRequired['list[str]'],
-        'platform': Required['str'],
-        'token': Required['str'],
-    },
-    total=False,
-)
-
-EnrollOut = TypedDict(
-    'EnrollOut',
-    {
-        'agent_token': Required['str'],
-        'capabilities': Required['list[str]'],
-        'hostname': Required['str'],
-        'id': Required['str'],
-        'platform': Required['str | None'],
-        'status': Required['str'],
-        'token_prefix': Required['str'],
-    },
-    total=False,
-)
-
-EvidenceOut = TypedDict(
-    'EvidenceOut',
-    {
-        'detail': Required['str'],
-        'key': Required['str'],
-        'metrics': NotRequired['dict[str, Any]'],
-        'rows': NotRequired['list[dict[str, Any]]'],
-        'status': Required["Literal['pass', 'partial', 'fail', 'none']"],
-        'title': Required['str'],
-    },
-    total=False,
-)
 
 ExchangeIn = TypedDict(
     'ExchangeIn',
@@ -933,6 +1036,46 @@ ExecuteOut = TypedDict(
         'dry_run': Required['bool'],
         'ok': Required['bool'],
         'planned': NotRequired['list[str]'],
+    },
+    total=False,
+)
+
+ExposureReportIn = TypedDict(
+    'ExposureReportIn',
+    {
+        'captcha_token': NotRequired['str | None'],
+        'consent': NotRequired['bool'],
+        'domain': Required['str'],
+        'email': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+ExposureReportOut = TypedDict(
+    'ExposureReportOut',
+    {
+        'created_at': Required['str'],
+        'cta': NotRequired['Cta | None'],
+        'domain': Required['str'],
+        'error': NotRequired['str | None'],
+        'finished_at': NotRequired['str | None'],
+        'id': Required['str'],
+        'passive_notice': NotRequired['str'],
+        'status': Required["Literal['queued', 'running', 'done', 'failed']"],
+        'summary': NotRequired['dict[str, Any] | None'],
+        'teaser': NotRequired['dict[str, Any] | None'],
+    },
+    total=False,
+)
+
+ExposureSubmitOut = TypedDict(
+    'ExposureSubmitOut',
+    {
+        'cached': Required['bool'],
+        'domain': Required['str'],
+        'email_stored': Required['bool'],
+        'id': Required['str'],
+        'status': Required["Literal['queued', 'running', 'done', 'failed']"],
     },
     total=False,
 )
@@ -1031,12 +1174,15 @@ FindingLifecycleOut = TypedDict(
         'duplicate_of': NotRequired['str | None'],
         'epss': Required['float | None'],
         'evidence': Required['dict[str, Any]'],
+        'exploitability': NotRequired['str'],
         'fingerprint': NotRequired['str | None'],
         'first_seen': Required['str'],
+        'fix_verified_at': NotRequired['str | None'],
         'id': Required['str'],
         'impact': Required['str | None'],
         'kev': NotRequired['bool | None'],
         'last_seen': Required['str'],
+        'last_verified_at': NotRequired['str | None'],
         'metadata': Required['dict[str, Any]'],
         'owner': NotRequired['str | None'],
         'priority_score': NotRequired['int | None'],
@@ -1141,6 +1287,17 @@ FromFindingIn = TypedDict(
     total=False,
 )
 
+GrantIn = TypedDict(
+    'GrantIn',
+    {
+        'clearance': NotRequired["Literal['public', 'internal', 'confidential', 'restricted']"],
+        'customer_id': NotRequired['str | None'],
+        'role': Required["Literal['viewer', 'analyst', 'admin']"],
+        'user_id': Required['str'],
+    },
+    total=False,
+)
+
 GraphEdgeOut = TypedDict(
     'GraphEdgeOut',
     {
@@ -1175,14 +1332,25 @@ HTTPValidationError = TypedDict(
     total=False,
 )
 
-HeartbeatIn = TypedDict(
-    'HeartbeatIn',
+HealthIn = TypedDict(
+    'HealthIn',
     {
-        'agent_version': NotRequired['str | None'],
-        'status': NotRequired['str | None'],
+        'batches_dropped': NotRequired['int | None'],
+        'buffer_batches': NotRequired['int | None'],
+        'buffer_bytes': NotRequired['int | None'],
+        'buffer_fill_pct': NotRequired['float | None'],
+        'flows_dropped': NotRequired['int | None'],
+        'iface': NotRequired['str | None'],
+        'last_upload_ok': NotRequired['bool | None'],
+        'last_upload_ts': NotRequired['float | None'],
+        'packets_dropped': NotRequired['int | None'],
+        'packets_seen': NotRequired['int | None'],
+        'sent_at': NotRequired['float | None'],
+        'uptime_s': NotRequired['int | None'],
     },
     total=False,
 )
+"""The ONLY telemetry a sensor sends: counters about itself, never traffic."""
 
 HeartbeatOut = TypedDict(
     'HeartbeatOut',
@@ -1275,6 +1443,33 @@ IntegrationPatch = TypedDict(
     total=False,
 )
 
+IntegrationT = TypedDict(
+    'IntegrationT',
+    {
+        'allow_private': NotRequired['bool'],
+        'config': NotRequired['dict[str, Any]'],
+        'enabled': NotRequired['bool'],
+        'events': NotRequired['list[str]'],
+        'filters': NotRequired['dict[str, Any]'],
+        'kind': Required['str'],
+        'min_severity': NotRequired['str'],
+        'name': Required['str'],
+        'secrets': NotRequired['dict[str, str | None]'],
+    },
+    total=False,
+)
+
+InterfaceIn = TypedDict(
+    'InterfaceIn',
+    {
+        'mac': NotRequired['str | None'],
+        'name': Required['str'],
+        'speed_mbps': NotRequired['int | None'],
+        'up': NotRequired['bool | None'],
+    },
+    total=False,
+)
+
 InventoryIn = TypedDict(
     'InventoryIn',
     {
@@ -1305,6 +1500,14 @@ InventorySnapshot = TypedDict(
         'os_info': Required['dict[str, Any]'],
         'packages': Required['list[dict[str, Any]]'],
         'posture': Required['dict[str, Any]'],
+    },
+    total=False,
+)
+
+InviteIn = TypedDict(
+    'InviteIn',
+    {
+        'label': NotRequired['str | None'],
     },
     total=False,
 )
@@ -1488,6 +1691,11 @@ OIDCConfig = TypedDict(
         'allow_private': NotRequired['bool'],
         'client_id': Required['str'],
         'extra_auth_params': NotRequired['dict[str, str]'],
+        'graph_base_url': NotRequired['str'],
+        'graph_login_url': NotRequired['str'],
+        'graph_mode': NotRequired["Literal['delegated', 'app']"],
+        'graph_overage': NotRequired["Literal['auto', 'off']"],
+        'graph_tenant_id': NotRequired['str | None'],
         'issuer': Required['str'],
         'scopes': NotRequired['list[str]'],
         'token_auth_method': NotRequired["Literal['client_secret_basic', 'client_secret_post', 'none']"],
@@ -1745,6 +1953,20 @@ PendingAction = TypedDict(
     total=False,
 )
 
+PlanOut = TypedDict(
+    'PlanOut',
+    {
+        'assets': Required['int | None'],
+        'edition': Required['str'],
+        'key': Required['str'],
+        'name': Required['str'],
+        'purchasable': Required['bool'],
+        'seats': Required['int | None'],
+        'sites': Required['int | None'],
+    },
+    total=False,
+)
+
 ProposeIn = TypedDict(
     'ProposeIn',
     {
@@ -1801,7 +2023,9 @@ ProviderIn = TypedDict(
         'default_role': NotRequired["Literal['viewer', 'analyst', 'admin', 'auditor']"],
         'display_name': Required['str'],
         'enabled': NotRequired['bool'],
+        'graph_client_secret': NotRequired['str | None'],
         'groups_claim': NotRequired['str'],
+        'idp_metadata_url': NotRequired['str | None'],
         'jit_provisioning': NotRequired['bool'],
         'kind': Required["Literal['oidc', 'saml']"],
         'oidc': NotRequired['OIDCConfig | None'],
@@ -1811,6 +2035,7 @@ ProviderIn = TypedDict(
         'saml': NotRequired['SAMLConfig | None'],
         'saml_metadata_xml': NotRequired['str | None'],
         'slug': Required['str'],
+        'sp_private_key': NotRequired['str | None'],
         'sync_roles': NotRequired['bool'],
     },
     total=False,
@@ -1829,6 +2054,8 @@ ProviderOut = TypedDict(
         'enabled': Required['bool'],
         'groups_claim': Required['str'],
         'has_client_secret': Required['bool'],
+        'has_graph_client_secret': NotRequired['bool'],
+        'has_sp_private_key': NotRequired['bool'],
         'id': Required['str'],
         'jit_provisioning': Required['bool'],
         'kind': Required['str'],
@@ -1839,6 +2066,7 @@ ProviderOut = TypedDict(
         'saml_acs_url': NotRequired['str | None'],
         'saml_entity_id': NotRequired['str | None'],
         'saml_metadata_url': NotRequired['str | None'],
+        'saml_sls_url': NotRequired['str | None'],
         'slug': Required['str'],
         'sync_roles': Required['bool'],
         'updated_at': Required['str'],
@@ -1855,7 +2083,9 @@ ProviderPatch = TypedDict(
         'default_role': NotRequired["Literal['viewer', 'analyst', 'admin', 'auditor'] | None"],
         'display_name': NotRequired['str | None'],
         'enabled': NotRequired['bool | None'],
+        'graph_client_secret': NotRequired['str | None'],
         'groups_claim': NotRequired['str | None'],
+        'idp_metadata_url': NotRequired['str | None'],
         'jit_provisioning': NotRequired['bool | None'],
         'oidc': NotRequired['OIDCConfig | None'],
         'preset': NotRequired["Literal['generic', 'okta', 'entra', 'google', 'auth0', 'keycloak'] | None"],
@@ -1863,6 +2093,7 @@ ProviderPatch = TypedDict(
         'role_mappings': NotRequired['list[RoleMapping] | None'],
         'saml': NotRequired['SAMLConfig | None'],
         'saml_metadata_xml': NotRequired['str | None'],
+        'sp_private_key': NotRequired['str | None'],
         'sync_roles': NotRequired['bool | None'],
     },
     total=False,
@@ -1890,6 +2121,16 @@ PublicProvidersOut = TypedDict(
     total=False,
 )
 
+QuotaOut = TypedDict(
+    'QuotaOut',
+    {
+        'limit': Required['int | None'],
+        'over': Required['bool'],
+        'used': Required['int | None'],
+    },
+    total=False,
+)
+
 RecomputeOut = TypedDict(
     'RecomputeOut',
     {
@@ -1900,6 +2141,18 @@ RecomputeOut = TypedDict(
     total=False,
 )
 """Result of POST /v1/attack-paths/recompute."""
+
+RedeemIn = TypedDict(
+    'RedeemIn',
+    {
+        'display_name': NotRequired['str | None'],
+        'email': NotRequired['str | None'],
+        'password': Required['str'],
+        'token': Required['str'],
+        'username': Required['str'],
+    },
+    total=False,
+)
 
 RemediationDetail = TypedDict(
     'RemediationDetail',
@@ -1922,6 +2175,14 @@ RemediationDetail = TypedDict(
         'verified_at': NotRequired['str | None'],
         'verifier': NotRequired['VerifierSummary'],
         'verifier_report': NotRequired['dict[str, Any]'],
+    },
+    total=False,
+)
+
+RemediationMergedIn = TypedDict(
+    'RemediationMergedIn',
+    {
+        'pr_url': NotRequired['str | None'],
     },
     total=False,
 )
@@ -2004,16 +2265,6 @@ Resolutions = TypedDict(
     total=False,
 )
 
-ResultIn = TypedDict(
-    'ResultIn',
-    {
-        'output': NotRequired['dict[str, Any]'],
-        'revert': NotRequired['dict[str, Any] | None'],
-        'status': Required["Literal['applied', 'failed']"],
-    },
-    total=False,
-)
-
 RevertIn = TypedDict(
     'RevertIn',
     {
@@ -2051,12 +2302,21 @@ SAMLConfig = TypedDict(
     'SAMLConfig',
     {
         'email_attribute': NotRequired['str | None'],
+        'graph_base_url': NotRequired['str'],
+        'graph_client_id': NotRequired['str | None'],
+        'graph_login_url': NotRequired['str'],
+        'graph_overage': NotRequired["Literal['auto', 'off']"],
+        'graph_tenant_id': NotRequired['str | None'],
         'groups_attribute': NotRequired['str | None'],
         'idp_entity_id': Required['str'],
+        'idp_slo_url': NotRequired['str | None'],
         'idp_sso_url': Required['str'],
         'idp_x509_cert': Required['str'],
         'name_attribute': NotRequired['str | None'],
         'name_id_format': NotRequired['str'],
+        'require_encrypted_assertions': NotRequired['bool'],
+        'sign_authn_requests': NotRequired['bool'],
+        'sp_x509_cert': NotRequired['str | None'],
         'want_messages_signed': NotRequired['bool'],
     },
     total=False,
@@ -2348,6 +2608,7 @@ ScopeCheckOut = TypedDict(
         'matched_entry_metadata': NotRequired['dict[str, Any]'],
         'normalized': Required['str'],
         'reason': Required['str'],
+        'resolved_ips': NotRequired['list[str]'],
     },
     total=False,
 )
@@ -2441,6 +2702,16 @@ ScopeProofOut = TypedDict(
     total=False,
 )
 
+ScopeSuggestionT = TypedDict(
+    'ScopeSuggestionT',
+    {
+        'kind': Required["Literal['domain', 'subdomain_wildcard', 'ipv4_cidr', 'ipv6_cidr', 'asn']"],
+        'notes': NotRequired['str | None'],
+        'value': Required['str'],
+    },
+    total=False,
+)
+
 SegmentOut = TypedDict(
     'SegmentOut',
     {
@@ -2451,6 +2722,42 @@ SegmentOut = TypedDict(
         'internet_facing': NotRequired['bool'],
         'metadata': NotRequired['dict[str, Any]'],
         'value': Required['str'],
+    },
+    total=False,
+)
+
+SensorOut = TypedDict(
+    'SensorOut',
+    {
+        'batches_total': Required['int'],
+        'duplicates_total': Required['int'],
+        'enrolled_at': Required['str'],
+        'flows_total': Required['int'],
+        'health': Required['dict[str, Any]'],
+        'hostname': Required['str | None'],
+        'id': Required['str'],
+        'interfaces': Required['list[dict[str, Any]]'],
+        'last_heartbeat_at': Required['str | None'],
+        'last_seen_at': Required['str | None'],
+        'last_upload_at': Required['str | None'],
+        'name': Required['str'],
+        'offline_since': Required['str | None'],
+        'silent_after_s': Required['int'],
+        'site': Required['str'],
+        'state': Required['str'],
+        'status': Required['str'],
+        'version': Required['str | None'],
+        'warnings': Required['list[str]'],
+    },
+    total=False,
+)
+
+SensorPatch = TypedDict(
+    'SensorPatch',
+    {
+        'name': NotRequired['str | None'],
+        'silent_after_s': NotRequired['int | None'],
+        'site': NotRequired['str | None'],
     },
     total=False,
 )
@@ -2535,6 +2842,30 @@ SlaRow = TypedDict(
     total=False,
 )
 
+SourceIn = TypedDict(
+    'SourceIn',
+    {
+        'allowed_formats': NotRequired['list[str]'],
+        'default_project': NotRequired['str | None'],
+        'description': NotRequired['str | None'],
+        'name': Required['str'],
+        'rate_limit_per_min': NotRequired['int'],
+    },
+    total=False,
+)
+
+SourcePatch = TypedDict(
+    'SourcePatch',
+    {
+        'allowed_formats': NotRequired['list[str] | None'],
+        'default_project': NotRequired['str | None'],
+        'description': NotRequired['str | None'],
+        'enabled': NotRequired['bool | None'],
+        'rate_limit_per_min': NotRequired['int | None'],
+    },
+    total=False,
+)
+
 StatusHistoryOut = TypedDict(
     'StatusHistoryOut',
     {
@@ -2545,6 +2876,93 @@ StatusHistoryOut = TypedDict(
         'id': Required['str'],
         'reason': Required['str | None'],
         'to_status': Required['str'],
+    },
+    total=False,
+)
+
+SuggestionOut = TypedDict(
+    'SuggestionOut',
+    {
+        'decided_at': NotRequired['str | None'],
+        'decided_by': NotRequired['str | None'],
+        'evidence': NotRequired['dict[str, Any]'],
+        'first_seen': Required['str'],
+        'id': Required['int'],
+        'integration_id': Required['str'],
+        'integration_name': NotRequired['str | None'],
+        'kind': Required['str'],
+        'last_seen': Required['str'],
+        'scope_entry_id': NotRequired['int | None'],
+        'source': Required['str'],
+        'status': Required['str'],
+        'value': Required['str'],
+    },
+    total=False,
+)
+
+SupplierDetail = TypedDict(
+    'SupplierDetail',
+    {
+        'created_at': Required['str'],
+        'criticality': Required['str'],
+        'domain': Required['str'],
+        'enabled': Required['bool'],
+        'findings': Required['list[dict[str, Any]]'],
+        'history': Required['list[AssessmentOut]'],
+        'id': Required['str'],
+        'interval_hours': Required['int'],
+        'last_assessed_at': NotRequired['str | None'],
+        'last_error': NotRequired['str | None'],
+        'last_grade': NotRequired['str | None'],
+        'last_score': NotRequired['int | None'],
+        'name': Required['str'],
+        'next_run_at': Required['str'],
+        'notes': NotRequired['str | None'],
+        'summary': NotRequired['dict[str, Any] | None'],
+    },
+    total=False,
+)
+
+SupplierIn = TypedDict(
+    'SupplierIn',
+    {
+        'criticality': NotRequired["Literal['low', 'medium', 'high', 'critical']"],
+        'domain': Required['str'],
+        'interval_hours': NotRequired['int'],
+        'name': NotRequired['str | None'],
+        'notes': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+SupplierOut = TypedDict(
+    'SupplierOut',
+    {
+        'created_at': Required['str'],
+        'criticality': Required['str'],
+        'domain': Required['str'],
+        'enabled': Required['bool'],
+        'id': Required['str'],
+        'interval_hours': Required['int'],
+        'last_assessed_at': NotRequired['str | None'],
+        'last_error': NotRequired['str | None'],
+        'last_grade': NotRequired['str | None'],
+        'last_score': NotRequired['int | None'],
+        'name': Required['str'],
+        'next_run_at': Required['str'],
+        'notes': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+SupplierPatch = TypedDict(
+    'SupplierPatch',
+    {
+        'criticality': NotRequired["Literal['low', 'medium', 'high', 'critical'] | None"],
+        'enabled': NotRequired['bool | None'],
+        'interval_hours': NotRequired['int | None'],
+        'name': NotRequired['str | None'],
+        'notes': NotRequired['str | None'],
     },
     total=False,
 )
@@ -2698,9 +3116,24 @@ SyncStatusOut = TypedDict(
     {
         'enabled': Required['bool'],
         'integration_id': Required['str'],
+        'interval_minutes': NotRequired['int | None'],
         'kind': Required['str'],
         'last_run': NotRequired['SyncRunOut | None'],
         'name': Required['str'],
+        'next_run_at': NotRequired['str | None'],
+        'pending_suggestions': NotRequired['int'],
+    },
+    total=False,
+)
+
+TemplateIn = TypedDict(
+    'TemplateIn',
+    {
+        'alert_rules': NotRequired['list[AlertRuleT]'],
+        'description': NotRequired['str | None'],
+        'integrations': NotRequired['list[IntegrationT]'],
+        'name': Required['str'],
+        'scope_suggestions': NotRequired['list[ScopeSuggestionT]'],
     },
     total=False,
 )
@@ -3008,6 +3441,49 @@ TlsGradeSummary = TypedDict(
     total=False,
 )
 
+TokenCreateIn = TypedDict(
+    'TokenCreateIn',
+    {
+        'label': NotRequired['str | None'],
+        'site': Required['str'],
+        'ttl_minutes': NotRequired['int'],
+    },
+    total=False,
+)
+
+TokenCreated = TypedDict(
+    'TokenCreated',
+    {
+        'created_at': Required['str'],
+        'created_by': Required['str | None'],
+        'expires_at': Required['str'],
+        'id': Required['str'],
+        'label': Required['str | None'],
+        'site': Required['str'],
+        'state': Required['str'],
+        'token': Required['str'],
+        'token_prefix': Required['str'],
+        'used_by_sensor': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+TokenOut = TypedDict(
+    'TokenOut',
+    {
+        'created_at': Required['str'],
+        'created_by': Required['str | None'],
+        'expires_at': Required['str'],
+        'id': Required['str'],
+        'label': Required['str | None'],
+        'site': Required['str'],
+        'state': Required['str'],
+        'token_prefix': Required['str'],
+        'used_by_sensor': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 TransitionOut = TypedDict(
     'TransitionOut',
     {
@@ -3025,6 +3501,76 @@ TrendPoint = TypedDict(
     {
         'at': Required['str'],
         'value': Required['int'],
+    },
+    total=False,
+)
+
+TrustLinkCreated = TypedDict(
+    'TrustLinkCreated',
+    {
+        'created_at': Required['str'],
+        'created_by': NotRequired['str | None'],
+        'expires_at': Required['str'],
+        'id': Required['str'],
+        'label': Required['str'],
+        'last_viewed_at': NotRequired['str | None'],
+        'password_protected': Required['bool'],
+        'path': Required['str'],
+        'period_days': Required['int'],
+        'revoked_at': NotRequired['str | None'],
+        'sections': Required['list[str]'],
+        'status': Required["Literal['active', 'expired', 'revoked']"],
+        'token': Required['str'],
+        'token_hint': Required['str'],
+        'view_count': Required['int'],
+    },
+    total=False,
+)
+
+TrustLinkIn = TypedDict(
+    'TrustLinkIn',
+    {
+        'expires_in_days': NotRequired['int'],
+        'label': Required['str'],
+        'password': NotRequired['str | None'],
+        'period_days': NotRequired['int'],
+        'sections': NotRequired["list[Literal['grade', 'verified_fixes', 'sla', 'compliance', 'coverage']]"],
+    },
+    total=False,
+)
+
+TrustLinkOut = TypedDict(
+    'TrustLinkOut',
+    {
+        'created_at': Required['str'],
+        'created_by': NotRequired['str | None'],
+        'expires_at': Required['str'],
+        'id': Required['str'],
+        'label': Required['str'],
+        'last_viewed_at': NotRequired['str | None'],
+        'password_protected': Required['bool'],
+        'period_days': Required['int'],
+        'revoked_at': NotRequired['str | None'],
+        'sections': Required['list[str]'],
+        'status': Required["Literal['active', 'expired', 'revoked']"],
+        'token_hint': Required['str'],
+        'view_count': Required['int'],
+    },
+    total=False,
+)
+
+TrustUnlockIn = TypedDict(
+    'TrustUnlockIn',
+    {
+        'password': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+UrlOut = TypedDict(
+    'UrlOut',
+    {
+        'url': Required['str'],
     },
     total=False,
 )
@@ -3091,6 +3637,45 @@ ValidationError = TypedDict(
     total=False,
 )
 
+VerificationHistoryOut = TypedDict(
+    'VerificationHistoryOut',
+    {
+        'exploitability': Required["Literal['unverified', 'confirmed', 'not_reproducible', 'inconclusive']"],
+        'finding_id': Required['str'],
+        'fix_verified_at': NotRequired['str | None'],
+        'items': Required['list[VerificationOut]'],
+        'last_verified_at': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+VerificationOut = TypedDict(
+    'VerificationOut',
+    {
+        'already_in_flight': NotRequired['bool'],
+        'check_id': NotRequired['str | None'],
+        'checked_at': NotRequired['str | None'],
+        'completed_at': NotRequired['str | None'],
+        'dispatched_at': NotRequired['str | None'],
+        'evidence': NotRequired['dict[str, Any]'],
+        'finding_id': Required['str'],
+        'id': Required['str'],
+        'purpose': Required["Literal['exploitability', 'fix']"],
+        'reason': NotRequired['str | None'],
+        'requested_at': Required['str'],
+        'requested_by': Required['str'],
+        'run_after': NotRequired['str | None'],
+        'scan_id': NotRequired['str | None'],
+        'scope_entry_id': NotRequired['int | None'],
+        'scope_proof': NotRequired['str | None'],
+        'status': Required["Literal['scheduled', 'queued', 'done', 'refused', 'unsupported', 'error', 'cancelled']"],
+        'target': NotRequired['str | None'],
+        'trigger': Required['str'],
+        'verdict': NotRequired["Literal['confirmed', 'not_reproducible', 'inconclusive'] | None"],
+    },
+    total=False,
+)
+
 VerifierSummary = TypedDict(
     'VerifierSummary',
     {
@@ -3100,17 +3685,6 @@ VerifierSummary = TypedDict(
         'summary': NotRequired['str | None'],
         'verdict': NotRequired['str | None'],
         'verify_ok': NotRequired['bool | None'],
-    },
-    total=False,
-)
-
-VerifyIn = TypedDict(
-    'VerifyIn',
-    {
-        'approver': NotRequired['str | None'],
-        'loa_ref': NotRequired['str | None'],
-        'method': NotRequired["Literal['dns_txt', 'http_file', 'attestation'] | None"],
-        'valid_until': NotRequired['str | None'],
     },
     total=False,
 )
@@ -3143,6 +3717,19 @@ Window = TypedDict(
         'label': Required['str'],
         'prev_start': Required['str'],
         'start': Required['str'],
+    },
+    total=False,
+)
+
+app__reports__models__EvidenceOut = TypedDict(
+    'app__reports__models__EvidenceOut',
+    {
+        'detail': Required['str'],
+        'key': Required['str'],
+        'metrics': NotRequired['dict[str, Any]'],
+        'rows': NotRequired['list[dict[str, Any]]'],
+        'status': Required["Literal['pass', 'partial', 'fail', 'none']"],
+        'title': Required['str'],
     },
     total=False,
 )
@@ -3182,12 +3769,156 @@ app__routers__devices__FindingBrief = TypedDict(
     total=False,
 )
 
+app__routers__fleet__EnrollIn = TypedDict(
+    'app__routers__fleet__EnrollIn',
+    {
+        'agent_version': NotRequired['str | None'],
+        'capabilities': NotRequired['list[str]'],
+        'hostname': Required['str'],
+        'labels': NotRequired['list[str]'],
+        'platform': Required['str'],
+        'token': Required['str'],
+    },
+    total=False,
+)
+
+app__routers__fleet__EnrollOut = TypedDict(
+    'app__routers__fleet__EnrollOut',
+    {
+        'agent_token': Required['str'],
+        'capabilities': Required['list[str]'],
+        'hostname': Required['str'],
+        'id': Required['str'],
+        'platform': Required['str | None'],
+        'status': Required['str'],
+        'token_prefix': Required['str'],
+    },
+    total=False,
+)
+
+app__routers__fleet__HeartbeatIn = TypedDict(
+    'app__routers__fleet__HeartbeatIn',
+    {
+        'agent_version': NotRequired['str | None'],
+        'status': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+app__routers__fleet__ResultIn = TypedDict(
+    'app__routers__fleet__ResultIn',
+    {
+        'output': NotRequired['dict[str, Any]'],
+        'revert': NotRequired['dict[str, Any] | None'],
+        'status': Required["Literal['applied', 'failed']"],
+    },
+    total=False,
+)
+
+app__routers__integration_sync__DismissIn = TypedDict(
+    'app__routers__integration_sync__DismissIn',
+    {
+        'reason': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+app__routers__lifecycle__DismissIn = TypedDict(
+    'app__routers__lifecycle__DismissIn',
+    {
+        'accepted_until': NotRequired['str | None'],
+        'reason': Required['str'],
+        'suppress': NotRequired['bool'],
+    },
+    total=False,
+)
+
+app__routers__network_actions__EvidenceOut = TypedDict(
+    'app__routers__network_actions__EvidenceOut',
+    {
+        'action_id': Required['str'],
+        'device': NotRequired['dict[str, Any]'],
+        'finding': NotRequired['dict[str, Any] | None'],
+    },
+    total=False,
+)
+
+app__routers__sensors__EnrollIn = TypedDict(
+    'app__routers__sensors__EnrollIn',
+    {
+        'hostname': NotRequired['str | None'],
+        'interfaces': NotRequired['list[InterfaceIn]'],
+        'name': NotRequired['str | None'],
+        'token': Required['str'],
+        'version': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+app__routers__sensors__EnrollOut = TypedDict(
+    'app__routers__sensors__EnrollOut',
+    {
+        'credential': Required['str'],
+        'credential_prefix': Required['str'],
+        'heartbeat_interval_s': Required['int'],
+        'name': Required['str'],
+        'sensor_id': Required['str'],
+        'site': Required['str'],
+    },
+    total=False,
+)
+
+app__routers__sensors__HeartbeatIn = TypedDict(
+    'app__routers__sensors__HeartbeatIn',
+    {
+        'health': NotRequired['HealthIn'],
+        'interfaces': NotRequired['list[InterfaceIn] | None'],
+        'version': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+app__scope_proof__VerifyIn = TypedDict(
+    'app__scope_proof__VerifyIn',
+    {
+        'approver': NotRequired['str | None'],
+        'loa_ref': NotRequired['str | None'],
+        'method': NotRequired["Literal['dns_txt', 'http_file', 'attestation'] | None"],
+        'valid_until': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+app__verification__models__ResultIn = TypedDict(
+    'app__verification__models__ResultIn',
+    {
+        'check_id': NotRequired['str | None'],
+        'checked_at': NotRequired['str | None'],
+        'evidence': NotRequired['dict[str, Any]'],
+        'reason': NotRequired['str | None'],
+        'status': Required["Literal['done', 'refused', 'unsupported', 'error']"],
+        'verdict': NotRequired["Literal['confirmed', 'not_reproducible', 'inconclusive'] | None"],
+    },
+    total=False,
+)
+"""What the worker reports back for one verification job."""
+
+app__verification__models__VerifyIn = TypedDict(
+    'app__verification__models__VerifyIn',
+    {
+        'reason': NotRequired['str | None'],
+    },
+    total=False,
+)
+"""Optional body for POST /v1/findings/{id}/verify."""
+
 # name -> (method, path, paginated)
 OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'healthz': ('GET', '/healthz', False),
     'readyz': ('GET', '/readyz', False),
     'list_groups': ('GET', '/scim/v2/Groups', False),
     'create_group': ('POST', '/scim/v2/Groups', False),
+    'search_groups': ('POST', '/scim/v2/Groups/.search', False),
     'get_group': ('GET', '/scim/v2/Groups/{group_id}', False),
     'replace_group': ('PUT', '/scim/v2/Groups/{group_id}', False),
     'patch_group': ('PATCH', '/scim/v2/Groups/{group_id}', False),
@@ -3199,10 +3930,12 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'service_provider_config': ('GET', '/scim/v2/ServiceProviderConfig', False),
     'list_users': ('GET', '/scim/v2/Users', False),
     'create_user': ('POST', '/scim/v2/Users', False),
+    'search_users': ('POST', '/scim/v2/Users/.search', False),
     'get_user': ('GET', '/scim/v2/Users/{user_id}', False),
     'replace_user': ('PUT', '/scim/v2/Users/{user_id}', False),
     'patch_user': ('PATCH', '/scim/v2/Users/{user_id}', False),
     'delete_user': ('DELETE', '/scim/v2/Users/{user_id}', False),
+    'public_status': ('GET', '/status', False),
     'list_alert_rules': ('GET', '/v1/alert-rules', True),
     'create_alert_rule': ('POST', '/v1/alert-rules', False),
     'patch_alert_rule': ('PATCH', '/v1/alert-rules/{rule_id}', False),
@@ -3234,6 +3967,7 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'admin_get_provider': ('GET', '/v1/auth/sso/admin/providers/{provider_id}', False),
     'admin_update_provider': ('PATCH', '/v1/auth/sso/admin/providers/{provider_id}', False),
     'admin_delete_provider': ('DELETE', '/v1/auth/sso/admin/providers/{provider_id}', False),
+    'admin_generate_sp_keypair': ('POST', '/v1/auth/sso/admin/providers/{provider_id}/saml-sp-keypair', False),
     'admin_test_provider': ('POST', '/v1/auth/sso/admin/providers/{provider_id}/test', False),
     'admin_list_scim_tokens': ('GET', '/v1/auth/sso/admin/scim-tokens', False),
     'admin_create_scim_token': ('POST', '/v1/auth/sso/admin/scim-tokens', False),
@@ -3241,11 +3975,17 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'admin_get_settings': ('GET', '/v1/auth/sso/admin/settings', False),
     'admin_put_settings': ('PUT', '/v1/auth/sso/admin/settings', False),
     'exchange': ('POST', '/v1/auth/sso/exchange', False),
+    'sso_logout': ('POST', '/v1/auth/sso/logout', False),
     'public_providers': ('GET', '/v1/auth/sso/providers', False),
     'saml_acs': ('POST', '/v1/auth/sso/{slug}/acs', False),
     'oidc_callback': ('GET', '/v1/auth/sso/{slug}/callback', False),
     'saml_metadata': ('GET', '/v1/auth/sso/{slug}/metadata', False),
+    'saml_sls': ('GET', '/v1/auth/sso/{slug}/sls', False),
     'sso_start': ('GET', '/v1/auth/sso/{slug}/start', False),
+    'get_billing': ('GET', '/v1/billing', False),
+    'create_checkout': ('POST', '/v1/billing/checkout', False),
+    'create_portal': ('POST', '/v1/billing/portal', False),
+    'stripe_webhook': ('POST', '/v1/billing/webhook', False),
     'list_chains': ('GET', '/v1/chains', True),
     'create_chain': ('POST', '/v1/chains', False),
     'list_changes': ('GET', '/v1/changes', True),
@@ -3267,12 +4007,15 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'bulk_upsert_findings': ('POST', '/v1/findings/bulk', False),
     'list_findings_legacy': ('GET', '/v1/findings/list', True),
     'recompute_identity': ('POST', '/v1/findings/recompute-identity', False),
+    'verify_bulk': ('POST', '/v1/findings/verify/bulk', False),
     'get_finding': ('GET', '/v1/findings/{finding_id}', False),
     'patch_finding': ('PATCH', '/v1/findings/{finding_id}', False),
     'accept_finding': ('POST', '/v1/findings/{finding_id}/accept', False),
     'mark_false_positive': ('POST', '/v1/findings/{finding_id}/false-positive', False),
     'reopen_finding': ('POST', '/v1/findings/{finding_id}/reopen', False),
     'finding_techniques': ('GET', '/v1/findings/{finding_id}/techniques', False),
+    'list_verifications': ('GET', '/v1/findings/{finding_id}/verifications', False),
+    'verify_finding': ('POST', '/v1/findings/{finding_id}/verify', False),
     'list_actions': ('GET', '/v1/fleet/actions', True),
     'propose_action': ('POST', '/v1/fleet/actions', False),
     'approve_action': ('POST', '/v1/fleet/actions/{action_id}/approve', False),
@@ -3285,6 +4028,7 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'list_network_actions': ('GET', '/v1/fleet/network-actions', True),
     'propose': ('POST', '/v1/fleet/network-actions', False),
     'propose_from_finding': ('POST', '/v1/fleet/network-actions/from-finding', False),
+    'action_evidence': ('GET', '/v1/fleet/network-actions/{action_id}/evidence', False),
     'execute': ('POST', '/v1/fleet/network-actions/{action_id}/execute', False),
     'heartbeat': ('POST', '/v1/fleet/{agent_id}/heartbeat', False),
     'post_inventory': ('POST', '/v1/fleet/{agent_id}/inventory', False),
@@ -3292,7 +4036,18 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'graph_paths': ('GET', '/v1/graph/paths', False),
     'import_lockfiles': ('POST', '/v1/import/lockfiles', False),
     'import_sbom': ('POST', '/v1/import/sbom', False),
+    'ingest': ('POST', '/v1/ingest', False),
+    'formats': ('GET', '/v1/ingest/formats', False),
+    'ingest_log': ('GET', '/v1/ingest/log', True),
+    'list_sources': ('GET', '/v1/ingest/sources', False),
+    'create_source': ('POST', '/v1/ingest/sources', False),
+    'patch_source': ('PATCH', '/v1/ingest/sources/{source_id}', False),
+    'revoke_source': ('DELETE', '/v1/ingest/sources/{source_id}', False),
+    'rotate_source': ('POST', '/v1/ingest/sources/{source_id}/rotate', False),
     'sync_status': ('GET', '/v1/integration-sync', False),
+    'list_suggestions': ('GET', '/v1/integration-sync/suggestions', False),
+    'accept_suggestion': ('POST', '/v1/integration-sync/suggestions/{suggestion_id}/accept', False),
+    'dismiss_suggestion': ('POST', '/v1/integration-sync/suggestions/{suggestion_id}/dismiss', False),
     'sync_now': ('POST', '/v1/integration-sync/{integration_id}', False),
     'sync_runs': ('GET', '/v1/integration-sync/{integration_id}/runs', False),
     'list_integrations': ('GET', '/v1/integrations', False),
@@ -3314,6 +4069,25 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_active_models': ('GET', '/v1/ml/model', False),
     'retrain': ('POST', '/v1/ml/retrain', False),
     'list_ml_risk': ('GET', '/v1/ml/risk', True),
+    'list_customers': ('GET', '/v1/msp/customers', True),
+    'create_customer': ('POST', '/v1/msp/customers', False),
+    'new_invite': ('POST', '/v1/msp/customers/{customer_id}/invites', False),
+    'reactivate_customer': ('POST', '/v1/msp/customers/{customer_id}/reactivate', False),
+    'suspend_customer': ('POST', '/v1/msp/customers/{customer_id}/suspend', False),
+    'switch_customer': ('POST', '/v1/msp/customers/{customer_id}/switch', False),
+    'list_grants': ('GET', '/v1/msp/grants', False),
+    'set_grant': ('POST', '/v1/msp/grants', False),
+    'revoke_grant': ('DELETE', '/v1/msp/grants/{grant_id}', False),
+    'redeem_invite': ('POST', '/v1/msp/invites/redeem', False),
+    'msp_me': ('GET', '/v1/msp/me', False),
+    'customers_summary': ('GET', '/v1/msp/summary', False),
+    'list_templates': ('GET', '/v1/msp/templates', False),
+    'create_template': ('POST', '/v1/msp/templates', False),
+    'update_template': ('PUT', '/v1/msp/templates/{template_id}', False),
+    'delete_template': ('DELETE', '/v1/msp/templates/{template_id}', False),
+    'apply_template': ('POST', '/v1/msp/templates/{template_id}/apply', False),
+    'usage': ('GET', '/v1/msp/usage', False),
+    'usage_snapshot': ('POST', '/v1/msp/usage/snapshot', False),
     'get_onboarding': ('GET', '/v1/onboarding', False),
     'put_onboarding': ('PUT', '/v1/onboarding', False),
     'list_objects': ('GET', '/v1/ontology/objects', True),
@@ -3328,8 +4102,13 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_provenance': ('GET', '/v1/provenance', False),
     'record_provenance': ('POST', '/v1/provenance', False),
     'backfill_provenance': ('POST', '/v1/provenance/backfill', False),
+    'create_report': ('POST', '/v1/public/exposure-report', False),
+    'get_report': ('GET', '/v1/public/exposure-report/{report_id}', False),
+    'public_view_get': ('GET', '/v1/public/trust/{token}', False),
+    'public_view_post': ('POST', '/v1/public/trust/{token}', False),
     'list_remediations': ('GET', '/v1/remediation', True),
     'propose_remediation': ('POST', '/v1/remediation/propose', False),
+    'remediation_merged': ('POST', '/v1/remediation/{remediation_id}/merged', False),
     'get_remediation': ('GET', '/v1/remediation/{rid}', False),
     'compliance_frameworks': ('GET', '/v1/reports/compliance', False),
     'compliance_pack': ('GET', '/v1/reports/compliance/{framework}', False),
@@ -3361,8 +4140,25 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'list_scope_decisions': ('GET', '/v1/scope/{entry_id}/decisions', True),
     'get_scope_proof': ('GET', '/v1/scope/{entry_id}/proof', False),
     'verify_scope': ('POST', '/v1/scope/{entry_id}/verify', False),
+    'list_sensors': ('GET', '/v1/sensors', False),
+    'enroll_sensors': ('POST', '/v1/sensors/enroll', False),
+    'heartbeat_sensors': ('POST', '/v1/sensors/heartbeat', False),
+    'ingest_claim': ('POST', '/v1/sensors/ingest/claim', False),
+    'ingest_done': ('POST', '/v1/sensors/ingest/done', False),
+    'list_tokens': ('GET', '/v1/sensors/tokens', False),
+    'create_token': ('POST', '/v1/sensors/tokens', False),
+    'revoke_token': ('DELETE', '/v1/sensors/tokens/{token_id}', False),
+    'get_sensor': ('GET', '/v1/sensors/{sensor_id}', False),
+    'patch_sensor': ('PATCH', '/v1/sensors/{sensor_id}', False),
+    'revoke_sensor': ('POST', '/v1/sensors/{sensor_id}/revoke', False),
     'list_sla_policies': ('GET', '/v1/sla-policies', False),
     'patch_sla_policy': ('PATCH', '/v1/sla-policies/{severity}', False),
+    'list_suppliers': ('GET', '/v1/suppliers', False),
+    'add_supplier': ('POST', '/v1/suppliers', False),
+    'get_supplier': ('GET', '/v1/suppliers/{supplier_id}', False),
+    'patch_supplier': ('PATCH', '/v1/suppliers/{supplier_id}', False),
+    'delete_supplier': ('DELETE', '/v1/suppliers/{supplier_id}', False),
+    'assess_now': ('POST', '/v1/suppliers/{supplier_id}/assess', False),
     'list_supply_chain_risks': ('GET', '/v1/supply-chain-risks', True),
     'list_suppressions': ('GET', '/v1/suppressions', True),
     'create_suppression': ('POST', '/v1/suppressions', False),
@@ -3375,7 +4171,7 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'delete_feed': ('DELETE', '/v1/ti/feeds/{feed_id}', False),
     'poll_feed': ('POST', '/v1/ti/feeds/{feed_id}/poll', False),
     'list_indicators': ('GET', '/v1/ti/indicators', True),
-    'ingest': ('POST', '/v1/ti/ingest', False),
+    'ingest_threat_intel': ('POST', '/v1/ti/ingest', False),
     'list_matches': ('GET', '/v1/ti/matches', True),
     'summary': ('GET', '/v1/ti/summary', False),
     'list_tickets': ('GET', '/v1/tickets', True),
@@ -3386,9 +4182,14 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'list_grades': ('GET', '/v1/tls-grades', True),
     'bulk_upsert_grades': ('POST', '/v1/tls-grades/bulk', False),
     'grades_summary': ('GET', '/v1/tls-grades/summary', False),
+    'list_links': ('GET', '/v1/trust-links', False),
+    'create_link': ('POST', '/v1/trust-links', False),
+    'list_sections': ('GET', '/v1/trust-links/sections', False),
+    'revoke_link': ('DELETE', '/v1/trust-links/{link_id}', False),
     'get_usage': ('GET', '/v1/usage', False),
     'take_snapshot': ('POST', '/v1/usage/snapshot', False),
     'list_snapshots': ('GET', '/v1/usage/snapshots', False),
+    'post_result_verification': ('POST', '/v1/verifications/{verification_id}/result', False),
 }
 
 
@@ -3414,6 +4215,11 @@ class GeneratedOperations:
         """POST /scim/v2/Groups -- Create Group
         """
         return self._request('POST', '/scim/v2/Groups')
+
+    def search_groups(self) -> Any:
+        """POST /scim/v2/Groups/.search -- Search Groups
+        """
+        return self._request('POST', '/scim/v2/Groups/.search')
 
     def get_group(self, group_id: str, *, excludedAttributes: str | None = None, attributes: str | None = None) -> Any:
         """GET /scim/v2/Groups/{group_id} -- Get Group
@@ -3460,20 +4266,25 @@ class GeneratedOperations:
         """
         return self._request('GET', '/scim/v2/ServiceProviderConfig')
 
-    def list_users(self, *, filter: str | None = None, startIndex: int | None = None, count: int | None = None) -> Any:
+    def list_users(self, *, filter: str | None = None, startIndex: int | None = None, count: int | None = None, attributes: str | None = None, excludedAttributes: str | None = None) -> Any:
         """GET /scim/v2/Users -- List Users
         """
-        return self._request('GET', '/scim/v2/Users', query={'filter': filter, 'startIndex': startIndex, 'count': count})
+        return self._request('GET', '/scim/v2/Users', query={'filter': filter, 'startIndex': startIndex, 'count': count, 'attributes': attributes, 'excludedAttributes': excludedAttributes})
 
     def create_user(self) -> Any:
         """POST /scim/v2/Users -- Create User
         """
         return self._request('POST', '/scim/v2/Users')
 
-    def get_user(self, user_id: str) -> Any:
+    def search_users(self) -> Any:
+        """POST /scim/v2/Users/.search -- Search Users
+        """
+        return self._request('POST', '/scim/v2/Users/.search')
+
+    def get_user(self, user_id: str, *, attributes: str | None = None, excludedAttributes: str | None = None) -> Any:
         """GET /scim/v2/Users/{user_id} -- Get User
         """
-        return self._request('GET', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id})
+        return self._request('GET', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id}, query={'attributes': attributes, 'excludedAttributes': excludedAttributes})
 
     def replace_user(self, user_id: str) -> Any:
         """PUT /scim/v2/Users/{user_id} -- Replace User
@@ -3489,6 +4300,11 @@ class GeneratedOperations:
         """DELETE /scim/v2/Users/{user_id} -- Delete User
         """
         return self._request('DELETE', '/scim/v2/Users/{user_id}', path_params={'user_id': user_id})
+
+    def public_status(self) -> Any:
+        """GET /status -- Public Status
+        """
+        return self._request('GET', '/status')
 
     def list_alert_rules(self, *, enabled: bool | None = None, limit: int | None = None, offset: int | None = None) -> list[AlertRuleOut]:
         """GET /v1/alert-rules -- List Alert Rules
@@ -3685,6 +4501,16 @@ class GeneratedOperations:
         """
         return self._request('DELETE', '/v1/auth/sso/admin/providers/{provider_id}', path_params={'provider_id': provider_id})
 
+    def admin_generate_sp_keypair(self, provider_id: str) -> Any:
+        """POST /v1/auth/sso/admin/providers/{provider_id}/saml-sp-keypair -- Admin Generate Sp Keypair
+
+        Generate (or rotate) the SAML SP signing/encryption key pair. The
+        private key is stored encrypted and never returned; the certificate is
+        saved in the provider config and returned for the IdP (it is also in the
+        SP metadata).
+        """
+        return self._request('POST', '/v1/auth/sso/admin/providers/{provider_id}/saml-sp-keypair', path_params={'provider_id': provider_id})
+
     def admin_test_provider(self, provider_id: str) -> Any:
         """POST /v1/auth/sso/admin/providers/{provider_id}/test -- Admin Test Provider
 
@@ -3722,10 +4548,25 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/auth/sso/exchange', body=body)
 
-    def public_providers(self) -> PublicProvidersOut:
-        """GET /v1/auth/sso/providers -- Public Providers
+    def sso_logout(self) -> Any:
+        """POST /v1/auth/sso/logout -- Sso Logout
+
+        End the caller's session(s) everywhere Paddock controls: every JWT
+        issued so far stops working (session watermark) and pending SSO exchange
+        codes are deleted. If the user signed in through SAML and the IdP has a
+        single-logout URL, ``idp_logout_url`` is the (signed) LogoutRequest
+        redirect the SPA should navigate to so the IdP session ends too; for OIDC
+        it is the IdP's ``end_session_endpoint`` when it has one.
         """
-        return self._request('GET', '/v1/auth/sso/providers')
+        return self._request('POST', '/v1/auth/sso/logout')
+
+    def public_providers(self, *, tenant: str | None = None) -> PublicProvidersOut:
+        """GET /v1/auth/sso/providers -- Public Providers
+
+        Args:
+            tenant: tenant slug or id (default: the default tenant)
+        """
+        return self._request('GET', '/v1/auth/sso/providers', query={'tenant': tenant})
 
     def saml_acs(self, slug: str) -> Any:
         """POST /v1/auth/sso/{slug}/acs -- Saml Acs
@@ -3742,10 +4583,43 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/auth/sso/{slug}/metadata', path_params={'slug': slug})
 
+    def saml_sls(self, slug: str) -> Any:
+        """GET /v1/auth/sso/{slug}/sls -- Saml Sls
+
+        SAML SingleLogoutService (HTTP-Redirect). Handles (a) the IdP's
+        LogoutResponse to a logout WE started and (b) an IdP-initiated
+        LogoutRequest. Both must be signed by the pinned IdP certificate.
+        """
+        return self._request('GET', '/v1/auth/sso/{slug}/sls', path_params={'slug': slug})
+
     def sso_start(self, slug: str, *, return_to: str | None = None, spa_challenge: str | None = None) -> Any:
         """GET /v1/auth/sso/{slug}/start -- Sso Start
         """
         return self._request('GET', '/v1/auth/sso/{slug}/start', path_params={'slug': slug}, query={'return_to': return_to, 'spa_challenge': spa_challenge})
+
+    def get_billing(self) -> BillingOut:
+        """GET /v1/billing -- Get Billing
+        """
+        return self._request('GET', '/v1/billing')
+
+    def create_checkout(self, body: CheckoutIn | dict[str, Any]) -> UrlOut:
+        """POST /v1/billing/checkout -- Create Checkout
+        """
+        return self._request('POST', '/v1/billing/checkout', body=body)
+
+    def create_portal(self) -> UrlOut:
+        """POST /v1/billing/portal -- Create Portal
+        """
+        return self._request('POST', '/v1/billing/portal')
+
+    def stripe_webhook(self) -> Any:
+        """POST /v1/billing/webhook -- Stripe Webhook
+
+        Stripe -> Paddock. Public route: the ``Stripe-Signature`` header is the
+        authentication (HMAC-SHA256 over ``timestamp.body``, tolerance window,
+        replay protection by event id). Always answers fast; 5xx makes Stripe retry.
+        """
+        return self._request('POST', '/v1/billing/webhook')
 
     def list_chains(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, anchor_asset_id: str | None = None, limit: int | None = None, offset: int | None = None) -> list[ChainOut]:
         """GET /v1/chains -- List Chains
@@ -3884,14 +4758,16 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/export/vex', query={'project': project, 'format': format})
 
-    def list_findings_paged(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, sla_breached: bool | None = None, fingerprint: str | None = None, sort: str | None = None, limit: int | None = None, offset: int | None = None) -> FindingLifecyclePage:
+    def list_findings_paged(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, sla_breached: bool | None = None, fingerprint: str | None = None, sort: str | None = None, limit: int | None = None, offset: int | None = None, exploitability: str | None = None, fix_verified: bool | None = None) -> FindingLifecyclePage:
         """GET /v1/findings -- List Findings Paged
 
         Args:
             suppressed: exclude (default) | include | only
             include_duplicates: also return findings collapsed into a primary
+            exploitability: safe-check verdict (schema 026)
+            fix_verified: only findings proven fixed (or not)
         """
-        return self._request('GET', '/v1/findings', query={'severity': severity, 'status': status, 'asset_id': asset_id, 'rule_source': rule_source, 'kev': kev, 'q': q, 'suppressed': suppressed, 'include_duplicates': include_duplicates, 'sla_breached': sla_breached, 'fingerprint': fingerprint, 'sort': sort, 'limit': limit, 'offset': offset})
+        return self._request('GET', '/v1/findings', query={'severity': severity, 'status': status, 'asset_id': asset_id, 'rule_source': rule_source, 'kev': kev, 'q': q, 'suppressed': suppressed, 'include_duplicates': include_duplicates, 'sla_breached': sla_breached, 'fingerprint': fingerprint, 'sort': sort, 'limit': limit, 'offset': offset, 'exploitability': exploitability, 'fix_verified': fix_verified})
 
     def bulk_upsert_findings(self, body: FindingBulkIn | dict[str, Any]) -> FindingBulkLifecycleOut:
         """POST /v1/findings/bulk -- Bulk Upsert
@@ -3913,6 +4789,11 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/findings/recompute-identity')
 
+    def verify_bulk(self, body: BulkVerifyIn | dict[str, Any]) -> BulkVerifyOut:
+        """POST /v1/findings/verify/bulk -- Verify Bulk
+        """
+        return self._request('POST', '/v1/findings/verify/bulk', body=body)
+
     def get_finding(self, finding_id: str) -> FindingLifecycleDetailOut:
         """GET /v1/findings/{finding_id} -- Get Finding
 
@@ -3925,14 +4806,14 @@ class GeneratedOperations:
         """
         return self._request('PATCH', '/v1/findings/{finding_id}', path_params={'finding_id': finding_id}, body=body)
 
-    def accept_finding(self, finding_id: str, body: DismissIn | dict[str, Any]) -> TransitionOut:
+    def accept_finding(self, finding_id: str, body: app__routers__lifecycle__DismissIn | dict[str, Any]) -> TransitionOut:
         """POST /v1/findings/{finding_id}/accept -- Accept Finding
 
         Risk accepted. A fixed finding cannot be accepted (reopen it first).
         """
         return self._request('POST', '/v1/findings/{finding_id}/accept', path_params={'finding_id': finding_id}, body=body)
 
-    def mark_false_positive(self, finding_id: str, body: DismissIn | dict[str, Any]) -> TransitionOut:
+    def mark_false_positive(self, finding_id: str, body: app__routers__lifecycle__DismissIn | dict[str, Any]) -> TransitionOut:
         """POST /v1/findings/{finding_id}/false-positive -- Mark False Positive
         """
         return self._request('POST', '/v1/findings/{finding_id}/false-positive', path_params={'finding_id': finding_id}, body=body)
@@ -3948,6 +4829,19 @@ class GeneratedOperations:
         ATT&CK techniques mapped to a single finding (highest confidence first).
         """
         return self._request('GET', '/v1/findings/{finding_id}/techniques', path_params={'finding_id': finding_id})
+
+    def list_verifications(self, finding_id: str, *, limit: int | None = None) -> VerificationHistoryOut:
+        """GET /v1/findings/{finding_id}/verifications -- List Verifications
+        """
+        return self._request('GET', '/v1/findings/{finding_id}/verifications', path_params={'finding_id': finding_id}, query={'limit': limit})
+
+    def verify_finding(self, finding_id: str, body: app__verification__models__VerifyIn | None | dict[str, Any] | None = None) -> VerificationOut:
+        """POST /v1/findings/{finding_id}/verify -- Verify Finding
+
+        Queue a safe check for this finding. 202 with the ledger row; 403 with the
+        refusal reason (and a ledger row) when scope or proof-of-control says no.
+        """
+        return self._request('POST', '/v1/findings/{finding_id}/verify', path_params={'finding_id': finding_id}, body=body)
 
     def list_actions(self, *, agent: str | None = None, status: str | None = None, limit: int | None = None, offset: int | None = None) -> ActionPage:
         """GET /v1/fleet/actions -- List Actions
@@ -3979,7 +4873,7 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/fleet/actions/{action_id}/deny', path_params={'action_id': action_id}, body=body)
 
-    def post_result(self, action_id: str, body: ResultIn | dict[str, Any]) -> ActionOut:
+    def post_result(self, action_id: str, body: app__routers__fleet__ResultIn | dict[str, Any]) -> ActionOut:
         """POST /v1/fleet/actions/{action_id}/result -- Post Result
 
         Agent reports the outcome of a real apply. Guards enforce rails #2 + #3:
@@ -4009,7 +4903,7 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/fleet/agents/{agent_id}', path_params={'agent_id': agent_id})
 
-    def enroll(self, body: EnrollIn | dict[str, Any]) -> EnrollOut:
+    def enroll(self, body: app__routers__fleet__EnrollIn | dict[str, Any]) -> app__routers__fleet__EnrollOut:
         """POST /v1/fleet/enroll -- Enroll
 
         Enroll a host agent. Validates the bootstrap token, mints an agent id +
@@ -4036,6 +4930,14 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/fleet/network-actions/from-finding', body=body)
 
+    def action_evidence(self, action_id: str) -> app__routers__network_actions__EvidenceOut:
+        """GET /v1/fleet/network-actions/{action_id}/evidence -- Action Evidence
+
+        What the approver needs to decide: the Sentry finding behind a proposal
+        (rule, severity, evidence JSON) and the device it points at. Read-only.
+        """
+        return self._request('GET', '/v1/fleet/network-actions/{action_id}/evidence', path_params={'action_id': action_id})
+
     def execute(self, action_id: str, body: ExecuteIn | dict[str, Any]) -> ExecuteOut:
         """POST /v1/fleet/network-actions/{action_id}/execute -- Execute
 
@@ -4048,7 +4950,7 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/fleet/network-actions/{action_id}/execute', path_params={'action_id': action_id}, body=body)
 
-    def heartbeat(self, agent_id: str, body: HeartbeatIn | dict[str, Any]) -> HeartbeatOut:
+    def heartbeat(self, agent_id: str, body: app__routers__fleet__HeartbeatIn | dict[str, Any]) -> HeartbeatOut:
         """POST /v1/fleet/{agent_id}/heartbeat -- Heartbeat
         """
         return self._request('POST', '/v1/fleet/{agent_id}/heartbeat', path_params={'agent_id': agent_id}, body=body)
@@ -4089,10 +4991,80 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/import/sbom', query={'project': project, 'replace': replace})
 
+    def ingest(self, *, format: str | None = None, project: str | None = None, asset: str | None = None, asset_kind: str | None = None, source: str | None = None, dry_run: bool | None = None, strict: bool | None = None, token: str | None = None) -> Any:
+        """POST /v1/ingest -- Ingest
+
+        Args:
+            format: Force a format instead of auto-detecting: sarif, cyclonedx, spdx, ocsf, trivy, grype, semgrep, nuclei, zap, csv
+            project: Repository / project the results belong to
+            asset: Attach every finding to this asset
+            source: Label for API-key callers (token callers use their source)
+            dry_run: Parse and validate only; store nothing
+            strict: Reject the whole upload if any record is invalid
+            token: Ingest token (prefer the header)
+        """
+        return self._request('POST', '/v1/ingest', query={'format': format, 'project': project, 'asset': asset, 'asset_kind': asset_kind, 'source': source, 'dry_run': dry_run, 'strict': strict, 'token': token})
+
+    def formats(self) -> Any:
+        """GET /v1/ingest/formats -- Formats
+        """
+        return self._request('GET', '/v1/ingest/formats')
+
+    def ingest_log(self, *, source_id: str | None = None, status: str | None = None, limit: int | None = None, offset: int | None = None) -> Any:
+        """GET /v1/ingest/log -- Ingest Log
+        """
+        return self._request('GET', '/v1/ingest/log', query={'source_id': source_id, 'status': status, 'limit': limit, 'offset': offset})
+
+    def list_sources(self, *, include_revoked: bool | None = None) -> Any:
+        """GET /v1/ingest/sources -- List Sources
+        """
+        return self._request('GET', '/v1/ingest/sources', query={'include_revoked': include_revoked})
+
+    def create_source(self, body: SourceIn | dict[str, Any]) -> Any:
+        """POST /v1/ingest/sources -- Create Source
+        """
+        return self._request('POST', '/v1/ingest/sources', body=body)
+
+    def patch_source(self, source_id: str, body: SourcePatch | dict[str, Any]) -> Any:
+        """PATCH /v1/ingest/sources/{source_id} -- Patch Source
+        """
+        return self._request('PATCH', '/v1/ingest/sources/{source_id}', path_params={'source_id': source_id}, body=body)
+
+    def revoke_source(self, source_id: str) -> Any:
+        """DELETE /v1/ingest/sources/{source_id} -- Revoke Source
+        """
+        return self._request('DELETE', '/v1/ingest/sources/{source_id}', path_params={'source_id': source_id})
+
+    def rotate_source(self, source_id: str) -> Any:
+        """POST /v1/ingest/sources/{source_id}/rotate -- Rotate Source
+        """
+        return self._request('POST', '/v1/ingest/sources/{source_id}/rotate', path_params={'source_id': source_id})
+
     def sync_status(self) -> list[SyncStatusOut]:
         """GET /v1/integration-sync -- Sync Status
         """
         return self._request('GET', '/v1/integration-sync')
+
+    def list_suggestions(self, *, status: str | None = None, integration_id: str | None = None, limit: int | None = None) -> list[SuggestionOut]:
+        """GET /v1/integration-sync/suggestions -- List Suggestions
+        """
+        return self._request('GET', '/v1/integration-sync/suggestions', query={'status': status, 'integration_id': integration_id, 'limit': limit})
+
+    def accept_suggestion(self, suggestion_id: int, body: AcceptIn | dict[str, Any]) -> AcceptOut:
+        """POST /v1/integration-sync/suggestions/{suggestion_id}/accept -- Accept Suggestion
+
+        Add the suggested value to scope through the normal scope add. The entry
+        still needs proof-of-control (``/v1/scope/{id}/challenge`` + ``/verify``)
+        before anything is scanned.
+        """
+        return self._request('POST', '/v1/integration-sync/suggestions/{suggestion_id}/accept', path_params={'suggestion_id': suggestion_id}, body=body)
+
+    def dismiss_suggestion(self, suggestion_id: int, body: app__routers__integration_sync__DismissIn | dict[str, Any]) -> SuggestionOut:
+        """POST /v1/integration-sync/suggestions/{suggestion_id}/dismiss -- Dismiss Suggestion
+
+        Dismiss: the suggestion stays recorded (so the next sync does not re-raise it).
+        """
+        return self._request('POST', '/v1/integration-sync/suggestions/{suggestion_id}/dismiss', path_params={'suggestion_id': suggestion_id}, body=body)
 
     def sync_now(self, integration_id: str) -> SyncNowOut:
         """POST /v1/integration-sync/{integration_id} -- Sync Now
@@ -4220,6 +5192,106 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/ml/risk', query={'limit': limit, 'offset': offset})
 
+    def list_customers(self, *, q: str | None = None, sort: str | None = None, order: Literal['asc', 'desc'] | None = None, limit: int | None = None, offset: int | None = None, refresh: bool | None = None) -> dict[str, Any]:
+        """GET /v1/msp/customers -- List Customers
+        """
+        return self._request('GET', '/v1/msp/customers', query={'q': q, 'sort': sort, 'order': order, 'limit': limit, 'offset': offset, 'refresh': refresh})
+
+    def create_customer(self, body: CustomerIn | dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/msp/customers -- Create Customer
+        """
+        return self._request('POST', '/v1/msp/customers', body=body)
+
+    def new_invite(self, customer_id: str, body: InviteIn | dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/msp/customers/{customer_id}/invites -- New Invite
+        """
+        return self._request('POST', '/v1/msp/customers/{customer_id}/invites', path_params={'customer_id': customer_id}, body=body)
+
+    def reactivate_customer(self, customer_id: str) -> dict[str, Any]:
+        """POST /v1/msp/customers/{customer_id}/reactivate -- Reactivate Customer
+        """
+        return self._request('POST', '/v1/msp/customers/{customer_id}/reactivate', path_params={'customer_id': customer_id})
+
+    def suspend_customer(self, customer_id: str) -> dict[str, Any]:
+        """POST /v1/msp/customers/{customer_id}/suspend -- Suspend Customer
+        """
+        return self._request('POST', '/v1/msp/customers/{customer_id}/suspend', path_params={'customer_id': customer_id})
+
+    def switch_customer(self, customer_id: str) -> dict[str, Any]:
+        """POST /v1/msp/customers/{customer_id}/switch -- Switch Customer
+        """
+        return self._request('POST', '/v1/msp/customers/{customer_id}/switch', path_params={'customer_id': customer_id})
+
+    def list_grants(self, *, user_id: str | None = None) -> dict[str, Any]:
+        """GET /v1/msp/grants -- List Grants
+        """
+        return self._request('GET', '/v1/msp/grants', query={'user_id': user_id})
+
+    def set_grant(self, body: GrantIn | dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/msp/grants -- Set Grant
+        """
+        return self._request('POST', '/v1/msp/grants', body=body)
+
+    def revoke_grant(self, grant_id: str) -> dict[str, Any]:
+        """DELETE /v1/msp/grants/{grant_id} -- Revoke Grant
+        """
+        return self._request('DELETE', '/v1/msp/grants/{grant_id}', path_params={'grant_id': grant_id})
+
+    def redeem_invite(self, body: RedeemIn | dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/msp/invites/redeem -- Redeem Invite
+
+        Public. The invite token is the credential; it is single use, expires,
+        and only works while the customer is active.
+        """
+        return self._request('POST', '/v1/msp/invites/redeem', body=body)
+
+    def msp_me(self) -> dict[str, Any]:
+        """GET /v1/msp/me -- Msp Me
+        """
+        return self._request('GET', '/v1/msp/me')
+
+    def customers_summary(self) -> dict[str, Any]:
+        """GET /v1/msp/summary -- Customers Summary
+        """
+        return self._request('GET', '/v1/msp/summary')
+
+    def list_templates(self) -> dict[str, Any]:
+        """GET /v1/msp/templates -- List Templates
+        """
+        return self._request('GET', '/v1/msp/templates')
+
+    def create_template(self, body: TemplateIn | dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/msp/templates -- Create Template
+        """
+        return self._request('POST', '/v1/msp/templates', body=body)
+
+    def update_template(self, template_id: str, body: TemplateIn | dict[str, Any]) -> dict[str, Any]:
+        """PUT /v1/msp/templates/{template_id} -- Update Template
+        """
+        return self._request('PUT', '/v1/msp/templates/{template_id}', path_params={'template_id': template_id}, body=body)
+
+    def delete_template(self, template_id: str) -> dict[str, Any]:
+        """DELETE /v1/msp/templates/{template_id} -- Delete Template
+        """
+        return self._request('DELETE', '/v1/msp/templates/{template_id}', path_params={'template_id': template_id})
+
+    def apply_template(self, template_id: str, body: ApplyIn | dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/msp/templates/{template_id}/apply -- Apply Template
+        """
+        return self._request('POST', '/v1/msp/templates/{template_id}/apply', path_params={'template_id': template_id}, body=body)
+
+    def usage(self, *, month: str | None = None, format: Literal['json', 'csv'] | None = None) -> Any:
+        """GET /v1/msp/usage -- Usage
+        """
+        return self._request('GET', '/v1/msp/usage', query={'month': month, 'format': format})
+
+    def usage_snapshot(self) -> dict[str, Any]:
+        """POST /v1/msp/usage/snapshot -- Usage Snapshot
+
+        Record today's per-customer usage (cron-able). Idempotent per day.
+        """
+        return self._request('POST', '/v1/msp/usage/snapshot')
+
     def get_onboarding(self) -> OnboardingOut:
         """GET /v1/onboarding -- Get Onboarding
         """
@@ -4305,6 +5377,26 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/provenance/backfill')
 
+    def create_report(self, body: ExposureReportIn | dict[str, Any]) -> ExposureSubmitOut:
+        """POST /v1/public/exposure-report -- Create Report
+        """
+        return self._request('POST', '/v1/public/exposure-report', body=body)
+
+    def get_report(self, report_id: str) -> ExposureReportOut:
+        """GET /v1/public/exposure-report/{report_id} -- Get Report
+        """
+        return self._request('GET', '/v1/public/exposure-report/{report_id}', path_params={'report_id': report_id})
+
+    def public_view_get(self, token: str) -> Any:
+        """GET /v1/public/trust/{token} -- Public View Get
+        """
+        return self._request('GET', '/v1/public/trust/{token}', path_params={'token': token})
+
+    def public_view_post(self, token: str, body: TrustUnlockIn | dict[str, Any]) -> Any:
+        """POST /v1/public/trust/{token} -- Public View Post
+        """
+        return self._request('POST', '/v1/public/trust/{token}', path_params={'token': token}, body=body)
+
     def list_remediations(self, *, status: str | None = None, limit: int | None = None, offset: int | None = None) -> RemediationPage:
         """GET /v1/remediation -- List Remediations
 
@@ -4323,6 +5415,14 @@ class GeneratedOperations:
         so the dashboard never sees a 5xx.
         """
         return self._request('POST', '/v1/remediation/propose', body=body)
+
+    def remediation_merged(self, remediation_id: str, body: RemediationMergedIn | None | dict[str, Any] | None = None) -> Any:
+        """POST /v1/remediation/{remediation_id}/merged -- Remediation Merged
+
+        Record that a remediation PR was merged; if its finding is marked fixed, a
+        safe re-check is scheduled (after the PR deploy delay).
+        """
+        return self._request('POST', '/v1/remediation/{remediation_id}/merged', path_params={'remediation_id': remediation_id}, body=body)
 
     def get_remediation(self, rid: str) -> RemediationDetail:
         """GET /v1/remediation/{rid} -- Get Remediation
@@ -4511,12 +5611,74 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/scope/{entry_id}/proof', path_params={'entry_id': entry_id})
 
-    def verify_scope(self, entry_id: int, body: VerifyIn | None | dict[str, Any] | None = None) -> VerifyOut:
+    def verify_scope(self, entry_id: int, body: app__scope_proof__VerifyIn | None | dict[str, Any] | None = None) -> VerifyOut:
         """POST /v1/scope/{entry_id}/verify -- Verify Scope
 
         Check ownership now (domains) or record an attestation (IP ranges/ASN).
         """
         return self._request('POST', '/v1/scope/{entry_id}/verify', path_params={'entry_id': entry_id}, body=body)
+
+    def list_sensors(self, *, include_revoked: bool | None = None) -> list[SensorOut]:
+        """GET /v1/sensors -- List Sensors
+        """
+        return self._request('GET', '/v1/sensors', query={'include_revoked': include_revoked})
+
+    def enroll_sensors(self, body: app__routers__sensors__EnrollIn | dict[str, Any]) -> app__routers__sensors__EnrollOut:
+        """POST /v1/sensors/enroll -- Enroll
+
+        Redeem an enrollment token. Authenticated by the token itself; rate
+        limited per client, with a lockout after repeated failures.
+        """
+        return self._request('POST', '/v1/sensors/enroll', body=body)
+
+    def heartbeat_sensors(self, body: app__routers__sensors__HeartbeatIn | dict[str, Any]) -> Any:
+        """POST /v1/sensors/heartbeat -- Heartbeat
+        """
+        return self._request('POST', '/v1/sensors/heartbeat', body=body)
+
+    def ingest_claim(self, body: ClaimIn | dict[str, Any]) -> Any:
+        """POST /v1/sensors/ingest/claim -- Ingest Claim
+        """
+        return self._request('POST', '/v1/sensors/ingest/claim', body=body)
+
+    def ingest_done(self, body: DoneIn | dict[str, Any]) -> Any:
+        """POST /v1/sensors/ingest/done -- Ingest Done
+        """
+        return self._request('POST', '/v1/sensors/ingest/done', body=body)
+
+    def list_tokens(self, *, limit: int | None = None) -> list[TokenOut]:
+        """GET /v1/sensors/tokens -- List Tokens
+        """
+        return self._request('GET', '/v1/sensors/tokens', query={'limit': limit})
+
+    def create_token(self, body: TokenCreateIn | dict[str, Any]) -> TokenCreated:
+        """POST /v1/sensors/tokens -- Create Token
+
+        Create a one-time enrollment token. The token is returned ONCE.
+        """
+        return self._request('POST', '/v1/sensors/tokens', body=body)
+
+    def revoke_token(self, token_id: str) -> None:
+        """DELETE /v1/sensors/tokens/{token_id} -- Revoke Token
+        """
+        return self._request('DELETE', '/v1/sensors/tokens/{token_id}', path_params={'token_id': token_id})
+
+    def get_sensor(self, sensor_id: str) -> SensorOut:
+        """GET /v1/sensors/{sensor_id} -- Get Sensor
+        """
+        return self._request('GET', '/v1/sensors/{sensor_id}', path_params={'sensor_id': sensor_id})
+
+    def patch_sensor(self, sensor_id: str, body: SensorPatch | dict[str, Any]) -> SensorOut:
+        """PATCH /v1/sensors/{sensor_id} -- Patch Sensor
+        """
+        return self._request('PATCH', '/v1/sensors/{sensor_id}', path_params={'sensor_id': sensor_id}, body=body)
+
+    def revoke_sensor(self, sensor_id: str) -> SensorOut:
+        """POST /v1/sensors/{sensor_id}/revoke -- Revoke Sensor
+
+        Revoke a sensor. Its credential stops working on the very next call.
+        """
+        return self._request('POST', '/v1/sensors/{sensor_id}/revoke', path_params={'sensor_id': sensor_id})
 
     def list_sla_policies(self) -> list[SlaPolicyOut]:
         """GET /v1/sla-policies -- List Sla Policies
@@ -4527,6 +5689,38 @@ class GeneratedOperations:
         """PATCH /v1/sla-policies/{severity} -- Patch Sla Policy
         """
         return self._request('PATCH', '/v1/sla-policies/{severity}', path_params={'severity': severity}, body=body)
+
+    def list_suppliers(self) -> list[SupplierOut]:
+        """GET /v1/suppliers -- List Suppliers
+        """
+        return self._request('GET', '/v1/suppliers')
+
+    def add_supplier(self, body: SupplierIn | dict[str, Any]) -> SupplierOut:
+        """POST /v1/suppliers -- Add Supplier
+        """
+        return self._request('POST', '/v1/suppliers', body=body)
+
+    def get_supplier(self, supplier_id: str) -> SupplierDetail:
+        """GET /v1/suppliers/{supplier_id} -- Get Supplier
+        """
+        return self._request('GET', '/v1/suppliers/{supplier_id}', path_params={'supplier_id': supplier_id})
+
+    def patch_supplier(self, supplier_id: str, body: SupplierPatch | dict[str, Any]) -> SupplierOut:
+        """PATCH /v1/suppliers/{supplier_id} -- Patch Supplier
+        """
+        return self._request('PATCH', '/v1/suppliers/{supplier_id}', path_params={'supplier_id': supplier_id}, body=body)
+
+    def delete_supplier(self, supplier_id: str) -> None:
+        """DELETE /v1/suppliers/{supplier_id} -- Delete Supplier
+        """
+        return self._request('DELETE', '/v1/suppliers/{supplier_id}', path_params={'supplier_id': supplier_id})
+
+    def assess_now(self, supplier_id: str) -> SupplierOut:
+        """POST /v1/suppliers/{supplier_id}/assess -- Assess Now
+
+        Queue an immediate re-assessment; the runner picks it up within seconds.
+        """
+        return self._request('POST', '/v1/suppliers/{supplier_id}/assess', path_params={'supplier_id': supplier_id})
 
     def list_supply_chain_risks(self, *, type: Literal['dependency_confusion', 'typosquat', 'abandoned', 'malicious_version', 'yanked', 'unpinned', 'install_scripts'] | None = None, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, project: str | None = None, limit: int | None = None, offset: int | None = None) -> SupplyChainRiskPage:
         """GET /v1/supply-chain-risks -- List Supply Chain Risks
@@ -4599,7 +5793,7 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/ti/indicators', query={'type': type, 'label': label, 'q': q, 'limit': limit, 'offset': offset})
 
-    def ingest(self, body: dict[str, Any] | dict[str, Any]) -> dict[str, Any]:
+    def ingest_threat_intel(self, body: dict[str, Any] | dict[str, Any]) -> dict[str, Any]:
         """POST /v1/ti/ingest -- Ingest
 
         Forward a STIX bundle (or {"url": ...}) to the threatintel service.
@@ -4666,6 +5860,28 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/tls-grades/summary')
 
+    def list_links(self) -> list[TrustLinkOut]:
+        """GET /v1/trust-links -- List Links
+        """
+        return self._request('GET', '/v1/trust-links')
+
+    def create_link(self, body: TrustLinkIn | dict[str, Any]) -> TrustLinkCreated:
+        """POST /v1/trust-links -- Create Link
+        """
+        return self._request('POST', '/v1/trust-links', body=body)
+
+    def list_sections(self) -> Any:
+        """GET /v1/trust-links/sections -- List Sections
+        """
+        return self._request('GET', '/v1/trust-links/sections')
+
+    def revoke_link(self, link_id: str) -> TrustLinkOut:
+        """DELETE /v1/trust-links/{link_id} -- Revoke Link
+
+        Revoke (kept, with its view history, for the audit trail).
+        """
+        return self._request('DELETE', '/v1/trust-links/{link_id}', path_params={'link_id': link_id})
+
     def get_usage(self) -> UsageOut:
         """GET /v1/usage -- Get Usage
         """
@@ -4680,6 +5896,15 @@ class GeneratedOperations:
         """GET /v1/usage/snapshots -- List Snapshots
         """
         return self._request('GET', '/v1/usage/snapshots', query={'days': days})
+
+    def post_result_verification(self, verification_id: str, body: app__verification__models__ResultIn | dict[str, Any]) -> VerificationOut:
+        """POST /v1/verifications/{verification_id}/result -- Post Result
+
+        Worker callback: only the service key, only for the dispatched job
+        (``X-Paddock-Scan`` must be the scan the verification was queued as). A user
+        or API key, even an admin's, can never post a verdict.
+        """
+        return self._request('POST', '/v1/verifications/{verification_id}/result', path_params={'verification_id': verification_id}, body=body)
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError

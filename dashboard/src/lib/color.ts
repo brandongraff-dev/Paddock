@@ -52,6 +52,33 @@ export function kindColor(k: AssetKind | string | undefined | null): string {
   return (KIND_COLOR as Record<string, string>)[k] ?? "#9fc2d8";
 }
 
+/**
+ * Asset-kind colours for the graph canvas only: a warm Daguerreotype ladder
+ * (cream, sand, amber, ember, clay, stone) with no blues or greens, so the
+ * canvas sits in the same palette as the rest of the product. Kinds stay
+ * distinguishable through the icon on each card; colour is a secondary cue.
+ */
+export const CANVAS_KIND_COLOR: Record<AssetKind, string> = {
+  org: "#cbbba6",
+  domain: "#ece2d0",
+  subdomain: "#d8c3a3",
+  ipv4: "#c2a27e",
+  ipv6: "#b39572",
+  port: "#e3b265",
+  service: "#e9c48f",
+  technology: "#bfa58c",
+  certificate: "#d9a08a",
+  endpoint: "#e67350",
+  repository: "#a89f94",
+  secret_candidate: "#d5493c",
+  cloud_account: "#9e9184",
+  cloud_resource: "#8f8478",
+};
+
+export function canvasKindColor(k: AssetKind | string | undefined | null): string {
+  return (k && (CANVAS_KIND_COLOR as Record<string, string>)[k]) || "#cbbba6";
+}
+
 /** Clamp a numeric blast score (0..100) to a width %. */
 export function blastPct(score: number | undefined | null): number {
   if (score == null || Number.isNaN(score)) return 0;

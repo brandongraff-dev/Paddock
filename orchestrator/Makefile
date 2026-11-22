@@ -17,7 +17,7 @@ run:
 	$(PYTHON) -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 build:
-	docker build -t paddock/orchestrator .
+	docker build -t paddock/orchestrator -f Dockerfile ..
 
 clean:
 	rm -rf .pytest_cache __pycache__ app/__pycache__ app/routers/__pycache__ tests/__pycache__

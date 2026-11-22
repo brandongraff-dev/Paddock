@@ -288,6 +288,18 @@ class ActionPage(BaseModel):
     total: int
 
 
+# Network quarantine/release cuts a device off a customer's network, so the
+# decision must say why. Host-agent actions keep the optional note.
+_NETWORK_ACTION_TYPES = frozenset({"quarantine_device", "release_device"})
+
+
+def _require_decision_reason(action_type: str | None, note: str | None) -> None:
+    if action_type in _NETWORK_ACTION_TYPES and not (note or "").strip():
+        raise HTTPException(
+            status_code=422, detail="a reason (note) is required to decide a network action",
+        )
+
+
 class ApproveIn(BaseModel):
     model_config = {"extra": "forbid"}
     # The explicit, conscious human decision to permit a REAL host change. When
@@ -706,6 +718,7 @@ async def approve_action(
                 status_code=409,
                 detail=f"cannot approve an action in status '{cur['status']}'",
             )
+        _require_decision_reason(cur["action_type"], body.note)
         self_approve = (cur["requested_by"] is not None
                         and cur["requested_by"] == principal.actor)
         if self_approve and not _allow_self_approve():
@@ -759,13 +772,14 @@ async def deny_action(
 ):
     """Admin-only. proposed -> denied."""
     async with pool.acquire() as con:
-        cur = await con.fetchrow("SELECT status FROM agent_actions WHERE id = $1", action_id)
+        cur = await con.fetchrow("SELECT status, action_type FROM agent_actions WHERE id = $1", action_id)
         if cur is None:
             raise HTTPException(status_code=404, detail="action not found")
         if cur["status"] != "proposed":
             raise HTTPException(
                 status_code=409, detail=f"cannot deny an action in status '{cur['status']}'"
             )
+        _require_decision_reason(cur["action_type"], body.note)
         row = await con.fetchrow(
             """
             UPDATE agent_actions

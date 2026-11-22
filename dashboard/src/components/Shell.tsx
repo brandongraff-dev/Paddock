@@ -16,6 +16,9 @@ import { ClassificationBanner } from "./Classification";
 import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
+import MspIndicator from "./MspIndicator";
+import { useMspMe } from "../hooks/useMsp";
+import { useMsp } from "../state/msp";
 
 interface NavEntry {
   to: string;
@@ -181,11 +184,22 @@ const Icon = {
       <circle cx="7" cy="7" r="0.8" /><circle cx="7" cy="17" r="0.8" />
     </svg>
   ),
+  Sensors: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="14" r="1.6" /><path d="M8.5 10.5 a5 5 0 0 1 7 0 M5.5 7.5 a9 9 0 0 1 13 0" />
+      <path d="M12 15.6 L12 20 M9 20 L15 20" />
+    </svg>
+  ),
   Integrations: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5" /></svg>),
   Identity: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="9" cy="9" r="3.2" /><path d="M3.5 19 Q4 14.5 9 14.5 Q14 14.5 14.5 19" />
       <path d="M15 7.5 L21 7.5 M15 11 L19.5 11" />
+    </svg>
+  ),
+  Billing: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 10h18M7 15h3" />
     </svg>
   ),
   Remediation: (
@@ -196,6 +210,24 @@ const Icon = {
   Reports: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 3 L15 3 L19 7 L19 21 L6 21 Z" /><path d="M15 3 L15 7 L19 7" /><path d="M9 17 L9 14 M12 17 L12 11 M15 17 L15 13" />
+    </svg>
+  ),
+  ContextSync: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 8 A8 8 0 0 0 5.5 6.5 M4 4 L4 8 L8 8" /><path d="M4 16 A8 8 0 0 0 18.5 17.5 M20 20 L20 16 L16 16" />
+      <circle cx="12" cy="12" r="1.6" />
+    </svg>
+  ),
+  NetworkActions: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="5" rx="1" /><rect x="3" y="16" width="6" height="5" rx="1" /><rect x="15" y="16" width="6" height="5" rx="1" />
+      <path d="M12 8 L12 12 M6 16 L6 12 L18 12 L18 16" /><path d="M13.5 19 L16.5 19" strokeDasharray="1.5 2" />
+    </svg>
+  ),
+  Suppliers: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="6" rx="1.2" /><rect x="3" y="15" width="6" height="6" rx="1.2" /><rect x="15" y="15" width="6" height="6" rx="1.2" />
+      <path d="M12 9 L12 12 M6 15 L6 12 L18 12 L18 15" />
     </svg>
   ),
 };
@@ -222,6 +254,7 @@ const navGroups: NavGroup[] = [
       { to: "/devices", label: "Devices", icon: Icon.Devices },
       { to: "/fleet", label: "Fleet", icon: Icon.Fleet },
       { to: "/dependencies", label: "Dependencies", icon: Icon.Dependencies },
+      { to: "/sensors", label: "Sensors", icon: Icon.Sensors },
     ],
   },
   {
@@ -235,6 +268,7 @@ const navGroups: NavGroup[] = [
       { to: "/attack", label: "ATT&CK", icon: Icon.Attack },
       { to: "/threat-intel", label: "Threat Intel", icon: Icon.ThreatIntel },
       { to: "/posture", label: "Posture", icon: Icon.Posture },
+      { to: "/suppliers", label: "Suppliers", icon: Icon.Suppliers },
     ],
   },
   {
@@ -247,11 +281,12 @@ const navGroups: NavGroup[] = [
       { to: "/tickets", label: "Tickets", icon: Icon.Tickets },
       { to: "/remediation", label: "Remediation", icon: Icon.Remediation },
       { to: "/reports", label: "Reports", icon: Icon.Reports },
+      { to: "/network-actions", label: "Network actions", icon: Icon.NetworkActions },
     ],
   },
   {
     label: "Govern",
-    items: [{ to: "/scope", label: "Scope", icon: Icon.Scope }, { to: "/integrations", label: "Integrations", icon: Icon.Integrations }],
+    items: [{ to: "/scope", label: "Scope", icon: Icon.Scope }, { to: "/integrations", label: "Integrations", icon: Icon.Integrations }, { to: "/context", label: "Context sync", icon: Icon.ContextSync }],
   },
 ];
 
@@ -262,6 +297,20 @@ const auditEntry: NavEntry = { to: "/audit", label: "Audit", icon: Icon.Audit };
 
 /** Settings → Identity (SSO + SCIM) — appended to Govern only for admins. */
 const identityEntry: NavEntry = { to: "/settings/identity", label: "Identity", icon: Icon.Identity };
+
+/** Settings → Billing (hosted plan, usage, Stripe) — admins only, next to Identity. */
+const billingEntry: NavEntry = { to: "/settings/billing", label: "Billing", icon: Icon.Billing };
+/** MSP console — appended to Govern only for MSP users (and not while inside a customer). */
+const mspEntry: NavEntry = {
+  to: "/msp",
+  label: "Customers",
+  icon: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="7" height="7" rx="1.5" /><rect x="14" y="4" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="6" rx="1.5" /><path d="M14 17 L21 17 M14 14 L21 14" />
+    </svg>
+  ),
+};
 
 function ToastStack() {
   const toasts = useStore((s) => s.toasts);
@@ -371,9 +420,12 @@ export default function Shell({ children, noScroll }: Props) {
   const resetClassification = useStore((s) => s.resetClassification);
 
   // Audit is appended to the rail only for roles that may open it.
+  const isMsp = useMspMe().data?.is_msp === true;
+  const acting = useMsp((s) => s.acting);
   const govExtra = [
     ...(canViewAudit(role) ? [auditEntry] : []),
-    ...(role === "admin" ? [identityEntry] : []),
+    ...(role === "admin" ? [identityEntry, billingEntry] : []),
+    ...(isMsp && !acting ? [mspEntry] : []),
   ];
   const entries = [...navEntries, ...govExtra];
 
@@ -432,6 +484,7 @@ export default function Shell({ children, noScroll }: Props) {
           </div>
           <div className="spacer" />
           <ClassificationBanner />
+          <MspIndicator />
           <Ticker />
         </header>
 

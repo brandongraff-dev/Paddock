@@ -61,9 +61,12 @@ def default_http(config: Mapping[str, Any]):
     """
     import httpx
 
+    from .pinned import pinned_client
+
     verify = not (config.get("allow_private") and config.get("verify_tls") is False)
-    return httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=False,
-                             verify=verify, headers={"User-Agent": USER_AGENT})
+    return pinned_client(allow_private=bool(config.get("allow_private")), verify=verify,
+                         timeout=httpx.Timeout(30.0, connect=10.0),
+                         headers={"User-Agent": USER_AGENT})
 
 
 def connector_class(kind: str) -> type[Connector]:
@@ -162,7 +165,8 @@ async def run_source_sync(pool, redis, integration_id: UUID | str, *, trigger: s
         async with (http_factory or default_http)(config) as http:
             conn = cls(config, secrets, http)
             batch = await asyncio.wait_for(conn.pull(), timeout=timeout)
-            counts = await apply_source_batch(pool, redis, batch, source=f"integration:{row['kind']}")
+            counts = await apply_source_batch(pool, redis, batch, source=f"integration:{row['kind']}",
+                                              integration_id=row["id"])
             warnings = list(getattr(conn, "last_warnings", []) or [])
         if warnings:
             counts["warnings"] = len(warnings)
@@ -249,8 +253,19 @@ def kick_source_syncs(pool, redis, runner: Callable[..., Awaitable[int]] | None 
         return False
 
     async def _go() -> None:
+        # This task is created inside whichever tenant's scheduler iteration
+        # got here first and would inherit THAT tenant's context; with the
+        # single-flight guard above, every other tenant's integrations would
+        # then never be pulled. Sweep every active tenant explicitly instead.
+        from .. import tenancy
+
         try:
-            await (runner or run_due_source_syncs)(pool, redis)
+            for tid in await tenancy.list_tenant_ids(pool):
+                try:
+                    with tenancy.tenant_context(tid):
+                        await (runner or run_due_source_syncs)(pool, redis)
+                except Exception:  # noqa: BLE001 -- one tenant never stops the rest
+                    log.exception("source_sync_sweep_failed", extra={"tenant_id": tid})
         except Exception:  # noqa: BLE001
             log.exception("source_sync_sweep_failed")
 

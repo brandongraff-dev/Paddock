@@ -20,6 +20,7 @@ import aiohttp
 import redis.asyncio as redis_async
 from loguru import logger
 
+from . import tenancy
 from .config import Settings, get_settings
 from .context import ModuleContext
 from .orchestrator import OrchestratorClient
@@ -343,7 +344,12 @@ async def run_loop() -> None:
 
                     async def _run_and_ack(mid: str, j: dict[str, Any]) -> None:
                         try:
-                            await _process_job(ctx, j, stop_event)
+                            # Bind the job's tenant (and scan) for its whole run;
+                            # every orchestrator callback echoes them back.
+                            with tenancy.bind_job(j):
+                                await _process_job(ctx, j, stop_event)
+                        except tenancy.TenantError as exc:
+                            logger.error("job without a usable tenant dropped msg_id={} err={}", mid, exc)
                         finally:
                             try:
                                 await r.xack(s.stream, s.consumer_group, mid)

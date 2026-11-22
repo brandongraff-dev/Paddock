@@ -10,12 +10,14 @@ leaked SCIM token can never deactivate the break-glass admin.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime
 from typing import Any
 
 from ..config import settings
 from . import mapping
+from .scim_filter import Col, Exists, FilterError, Spec, compile_filter
 from .store import get_settings, revoke_user_sessions
 
 USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
@@ -72,6 +74,15 @@ async def break_glass(con) -> list[str]:
 # Rendering
 # --------------------------------------------------------------------------- #
 
+def user_version(row, groups: list[tuple[str, str]] | None = None) -> str:
+    return version_of("user", row["id"], row["updated_at"], row["role"], row["clearance"],
+                      sorted(g for g, _ in (groups or [])))
+
+
+def group_version(row, members: list[tuple[str, str]] | None = None) -> str:
+    return version_of("group", row["id"], row["updated_at"], sorted(m for m, _ in (members or [])))
+
+
 def user_resource(row, groups: list[tuple[str, str]] | None = None) -> dict[str, Any]:
     uid = str(row["id"])
     res: dict[str, Any] = {
@@ -84,6 +95,7 @@ def user_resource(row, groups: list[tuple[str, str]] | None = None) -> dict[str,
             "created": _iso(row["created_at"]),
             "lastModified": _iso(row["updated_at"]),
             "location": f"{base_url()}/Users/{uid}",
+            "version": user_version(row, groups),
         },
     }
     if row["external_id"]:
@@ -116,6 +128,7 @@ def group_resource(row, members: list[tuple[str, str]] | None) -> dict[str, Any]
             "created": _iso(row["created_at"]),
             "lastModified": _iso(row["updated_at"]),
             "location": f"{base_url()}/Groups/{gid}",
+            "version": group_version(row, members),
         },
     }
     if row["external_id"]:
@@ -138,37 +151,77 @@ def list_response(resources: list[dict[str, Any]], total: int, start: int) -> di
 
 
 # --------------------------------------------------------------------------- #
-# Filters: `attr eq "value"` [and ...]
+# Filters (RFC 7644 3.4.2.2): see scim_filter.py
 # --------------------------------------------------------------------------- #
 
-_COND = re.compile(
-    r'^\s*([A-Za-z][A-Za-z0-9_.:\-]*)\s+(eq)\s+("(?:[^"\\]|\\.)*"|true|false|null)\s*$', re.I,
-)
+USER_SPEC: Spec = {
+    "username": Col("u.username"),
+    "externalid": Col("u.external_id", ci=False),
+    "displayname": Col("u.display_name"),
+    "name.givenname": Col("u.given_name"),
+    "name.familyname": Col("u.family_name"),
+    "name.formatted": Col("concat_ws(' ', u.given_name, u.family_name)"),
+    "emails": Col("u.email"),
+    "emails.value": Col("u.email"),
+    "emails.type": Col("(CASE WHEN u.email IS NULL THEN NULL ELSE 'work' END)"),
+    "emails.primary": Col("(CASE WHEN u.email IS NULL THEN NULL ELSE TRUE END)", "bool"),
+    "active": Col("u.active", "bool"),
+    "id": Col("u.id::text", ci=False),
+    "roles.value": Col("u.role"),
+    "meta.lastmodified": Col("u.updated_at", "datetime"),
+    "meta.created": Col("u.created_at", "datetime"),
+    "groups.value": Exists(
+        "EXISTS (SELECT 1 FROM scim_group_members gm WHERE gm.user_id = u.id AND lower(gm.group_id::text) = {p})",
+        "EXISTS (SELECT 1 FROM scim_group_members gm WHERE gm.user_id = u.id)",
+    ),
+}
+GROUP_SPEC: Spec = {
+    "displayname": Col("g.display_name"),
+    "externalid": Col("g.external_id", ci=False),
+    "id": Col("g.id::text", ci=False),
+    "meta.lastmodified": Col("g.updated_at", "datetime"),
+    "meta.created": Col("g.created_at", "datetime"),
+    "members.value": Exists(
+        "EXISTS (SELECT 1 FROM scim_group_members gm WHERE gm.group_id = g.id AND lower(gm.user_id::text) = {p})",
+        "EXISTS (SELECT 1 FROM scim_group_members gm WHERE gm.group_id = g.id)",
+    ),
+}
 
 
-def parse_filter(expr: str | None, allowed: dict[str, str]) -> list[tuple[str, Any]]:
-    """Return [(canonical_attr, value)]. Only ``eq`` joined by ``and``.
+def filter_sql(expr: str | None, spec: Spec, args: list[Any]) -> str | None:
+    """Compile a SCIM ``filter`` to SQL (bind values appended to ``args``);
+    any problem is a 400 ``invalidFilter``."""
+    try:
+        return compile_filter(expr, spec, args)
+    except FilterError as exc:
+        raise ScimError(400, f"unsupported filter: {exc}", "invalidFilter") from exc
 
-    ``allowed`` maps lower-cased SCIM attribute -> canonical name.
-    """
-    if not expr:
-        return []
-    parts = re.split(r"\s+and\s+", expr.strip(), flags=re.I)
-    out: list[tuple[str, Any]] = []
-    for part in parts:
-        m = _COND.match(part)
-        if not m:
-            raise ScimError(400, f"unsupported filter: {expr[:200]}", "invalidFilter")
-        attr = _strip_urn(m.group(1)).lower()
-        if attr not in allowed:
-            raise ScimError(400, f"filtering on {m.group(1)!r} is not supported", "invalidFilter")
-        raw = m.group(3)
-        if raw.startswith('"'):
-            val: Any = re.sub(r'\\(.)', r"\1", raw[1:-1])
+
+def project(res: dict[str, Any], attributes: str | None, excluded: str | None) -> dict[str, Any]:
+    """RFC 7644 3.4.2.5 ``attributes`` / ``excludedAttributes`` (top-level
+    names or dotted sub-attributes; ``id`` and ``schemas`` always stay)."""
+    keep = {a.strip().lower().split(".")[0] for a in (attributes or "").split(",") if a.strip()}
+    drop = {a.strip().lower() for a in (excluded or "").split(",") if a.strip()}
+    if not keep and not drop:
+        return res
+    out = {}
+    for k, v in res.items():
+        low = k.lower()
+        if low in ("id", "schemas"):
+            out[k] = v
+        elif keep and low not in keep:
+            continue
+        elif low in drop:
+            continue
         else:
-            val = {"true": True, "false": False, "null": None}[raw.lower()]
-        out.append((allowed[attr], val))
+            out[k] = v
     return out
+
+
+def version_of(*parts: Any) -> str:
+    """Weak ETag over whatever makes a representation change."""
+    h = hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:20]
+    return f'W/"{h}"'
 
 
 def _strip_urn(path: str) -> str:
@@ -319,7 +372,7 @@ def _set_user_attr(new: dict[str, Any], kind: str, path: str, value: Any) -> Non
 # Groups: PATCH
 # --------------------------------------------------------------------------- #
 
-_MEMBER_FILTER = re.compile(r'^members\[\s*value\s+eq\s+"([^"]+)"\s*\]$', re.I)
+_MEMBER_FILTER = re.compile(r'^members\[\s*value\s+eq\s+"([^"]+)"\s*\](\.value)?$', re.I)
 
 
 def apply_group_patch(
@@ -349,7 +402,7 @@ def apply_group_patch(
         if m:
             if kind != "remove":
                 raise ScimError(400, "only remove is supported with a member filter", "invalidPath")
-            mem.discard(m.group(1))
+            mem.discard(m.group(1).lower())
             continue
         _group_attr(new, mem, kind, p, value)
     return new, mem
@@ -362,9 +415,9 @@ def _member_ids(value: Any) -> list[str]:
     out = []
     for it in items:
         if isinstance(it, dict) and it.get("value"):
-            out.append(str(it["value"]))
+            out.append(str(it["value"]).lower())
         elif isinstance(it, str) and it:
-            out.append(it)
+            out.append(it.lower())
     return out
 
 

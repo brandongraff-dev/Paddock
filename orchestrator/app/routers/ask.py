@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, Query
 from ..config import settings
 from ..db import get_pool
 from ..models import AskIn, ClusterOut
+from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["ask"])
@@ -57,7 +58,7 @@ async def ask(body: AskIn) -> dict[str, Any]:
         import httpx
 
         async with httpx.AsyncClient(timeout=_PROXY_TIMEOUT) as http:
-            resp = await http.post(url, json=payload)
+            resp = await http.post(url, json=payload, headers=service_headers())
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):
@@ -129,7 +130,7 @@ async def _graphsync_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
         import httpx
 
         async with httpx.AsyncClient(timeout=_PROXY_TIMEOUT) as http:
-            resp = await http.get(url, params=clean)
+            resp = await http.get(url, params=clean, headers=service_headers())
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):

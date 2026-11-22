@@ -15,8 +15,12 @@ WORKDIR /app
 
 # Install from pyproject.toml (single source of truth for dependencies; a
 # hand-copied list here drifted and shipped images missing httpx/cryptography).
-COPY pyproject.toml ./
-COPY app ./app
+# Built from the REPOSITORY ROOT (context: ., file: orchestrator/Dockerfile)
+# so the migrations ship inside the image: the app migrates on startup
+# (migrate_on_startup) and app.migrate looks in /app/schema first.
+COPY orchestrator/pyproject.toml ./
+COPY orchestrator/app ./app
+COPY schema ./schema
 RUN pip install --no-cache-dir ".[aws]"
 
 RUN chown -R app:app /app

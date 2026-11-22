@@ -61,8 +61,21 @@ from .routers import scim as scim_router
 from .routers import sso as sso_router
 from .routers import tickets as tickets_router
 from .routers import timeline as timeline_router
+from .verification import router as verification_router
 from .reports import router as reports_router
+from .routers import ingest as ingest_router
 from .scheduler import scheduler_loop
+from .billing import gate as billing_gate
+from .billing import router as billing_router
+from .billing import status as billing_status
+from .growth import exposure as growth_exposure
+from .growth import suppliers as growth_suppliers
+from .growth import trust as growth_trust
+from .growth.config import growth_settings
+from .growth.runner import growth_loop
+from . import sensors as sensors_svc
+from . import tenancy
+from .routers import sensors as sensors_router
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +133,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler_task = asyncio.create_task(scheduler_loop(app))
         app.state.scheduler_task = scheduler_task
 
+    # Growth runner (schema 032): public exposure jobs + supplier assessments.
+    # Passive only: DNS + CT, never a packet to the assessed domain.
+    growth_task: asyncio.Task | None = None
+    if growth_settings.runner_enabled:
+        growth_task = asyncio.create_task(growth_loop(app))
+        app.state.growth_task = growth_task
+    # Sentry liveness: flags silent sensors and emits sensor.offline/online.
+    sensor_task: asyncio.Task | None = asyncio.create_task(sensors_svc.monitor_loop(app))
+
     try:
         yield
     finally:
-        for task in (scheduler_task, anchor_task):
+        for task in (scheduler_task, anchor_task, growth_task, sensor_task):
             if task is None:
                 continue
             task.cancel()
@@ -212,6 +234,9 @@ def create_app() -> FastAPI:
         are sent every ~15s so intermediaries don't drop idle streams.
         """
         r = request.app.state.redis
+        # The stream is shared by every tenant; a caller only ever sees events
+        # stamped with its own tenant (queue.publish_event stamps them).
+        caller_tenant = tenancy.current_tenant_id()
 
         async def gen() -> AsyncIterator[bytes]:
             async for sid, payload in read_events(r, since=since, block_ms=15000):
@@ -219,6 +244,8 @@ def create_app() -> FastAPI:
                     return
                 if payload.get("event") == "keepalive":
                     yield b": keepalive\n\n"
+                    continue
+                if not tenancy.event_visible_to(payload, caller_tenant):
                     continue
                 body = json.dumps({"id": sid, **payload}, default=str)
                 yield f"id: {sid}\ndata: {body}\n\n".encode("utf-8")
@@ -273,6 +300,7 @@ def create_app() -> FastAPI:
     # Fleet agents + gated enforcement, auto-remediation, IoT/OT devices
     app.include_router(devices_router.router)
     app.include_router(fleet_router.router)
+    app.include_router(sensors_router.router)
     app.include_router(remediation_router.router)
     # Two-way ticketing: inbound callbacks from Jira / ServiceNow / Linear.
     app.include_router(integrations_inbound_router.router)
@@ -294,6 +322,24 @@ def create_app() -> FastAPI:
     app.include_router(onboarding_router.system_router)
     # Reporting: executive report, weekly digest, compliance evidence packs
     app.include_router(reports_router.router)
+    # Hosted-edition billing (schema 028): Stripe checkout/portal/webhook, the
+    # 402 upgrade body, and the public /status endpoint.
+    app.include_router(billing_router.router)
+    app.include_router(billing_status.router)
+    app.add_exception_handler(billing_gate.PaymentRequired, billing_gate.payment_required_handler)
+    app.include_router(verification_router.router)
+    # MSP console (schema 033): customers, switching, rollup, templates, usage
+    from .routers import msp as msp_router
+
+    app.include_router(msp_router.router)
+    # Universal ingest + per-source ingest tokens (schema 027).
+    app.include_router(ingest_router.router)
+    # Growth (schema 032): free exposure report (public), shareable trust pages,
+    # supplier monitoring. All passive: DNS + certificate transparency only.
+    app.include_router(growth_exposure.router)
+    app.include_router(growth_trust.router)
+    app.include_router(growth_trust.public_router)
+    app.include_router(growth_suppliers.router)
 
     return app
 

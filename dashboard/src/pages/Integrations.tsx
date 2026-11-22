@@ -36,6 +36,7 @@ import {
   type SchemaProp,
   type TestResult,
 } from "../api/integrations";
+import ConnectAnything from "../components/ConnectAnything";
 import EmptyState from "../components/EmptyState";
 import Gate from "../components/Gate";
 import "../styles/integrations.css";
@@ -771,6 +772,8 @@ export default function IntegrationsPage() {
           </ul>
         )}
       </section>
+
+      <ConnectAnything />
 
       <section className="ig-catalog" aria-label="catalog">
         <div className="ig-catalog-head">

@@ -31,6 +31,7 @@ from ..config import settings
 from ..db import create_pool
 from ..middleware import configure_logging
 from ..queue import create_redis
+from .. import tenancy
 from . import service
 from .settings import isettings
 
@@ -50,20 +51,38 @@ async def ensure_group(r: Any, stream: str, group: str) -> None:
 
 
 async def handle_entry(pool: Any, sid: str, fields: dict[str, Any]) -> bool:
-    """Map + emit one stream entry. Returns True when it may be acked."""
+    """Map + emit one stream entry. Returns True when it may be acked.
+
+    The entry's ``tenant_id`` is bound for the whole job: the enrichment reads
+    and the fan-out to integrations (Slack / Jira / SIEM ... which are tenant
+    rows) only ever see that tenant's rows, so tenant A's event can never be
+    delivered to tenant B's integration. An entry that names no tenant is the
+    default tenant's -- or, under TENANCY_STRICT, dropped.
+    """
     try:
-        event = await service.event_from_stream(pool, fields, sid)
-    except Exception:  # noqa: BLE001 -- a malformed entry must not wedge the stream
-        log.exception("integration_stream_map_failed", extra={"stream_id": sid})
+        tid = tenancy.norm(service.decode_stream_fields(fields).get("tenant_id"))
+    except ValueError:
+        log.warning("integration_event_bad_tenant", extra={"stream_id": sid})
         return True
-    if event is None:
-        return True
-    # fan_out (not emit) so a DB outage leaves the entry un-acked for retry.
-    try:
-        await service.fan_out(pool, event)
-    except Exception:  # noqa: BLE001
-        log.exception("integration_fan_out_failed", extra={"stream_id": sid})
-        return False
+    if tid is None:
+        if settings.tenancy_strict:
+            log.warning("integration_event_without_tenant_dropped", extra={"stream_id": sid})
+            return True
+        tid = tenancy.DEFAULT_TENANT_ID
+    with tenancy.tenant_context(tid):
+        try:
+            event = await service.event_from_stream(pool, fields, sid)
+        except Exception:  # noqa: BLE001 -- a malformed entry must not wedge the stream
+            log.exception("integration_stream_map_failed", extra={"stream_id": sid})
+            return True
+        if event is None:
+            return True
+        # fan_out (not emit) so a DB outage leaves the entry un-acked for retry.
+        try:
+            await service.fan_out(pool, event)
+        except Exception:  # noqa: BLE001
+            log.exception("integration_fan_out_failed", extra={"stream_id": sid})
+            return False
     return True
 
 
@@ -111,7 +130,12 @@ async def delivery_loop(pool: Any, stop: asyncio.Event,
                         transport: Optional[httpx.AsyncBaseTransport] = None) -> None:
     while not stop.is_set():
         try:
-            n = await service.process_due(pool, transport=transport)
+            # Due deliveries are tenant rows: sweep each active tenant in its own
+            # context (a connector call carries only that tenant's secrets).
+            n = 0
+            for tid in await tenancy.list_tenant_ids(pool):
+                with tenancy.tenant_context(tid):
+                    n += await service.process_due(pool, transport=transport)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

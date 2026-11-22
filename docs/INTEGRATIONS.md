@@ -79,10 +79,15 @@ The **Test** button is the one synchronous path: the API sends an
 | `finding.resolved` | fixed or verified closed | finding's | as above + `status` |
 | `finding.reopened` | a fixed finding came back | finding's | as above |
 | `finding.accepted` | risk-accepted, false positive or won't-fix | finding's | as above + `status` |
+| `finding.verified` | a safe check ran against a finding ([Verification](VERIFICATION.md)) | finding's | as above + `verdict`, `check_id`, `verification_id` |
+| `finding.fix_verified` | a fix was re-checked and could no longer be reproduced | finding's | as above |
+| `finding.fix_failed` | a fix did not hold; the finding was reopened (also emits `finding.reopened`) | finding's | as above |
 | `attack_path.opened` | a new path to a crown jewel | path's | `attack_path_id`, `fingerprint`, `source_asset`, `target_asset`, `exploitability`, `kev_on_path` |
 | `change.detected` | the attack surface changed | change's | `change_type`, `asset` |
 | `asset.discovered` | a new asset | none | `asset_id`, `asset`, `asset_kind`, `source` |
 | `device.behavior` | a Sentry behaviour detector fired | detector's | `device`, `detector` |
+| `sensor.offline` | a Sentry sensor stopped reporting (see [Sentry](SENTRY.md)) | `high` | `sensor_id`, `sensor`, `site`, `last_seen`, `silent_for_s` |
+| `sensor.online` | a silent sensor is reporting again | `info` | `sensor_id`, `sensor`, `site` |
 | `scan.completed` / `scan.failed` | a scan finished / failed | none | `scan_id`, `scan_kind`, `target`, `error` |
 | `report.digest` | the scheduled digest is ready | none | |
 | `integration.test` | the Test button | `info` | `integration_id`, `integration_name` |
@@ -167,13 +172,75 @@ Worker environment: `DATABASE_URL`, `REDIS_URL`, `PADDOCK_SECRET_KEY`
   and reserved ranges always refused, private/LAN addresses only when the
   integration has **Allow private network** switched on) and never follows
   redirects. SMTP hosts get the same check. URLs are also validated when you
-  save, so mistakes surface in the form.
+  save, so mistakes surface in the form. The check is **DNS-pinned** (see
+  [Outbound safety](#outbound-safety)): the name is resolved once and Paddock
+  connects to the addresses it validated, so DNS rebinding cannot swap in an
+  internal address between the check and the connection.
 * **Admin only.** Creating, editing, testing, enabling/disabling and retrying
   need the `admin` capability; reading needs `read`. Every write lands in the
   hash-chained audit log (request bodies, and therefore secrets, are not
   recorded).
 * Email is always encrypted (STARTTLS or implicit TLS, certificate verified);
   there is no plaintext mode.
+
+---
+
+## Outbound safety
+
+Every URL a customer can influence is fetched through
+`app.integrations.pinned.PinnedTransport` (httpx), never a bare client. A check
+that resolves a name and then lets the HTTP library resolve it *again* is open
+to DNS rebinding: the attacker's DNS answers a public address for the check and
+`127.0.0.1` / `169.254.169.254` (TTL 0) for the connect. The pinned transport
+removes the second lookup:
+
+1. It resolves the host **once** and validates **every** A/AAAA answer with the
+   same rules as `netsafety` (one definition of "protected address", shared
+   with the scan scope guard): cloud-metadata / reserved ranges (`HARD_DENY`) are
+   always refused, private / loopback / link-local / CGNAT only when the
+   integration has *Allow private network*, IPv4-mapped IPv6 is unmapped first.
+   **One bad answer refuses the whole name** (mixed public + internal answers
+   are not trusted); an empty or unparseable answer is refused.
+2. It connects to one of those literal addresses (the next one if the connect
+   fails, at most four), so the socket can only reach an address that passed.
+3. The original hostname is kept for the `Host` header and for TLS: it is the
+   SNI and the certificate is verified against it, not against the IP.
+4. Connections are not kept alive across requests (a pooled socket is keyed by
+   IP; reusing it for another hostname would skip the certificate check).
+5. Redirects are never followed by the client. The few callers that follow
+   them by hand (scope-proof file checks: same host only, max 3; context
+   connectors on their vendor's shard hosts) re-validate each hop, and the
+   transport re-resolves and re-validates every request regardless.
+
+Where it applies: all notification and ticketing connectors (webhook, Slack,
+Teams, PagerDuty, Jira, ServiceNow, Linear, SIEMs incl. Splunk with
+`tls_verify=false`), context / action connectors (Defender, CrowdStrike,
+ServiceNow CMDB, Unifi, Meraki), inbound-ticket handlers, scope-proof HTTPS
+file checks, OIDC discovery / JWKS / token / userinfo, Microsoft Graph, and SAML
+IdP metadata URLs. SMTP connects to a validated IP with the configured hostname
+for STARTTLS/TLS verification; syslog resolves once and connects by IP the same
+way. Not covered: calls to Paddock's own services (fixed internal URLs), the
+operator-configured audit-anchor webhook, and the threat-intel feed pollers,
+which run in the separate `threatintel` service (the orchestrator only stores
+the feed URLs and asks that service to poll; it is not covered by this transport).
+
+**Proxies.** `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` in the environment are
+**ignored** for these requests: through a proxy it is the proxy that resolves
+the name, which would put the rebinding window back. If your network only
+allows egress through a proxy set `PADDOCK_OUTBOUND_PROXY=http://proxy:3128`.
+Paddock then still refuses any name whose addresses fail the policy (it
+resolves and checks the name itself first), but the final connect is the
+proxy's own, so **the proxy must enforce the egress policy** (deny RFC 1918,
+loopback, link-local and metadata ranges) and the residual rebinding window is
+the proxy's to close. Prefer allow-listing the few vendor hosts at the proxy.
+
+Tests (`orchestrator/tests/test_pinned_transport.py`): a scripted resolver that
+answers a public address first and `127.0.0.1` second (the connection goes to
+the first, or is refused, never to loopback), IPv6, mixed answers, redirects to
+internal names and literal metadata IPs, a local TLS server proving SNI, `Host`
+and certificate verification for the original hostname (and rejection of a
+certificate for another name or CA), fallback to the next validated address,
+proxy handling.
 
 ---
 

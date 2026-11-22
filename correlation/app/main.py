@@ -21,9 +21,11 @@ import signal
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from . import tenancy
 from .config import settings
 from .db import Database
 from .engine.attack_mapping import (
@@ -74,10 +76,11 @@ class Service:
         self._redis: Any = None
         self._bg_tasks: list[asyncio.Task[Any]] = []
         self._ready = False
-        # Attack-path recompute debounce state.
-        self._pathcompute_lock = asyncio.Lock()
-        self._pathcompute_task: Optional[asyncio.Task[Any]] = None
-        self._last_pathcompute: float = 0.0
+        # Attack-path recompute debounce state, PER TENANT: one tenant's pending
+        # recompute must never swallow another tenant's trigger.
+        self._pathcompute_locks: dict[str, asyncio.Lock] = {}
+        self._pathcompute_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._last_pathcompute: dict[str, float] = {}
 
     async def startup(self) -> None:
         self.loader.load_all()
@@ -110,7 +113,9 @@ class Service:
         )
         if self.cfg.attack_map_enabled:
             try:
-                n = await self.mapper.sync_catalog()
+                # attack_technique_map is a global catalogue: platform-only writes.
+                with tenancy.platform_context():
+                    n = await self.mapper.sync_catalog()
                 log.info("attack_technique_map catalog synced: %d rules", n)
             except Exception:
                 log.exception("attack catalog sync failed")
@@ -147,13 +152,13 @@ class Service:
 
     async def shutdown(self) -> None:
         self._ready = False
-        if self._pathcompute_task is not None:
-            self._pathcompute_task.cancel()
+        for task in list(self._pathcompute_tasks.values()):
+            task.cancel()
             try:
-                await self._pathcompute_task
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
-            self._pathcompute_task = None
+        self._pathcompute_tasks.clear()
         for t in self._bg_tasks:
             t.cancel()
         for t in self._bg_tasks:
@@ -215,6 +220,8 @@ class Service:
                 for msg_id, fields in items:
                     try:
                         await self._handle_event(fields)
+                    except tenancy.TenantError as exc:
+                        log.warning("dropping event %s without a usable tenant: %s", msg_id, exc)
                     except Exception:
                         log.exception("event %s failed", msg_id)
                     finally:
@@ -236,19 +243,24 @@ class Service:
             payload = fields
 
         ev = payload.get("event")
-        if ev == "finding_opened":
-            fid = payload.get("finding_id")
-            if fid:
-                await self._on_finding_opened(fid)
-            self._trigger_pathcompute()
-        elif ev == "asset_added":
-            aid = payload.get("asset_id")
-            if aid:
-                await self._on_asset_added(aid)
-            self._trigger_pathcompute()
-        elif ev == "edge_added":
-            # A new edge reshapes reachability; recompute (debounced).
-            self._trigger_pathcompute()
+        if ev not in ("finding_opened", "asset_added", "edge_added"):
+            return
+        # The event names its tenant; everything it triggers (DB reads/writes,
+        # orchestrator calls, the debounced recompute task it spawns) runs as it.
+        with tenancy.bind_event(payload):
+            if ev == "finding_opened":
+                fid = payload.get("finding_id")
+                if fid:
+                    await self._on_finding_opened(fid)
+                self._trigger_pathcompute()
+            elif ev == "asset_added":
+                aid = payload.get("asset_id")
+                if aid:
+                    await self._on_asset_added(aid)
+                self._trigger_pathcompute()
+            elif ev == "edge_added":
+                # A new edge reshapes reachability; recompute (debounced).
+                self._trigger_pathcompute()
         # cve_published and finding_closed are informational; we handle
         # them via the periodic sweep for simplicity.
 
@@ -355,6 +367,12 @@ class Service:
                 log.exception("periodic sweep crashed; continuing")
 
     async def run_sweep(self) -> dict[str, Any]:
+        """Sweep the tenant named by the request, else every active tenant."""
+        return tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self._sweep_tenant)
+        )
+
+    async def _sweep_tenant(self) -> dict[str, Any]:
         assert self.matcher is not None and self.policy_eval is not None
         chains = await self.matcher.sweep_open_findings()
         for c in chains:
@@ -400,36 +418,54 @@ class Service:
         while True:
             try:
                 await asyncio.sleep(interval)
-                await self.run_pathcompute()
+                await self.run_pathcompute_scoped()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("periodic attack-path sweep crashed; continuing")
 
+    @staticmethod
+    def _pc_key() -> str:
+        return tenancy.current_tenant_id() or "-"
+
     async def run_pathcompute(self) -> dict[str, Any]:
-        """Recompute all attack paths. Serialized so concurrent triggers and
-        the periodic sweep never overlap."""
+        """Recompute the CURRENT tenant's attack paths. Serialized per tenant so
+        concurrent triggers and the periodic sweep never overlap."""
         assert self.attackpaths is not None
-        async with self._pathcompute_lock:
+        key = self._pc_key()
+        lock = self._pathcompute_locks.setdefault(key, asyncio.Lock())
+        async with lock:
             result = await self.attackpaths.run()
-            self._last_pathcompute = asyncio.get_running_loop().time()
+            self._last_pathcompute[key] = asyncio.get_running_loop().time()
         return result
 
+    async def run_pathcompute_scoped(self) -> dict[str, Any]:
+        """The tenant named by the request, else every active tenant."""
+        res = tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self.run_pathcompute)
+        )
+        res.setdefault("computed", 0)
+        res.setdefault("elapsed_ms", 0.0)
+        return res
+
     def _trigger_pathcompute(self) -> None:
-        """Schedule a debounced attack-path recompute (≤ once per window)."""
+        """Schedule a debounced attack-path recompute (≤ once per window) for
+        the current tenant (the task inherits the tenant context)."""
         if self.attackpaths is None:
             return
-        if self._pathcompute_task is not None and not self._pathcompute_task.done():
+        key = self._pc_key()
+        pending = self._pathcompute_tasks.get(key)
+        if pending is not None and not pending.done():
             # A recompute is already pending; it will pick up the latest graph.
             return
-        self._pathcompute_task = asyncio.create_task(
-            self._debounced_pathcompute(), name="pathcompute"
+        self._pathcompute_tasks[key] = asyncio.create_task(
+            self._debounced_pathcompute(), name=f"pathcompute-{key}"
         )
 
     async def _debounced_pathcompute(self) -> None:
         window = max(0, self.cfg.attackpath_debounce_sec)
         now = asyncio.get_running_loop().time()
-        wait = self._last_pathcompute + window - now
+        wait = self._last_pathcompute.get(self._pc_key(), 0.0) + window - now
         if wait > 0:
             await asyncio.sleep(wait)
         try:
@@ -483,6 +519,20 @@ app = FastAPI(
     version="0.1.0",
     lifespan=_lifespan,
 )
+
+
+@app.middleware("http")
+async def _tenant_middleware(request: Request, call_next):
+    """Bind the tenant the caller (the orchestrator, with the service key)
+    names via X-Paddock-Tenant; naming one without the key is refused."""
+    try:
+        tid = tenancy.request_tenant(request.headers, path=request.url.path)
+    except tenancy.TenantError as exc:
+        return JSONResponse({"error": "tenant_forbidden", "detail": str(exc)}, status_code=403)
+    if tid is None:
+        return await call_next(request)
+    with tenancy.tenant_context(tid):
+        return await call_next(request)
 
 
 class SweepResponse(BaseModel):
@@ -554,8 +604,11 @@ async def map_attack() -> MapAttackResponse:
         raise HTTPException(status_code=503, detail="not ready")
     if not service.cfg.attack_map_enabled:
         raise HTTPException(status_code=409, detail="attack mapping disabled")
-    res = await service.mapper.map_findings()
-    return MapAttackResponse(**res)
+    res = tenancy.merge_counts(await tenancy.run_for_request_or_all(
+        service.db.pool, service.mapper.map_findings))
+    return MapAttackResponse(
+        mapped=res.get("mapped", 0), techniques=res.get("techniques", 0),
+        tactics=res.get("tactics", 0), elapsed_ms=res.get("elapsed_ms", 0.0))
 
 
 @app.get("/attack/coverage")
@@ -574,7 +627,7 @@ class ComputePathsResponse(BaseModel):
 async def compute_paths() -> ComputePathsResponse:
     if service.attackpaths is None:
         raise HTTPException(status_code=503, detail="not ready")
-    res = await service.run_pathcompute()
+    res = await service.run_pathcompute_scoped()
     return ComputePathsResponse(
         computed=res["computed"], elapsed_ms=res["elapsed_ms"]
     )
@@ -591,8 +644,9 @@ async def fuse() -> FuseResponse:
         raise HTTPException(status_code=503, detail="not ready")
     if not service.cfg.fusion_enabled:
         raise HTTPException(status_code=409, detail="fusion disabled")
-    res = await service.fusion.run()
-    return FuseResponse(fused=res["computed"], elapsed_ms=res["elapsed_ms"])
+    res = tenancy.merge_counts(await tenancy.run_for_request_or_all(
+        service.db.pool, service.fusion.run))
+    return FuseResponse(fused=res.get("computed", 0), elapsed_ms=res.get("elapsed_ms", 0.0))
 
 
 @app.post("/sweep", response_model=SweepResponse)
@@ -605,8 +659,11 @@ async def sweep() -> SweepResponse:
 async def recompute_blast(limit: int = 2000) -> dict[str, int]:
     if service.blast is None:
         raise HTTPException(status_code=503, detail="not ready")
-    n = await service.blast.recompute_all_open(limit=limit)
-    return {"recomputed": n}
+    async def _one() -> dict[str, Any]:
+        return {"n": await service.blast.recompute_all_open(limit=limit)}
+
+    res = tenancy.merge_counts(await tenancy.run_for_request_or_all(service.db.pool, _one))
+    return {"recomputed": int(res.get("n", 0))}
 
 
 # Entry point for `python -m app.main`

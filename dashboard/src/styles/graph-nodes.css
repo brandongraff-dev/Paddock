@@ -1,0 +1,131 @@
+/* ------------------------------------------------------------------ *
+ * Graph canvas nodes: workflow-canvas cards (uniform size, icon tile, *
+ * title + quiet subtitle, side handles). Tokens only; no hover glow.  *
+ * ------------------------------------------------------------------ */
+.gnode {
+  --kind-color: var(--accent);
+  position: relative;
+  width: 208px;
+  height: 56px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-0);
+  font-family: var(--sans);
+  transition: border-color 120ms ease, opacity 120ms ease;
+}
+.react-flow__node.selected .gnode,
+.gnode:hover { border-color: var(--border-strong); }
+
+.gnode-icon {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--kind-color);
+  background: color-mix(in srgb, var(--kind-color) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--kind-color) 32%, transparent);
+}
+.gnode-text { min-width: 0; flex: 1 1 auto; }
+.gnode-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--text-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnode-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnode-sub .blast { font-family: var(--mono); }
+
+/* open high/critical findings: a count badge only, so a busy surface doesn't turn red */
+.gnode-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font: 600 10px/1 var(--mono);
+  color: #fff;
+  background: var(--sev-crit);
+  border: 2px solid var(--bg);
+}
+
+/* connection handles: small dots on the card edge */
+.gnode .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--panel);
+  border: 1.5px solid color-mix(in srgb, var(--kind-color) 60%, var(--border-strong));
+}
+.gnode .react-flow__handle-left { left: -5px; }
+.gnode .react-flow__handle-right { right: -5px; }
+
+.gnode.gx-dim { opacity: 0.18; }
+.gnode.gx-fade { opacity: 0.35; }
+
+/* edges: quiet by default; a hovered node lights its own links */
+.react-flow__edge.gx-edge-lit path { stroke: var(--text-1) !important; }
+
+/* ---------- kind filter: one quiet toolbar, neutral chips ---------- */
+.gfilter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.gchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 12px/1 var(--sans);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.gchip:hover { color: var(--text-1); }
+.gchip.on { color: var(--text-0); background: rgba(236, 226, 208, 0.07); }
+.gchip .sq { width: 7px; height: 7px; border-radius: 2px; opacity: 0.35; }
+.gchip.on .sq { opacity: 1; }
+.gchip .n { font: 11px/1 var(--mono); color: var(--text-2); }
+.gchip:focus-visible { outline: 1px solid var(--border-strong); outline-offset: 1px; }
+.gsep { width: 1px; height: 16px; margin: 0 4px; background: var(--border); }
+.gchip.kev .sq { background: var(--sev-crit); }
+.gchip.kev.on { color: var(--text-0); background: rgba(213, 73, 60, 0.12); }
+
+/* graph page only: warm chrome, no cool tints (globals are shared with other canvases) */
+.graph-wrap .react-flow__controls,
+.graph-wrap .react-flow__minimap { background: rgba(22, 19, 16, 0.92) !important; }
+.graph-wrap .react-flow__controls button svg { fill: var(--text-1); }
+.graph-wrap .react-flow__edge:hover .react-flow__edge-path,
+.graph-wrap .react-flow__edge.selected .react-flow__edge-path { stroke: var(--text-1); }

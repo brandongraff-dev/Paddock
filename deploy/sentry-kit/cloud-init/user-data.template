@@ -1,0 +1,37 @@
+#cloud-config
+# Paddock Sentry: cloud-init user-data for Raspberry Pi OS (Trixie and later, via
+# Raspberry Pi Imager or by dropping this file on the boot partition as
+# "user-data"), Debian cloud images and Ubuntu.
+#
+# Render it first (fills the four @PLACEHOLDERS@ and checks them):
+#   ./render-user-data.sh --server https://paddock.example.com:8101 \
+#       --token pet_xxxxxxxx_... --bundle-url https://files.example.com/paddock-sentry-kit.tar.gz \
+#       --bundle-sha256 <sha256 printed by make-bundle.sh>  > user-data
+#
+# The sensor sources come from the kit bundle you host yourself (make-bundle.sh),
+# verified by SHA-256 before anything runs. The device contacts only: the Debian
+# package mirror, that bundle URL, and your Paddock server. No telemetry.
+hostname: paddock-sentry
+manage_etc_hosts: true
+package_update: true
+packages:
+  - tcpdump
+  - python3
+  - ca-certificates
+  - curl
+
+write_files:
+  - path: /boot/firmware/paddock-sentry.env
+    permissions: "0600"
+    content: |
+      PADDOCK_SERVER=@PADDOCK_SERVER@
+      PADDOCK_ENROLL_TOKEN=@ENROLL_TOKEN@
+      # PADDOCK_SENTRY_IFACE=eth1
+      # PADDOCK_SENTRY_NAME=@SENSOR_NAME@
+
+runcmd:
+  - [ sh, -c, "mkdir -p /opt/paddock-sentry-kit && curl -fsSL --proto '=https' -o /tmp/kit.tar.gz '@BUNDLE_URL@'" ]
+  - [ sh, -c, "echo '@BUNDLE_SHA256@  /tmp/kit.tar.gz' | sha256sum -c -" ]
+  - [ sh, -c, "tar -xzf /tmp/kit.tar.gz -C /opt/paddock-sentry-kit --strip-components=1" ]
+  - [ sh, -c, "PADDOCK_SKIP_APT=1 /opt/paddock-sentry-kit/install.sh --env /boot/firmware/paddock-sentry.env" ]
+  - [ rm, -f, /tmp/kit.tar.gz ]

@@ -142,6 +142,13 @@ export interface Finding {
   why?: WhyFactor[];
   /** Detail endpoint only: transition timeline, newest first. */
   history?: StatusHistoryEntry[];
+
+  /* ---- Verified findings (schema 026). Optional: older servers omit them. ---- */
+  /** Safe-check verdict: unverified | confirmed | not_reproducible | inconclusive. */
+  exploitability?: "unverified" | "confirmed" | "not_reproducible" | "inconclusive";
+  last_verified_at?: string | null;
+  /** Set when a re-check after the fix could no longer reproduce it ("verified fixed"). */
+  fix_verified_at?: string | null;
 }
 
 export interface WhyFactor {

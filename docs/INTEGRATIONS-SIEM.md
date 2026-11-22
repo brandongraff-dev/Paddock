@@ -1,7 +1,7 @@
 # SIEM integrations (OCSF 1.3)
 
 Paddock pushes findings and platform events into your SIEM as
-**[OCSF 1.3](https://schema.ocsf.io/1.3.0/)** JSON. Four connectors ship in
+**[OCSF 1.3](https://schema.ocsf.io/1.3.0/)** JSON. Five connectors ship in
 `orchestrator/app/integrations/connectors/`, all `Capability.NOTIFY`, category
 `siem`:
 
@@ -9,6 +9,7 @@ Paddock pushes findings and platform events into your SIEM as
 |---|---|---|---|---|
 | `splunk_hec` | Splunk HTTP Event Collector | HTTPS | up to 200 events per request | `token` |
 | `sentinel` | Microsoft Sentinel via the Azure Monitor **Logs Ingestion API** | HTTPS | up to 500 records per request, split at the 1 MB body limit | `client_secret` |
+| `google_secops` | Google SecOps (Chronicle) Ingestion API | HTTPS | up to 200 events per request, split at 1 MB | `service_account_json` |
 | `elastic` | Elasticsearch / Elastic Security `_bulk` | HTTPS | up to 500 docs per request | `api_key` |
 | `syslog` | Any RFC 5424 collector (QRadar, ArcSight, Graylog, rsyslog, syslog-ng…) | TLS (default), or TCP/UDP for private targets | one connection per batch | none |
 
@@ -217,6 +218,40 @@ CEF extension keys:
 | `dst` / `dhost` / `dvchost` / `duser` | asset value: `dst` for IPs, `dhost` for domains, `duser` for repositories, `dvchost` otherwise |
 | `cn1` `cvss`, `cfp1` `epss` | original scores |
 | `request` | deep link into the Paddock dashboard |
+
+---
+
+## Google SecOps (Chronicle)
+
+`google_secops` sends events to the Chronicle **Ingestion API** with
+service-account auth (the same JWT-bearer flow as the GCP connector: a signed
+RS256 JWT exchanged at `oauth2.googleapis.com`, scope
+`https://www.googleapis.com/auth/malachite-ingestion`; no Google SDK). The token
+is cached and refreshed once on a 401.
+
+1. In Google SecOps, create a service account with ingestion rights and download
+   its JSON key. Note the SecOps **customer ID** (a GUID).
+2. Create the integration: `customer_id`, `region` (`us` default, or `europe`,
+   `europe-west2`, `asia-southeast1`, ...), and paste the key as the
+   `service_account_json` secret. `ingestion_url` overrides the regional host.
+3. Pick `format`:
+   * `udm` (default): each event is sent as a **UDM** `GENERIC_EVENT` to
+     `POST /v2/udmevents:batchCreate` (`{customer_id, events}`). No parser needed.
+     The OCSF record from the shared mapping (below) is mapped to
+     `security_result` (`summary`, `description`, `severity` INFORMATIONAL..CRITICAL,
+     `rule_name`, `rule_id`, `category_details`, `url_back_to_product`), the asset
+     becomes `target` (`ip`, `url` or `hostname`), `metadata.product_log_id` is the
+     Paddock event id, and the complete OCSF record rides in `additional.ocsf`.
+   * `ocsf`: the OCSF JSON is sent as raw log lines to
+     `POST /v2/unstructuredlogs:batchCreate` with your `log_type` (default
+     `PADDOCK_OCSF`; needs a custom log type with an OCSF-JSON parser).
+
+Bodies are split at 1 MB and 200 events per request. HTTP 200 is success. 429
+and 5xx are retryable; 400 (invalid UDM or unknown log type), 401/403 and a
+malformed `customer_id` are not. **Test** sends one `integration.test` event
+end to end, so a green test proves the key, the customer ID and the region.
+Chronicle does not de-duplicate on `product_log_id`; Paddock may resend a batch
+after a transient failure, so key detections on it.
 
 ---
 

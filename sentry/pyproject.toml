@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paddock-sentry"
-version = "0.1.0"
+version = "0.2.0"
 description = "Paddock Sentry: a passive (listen-only) network sensor for IoT/OT visibility. Standard library only."
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-only" }

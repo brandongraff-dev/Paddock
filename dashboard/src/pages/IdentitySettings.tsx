@@ -30,6 +30,8 @@ import {
   type ScimTokenCreated,
 } from "../api/sso";
 import { ApiError } from "../api/client";
+import { paymentRequired } from "../api/billing";
+import { featureLabel } from "../components/UpgradePrompt";
 import type { Classification, Role } from "../api/types";
 import EmptyState from "../components/EmptyState";
 import Gate from "../components/Gate";
@@ -77,6 +79,8 @@ const PRESETS: Record<Preset, PresetInfo> = {
 };
 
 function errText(e: unknown): string {
+  const pr = paymentRequired(e);
+  if (pr) return `${featureLabel(pr.feature)} is part of the ${pr.required_edition} plan. Upgrade under Settings → Billing.`;
   if (e instanceof ApiError) {
     const b = e.body as { detail?: unknown } | undefined;
     if (b && typeof b.detail === "string") return b.detail;

@@ -22,16 +22,25 @@ import ExplorePage from "./pages/Explore";
 import ThreatIntelPage from "./pages/ThreatIntel";
 import DevicesPage from "./pages/Devices";
 import FleetPage from "./pages/Fleet";
+import SensorsPage from "./pages/Sensors";
 import RemediationPage from "./pages/Remediation";
 import IntegrationsPage from "./pages/Integrations";
 import SuppressionsPage from "./pages/Suppressions";
 import ReportsPage from "./pages/Reports";
+import MspConsolePage from "./pages/MspConsole";
 import Login from "./pages/Login";
 import SsoCallback from "./pages/SsoCallback";
+import ContextSyncPage from "./pages/ContextSync";
+import NetworkActionsPage from "./pages/NetworkActions";
 import IdentitySettingsPage from "./pages/IdentitySettings";
+import BillingPage from "./pages/Billing";
 import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
 import Setup, { FirstRunRedirect } from "./pages/Setup";
+import CheckPage from "./pages/Check";
+import TrustPage from "./pages/Trust";
+import TrustLinksPage from "./pages/TrustLinks";
+import SuppliersPage from "./pages/Suppliers";
 import { useLiveEvents } from "./hooks/useLiveEvents";
 import { useAuth, canViewAudit } from "./state/auth";
 import type { ReactNode } from "react";
@@ -73,6 +82,8 @@ function AuthedApp() {
       <FirstRunRedirect />
       <Routes>
         <Route path="/welcome" element={<Landing />} />
+        <Route path="/check" element={<CheckPage />} />
+        <Route path="/trust/:token" element={<TrustPage />} />
         <Route path="/setup" element={<Setup />} />
         <Route path="/" element={<Shell><Overview /></Shell>} />
         <Route path="/graph" element={<Shell noScroll><GraphPage /></Shell>} />
@@ -94,19 +105,26 @@ function AuthedApp() {
         <Route path="/threat-intel" element={<Shell><ThreatIntelPage /></Shell>} />
         <Route path="/devices" element={<Shell><DevicesPage /></Shell>} />
         <Route path="/fleet" element={<Shell><FleetPage /></Shell>} />
+        <Route path="/sensors" element={<Shell><SensorsPage /></Shell>} />
         <Route path="/remediation" element={<Shell><RemediationPage /></Shell>} />
         <Route path="/integrations" element={<Shell><IntegrationsPage /></Shell>} />
         <Route path="/suppressions" element={<Shell><SuppressionsPage /></Shell>} />
         <Route path="/reports" element={<Shell><ReportsPage /></Shell>} />
+        <Route path="/context" element={<Shell><ContextSyncPage /></Shell>} />
+        <Route path="/network-actions" element={<Shell><NetworkActionsPage /></Shell>} />
+        <Route path="/reports/trust" element={<Shell><RequireAdmin><TrustLinksPage /></RequireAdmin></Shell>} />
+        <Route path="/suppliers" element={<Shell><SuppliersPage /></Shell>} />
         <Route path="/audit" element={<Shell><RequireAudit><AuditPage /></RequireAudit></Shell>} />
         <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
+        <Route path="/settings/billing" element={<Shell><RequireAdmin><BillingPage /></RequireAdmin></Shell>} />
+        <Route path="/msp" element={<Shell><MspConsolePage /></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
 }
 
-const APP_SEGMENTS = new Set(["ask", "attack", "attack-paths", "audit", "chains", "changes", "dependencies", "devices", "explore", "findings", "fleet", "graph", "integrations", "monitoring", "posture", "remediation", "reports", "risk-model", "scans", "scope", "settings", "setup", "sso", "suppressions", "threat-intel", "tickets", "timeline"]);
+const APP_SEGMENTS = new Set(["ask", "attack", "attack-paths", "audit", "chains", "changes", "context", "dependencies", "devices", "explore", "findings", "fleet", "graph", "integrations", "monitoring", "msp", "network-actions", "posture", "remediation", "reports", "risk-model", "scans", "scope", "sensors", "settings", "setup", "sso", "suppliers", "suppressions", "threat-intel", "tickets", "timeline"]);
 
 function SignedOutDeepLink() {
   const seg = window.location.pathname.split("/")[1] ?? "";
@@ -121,6 +139,8 @@ function PublicApp() {
         <Route path="/" element={<Landing />} />
         <Route path="/welcome" element={<Landing />} />
         <Route path="/sso/callback" element={<SsoCallback />} />
+        <Route path="/check" element={<CheckPage />} />
+        <Route path="/trust/:token" element={<TrustPage />} />
         <Route path="/login" element={<Login />} />
         {/* app routes the sign-in screen should catch (deep links): everything else is a real 404 */}
         <Route path={`/:seg/*`} element={<SignedOutDeepLink />} />

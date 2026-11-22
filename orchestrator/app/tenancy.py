@@ -55,6 +55,10 @@ def _norm(tenant_id: Any) -> str | None:
     return str(uuid.UUID(str(tenant_id)))  # validates; raises ValueError
 
 
+#: Public name for the validator (raises ValueError on a malformed id).
+norm = _norm
+
+
 def current_tenant_id() -> str | None:
     """The tenant queries in this context run as (None = no tenant).
 
@@ -69,6 +73,21 @@ def current_tenant_id() -> str | None:
 def current_tenant_key() -> str:
     """A cache key for per-tenant in-process caches."""
     return current_tenant_id() or "-"
+
+
+def event_visible_to(payload: dict, caller_tenant: str | None) -> bool:
+    """May ``caller_tenant`` see this stream event? Events are stamped with a
+    ``tenant_id`` by ``queue.publish_event``; an unstamped (legacy) event
+    belongs to the default tenant, and in strict mode to nobody."""
+    if caller_tenant is None:
+        return False
+    ev = payload.get("tenant_id")
+    if ev in (None, ""):
+        return not settings.tenancy_strict and caller_tenant == DEFAULT_TENANT_ID
+    try:
+        return _norm(ev) == caller_tenant
+    except ValueError:
+        return False
 
 
 def set_tenant(tenant_id: Any) -> contextvars.Token:
@@ -165,7 +184,57 @@ async def create_tenant(owner_pool, *, slug: str, name: str, tenant_id: str | No
 
 
 # --------------------------------------------------------------------------- #
+# Database roles (schema/100_app_role.sh + 101_service_roles.sh, or this CLI)
+# --------------------------------------------------------------------------- #
+
+#: Compute services that connect as their own least-privilege role
+#: ``paddock_svc_<name>`` (schema/029_service_tenancy.sql).
+SERVICE_ROLE_NAMES = (
+    "intel", "correlation", "mlrisk", "triage", "ontology", "threatintel",
+    "otdiscovery", "changewatch", "brain", "remediation", "sca", "codeanalysis",
+    "graphsync",
+)
+
+
+def role_password(role: str, env: dict[str, str] | None = None) -> str | None:
+    """Password for a DB role from the environment, first match wins:
+    ``PADDOCK_SVC_<NAME>_DB_PASSWORD`` (service roles) -> ``PADDOCK_SERVICES_DB_PASSWORD``
+    (service roles) -> ``PADDOCK_APP_DB_PASSWORD`` -> ``POSTGRES_PASSWORD``."""
+    import os
+
+    e = os.environ if env is None else env
+    names: list[str] = []
+    if role.startswith("paddock_svc_"):
+        names += [f"PADDOCK_SVC_{role[len('paddock_svc_'):].upper()}_DB_PASSWORD", "PADDOCK_SERVICES_DB_PASSWORD"]
+    names += ["PADDOCK_APP_DB_PASSWORD", "POSTGRES_PASSWORD"]
+    for n in names:
+        if e.get(n):
+            return e[n]
+    return None
+
+
+async def provision_roles(con, env: dict[str, str] | None = None) -> dict[str, str]:
+    """Give ``paddock_app`` and every ``paddock_svc_*`` role LOGIN + a password
+    (needs the schema owner). Roles with no configured password stay NOLOGIN.
+    Idempotent. Returns ``{role: "login" | "nologin" | "missing"}``."""
+    out: dict[str, str] = {}
+    for role in ("paddock_app", *(f"paddock_svc_{n}" for n in SERVICE_ROLE_NAMES)):
+        if not await con.fetchval("SELECT 1 FROM pg_roles WHERE rolname = $1", role):
+            out[role] = "missing"
+            continue
+        pw = role_password(role, env)
+        if not pw:
+            out[role] = "nologin"
+            continue
+        stmt = await con.fetchval("SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', $1::text, $2::text)", role, pw)
+        await con.execute(stmt)
+        out[role] = "login"
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Operator CLI:  python -m app.tenancy create <slug> "<name>" [--admin USER]
+#                python -m app.tenancy provision-roles
 # Run with OWNER_DATABASE_URL (the schema owner / migration role).
 # --------------------------------------------------------------------------- #
 
@@ -186,6 +255,7 @@ async def _cli(argv: list[str]) -> int:
     c.add_argument("name")
     c.add_argument("--admin", help="username of the tenant's first admin")
     sub.add_parser("list", help="list tenants")
+    sub.add_parser("provision-roles", help="set LOGIN + passwords on paddock_app and the paddock_svc_* roles")
     args = p.parse_args(argv)
 
     dsn = os.environ.get("OWNER_DATABASE_URL") or os.environ.get("DATABASE_URL")
@@ -194,6 +264,10 @@ async def _cli(argv: list[str]) -> int:
         return 2
     con = await asyncpg.connect(_coerce_dsn(dsn))
     try:
+        if args.cmd == "provision-roles":
+            for role, state in (await provision_roles(con)).items():
+                print(f"{role:<28} {state}")
+            return 0
         if args.cmd == "list":
             for r in await con.fetch("SELECT id, slug, name, status FROM tenants ORDER BY created_at"):
                 print(f"{r['id']}  {r['slug']:<24} {r['status']:<10} {r['name']}")

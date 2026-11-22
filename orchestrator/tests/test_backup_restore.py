@@ -91,8 +91,8 @@ async def _drop_db(proc, name: str) -> None:
     await admin.close()
 
 
-@pytest.mark.parametrize("encrypt", ["none", "age"])
-async def test_backup_restore_round_trip(db_pool, postgresql_my_proc, tmp_path, encrypt):
+@pytest.mark.parametrize("encrypt,via_sql", [("none", False), ("age", False), ("none", True)])
+async def test_backup_restore_round_trip(db_pool, postgresql_my_proc, tmp_path, encrypt, via_sql):
     if encrypt == "age" and not (shutil.which("age") and shutil.which("age-keygen")):
         pytest.skip("age not installed")
     await _seed(db_pool)
@@ -122,7 +122,9 @@ async def test_backup_restore_round_trip(db_pool, postgresql_my_proc, tmp_path, 
 
     name, target = await _fresh_db(postgresql_my_proc)
     try:
-        renv = {"RESTORE_DATABASE_URL": target}
+        # via_sql: the path taken when client tools are newer than the server
+        # (pg_restore 17+ against a 16 server); forced here so it is always tested.
+        renv = {"RESTORE_DATABASE_URL": target, "RESTORE_VIA_SQL": "1" if via_sql else "0"}
         if encrypt == "age":
             renv["AGE_IDENTITY"] = str(tmp_path / "age.key")
         res = _run(RESTORE, renv, str(artifact))

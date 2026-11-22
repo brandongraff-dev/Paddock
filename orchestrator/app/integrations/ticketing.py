@@ -210,7 +210,8 @@ async def apply_inbound(
                               + (f" - {str(upd.comment)[:200]}" if upd.comment else ""))
                     await con.execute(
                         "UPDATE findings SET status = $2, metadata = metadata || $3::jsonb, "
-                        "status_reason = $4, status_by = $5, status_changed_at = NOW() WHERE id = $1",
+                        "status_reason = $4, status_by = $5, status_changed_at = NOW(), "
+                        "fix_verified_at = NULL WHERE id = $1",
                         fid, new, json.dumps(patch), reason, actor,
                     )
                 else:

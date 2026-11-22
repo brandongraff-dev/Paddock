@@ -98,7 +98,7 @@ async def _build(con) -> OnboardingOut:
         out.available = False
         return out
     if row is None:
-        await con.execute("INSERT INTO onboarding (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+        await con.execute("INSERT INTO onboarding (id) VALUES (1) ON CONFLICT (tenant_id, id) DO NOTHING")
         row = await con.fetchrow("SELECT * FROM onboarding WHERE id = 1")
 
     out.workspace_name = row["workspace_name"]
@@ -197,7 +197,7 @@ async def put_onboarding(body: OnboardingPatch, request: Request, pool=Depends(g
 
     async with pool.acquire() as con:
         try:
-            await con.execute("INSERT INTO onboarding (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+            await con.execute("INSERT INTO onboarding (id) VALUES (1) ON CONFLICT (tenant_id, id) DO NOTHING")
             await con.execute(f"UPDATE onboarding SET {', '.join(sets)} WHERE id = 1", *args)
         except asyncpg.UndefinedTableError:
             raise HTTPException(
