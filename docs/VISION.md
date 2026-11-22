@@ -147,7 +147,7 @@ the UI is just one client.
 | **Outrider** (discovery) | keeps the twin complete across all sensors | passive by default; active only in proven scope |
 | **Herald** (intel) | "are we affected?" in minutes when KEV/EPSS moves | reads the twin; no target interaction |
 | **Assessor** (triage) | turns raw findings into **evidence-backed** ones: version proof, config proof, reachability proof, all *non-destructive*; auto-closes what it can't substantiate | the defensive analogue of a PoC: proof without exploitation |
-| **Wargame** (simulation) | runs ATT&CK-style attacker playbooks **against the twin, not production**: "from guest Wi-Fi, can an attacker reach the PLC?" | zero production risk; answers the red-team question safely |
+| **Wargame** (simulation) | runs ATT&CK-style attacker playbooks **against the twin, not production**: "from guest Wi-Fi, can an attacker reach the PLC?" | zero production risk; answers the red-team question safely. Spec: [WARGAME.md](WARGAME.md) |
 | **Farrier** (fix) | drafts the change where it lives (IaC PR, firewall rule, VLAN move, config, dependency bump) | human approval gate; verify-after-apply |
 | **Warden** (guardrails) | enforces scope and autonomy policy on every other agent | the agent that watches the agents |
 | **Ask** (investigation) | natural-language questions over the twin, with citations | read-only, RBAC-filtered |
