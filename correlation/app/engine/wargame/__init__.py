@@ -40,6 +40,14 @@ from .model import (
     strongest_label,
     weakest_label,
 )
+from .environment import (
+    ChangeError,
+    ChangeKind,
+    ChangeOp,
+    Environment,
+    ProposedChange,
+    apply_change,
+)
 from .safety import (
     UnsafeWargameAction,
     assert_precondition_allowed,
@@ -52,9 +60,15 @@ __all__ = [
     "Action",
     "Assumption",
     "Certificate",
+    "ChangeError",
+    "ChangeKind",
+    "ChangeOp",
     "Corroboration",
     "Decision",
     "Edge",
+    "Environment",
+    "ProposedChange",
+    "apply_change",
     "EvidenceLabel",
     "FixCandidate",
     "FixSet",
