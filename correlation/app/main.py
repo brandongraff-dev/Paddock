@@ -39,6 +39,8 @@ from .engine.chain import ChainMatcher, PolicyEvaluator
 from .engine.fusion import FusionEngine
 from .engine.graph import Graph
 from .engine.policy import RuleLoader
+from .engine.wargame import report, store
+from .engine.wargame.graph_adapter import environment_from_graph
 from .narratives.writer import NarrativeWriter
 from .orchestrator import OrchestratorClient
 
@@ -448,6 +450,50 @@ class Service:
         res.setdefault("elapsed_ms", 0.0)
         return res
 
+    # ------------------------------------------------------------------
+    # Wargame assessment (assemble from the asset graph, run, persist)
+    # ------------------------------------------------------------------
+
+    async def _wargame_tenant(self) -> dict[str, Any]:
+        """Run one Wargame assessment for the CURRENT tenant and persist it.
+
+        DEFENSIVE: assembles a Wargame environment from the existing asset
+        graph (pure model reasoning), runs the backward-reachability engine,
+        and writes the scorecard + routes. No exploitation, no probes.
+
+        The legacy asset graph carries no firewall rules, so the environment
+        is honestly all-INFERRED and coverage is reported as unmeasured
+        (``coverage_pct=None``) — never implied full.
+        """
+        if self.attackpaths is None:
+            return {"assessments": 0, "routes": 0}
+        graph = await self.attackpaths._load_graph()
+        env = environment_from_graph(graph)
+        rr = env.reachability()
+        sc = report.build_scorecard(rr, coverage_pct=None)
+        bundle = store.assemble_bundle(reachability=rr, scorecard=sc, label="auto")
+        await store.persist(self.db, bundle)
+        return {"assessments": 1, "routes": len(rr.routes)}
+
+    async def run_wargame_scoped(self) -> dict[str, Any]:
+        """The tenant named by the request, else every active tenant.
+
+        Mirrors :meth:`run_pathcompute_scoped`: ``run_for_request_or_all``
+        runs ``_wargame_tenant`` once per scope, each inside its own tenant
+        context and wrapped so one tenant's failure is logged and skipped;
+        ``merge_counts`` folds the survivors (summing ``assessments`` and
+        ``routes``)."""
+        started = asyncio.get_running_loop().time()
+        res = tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self._wargame_tenant)
+        )
+        res.setdefault("assessments", 0)
+        res.setdefault("routes", 0)
+        res["elapsed_ms"] = round(
+            (asyncio.get_running_loop().time() - started) * 1000.0, 2
+        )
+        return res
+
     def _trigger_pathcompute(self) -> None:
         """Schedule a debounced attack-path recompute (≤ once per window) for
         the current tenant (the task inherits the tenant context)."""
@@ -630,6 +676,24 @@ async def compute_paths() -> ComputePathsResponse:
     res = await service.run_pathcompute_scoped()
     return ComputePathsResponse(
         computed=res["computed"], elapsed_ms=res["elapsed_ms"]
+    )
+
+
+class ComputeWargameResponse(BaseModel):
+    assessments: int
+    routes: int
+    elapsed_ms: float
+
+
+@app.post("/compute-wargame", response_model=ComputeWargameResponse)
+async def compute_wargame() -> ComputeWargameResponse:
+    if service.attackpaths is None:
+        raise HTTPException(status_code=503, detail="not ready")
+    res = await service.run_wargame_scoped()
+    return ComputeWargameResponse(
+        assessments=res["assessments"],
+        routes=res["routes"],
+        elapsed_ms=res["elapsed_ms"],
     )
 
 
