@@ -16,7 +16,26 @@ enforces.
 
 It is pure Python (standard library only, no new third-party deps), lives
 inside one service (`correlation`), is read by another (`orchestrator`),
-and is covered by ~540 tests.
+and is covered by roughly 900 tests in `correlation/tests/wargame` (plus
+the orchestrator API tests and the CLI tests).
+
+### Surfaces
+
+There are three ways to use Wargame; all of them sit on this engine:
+
+- **The API.** Orchestrator `/v1/wargame/*` (read assessments, routes,
+  boundaries, certificates, fix set, evidence; recompute; ingest a twin;
+  `POST /v1/wargame/change-impact`). See §15.
+- **The dashboard page.** `/wargame` (`dashboard/src/pages/Wargame.tsx`):
+  scorecard, routes with per-hop evidence labels, the cheapest fix set,
+  boundary verdicts and certificates, the change gate, and a setup walk-through
+  for an empty tenant. `/wargame?sample=1` renders a clearly labelled
+  fictional estate; it is opt-in and never stands in for a failed or empty API
+  response.
+- **The local CLI.** `paddock wargame init | check | plan` (see
+  [CLI.md](CLI.md)): reads a `wargame.toml` plus config exports from disk, no
+  server, prints routes, the verified fix set and (for a Terraform plan) the
+  change-gate verdict.
 
 ---
 
@@ -94,12 +113,15 @@ never make a route read as proof of closure.
 - `Hop(src, dst, labels, port, rule_ref, fix_candidate_ids)` with
   `.weakest`; `Route(entry, jewel, hops)` with `.weakest_label`, `.length`,
   `.fix_elements` (the union of cuttable ids along it), `.pair`.
-- `ReachabilityResult(routes, open_pairs, closed_pairs, conditional_pairs)`.
+- `ReachabilityResult(routes, open_pairs, closed_pairs, conditional_pairs,
+  truncated_pairs, incomplete_pairs, inferred_pairs, witness_routes,
+  budget_exhausted)` — the pair sets are exact; `routes` are examples (§4).
 
 ### Fix set, certificate, replica, flows
 
 - `FixCandidate(id, kind, cost_class, description, cost, blocks)` and
-  `FixSet(selected, total_cost, cuts_all, uncut_routes, optimality)`.
+  `FixSet(selected, total_cost, cuts_all, uncut_routes, optimality)`;
+  `mincut.VerifiedFixSet` extends it (§5).
   `DEFAULT_COST_CLASSES` maps a change class to a weight (a rule change is
   cheap, a device patch is expensive) so the optimiser minimises a
   customer-set cost, never an invented risk number.
@@ -150,22 +172,76 @@ no packets sent.
 ## 4. Backward search — `reachability.py`
 
 `backward_reachability(nodes, edges, rulesets, *, max_hops=8,
-max_routes_per_pair=16) -> ReachabilityResult`.
+max_routes_per_pair=16, visit_budget=None) -> ReachabilityResult`.
 
-- Builds a **directed** adjacency and, for each crown jewel, searches
-  **backward** to every entry, enumerating simple paths bounded by
-  `max_hops`, capped per `(entry, jewel)` pair, with a global visit budget
-  so a dense graph can't blow up. Output is deterministic (neighbours sorted;
-  shortest routes first, then lexicographically).
-- Each edge becomes a `Hop` whose labels are computed thus:
-  - ungoverned edge → its `base_labels`, or `INFERRED` if it has none;
-  - governed edge → `rules.boundary_permits(...)`: **denied ⇒ the hop is not
-    traversable** (a closed boundary); allowed ⇒ `PROVED_CONFIG`;
-    conditional ⇒ `CONDITIONAL` (never `PROVED_CONFIG`). Plus any
-    `base_labels` (e.g. `OBSERVED`).
-- A pair is **open** if ≥1 route survived, **closed** if not, and
-  **conditional** if every open route depends on a conditional hop. These
-  three sets drive the scorecard and certificates.
+The module does two separate jobs.
+
+**1. Deciding open / closed — exact, independent of route enumeration.**
+Each edge is first reduced to a traversable hop (below); non-traversable
+edges are dropped. For every crown jewel a **reverse breadth-first search**
+over the traversable edges, with **no hop limit and no budget**, finds every
+entry that can reach it. A pair `(entry, jewel)` is:
+
+- **open** iff the jewel is reachable from the entry over the traversable
+  edges (`entry == jewel` is never a pair);
+- **closed** iff it is not open ("no route exists in the model");
+- **conditional** (`conditional_pairs`) iff it is open but **not** open over
+  the subgraph of edges carrying no `CONDITIONAL` label — i.e. every route, of
+  any length, leans on at least one conditional hop;
+- **inferred** (`inferred_pairs`) iff it is open but not open over the
+  subgraph of edges whose weakest label is stronger than `INFERRED` — every
+  route leans on a hop the model merely infers (`INFERRED`/`UNKNOWN`).
+  Inferred pairs stay open (an ungoverned adjacency is permitted by default,
+  the conservative direction) and are *not* folded into `conditional_pairs`;
+  the two sets may overlap. They exist so a report or certificate can ask for
+  corroboration.
+
+Because this pass never enumerates, no hop limit, cap or budget can turn an
+open pair into a closed one (invariant 1.4).
+
+**2. Listing example routes — bounded.** Simple paths are enumerated by a
+backward depth-first search with iterative deepening on route length
+(shortest first), bounded by `max_hops`, `max_routes_per_pair`, and a
+**per-jewel** visit budget (`_VISIT_BUDGET = 200_000`, overridable with
+`visit_budget`), so a dense neighbourhood around one jewel cannot starve the
+jewels after it. Routes are examples, not the definition of open. The result
+says where the listing fell short:
+
+- `truncated_pairs` — open pairs with **no** listed route (none fit inside the
+  limits). They stay open; `witness_routes` holds one deterministic shortest
+  route for each, with no hop limit (so possibly longer than `max_hops`).
+- `incomplete_pairs` — open pairs whose listed routes may not be *all* their
+  routes (cap hit, hop limit bit, budget ran out, or parallel-edge variants cut
+  off by the cap); includes `truncated_pairs`. A fix set solved over such a
+  listing is not proven to cut the pair (§5).
+- `budget_exhausted` — some jewel's enumeration hit its visit budget. Open /
+  closed is unaffected.
+
+**Hops.** Each edge becomes a hop template whose labels are:
+- ungoverned edge → its `base_labels`, or `INFERRED` if it has none;
+- governed edge → `rules.boundary_permits(...)`: **denied ⇒ not traversable**
+  (a closed boundary), as is an edge whose rule set is missing or whose
+  endpoint is not in the model; allowed ⇒ `PROVED_CONFIG`; conditional ⇒
+  `CONDITIONAL` (never `PROVED_CONFIG`). Plus any `base_labels` (e.g.
+  `OBSERVED`).
+
+**Parallel edges.** Several traversable edges between the same ordered node
+pair are not collapsed into one hop (that dropped the other edges' fix ids, so
+the min-cut could "cut" a hop a parallel edge still carried). Edges are grouped
+by `fix_candidate_id` (same id, or none, are interchangeable for cutting); each
+group is represented by its strongest edge (strongest weakest-label, then
+`rule_ref`, then port), and each node path is expanded lazily into one **route
+variant per combination of groups**, each hop a concrete edge. Cutting every
+variant of a node path is exactly "for some hop, cut all of its parallel
+edges", so the hitting set over variants is correct. With no differing fix ids
+the output is one route per node path. The primary variant (strongest edge on
+every hop) comes first, then variants deviating on one hop, two hops, …;
+variants count toward `max_routes_per_pair`.
+
+Output is deterministic: neighbours are visited in sorted id order, routes are
+emitted per pair shortest first, then primary before alternate variants, then
+by node-id sequence. `shortest_route(nodes, edges, rulesets, entry, jewel)`
+returns a single no-hop-limit shortest route.
 
 This is the structural heart: "can anyone reach what matters, and by what
 route, and how good is the evidence for each step."
@@ -177,18 +253,72 @@ route, and how good is the evidence for each step."
 The cheapest set of changes that cuts **every** open route. This is a
 weighted **hitting set** (a route is broken when the fix set contains any one
 of its cuttable elements), which is NP-hard — the module says so and never
-calls a result "minimal" unless it is exact.
+calls a result "minimal" unless the exact search completed.
 
-- `min_cost_fix_set(routes, candidates) -> FixSet`: exact branch-and-bound
-  for small instances (≤24 distinct candidates) with a disjoint-route cost
-  lower bound and most-constrained-route branching; cost-effective greedy
-  fallback for larger instances (`optimality` records which ran).
-- A route with no cuttable element (e.g. an inferred hop with no modelled
-  control to change) cannot be cut: it is recorded in `uncut_routes` and
-  forces `cuts_all=False`.
+- `min_cost_fix_set(routes, candidates) -> FixSet`: solves over the route
+  element-sets it is given (duplicates and superset routes are dropped first).
+  Exact branch-and-bound for small instances (≤ 24 distinct candidate ids
+  across the reduced routes) with a disjoint-route cost lower bound and
+  most-constrained-route branching; cost-effective greedy for larger ones. The
+  branch-and-bound carries a **node cap** (`_BNB_NODE_LIMIT = 250_000`); if the
+  cap is hit the better of its incumbent and the greedy answer is returned.
+  Negative or non-finite costs raise `ValueError`; an id with no
+  `FixCandidate` is priced at `DEFAULT_UNKNOWN_COST` (5.0), never zero.
+- **What "exact" and "greedy" mean.** `optimality="exact"` means the
+  branch-and-bound **completed** (and, for `verified_fix_set`, that the result
+  was also verified against the model). `"greedy"` means *not proven minimal*:
+  greedy ran, the node cap was hit, or the fix set was not verified. The
+  persisted schema admits only these two values; `VerifiedFixSet.solver`
+  records what actually ran (`branch_and_bound`, `branch_and_bound_incomplete`,
+  `greedy`, `none`).
+- A route with no cuttable element (an inferred hop with no modelled control)
+  cannot be cut: it is recorded in `uncut_routes` and forces `cuts_all=False`.
 - `cost_for(cost_class, overrides)` resolves the weight; a compensating
   control naturally beats a device patch because it is cheaper.
-- `fix_set_for(result, candidates)` pulls the open routes' `fix_elements`.
+- `fix_set_for(result, candidates)` solves over the **listed** open routes'
+  `fix_elements`. Because the listing is bounded, if any open pair is in
+  `incomplete_pairs` (or `budget_exhausted`) it reports `cuts_all=False` and
+  `optimality="greedy"`: it will not claim to cut routes it never saw. It is
+  used by the demos; the product paths use the verified version.
+
+### `verified_fix_set` — checked against the model
+
+`verified_fix_set(nodes, edges, rulesets, candidates, *, pairs=None,
+max_iters=25, max_hops=8, max_routes_per_pair=16, result=None) ->
+VerifiedFixSet`. `assess.assess_environment` and the CLI (`paddock wargame
+check`) use this, not `fix_set_for`. It runs a **lazy-constraint loop**:
+
+1. Take the open pairs of `backward_reachability` (or the caller's `result`
+   for the same model and limits), optionally restricted to `pairs`, as the
+   targets.
+2. Re-run reachability with **every** candidate applied. Targets still open are
+   **uncuttable** (e.g. an inferred hop with no control): reported in
+   `uncuttable_pairs`, not targeted.
+3. Solve the hitting set over the listed routes of the cuttable targets
+   (`truncated_pairs` contribute their witness route).
+4. `apply_fix_set(edges, selected)` removes every edge whose
+   `fix_candidate_id` is selected; re-run exact reachability. If a target is
+   still open, add its surviving routes (or a shortest witness) as new
+   constraints — each avoids every selected fix, so it is genuinely new — and
+   re-solve. Repeat until verified or `max_iters` rounds.
+5. If the exact solver is out of reach (`proven` false), the selection is grown
+   monotonically with greedy additions instead of re-solving from scratch
+   (which can oscillate), and a reverse-delete pass at the end drops fixes the
+   constraint pool does not need, keeping the result only if it still verifies.
+
+Because each added constraint is a real route, every solve is over a
+relaxation of the true problem, so an exact solve that verifies is the true
+optimum. `VerifiedFixSet` adds `verified`, `target_pairs`, `uncut_pairs` (still
+open after the fix: the uncuttable ones plus any not closed within
+`max_iters`), `uncuttable_pairs`, `iterations`, `routes` (the constraint
+routes, then example routes of the uncuttable pairs, which `uncut_routes`
+indexes) and `solver`. `cuts_all` is `True` only when the post-fix model has no
+open target pair; `optimality` is `"exact"` only when verified **and** the
+final solve was a completed branch-and-bound.
+
+`assess.py` stores `fix_set_verified`, `fix_set_solver`, `fix_set_uncut_pairs`
+and `fix_set_uncuttable_pairs` in the assessment `metadata` (there is no
+fix-set column for them; see §18).
 
 ---
 
@@ -299,7 +429,9 @@ auditor verdict:
   `from_reachability(result, entry, jewel, ...)` is the **pair-level** check:
   its config verdict comes from the end-to-end search (open → OPEN,
   conditional → `conditional`, closed → CLOSED), never a direct-edge lookup —
-  a multi-hop pair usually has no direct edge. The probe is UNKNOWN unless a
+  a multi-hop pair usually has no direct edge. A pair in `truncated_pairs` is
+  open (it has no listed route, not no route) and reads as OPEN; a truncated
+  pair that is somehow not open reads UNKNOWN, never closed. The probe is UNKNOWN unless a
   real probe result is passed; the model's own reachability is never fed in
   as a "probe" (that was circular evidence).
 
@@ -328,9 +460,9 @@ ParseResult` dispatches to:
 | Vendor key | Input | Notes |
 |---|---|---|
 | `aws` | `describe-security-groups` / `describe-network-acls` JSON | SG ingress/egress rule sets; **SG-to-SG references** resolved from supplied member CIDRs; NACLs ordered by rule number with deny semantics; subnet/ENI bindings |
-| `cisco_asa` | ASA config text | objects + nested object-groups, extended ACLs with order/deny, named ports, `access-group` interface bindings |
-| `fortinet` | FortiOS CLI | address/addrgrp (incl. FQDN), service custom/group, policies grouped into `srcintf>dstintf` rule sets, disabled policies skipped |
-| `paloalto` | PAN-OS `set` format | objects, static vs **dynamic** address groups, security rules grouped by zone pair |
+| `cisco_asa` | ASA config text | objects + nested object-groups, extended ACLs with order/deny, named ports, `access-group` interface and `global` bindings; **security-level default rule sets** (`asa:security-level:permit` / `:deny`) bound per interface pair when no ACL is bound, `same-security-traffic permit inter-interface` honoured; the global ACL is combined after the interface ACLs; object and twice NAT make affected rules conditional |
+| `fortinet` | FortiOS CLI | address/addrgrp (incl. FQDN), service custom/group, policies grouped into `srcintf>dstintf` rule sets (`any` interfaces expanded), disabled policies skipped; **IPv6** (`address6` / `policy6`); address and service **negation** modelled as an exact complement; VIPs (destination NAT) and non-`always` schedules make rules conditional |
+| `paloalto` | PAN-OS `set` format | objects (scoped `shared` / `vsys` / `device-group` tables, local shadows shared), static vs **dynamic** address groups, security rules grouped by zone pair in PAN-OS order **pre-rulebase → local rulebase → post-rulebase** (shared pre, device-group pre, local, device-group post, shared post); `rule-type` (intrazone / interzone / universal) honoured; default **intrazone ALLOW** rule sets and interzone DENY |
 | `terraform` | `terraform show -json` plan | `parse_plan()` → a `ProposedChange` for the change gate |
 
 The shared foundation `parsers/base.py` does the work that decides
@@ -340,9 +472,17 @@ correctness:
   guards; CIDR/netmask/Cisco-wildcard/range normalisation (`normalize_cidrs`);
   a named-service and protocol map. A user-defined object wins over a
   same-named built-in.
+- **Address families.** `"0.0.0.0/0"` is **IPv4 only**: "any" is
+  `ANY4_CIDRS = ("0.0.0.0/0",)` or `ANY6_CIDRS = ("::/0",)` by family, so an
+  IPv4 any-rule never silently covers IPv6 (and vice versa).
 - **The honesty rule.** `ConditionalFeature` enumerates runtime-only features
   (FQDN, App-ID, User-ID, dynamic address groups, external dynamic lists,
-  URL/geo categories, SD-WAN) and `UNRESOLVED`. Any rule that uses one — *or
+  URL/geo categories, SD-WAN, and `NAT` (translation changes the match),
+  `SCHEDULE` (rule active only in a time window) and `PARTIAL_MATCH` (the rule
+  also matches on a field the model lacks: source port, ICMP type, protocol
+  number)) and `UNRESOLVED`. Group cycles, over-deep nesting, empty groups and
+  unreadable masks are never read as a clean "any" or as "matches nothing": they
+  become **conditional any** with a warning. Any rule that uses one — *or
   references an object the parser could not resolve* — is marked
   `conditional=True` and over-approximated toward *reachable* (resolve the
   unknown to "any"), so a parse gap can never prove a boundary closed. Every
@@ -350,6 +490,12 @@ correctness:
 - `build_rule(...)` assembles a `Rule` and applies the honesty rule;
   `ParseResult` carries `rulesets`, `bindings` (where each set is enforced)
   and `warnings`.
+
+**Still open in the firewall parsers.** ASA: an interface bound with both an
+`in` and an `out` ACL is not modelled as their conjunction. FortiGate:
+`proxy-policy`, `multicast-policy` (and the 4-to-6 / 6-to-4 policy tables) and
+local-in policies are skipped with a warning. PAN-OS: the Panorama
+device-group **hierarchy** (parent/child inheritance) is not followed.
 
 ---
 
@@ -423,20 +569,48 @@ port.
 
 ## 13. Self-evaluation — `ranges.py`
 
-The credibility keystone. `library()` is nine synthetic environments with
-**known-correct ground truth** (open path, deny-closed, conditional-only,
-decoy branch, identity/ungoverned path, planted misconfig, multi-entry/
-multi-jewel). `score(cases) -> EvalReport` runs the engine on each and
-computes:
+The credibility keystone. `library()` is **13** synthetic environments, scored
+against ground truth the engine does not produce:
+
+- Cases 1–9 have **hand-declared** truth: open path (`single_open`,
+  `two_hop_open`), deny-closed (`deny_closes`, `broken_middle_hop`),
+  conditional-only, decoy branch, identity/ungoverned path, planted
+  misconfiguration, multi-entry/multi-jewel.
+- Cases 10–13 are **adversarial** — built to break enumeration-based shortcuts
+  — and take their truth from `ground_truth(env)`: `long_chain_open` (a 10-hop
+  route, beyond the 8-hop listing limit), `dense_budget_starved` (a complete
+  10-node mesh feeding one jewel, with a later jewel one hop away),
+  `parallel_edges_split_fix` (two parallel firewalls with different fix ids),
+  `sub_cidr_carveout` (allow/deny slices over part of a /24 source node).
+
+**The independent oracle.** `ground_truth(env) -> (truly_open, truly_closed)`
+is a brute-force checker that **shares no code with the engine**: it
+re-implements first-match evaluation (a matching conditional rule counts as
+"possible"), enumerates every host of every CIDR (CIDRs over 1024 addresses
+are refused, so only tiny ranges) and every port breakpoint of every rule
+inside the edge's port class, and runs its own graph search. It is how the
+adversarial cases get their truth, and how fix sets are checked.
+
+`score(cases) -> EvalReport` runs the real engine on each case and computes:
 
 - **`false_closed_rate`** = `|engine-closed but truly open| / |engine-closed|`
-  — the headline number; a certificate is worthless if this isn't ~0. A
+  — the headline number; a certificate is worthless if this isn't 0. A
   conditional pair never counts as closed.
 - `false_open_rate`, `closure_precision`, `closure_recall`, per-case results.
+- **`false_cut_rate`** = `|cases where a fix set claimed cuts_all but the
+  oracle still finds a target pair open after applying it| / |cases with a
+  cuts_all claim|`. Both `fix_set_for` and `verified_fix_set` are checked; it
+  must be 0. A case counts as correct only if there is no false closed, no
+  false open and no false cut.
 
-`run_library()` measures **false_closed_rate = 0.0** and false_open 0.0
-(precision/recall 1.0) — the engine never calls a truly-open pair closed on
-the library. A test (`test_ranges.py`) fails the build if that regresses.
+**Measured** (`python -c "from app.engine.wargame import ranges;
+print(ranges.run_library().summary)"` in `correlation/`): 13 cases, 21 scored
+pairs, 13/13 cases match ground truth; **false_closed_rate 0.0000**,
+false_open_rate 0.0000, closure precision 1.0000, closure recall 1.0000,
+**false_cut_rate 0.0000**. One case (`parallel_edges_split_fix`) produces a
+`cuts_all` claim; the other twelve have no fix candidates on their edges (or
+nothing open), so they make none — the rate is over that single claim.
+`test_ranges.py` fails the build if any of these regress.
 
 ---
 
@@ -490,7 +664,38 @@ Correlation (internal, not in the public OpenAPI):
 - `POST /set-topology` `{segments, edges}` → store the topology;
 - `POST /compute-wargame` → assess the **persisted twin** when present
   (config-proved, with certificates), else the all-inferred asset graph, and
-  persist the result.
+  persist the result;
+- `POST /change-impact` `{plan, flows?, flows_format}` → the change gate
+  against the tenant's persisted twin (below).
+
+Size caps (each exceeded cap is a 413/422, never an OOM): config `raw` ≤ 8 MiB
+of characters, ≤ 5,000 topology segments and ≤ 20,000 topology edges, `flows`
+≤ 8 MiB of characters, and a `/change-impact` body ≤ 32 MiB. The orchestrator
+enforces raw body caps **before** parsing (by `Content-Length` and by counting
+streamed bytes): 16 MiB for `/v1/wargame/twin/config`, 8 MiB for
+`/twin/topology`, 32 MiB for `/change-impact`.
+
+**Change impact.** Correlation `POST /change-impact` and orchestrator
+`POST /v1/wargame/change-impact` (which proxies synchronously, 60 s timeout, no
+Redis fallback — the caller needs the answer). Request: `plan` (the object from
+`terraform show -json`), optional `flows` (raw firewall / Zeek / generic text)
+and `flows_format` (`auto`, `zeek`, `generic`, `firewall`). It is **read-only**:
+it loads the tenant's twin, applies the parsed plan to a copy, runs
+`changegate.evaluate_change` before vs after, and persists and applies nothing.
+Response: `verdict` (`safe`, `opens_route_to_crown_jewel`, `breaks_live_flows`,
+`opens_and_breaks`; treat an unknown value as "needs review"),
+`routes_opened` / `routes_closed` (`{entry, jewel}`), `newly_denied_flows` /
+`newly_allowed_flows` (`{src_ip, dst_ip, proto, dst_port, ruleset_id}`),
+`summary`, `warnings`, `change_title`, `affected_boundaries`, `flows_parsed`,
+`flows_skipped`, and **`complete`**. `complete` is `false` when part of the plan
+was **not** evaluated: a modelled resource type that failed to parse or was
+malformed, or an operation on a rule set or rule the twin does not hold
+(reported as a "not evaluated" warning, never silently dropped). Resource
+types the gate does not model at all (instances, buckets, …) are noted in
+`warnings` but do not clear `complete`. A `safe` verdict with
+`complete=false` is **not a proof**, and the summary says so. Errors: 409 no
+twin for the tenant, 422 not a `terraform show -json` plan (or not
+evaluable), 413 oversize, 503 correlation unreachable or failing.
 
 Orchestrator (`/v1/wargame/*`, in the OpenAPI, with generated Python + TS
 SDKs):
@@ -499,8 +704,17 @@ SDKs):
   tenant-scoped by row-level security;
 - `POST /v1/wargame/recompute` — trigger a run (sync call to correlation,
   Redis fallback, never fails hard);
+- `POST /v1/wargame/change-impact` — the change gate (above);
 - `POST /v1/wargame/twin/config`, `/twin/topology`, `GET /v1/wargame/twin` —
   ingest config / declare topology / read a twin summary.
+
+**Grants.** The correlation service role (`paddock_svc_correlation`) must be
+granted the wargame tables. `schema/040_wargame_twin.sql` extends 029's
+service-grant allow-list in `paddock_apply_service_grants()` with the eleven
+tables (`wargame_assessments`, `_routes`, `_boundaries`, `_certificates`,
+`_fix_sets`, `_evidence`, `_rulesets`, `_rules`, `_segments`, `_edges`,
+`_config_snapshots`) so a later grant run does not revoke them, and also grants
+`SELECT, INSERT, UPDATE, DELETE` on them directly.
 
 All read endpoints serve routes and narratives verbatim as the compute
 service wrote them; no endpoint aids exploitation.
@@ -555,7 +769,7 @@ route tables ─routing─▶ oracle ─────┘                         
                                                                                └─ store/twin_store ──▶ Postgres ──▶ /v1/wargame/* API + SDKs
 observed flow vs a closed certificate ──impossible──▶ critical alert (human-resolved)
 proposed change ──changegate──▶ routes opened/closed + live flows it would break
-ranges ──score──▶ measured false-"closed" rate (0.0 on the library)
+ranges ──score──▶ measured false-"closed" and false-cut rates (0.0 on the library)
 ```
 
 Three runnable demos print this end to end:
@@ -574,15 +788,34 @@ Three runnable demos print this end to end:
 
 ## 18. What is not built yet
 
-The dashboard UI; probe deployment mode (the active worker on out-of-scope
-segments); the sandbox runner behind `replica.ReplicaRunner`. Known
-follow-ups: the orchestrator Redis fallback for twin ingest jobs isn't yet
-consumed by correlation's stream handler (the sync path works and is tried
-first); the twin stores no probe results or observed flows yet, so every closed
-pair of a twin assessment is `proved_config` (never `pass`) until a probe
-source is wired into `assess_environment(probes=..., observed_flows=...)`;
-`scripts/install.sh` does not yet generate `WARGAME_SIGNING_KEY`; and Terraform rule ids don't match the AWS
-parser's ids, so remove/modify across the two needs an id-mapping layer.
+Built since the earlier version of this list: the dashboard page
+(`/wargame`), the change-impact endpoint and the `paddock wargame` CLI.
+
+Still missing:
+
+- **Probe deployment mode** — the active worker on out-of-scope segments that
+  would produce real probe results.
+- **The replica sandbox runner** behind `replica.ReplicaRunner` (only the
+  precondition checks exist).
+- **A consumer for the Redis fallback jobs.** The orchestrator queues twin
+  ingest (and recompute) jobs to Redis when correlation is unreachable, but
+  correlation's stream handler does not consume them; only the synchronous
+  path (tried first) works.
+- **`scripts/install.sh` does not generate `WARGAME_SIGNING_KEY`**, so an
+  install without it signs with the labelled public development key
+  (`unsigned-dev`).
+- **The twin stores no observed flows or probe results**, so every closed pair
+  of a twin assessment is `proved_config`, never `pass`, until a probe source is
+  wired into `assess_environment(probes=..., observed_flows=...)`.
+- **The fix set's uncut pairs live in assessment `metadata`**
+  (`fix_set_uncut_pairs`, `fix_set_uncuttable_pairs`), not in a fix-set column,
+  so the stored fix-set row alone does not say which pairs it fails to cut.
+- Terraform ↔ AWS rule matching is partial: NACL rules use the AWS parser's
+  ids directly and security-group rules are matched by content when the plan
+  is parsed against the twin (`parse_plan(raw, env)`). A remove/modify that
+  can't be matched (SG-to-SG references, prefix lists) keeps the live rule
+  and is reported with a warning; the change-impact result then has
+  `complete=false`.
 
 See [WARGAME.md §9](WARGAME.md) for the build-order status and the product
 context.
