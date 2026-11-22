@@ -38,10 +38,15 @@ from typing import Any, Callable, Optional
 from ..model import Action, PortRange, Proto, Rule, RuleSet
 
 _MAX_GROUP_DEPTH = 32
-_ANY_TOKENS: frozenset[str] = frozenset(
-    {"any", "all", "any4", "any6", "0.0.0.0/0", "::/0", "0.0.0.0 0.0.0.0", "*"}
-)
+#: Tokens meaning "any address in either family". ``0.0.0.0/0`` and
+#: ``0.0.0.0 0.0.0.0`` are deliberately NOT here: they are IPv4-only, and
+#: widening them to ``::/0`` would broaden a DENY over IPv6 traffic.
+_ANY_TOKENS: frozenset[str] = frozenset({"any", "all", "*"})
+_ANY4_TOKENS: frozenset[str] = frozenset({"any4", "0.0.0.0 0.0.0.0"})
+_ANY6_TOKENS: frozenset[str] = frozenset({"any6"})
 ANY_CIDRS: tuple[str, ...] = ("0.0.0.0/0", "::/0")
+ANY4_CIDRS: tuple[str, ...] = ("0.0.0.0/0",)
+ANY6_CIDRS: tuple[str, ...] = ("::/0",)
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +65,9 @@ class ConditionalFeature(str, Enum):
     GEO = "geo"                         # geo-IP, data-driven
     SDWAN = "sdwan"                     # path chosen at runtime
     UNRESOLVED = "unresolved_object"    # we could not read the referenced object
+    NAT = "nat"                         # address translation changes the match
+    SCHEDULE = "schedule"               # rule only active in a time window
+    PARTIAL_MATCH = "partial_match"     # matches on fields the model lacks
 
 
 CONDITIONAL_REASON: dict[ConditionalFeature, str] = {
@@ -72,6 +80,9 @@ CONDITIONAL_REASON: dict[ConditionalFeature, str] = {
     ConditionalFeature.GEO: "match depends on a runtime geo-IP lookup",
     ConditionalFeature.SDWAN: "the egress path is chosen at runtime",
     ConditionalFeature.UNRESOLVED: "a referenced object could not be resolved from the supplied config",
+    ConditionalFeature.NAT: "address translation (NAT/VIP) means the matched address differs from the real one; both are assumed reachable",
+    ConditionalFeature.SCHEDULE: "rule is only active during a schedule / time-range that the static model does not evaluate",
+    ConditionalFeature.PARTIAL_MATCH: "rule also matches on a field the model does not represent (source port, ICMP type, protocol number, ...); it was widened",
 }
 
 
@@ -144,44 +155,60 @@ class ParseResult:
 # Address / service normalisation
 # ---------------------------------------------------------------------------
 
-def normalize_cidrs(token: str) -> Optional[list[str]]:
+def normalize_cidrs(token: str, mask_style: str = "auto") -> Optional[list[str]]:
     """Normalise an address literal to a list of canonical CIDR strings.
 
-    Accepts: ``any``/``all``/``*``; a bare host (``10.0.0.1`` → ``/32``);
-    a CIDR (``10.0.0.0/24``); an ``addr mask`` pair (``10.0.0.0
-    255.255.255.0``); an ``addr/mask`` pair; an inclusive range
-    (``10.0.0.1-10.0.0.9``); IPv6 forms. Returns ``None`` when the token is
-    not an address literal at all (so the caller treats it as an object
-    name). Never raises.
+    Accepts: ``any``/``all``/``*`` (both families); ``any4`` /
+    ``0.0.0.0 0.0.0.0`` / ``0.0.0.0/0`` (IPv4 only); ``any6`` / ``::/0``
+    (IPv6 only); a bare host (``10.0.0.1`` → ``/32``); a CIDR
+    (``10.0.0.0/24``, host bits are masked off); an ``addr mask`` pair
+    (``10.0.0.0 255.255.255.0``); an ``addr/mask`` pair; an inclusive range
+    (``10.0.0.1-10.0.0.9``, summarised to the exact CIDR cover); IPv6 forms.
+    Returns ``None`` when the token is not an address literal at all (so the
+    caller treats it as an object name, which resolves as UNRESOLVED if no
+    such object exists). Never raises.
+
+    ``mask_style`` says how to read the second half of an ``addr mask``
+    pair: ``"auto"`` (the historical default) guesses netmask vs Cisco
+    wildcard from the leading bit; ``"netmask"`` (ASA, FortiOS) only accepts
+    a contiguous netmask, so ``0.0.0.0`` is ``/0`` (not a host); ``"wildcard"``
+    only accepts a contiguous wildcard (IOS). An unreadable mask → ``None``.
     """
     if token is None:
         return None
-    t = token.strip()
+    try:
+        t = str(token).strip()
+    except Exception:  # pragma: no cover - defensive
+        return None
     if not t:
         return None
-    if t.lower() in _ANY_TOKENS:
+    low = " ".join(t.lower().split())
+    if low in _ANY_TOKENS:
         return list(ANY_CIDRS)
+    if low in _ANY4_TOKENS:
+        return list(ANY4_CIDRS)
+    if low in _ANY6_TOKENS:
+        return list(ANY6_CIDRS)
 
     # addr mask  OR  addr wildcard  (space-separated)
     parts = t.split()
     if len(parts) == 2:
-        got = _addr_mask(parts[0], parts[1])
-        return got  # may be None if not parseable
+        return _addr_mask(parts[0], parts[1], mask_style)  # may be None
 
-    # range a-b
+    # range a-b (also "a - b")
     if "-" in t and "/" not in t:
         lo, _, hi = t.partition("-")
         rng = _range_to_cidrs(lo.strip(), hi.strip())
         if rng is not None:
             return rng
+    if len(parts) != 1:
+        return None
 
     # addr/mask where mask is dotted (IPv4) e.g. 10.0.0.0/255.255.255.0
     if "/" in t:
         addr, _, mask = t.partition("/")
         if "." in mask and not mask.isdigit():
-            got = _addr_mask(addr.strip(), mask.strip())
-            if got is not None:
-                return got
+            return _addr_mask(addr.strip(), mask.strip(), mask_style)
 
     # plain CIDR or host
     try:
@@ -197,7 +224,7 @@ def normalize_cidrs(token: str) -> Optional[list[str]]:
         return None
 
 
-def _addr_mask(addr: str, mask: str) -> Optional[list[str]]:
+def _addr_mask(addr: str, mask: str, mask_style: str = "auto") -> Optional[list[str]]:
     """Resolve ``addr mask`` where mask is a netmask (255.255.255.0),
     a Cisco wildcard (0.0.0.255), or ``host``/a prefix length."""
     addr = addr.strip()
@@ -217,31 +244,119 @@ def _addr_mask(addr: str, mask: str) -> Optional[list[str]]:
         m = ipaddress.ip_address(mask)
     except ValueError:
         return None
-    # Decide netmask vs wildcard by the leading bit: netmasks start 1s,
-    # wildcards start 0s. (255.0.0.0 → netmask; 0.0.0.255 → wildcard.)
+    if m.version != ip.version:
+        return None
     as_int = int(m)
     bits = ip.max_prefixlen
-    if as_int == 0:
-        # All-zero mask on a specific host. As a Cisco wildcard this means
-        # "match this exact host"; the "match anything" case (0.0.0.0
-        # 0.0.0.0) is handled earlier via _ANY_TOKENS. So treat it as /32.
-        return [f"{ip}/{bits}"]
-    # A proper (contiguous) netmask?
-    netmask_int = as_int
-    is_netmask = _is_contiguous_mask(netmask_int, bits)
-    if not is_netmask:
-        # treat as wildcard: invert
-        netmask_int = (~as_int) & ((1 << bits) - 1)
-        if not _is_contiguous_mask(netmask_int, bits):
-            # non-contiguous wildcard (ACLs allow it) — can't express as a
-            # single CIDR; over-approximate to the host's /prefix by the
-            # number of set bits, flagged by the caller via unresolved.
+    full = (1 << bits) - 1
+    if mask_style == "netmask":
+        if not _is_contiguous_mask(as_int, bits):
             return None
+        netmask_int = as_int
+    elif mask_style == "wildcard":
+        netmask_int = (~as_int) & full
+        if not _is_contiguous_mask(netmask_int, bits):
+            return None
+    else:
+        # Decide netmask vs wildcard by the leading bit: netmasks start 1s,
+        # wildcards start 0s. (255.0.0.0 → netmask; 0.0.0.255 → wildcard.)
+        if as_int == 0:
+            # All-zero mask on a specific host. As a Cisco wildcard this
+            # means "match this exact host"; the "match anything" case
+            # (0.0.0.0 0.0.0.0) is handled earlier. Netmask-style vendors
+            # pass mask_style="netmask" and get /0 instead.
+            return [f"{ip}/{bits}"]
+        netmask_int = as_int
+        if not _is_contiguous_mask(netmask_int, bits):
+            netmask_int = (~as_int) & full
+            if not _is_contiguous_mask(netmask_int, bits):
+                # non-contiguous wildcard (ACLs allow it): not one CIDR; the
+                # caller must flag it (unresolved → conditional any).
+                return None
     prefix = bin(netmask_int).count("1")
     try:
         return [str(ipaddress.ip_network(f"{addr}/{prefix}", strict=False))]
     except ValueError:
         return None
+
+
+def cidr_family(cidr: str) -> Optional[int]:
+    """4 or 6 for a CIDR string, ``None`` if it does not parse."""
+    try:
+        return ipaddress.ip_network(cidr, strict=False).version
+    except ValueError:
+        return None
+
+
+def filter_family(cidrs: "tuple[str, ...] | list[str]", version: int) -> tuple[str, ...]:
+    """Keep only the CIDRs of one address family (4 or 6)."""
+    return tuple(c for c in cidrs if cidr_family(c) == version)
+
+
+def exclude_cidrs(
+    cidrs: "tuple[str, ...] | list[str]",
+    minus: "tuple[str, ...] | list[str]",
+) -> list[str]:
+    """Exact set difference ``cidrs - minus`` as a minimal list of CIDRs.
+
+    Unparseable entries in ``cidrs`` raise ``ValueError`` (the caller must
+    not compute an exact difference over something it could not read);
+    unparseable entries in ``minus`` do too, for the same reason.
+    """
+    nets4: list = []
+    nets6: list = []
+    for c in cidrs:
+        n = ipaddress.ip_network(c, strict=False)
+        (nets4 if n.version == 4 else nets6).append(n)
+    sub4: list = []
+    sub6: list = []
+    for c in minus:
+        n = ipaddress.ip_network(c, strict=False)
+        (sub4 if n.version == 4 else sub6).append(n)
+    out: list[str] = []
+    for nets, subs in ((nets4, sub4), (nets6, sub6)):
+        work = list(ipaddress.collapse_addresses(nets)) if nets else []
+        for sub in (ipaddress.collapse_addresses(subs) if subs else []):
+            nxt = []
+            for n in work:
+                if not n.overlaps(sub):
+                    nxt.append(n)
+                elif sub.supernet_of(n):
+                    continue                       # fully removed
+                else:                               # n strictly contains sub
+                    nxt.extend(n.address_exclude(sub))
+            work = nxt
+        if work:
+            out.extend(str(n) for n in ipaddress.collapse_addresses(work))
+    return out
+
+
+def complement_cidrs(
+    cidrs: "tuple[str, ...] | list[str]",
+    families: tuple[int, ...] = (4, 6),
+) -> list[str]:
+    """The exact complement of ``cidrs`` within the given address families
+    (used for negated address matches). Raises ``ValueError`` on an
+    unparseable entry. An empty result means "matches nothing"."""
+    universe = [c for c, v in (("0.0.0.0/0", 4), ("::/0", 6)) if v in families]
+    return exclude_cidrs(universe, cidrs)
+
+
+def cidrs_overlap(a: "tuple[str, ...] | list[str]", b: "tuple[str, ...] | list[str]") -> bool:
+    """True if any CIDR in ``a`` overlaps any CIDR in ``b`` (same family)."""
+    for x in a:
+        try:
+            nx = ipaddress.ip_network(x, strict=False)
+        except ValueError:
+            continue
+        for y in b:
+            try:
+                ny = ipaddress.ip_network(y, strict=False)
+            except ValueError:
+                continue
+            if nx.version == ny.version and nx.overlaps(ny):
+                return True
+    return False
 
 
 def _is_contiguous_mask(value: int, bits: int) -> bool:
@@ -310,16 +425,38 @@ WELL_KNOWN_SERVICES: dict[str, tuple[Proto, int, int]] = {
 _PROTO_ALIASES: dict[str, Proto] = {
     "tcp": Proto.TCP, "6": Proto.TCP,
     "udp": Proto.UDP, "17": Proto.UDP,
-    "icmp": Proto.ICMP, "1": Proto.ICMP, "icmpv6": Proto.ICMP, "58": Proto.ICMP,
+    "icmp": Proto.ICMP, "1": Proto.ICMP, "icmpv6": Proto.ICMP, "icmp6": Proto.ICMP,
+    "ipv6-icmp": Proto.ICMP, "58": Proto.ICMP,
     "ip": Proto.ANY, "any": Proto.ANY, "-1": Proto.ANY, "0": Proto.ANY,
 }
 
 
 def proto_from(token: str | int | None) -> Proto:
-    """Map a protocol name/number to :class:`Proto`. Unknown → ANY."""
+    """Map a protocol name/number to :class:`Proto`. Unknown → ANY.
+
+    ANY is a *widening* for an unknown protocol (e.g. ``gre``, ``47``): fine
+    for an allow, but a DENY of one protocol must not be read as a deny of
+    every protocol. Use :func:`proto_is_exact` to decide whether the caller
+    has to flag the rule conditional.
+    """
     if token is None:
         return Proto.ANY
     return _PROTO_ALIASES.get(str(token).strip().lower(), Proto.ANY)
+
+
+#: Tokens that genuinely mean "every IP protocol".
+_ANY_PROTO_TOKENS: frozenset[str] = frozenset({"ip", "any", "-1", "all"})
+
+
+def proto_is_exact(token: str | int | None) -> bool:
+    """True when :func:`proto_from` represents ``token`` exactly: a
+    tcp/udp/icmp alias, or a token meaning "all protocols". False for any
+    other protocol (``gre``, ``esp``, ``47``, ``sctp``, garbage), which the
+    neutral model can only widen to ANY."""
+    if token is None:
+        return True
+    t = str(token).strip().lower()
+    return t in _ANY_PROTO_TOKENS or (t in _PROTO_ALIASES and _PROTO_ALIASES[t] is not Proto.ANY)
 
 
 def port_from_name(token: str) -> Optional[int]:
@@ -330,14 +467,20 @@ def port_from_name(token: str) -> Optional[int]:
         n = int(t)
         return n if 0 <= n <= 65535 else None
     svc = WELL_KNOWN_SERVICES.get(t)
-    return svc[1] if svc else None
+    if svc is None or svc[0] not in (Proto.TCP, Proto.UDP):
+        return None                 # e.g. "icmp" is not a port
+    return svc[1]
 
 
 def port_range(proto: Proto, low: int, high: Optional[int] = None) -> PortRange:
-    """Build a PortRange, clamping to valid bounds and ordering lo ≤ hi."""
+    """Build a PortRange, clamping to valid bounds and ordering lo ≤ hi.
+
+    Never raises: each end is clamped into 0..65535 *before* ordering, so an
+    out-of-range port (``70000``) cannot produce an invalid PortRange."""
     hi = low if high is None else high
-    low, hi = min(low, hi), max(low, hi)
-    return PortRange(proto, max(0, low), min(65535, hi))
+    lo_c = max(0, min(65535, int(low)))
+    hi_c = max(0, min(65535, int(hi)))
+    return PortRange(proto, min(lo_c, hi_c), max(lo_c, hi_c))
 
 
 def service_from_name(token: str) -> Optional[tuple[PortRange, ...]]:
@@ -420,8 +563,15 @@ class ObjectTable:
         for c in cidrs:
             if c not in seen:
                 seen.append(c)
+        if not seen:
+            # Nothing concrete (an empty group, or one whose only members
+            # were cyclic). Never let "empty" silently become a clean "any":
+            # widen to any *and* flag it, so a DENY on it can't prove closed.
+            feats.add(ConditionalFeature.UNRESOLVED)
+            unresolved.append(f"{token} (resolves to no addresses)")
+            seen = list(ANY_CIDRS)
         return ResolvedAddresses(
-            cidrs=tuple(seen) if seen else ANY_CIDRS,
+            cidrs=tuple(seen),
             conditional=bool(feats),
             features=tuple(sorted(feats, key=lambda f: f.value)),
             unresolved=tuple(dict.fromkeys(unresolved)),
@@ -436,7 +586,14 @@ class ObjectTable:
         seen: set[str],
         depth: int,
     ) -> None:
-        if depth > _MAX_GROUP_DEPTH or token in seen:
+        if token in seen or depth > _MAX_GROUP_DEPTH:
+            # A cycle (or absurd nesting) means the config is not what we
+            # think it is: over-approximate to "any" and flag it, rather than
+            # silently contributing nothing.
+            why = "group cycle" if token in seen else "group nesting too deep"
+            feats.add(ConditionalFeature.UNRESOLVED)
+            unresolved.append(f"{token} ({why})")
+            out.extend(ANY_CIDRS)
             return
         # A user-defined object/group wins over a same-named literal: real
         # configs do name objects, and the table is authoritative.
@@ -451,11 +608,17 @@ class ObjectTable:
             out.extend(ANY_CIDRS)
             return
         seen = seen | {token}
-        if obj.conditional and obj.feature is not None:
-            feats.add(obj.feature)
-            # a conditional object still contributes any CIDRs it has, plus
-            # "any" so the over-approximation is safe
-            out.extend(obj.cidrs or ANY_CIDRS)
+        if obj.conditional:
+            feat = obj.feature if obj.feature is not None else ConditionalFeature.UNRESOLVED
+            feats.add(feat)
+            out.extend(obj.cidrs)
+            # A NAT/VIP object is exactly its real + mapped addresses (the
+            # flag is about *which* one matches). Any other conditional
+            # object may hold addresses we could not read (FQDN, dynamic
+            # group, a member line we skipped, ...), so it also contributes
+            # "any": a partial CIDR list would *narrow* an allow.
+            if feat is not ConditionalFeature.NAT or not obj.cidrs:
+                out.extend(ANY_CIDRS)
         else:
             out.extend(obj.cidrs)
         for m in obj.members:
@@ -470,8 +633,12 @@ class ObjectTable:
         for p in ports:
             if p not in uniq:
                 uniq.append(p)
+        if not uniq:
+            feats.add(ConditionalFeature.UNRESOLVED)
+            unresolved.append(f"{token} (resolves to no ports)")
+            uniq = [PortRange.any()]
         return ResolvedService(
-            ports=tuple(uniq) if uniq else (PortRange.any(),),
+            ports=tuple(uniq),
             conditional=bool(feats),
             features=tuple(sorted(feats, key=lambda f: f.value)),
             unresolved=tuple(dict.fromkeys(unresolved)),
@@ -486,7 +653,11 @@ class ObjectTable:
         seen: set[str],
         depth: int,
     ) -> None:
-        if depth > _MAX_GROUP_DEPTH or token in seen:
+        if token in seen or depth > _MAX_GROUP_DEPTH:
+            why = "group cycle" if token in seen else "group nesting too deep"
+            feats.add(ConditionalFeature.UNRESOLVED)
+            unresolved.append(f"{token} ({why})")
+            out.append(PortRange.any())
             return
         # A user-defined service/group wins over a same-named built-in, and
         # vendor defaults (e.g. FortiGate DNS = tcp+udp/53) differ from the
@@ -502,9 +673,14 @@ class ObjectTable:
             out.append(PortRange.any())
             return
         seen = seen | {token}
-        if obj.conditional and obj.feature is not None:
-            feats.add(obj.feature)
         out.extend(obj.ports)
+        if obj.conditional:
+            feat = obj.feature if obj.feature is not None else ConditionalFeature.UNRESOLVED
+            feats.add(feat)
+            if feat is ConditionalFeature.UNRESOLVED or not obj.ports:
+                # parts of the object could not be read: never narrower
+                # than the truth
+                out.append(PortRange.any())
         for m in obj.members:
             self._resolve_svc(m, out, feats, unresolved, seen, depth + 1)
 
@@ -526,28 +702,51 @@ def build_rule(
     cost_class: str = "network_rule",
     extra_conditional: bool = False,
     extra_feature: Optional[ConditionalFeature] = None,
+    extra_features: "tuple[ConditionalFeature, ...] | list[ConditionalFeature]" = (),
 ) -> tuple[Rule, list[ParseWarning]]:
     """Assemble a :class:`Rule` from resolved parts, applying the honesty
     rule: the rule is ``conditional`` if any of its addresses/service were
     conditional, or the caller flags an L7/identity feature on the rule
-    itself (App-ID, User-ID, …)."""
-    conditional = src.conditional or dst.conditional or service.conditional or extra_conditional
+    itself (App-ID, User-ID, …). ``extra_features`` lets a caller flag
+    several rule-level features at once (each gets its own warning).
+
+    An empty side (no CIDRs / no ports) is never silently read as a clean
+    "any": it widens to any and makes the rule conditional."""
+    feats = list(src.features) + list(dst.features) + list(service.features)
+    if extra_feature is not None:
+        feats.append(extra_feature)
+    feats.extend(extra_features)
+    empty: list[str] = []
+    src_cidrs, dst_cidrs, ports = tuple(src.cidrs), tuple(dst.cidrs), tuple(service.ports)
+    if not src_cidrs:
+        src_cidrs = ANY_CIDRS
+        empty.append("source")
+    if not dst_cidrs:
+        dst_cidrs = ANY_CIDRS
+        empty.append("destination")
+    if not ports:
+        ports = (PortRange.any(),)
+        empty.append("service")
+    if empty:
+        feats.append(ConditionalFeature.UNRESOLVED)
+    conditional = (src.conditional or dst.conditional or service.conditional
+                   or extra_conditional or bool(feats))
     rule = Rule(
         id=rule_id,
         action=action,
         order=order,
-        src_cidrs=tuple(src.cidrs),
-        dst_cidrs=tuple(dst.cidrs),
-        ports=tuple(service.ports) or (PortRange.any(),),
+        src_cidrs=src_cidrs,
+        dst_cidrs=dst_cidrs,
+        ports=ports,
         vendor=vendor,
         conditional=conditional,
         raw_ref=raw_ref,
         cost_class=cost_class,
     )
     warnings: list[ParseWarning] = []
-    feats = list(src.features) + list(dst.features) + list(service.features)
-    if extra_feature is not None:
-        feats.append(extra_feature)
+    for side in empty:
+        warnings.append(ParseWarning(
+            WarningLevel.UNRESOLVED, f"empty {side}; widened to any", raw_ref))
     for f in dict.fromkeys(feats):
         warnings.append(
             ParseWarning(WarningLevel.CONDITIONAL, CONDITIONAL_REASON[f], raw_ref)
@@ -557,6 +756,52 @@ def build_rule(
             ParseWarning(WarningLevel.UNRESOLVED, f"unresolved object: {u}", raw_ref)
         )
     return rule, warnings
+
+
+def _covered(cidr: str, among: "list[str] | tuple[str, ...]") -> bool:
+    try:
+        n = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return cidr in among
+    for c in among:
+        try:
+            m = ipaddress.ip_network(c, strict=False)
+        except ValueError:
+            continue
+        if m.version == n.version and m.supernet_of(n):
+            return True
+    return False
+
+
+def apply_nat_overapprox(
+    rule: Rule,
+    nat_pairs: "list[tuple[tuple[str, ...], tuple[str, ...]]]",
+) -> tuple[Rule, bool]:
+    """Over-approximate a rule across address translation.
+
+    ``nat_pairs`` are ``(real_cidrs, mapped_cidrs)`` translations. Whether a
+    firewall matches a rule on the real or the mapped address depends on
+    vendor/version (ASA 8.3+ real, PAN-OS pre-NAT destination, ...), and the
+    topology may describe either. So wherever a rule side overlaps one half
+    of a translation, the other half is added and the rule is flagged
+    ``conditional``. Returns ``(rule, changed)``.
+    """
+    from dataclasses import replace as _replace
+
+    src, dst = list(rule.src_cidrs), list(rule.dst_cidrs)
+    changed = False
+    for real, mapped in nat_pairs:
+        for side in (src, dst):
+            snapshot = tuple(side)
+            for a, b in ((real, mapped), (mapped, real)):
+                if a and b and cidrs_overlap(snapshot, a):
+                    for c in b:
+                        if not _covered(c, side):
+                            side.append(c)
+                            changed = True
+    if not changed:
+        return rule, False
+    return _replace(rule, src_cidrs=tuple(src), dst_cidrs=tuple(dst), conditional=True), True
 
 
 # ---------------------------------------------------------------------------
