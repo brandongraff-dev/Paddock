@@ -387,6 +387,36 @@ material.
 
 ## 9. What it's built from, and in what order
 
+### Implementation status (engine)
+
+A tested engine now lives in `correlation/app/engine/wargame/` (pure
+Python, no new deps, ~390 tests). Built so far:
+
+- **Solver + backward search + fix set + evidence ladder** — `rules.py`,
+  `reachability.py`, `mincut.py`, `model.py`.
+- **Closed-boundary certificates** (assumptions + expiry + signature) —
+  `certificate.py`.
+- **Config parsers → vendor-neutral rule model** — `parsers/` for AWS
+  (SG + NACL), Cisco ASA, FortiGate, Palo Alto, with the honesty rule
+  (runtime-only / unresolved → *conditional*).
+- **Change-impact proof** (routes opened/closed + live flows it would
+  break) — `changegate.py`; **Terraform-plan parser** —
+  `parsers/terraform.py`.
+- **Three-way agreement report** — `agreement.py`; **scorecard**
+  (closure always shown with coverage) — `report.py`.
+- **Impossible-traffic** detection and **replica verification**
+  (preconditions only, no exploit) — `impossible.py`, `replica.py`.
+- Runnable demos: `python -m app.engine.wargame.demo` and
+  `… .demo_changegate`.
+
+Not yet built: live connector wiring (read-only firewall/cloud/IoT-tool
+ingest and the topology that maps rule sets onto graph edges), probe
+deployment mode, auditor-formatted compliance packs, the sandbox runner
+behind `replica.ReplicaRunner`, twin ranges with a published
+false-"closed" rate, and the dashboard. A known gap: Terraform rule ids
+(resource addresses) don't match the AWS parser's ids, so remove/modify
+across the two needs an id-mapping layer (add composes today).
+
 | Exists today | Needs building |
 |---|---|
 | Attack-path engine (`attackpath.py`): forward Dijkstra, undirected | Directed, rule-aware graph; backward search; ILP fix set over (entry, jewel) pairs |
