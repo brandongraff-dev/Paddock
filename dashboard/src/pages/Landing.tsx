@@ -3,10 +3,14 @@ import DigitHorse from "../brand/DigitHorse";
 import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
 import PixelField from "../brand/PixelField";
+import GitHubStars from "./landing/GitHubStars";
+import CtaBox from "./landing/CtaBox";
+import Faq from "./landing/Faq";
 import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
+import HowItWorks from "./landing/HowItWorks";
 import { useInView } from "./landing/hooks";
 import "../styles/landing.css";
 
@@ -32,8 +36,8 @@ const AGENTS: Agent[] = [
     name: "Warden",
     version: "1.0",
     id: "AGENT-001 · v1.0.0",
-    role: "Scope agent",
-    blurb: "Enforces the allowlist on every packet; differential-fuzzed against real URL parsers",
+    role: "Scope",
+    blurb: "Keeps every scan inside the scope you own.",
     to: "/scope",
     plate: 6,
     tone: "sepia",
@@ -42,8 +46,8 @@ const AGENTS: Agent[] = [
     name: "Outrider",
     version: "2.1",
     id: "AGENT-002 · v2.1.4",
-    role: "Discovery agent",
-    blurb: "Maps your surface from CT logs, DNS, ASN ranges and polite authorised probes",
+    role: "Discovery",
+    blurb: "Finds everything you have exposed to the internet.",
     to: "/graph",
     plate: 3,
     tone: "ash",
@@ -52,8 +56,8 @@ const AGENTS: Agent[] = [
     name: "Herald",
     version: "1.4",
     id: "AGENT-003 · v1.4.2",
-    role: "Threat-intel agent",
-    blurb: "Correlates NVD, EPSS, CISA KEV and your TAXII feeds against what you actually run",
+    role: "Threat intel",
+    blurb: "Flags the weaknesses attackers are using right now.",
     to: "/threat-intel",
     plate: 8,
     tone: "patina",
@@ -62,8 +66,8 @@ const AGENTS: Agent[] = [
     name: "Farrier",
     version: "3.0",
     id: "AGENT-004 · v3.0.1",
-    role: "Remediation agent",
-    blurb: "Routes each attack path to its owner with the fix, the ticket and the deadline",
+    role: "Remediation",
+    blurb: "Sends each fix to the team that owns it.",
     to: "/remediation",
     plate: 0,
     tone: "ember",
@@ -72,8 +76,8 @@ const AGENTS: Agent[] = [
 
 const REPO = "https://github.com/brandongraff-dev/cybersec";
 const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
-  { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["Principles", "#principles"], ["Console", "/login"]] },
-  { title: "Project", links: [["Source", REPO], ["Documentation", `${REPO}/tree/main/docs`], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
+  { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["How it works", "#how"], ["Principles", "#principles"], ["FAQ", "#faq"], ["Console", "/login"]] },
+  { title: "Project", links: [["Source", REPO], ["Documentation", "https://paddock-docs.vercel.app"], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
   { title: "Security", links: [["Security policy", `${REPO}/blob/main/SECURITY.md`], ["Report a vulnerability", `${REPO}/security/advisories/new`], ["Code of conduct", `${REPO}/blob/main/CODE_OF_CONDUCT.md`]] },
 ];
 
@@ -87,6 +91,7 @@ const RULES = [
 export default function Landing() {
   const token = useAuth((s) => s.token);
   const enter = token ? "/" : "/login";
+  const isPhone = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 720px)").matches;
   const [railRef, railIn] = useInView<HTMLDivElement>(0.15);
   const [megaRef, megaIn] = useInView<HTMLDivElement>(0.6);
 
@@ -95,7 +100,7 @@ export default function Landing() {
       <div className="lp-col">
       <section className="lp-hero">
         <div className="lp-sky" aria-hidden="true">
-          <PixelField className="lp-pixels" cell={6} maxDpr={1} wake={{ x: 0.43, y: 0.64 }} />
+          <PixelField className="lp-pixels" cell={6} maxDpr={1} wake={isPhone ? { x: 0.4, y: 0.62 } : { x: 0.43, y: 0.64 }} />
         </div>
 
         <nav className="lp-nav">
@@ -107,9 +112,10 @@ export default function Landing() {
             <a href="#agents">Agents</a>
             <a href="#product">Product</a>
             <a href="#principles">Principles</a>
-            <a href="https://github.com/brandongraff-dev/cybersec" target="_blank" rel="noreferrer">
-              Source
+            <a href="https://paddock-docs.vercel.app" target="_blank" rel="noreferrer">
+              Docs
             </a>
+            <GitHubStars />
             <Link to={enter} className="lp-cta">
               {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
             </Link>
@@ -142,6 +148,10 @@ export default function Landing() {
         </footer>
       </section>
 
+      <section className="lp-cta-strip" aria-label="Get started">
+        <CtaBox className="cta-strip" />
+      </section>
+
       <section className="lp-agents" id="agents">
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Defensive agents</span>
@@ -154,22 +164,14 @@ export default function Landing() {
                 <DigitHorse still={a.plate} strays={false} body={0.5} />
               </div>
               <div className="lp-card-body">
-                <div className="lp-card-top">
-                  <h3>
-                    {a.name} {a.version}
-                  </h3>
-                  <span className="lp-tag">
-                    <i aria-hidden="true" />
-                    {a.role}
-                  </span>
-                </div>
-                <div className="lp-card-info">
-                  <span>Agent info</span>
-                  <span className="mono">{a.id}</span>
-                </div>
+                <span className="lp-tag">
+                  <i aria-hidden="true" />
+                  {a.role}
+                </span>
+                <h3>{a.name}</h3>
                 <p>{a.blurb}</p>
-                <Link to={token ? a.to : "/login"} className="lp-run">
-                  <span aria-hidden="true">⟶</span> Run agent
+                <Link to={token ? a.to : "/login"} className="lp-open">
+                  Open <span aria-hidden="true">→</span>
                 </Link>
               </div>
             </article>
@@ -179,6 +181,7 @@ export default function Landing() {
 
       <DitherRule className="lp-rule-dither" />
       <Showcase />
+      <HowItWorks />
 
 
       <section className="lp-principles" id="principles">
@@ -197,24 +200,21 @@ export default function Landing() {
       </section>
 
 
+      <Faq />
       </div>
 
       <footer className="lp-footer">
-        <DitherRule className="lp-footer-dither" rows={10} deep />
+        <PixelField className="lp-footer-px" cell={6} maxDpr={1} animate={false} wake={{ x: 1.08, y: 1.02 }} />
         <div className="lp-footer-in">
           <div className="lp-footer-cta">
             <h2>Close the paths before they&apos;re walked.</h2>
-            <div>
-              <Link to={enter} className="lp-run lp-footer-btn">
-                {token ? "Open console" : "Sign in"} <span aria-hidden="true">→</span>
-              </Link>
-            </div>
+            <CtaBox className="cta-footer" />
           </div>
           <div className="lp-footer-grid">
             <div className="lp-footer-brand" ref={megaRef}>
               <div className={`lp-footer-logo${megaIn ? " in" : ""}`}>
                 <HorseMark size={34} />
-                <Wordmark height={30} shimmer deep />
+                <Wordmark height={30} shimmer />
               </div>
               <p>Map the paths attackers would take, and close them before they do.</p>
             </div>

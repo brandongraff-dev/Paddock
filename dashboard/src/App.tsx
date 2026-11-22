@@ -35,6 +35,7 @@ import NetworkActionsPage from "./pages/NetworkActions";
 import IdentitySettingsPage from "./pages/IdentitySettings";
 import BillingPage from "./pages/Billing";
 import Landing from "./pages/Landing";
+import NotFound from "./pages/NotFound";
 import Setup, { FirstRunRedirect } from "./pages/Setup";
 import CheckPage from "./pages/Check";
 import TrustPage from "./pages/Trust";
@@ -123,6 +124,13 @@ function AuthedApp() {
   );
 }
 
+const APP_SEGMENTS = new Set(["ask", "attack", "attack-paths", "audit", "chains", "changes", "context", "dependencies", "devices", "explore", "findings", "fleet", "graph", "integrations", "monitoring", "msp", "network-actions", "posture", "remediation", "reports", "risk-model", "scans", "scope", "sensors", "settings", "setup", "sso", "suppliers", "suppressions", "threat-intel", "tickets", "timeline"]);
+
+function SignedOutDeepLink() {
+  const seg = window.location.pathname.split("/")[1] ?? "";
+  return APP_SEGMENTS.has(seg) ? <Login /> : <NotFound />;
+}
+
 /** Signed-out surface: the public landing page and the sign-in screen. */
 function PublicApp() {
   return (
@@ -133,7 +141,10 @@ function PublicApp() {
         <Route path="/sso/callback" element={<SsoCallback />} />
         <Route path="/check" element={<CheckPage />} />
         <Route path="/trust/:token" element={<TrustPage />} />
-        <Route path="*" element={<Login />} />
+        <Route path="/login" element={<Login />} />
+        {/* app routes the sign-in screen should catch (deep links): everything else is a real 404 */}
+        <Route path={`/:seg/*`} element={<SignedOutDeepLink />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   );
