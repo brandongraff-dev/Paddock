@@ -36,9 +36,10 @@ jobs:
   #
   # A Postgres 16 service container is provided to every leg and exposed as
   # TEST_DATABASE_URL. Most services' DB-backed suites opt in via that var
-  # and skip cleanly without it; the orchestrator instead spins up its own
-  # disposable databases with pytest-postgresql (needs the pg server
-  # binaries, installed below only for that leg).
+  # and skip cleanly without it. The orchestrator creates its own disposable
+  # databases on that same server (ORCH_TEST_PG, no local pg binaries), once
+  # as a superuser and once as the non-superuser RLS role (app_role), which
+  # is the run that proves tenant isolation.
   # --------------------------------------------------------------------- #
   python:
     name: py ${{ matrix.service }}
@@ -47,7 +48,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { service: orchestrator,    path: orchestrator,    extra: dev,  pg_bin: true }
+          - { service: orchestrator,    path: orchestrator,    extra: dev }
+          - { service: orchestrator (rls app role), path: orchestrator, extra: dev, app_role: "1" }
           - { service: correlation,     path: correlation,     extra: test }
           - { service: intel,           path: intel,           extra: dev }
           - { service: sca,             path: sca,             extra: test }
@@ -63,6 +65,9 @@ jobs:
           - { service: worker-active,   path: workers/active,  extra: dev }
           - { service: otdiscovery,     path: otdiscovery,     extra: test }
           - { service: sentry,          path: sentry,          extra: test }
+          - { service: remediation,     path: remediation,     extra: test }
+          - { service: agent,           path: agent,           extra: test }
+          - { service: mcp,             path: mcp,             extra: test }
 
     services:
       postgres:
@@ -71,6 +76,9 @@ jobs:
           POSTGRES_USER: asm
           POSTGRES_PASSWORD: asm
           POSTGRES_DB: asm_test
+          # test-only container: lets the orchestrator suite connect by user
+          # alone (ORCH_TEST_PG) to create its throwaway databases and roles
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U asm -d asm_test"
@@ -84,6 +92,9 @@ jobs:
       # suites apply schema and truncate tables.
       TEST_DATABASE_URL: postgresql://asm:asm@localhost:5432/asm_test
       DATABASE_URL: postgresql://asm:asm@localhost:5432/asm_test
+      # orchestrator: reuse the service container instead of local pg binaries
+      ORCH_TEST_PG: localhost:5432:asm
+      ORCH_TEST_APP_ROLE: ${{ matrix.app_role || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -91,15 +102,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Ensure Postgres 16 server binaries (orchestrator / pytest-postgresql)
-        if: ${{ matrix.pg_bin }}
-        run: |
-          if [ ! -d /usr/lib/postgresql/16/bin ]; then
-            sudo apt-get update
-            sudo apt-get install -y postgresql-16 postgresql-client-16
-          fi
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
 
       - name: Install ${{ matrix.service }} (+ ${{ matrix.extra }} extra)
         working-directory: ${{ matrix.path }}
