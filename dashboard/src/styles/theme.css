@@ -204,7 +204,9 @@ body,
 }
 
 @media (max-width: 860px) {
-  :root { --rail-w: 60px; }
+  /* Must out-rank tokens.css's `:root[data-theme="dark"]` (the console is
+     always dark), or the rail never collapses on phones. */
+  :root, :root:root[data-theme] { --rail-w: 60px; }
   .rail .brand-name,
   .rail-label,
   .rail-group-label,
