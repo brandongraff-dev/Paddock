@@ -22,6 +22,14 @@ ENGINES: dict[str, tuple[str, tuple[str, ...]]] = {
     "remediation": ("remediation/app", ("__init__.py", "gate.py", "generators.py", "verify.py",
                                         "injection.py")),
     "orchestrator": ("orchestrator/app", ("__init__.py", "standards.py")),
+    # Wargame is a stdlib-only subpackage of the correlation service. The service-bound modules
+    # (store, twin_store, assess, graph_adapter: database / attack-path imports) and the demos are
+    # deliberately left out. Its one outside import, ``..policy``, is supplied by engines.py.
+    "wargame": ("correlation/app/engine/wargame", (
+        "__init__.py", "model.py", "environment.py", "reachability.py", "rules.py", "safety.py",
+        "fabric.py", "topology.py", "impossible.py", "ingest.py", "routing.py", "mincut.py",
+        "report.py", "changegate.py", "agreement.py", "certificate.py", "signing.py", "identity.py",
+        "parsers")),
 }
 
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "tests")

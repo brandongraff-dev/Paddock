@@ -28,6 +28,12 @@ def _resolves(pkg_dir: Path, module_file: Path, level: int, name: str | None) ->
     return target.with_suffix(".py").is_file() or (target / "__init__.py").is_file()
 
 
+# Imports the loader (paddock_cli/engines.py) satisfies itself instead of the bundle:
+# wargame's safety.py does ``from ..policy import ...`` (the correlation service's module, which
+# needs yaml/pydantic); engines.py installs a stdlib-only stand-in under that name.
+LOADER_PROVIDED = {("wargame/safety.py", "..policy")}
+
+
 def test_every_relative_import_in_the_bundle_resolves(tmp_path):
     dest = tmp_path / "_vendor"
     assert vendor.vendor_all(REPO, dest)
@@ -41,6 +47,9 @@ def test_every_relative_import_in_the_bundle_resolves(tmp_path):
                     continue
                 if node.module is not None:
                     ok = _resolves(pkg, f, node.level, node.module)
+                    spelled = "." * node.level + node.module
+                    if not ok and (str(f.relative_to(dest)), spelled) in LOADER_PROVIDED:
+                        continue
                     if not ok:
                         missing.append(f"{f.relative_to(dest)}: from {'.' * node.level}{node.module}")
                 else:  # from . import a, b -> each name is a sibling module or a package attr

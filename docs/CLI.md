@@ -14,6 +14,7 @@ in this repository. Nothing is reimplemented that an engine provides.
 | SARIF 2.1.0 | `orchestrator/app/standards.sarif_log` | same writer as `GET /v1/export/sarif` |
 | Diff generators, deterministic gate, rule verifier, injection scan | `remediation/app` | `generators`, `gate`, `verify`, `injection` |
 | Upload payloads | `sca` `build_sca_finding`, `codeanalysis` `build_sast_finding` | `POST /v1/findings/bulk` |
+| Crown-jewel routes, minimum fix set, change gate | `correlation/app/engine/wargame` | `parsers`, `topology`, `Environment.reachability`, `mincut`, `changegate` |
 
 Each service ships a package named `app`, so the CLI loads them under private aliases
 (`paddock_cli/engines.py`) instead of importing them normally. In a checkout it reads the service
@@ -120,6 +121,140 @@ the remediation injection scanner first. Needs `contents: write` and `pull_reque
 scanning with `if: always()`, weekly schedule) and `.pre-commit-config.yaml` (offline secrets and code check).
 Existing files are never overwritten (`--force` re-creates the workflow); an existing pre-commit config gets
 the snippet printed instead of being edited.
+
+## wargame
+
+```bash
+paddock wargame init                                  # write an example project to try
+paddock wargame check [--file wargame.toml] [--json]
+paddock wargame plan PLAN.json [--file wargame.toml] [--flows FILE] [--json | --markdown] [--strict]
+```
+
+Wargame's "aha", locally and without a server: describe the segments that matter, point at your
+firewall and cloud config exports, and `check` works backward from each crown jewel to show every
+route that reaches it, **labelled hop by hop with the evidence behind it**, plus the cheapest set of
+changes that cuts every route. `plan` runs the same model against a `terraform show -json` plan and
+says whether the change opens a route or breaks live traffic. It reads files and prints; it sends no
+packet, applies nothing and never runs an exploit (the engine's rules, see
+[WARGAME_ENGINE.md](WARGAME_ENGINE.md)). Engine reference and evidence ladder: same document.
+
+### wargame.toml
+
+`paddock wargame init` writes a commented example (guest Wi-Fi to a smart fridge to the POS controller
+to the payments database) plus tiny sample configs under `wargame/`, so `check` works immediately.
+Existing files are never overwritten (`--force` does). Paths are relative to the project file.
+
+| Section | Keys | Meaning |
+|---|---|---|
+| `[project]` | `name` | label in output (default: directory name) |
+| `[[segment]]` | `id`, `cidrs`, `role`, `jewel_kind`, `reason` | a network that matters. `role` is `entry` (where an attacker could start), `crown_jewel` (must stay unreachable) or `intermediate` (default). At least one entry and one crown jewel are required |
+| `[[source]]` | `vendor`, `path`, `id_prefix`, `sg_members` | a config export. `vendor`: `fortinet`, `cisco_asa`, `paloalto` (device config text), `aws` (`describe-security-groups` or `describe-network-acls` JSON), `aws_routes` (`describe-route-tables` JSON; a hop with no route is dropped). `id_prefix` disambiguates two devices that reuse rule set names; `sg_members = { "sg-1" = ["10.0.0.0/24"] }` resolves SG-to-SG references (aws) |
+| `[zones]` | `name = "segment-id"` | a firewall zone or interface to the segment behind it |
+| `[subnets]` | `name = "segment-id"` | an AWS subnet or ENI to its segment |
+| `[[edge]]` | `from`, `to`, `ruleset`, `port`, `evidence`, `note` | a declared adjacency. `ruleset` names a rule set from a source (an unknown name is an error, never a silent "closed"). With none, the edge is an ungoverned adjacency, labelled **inferred**. `port` is `tcp/5432`, `udp/53`, `tcp/8000-8100` or `any`. `evidence = "observed"` marks an ungoverned edge you have seen traffic on |
+| `[flows]` | `file`, `format` | observed traffic (Zeek `conn.log` JSON lines, firewall allow logs, generic JSON; `format` is `auto`, `generic`, `zeek` or `firewall`). Real flows add *observed* evidence and `plan` uses them to list the live flows a change would break |
+
+Rule sets whose two sides both resolve through `[zones]`/`[subnets]` are wired into the model
+automatically (Fortinet and Palo Alto zone pairs, AWS subnets); anything else is declared with `[[edge]]`.
+
+### check
+
+Prints the board line (closure **always** with its coverage caveat), every open route with each hop's
+evidence, the cheapest fix set with `cuts every route: yes/no`, and a **"what we couldn't prove"**
+section: conditional rules (FQDN, App-ID, unresolved objects, treated as reachable), parser gaps and
+routing assumptions. A conditional or inferred hop is printed `UNPROVEN`; such a route counts as open.
+
+```text
+  33.3% of routes to crown jewels are proved closed, over a model whose coverage is not yet
+  measured; 2 routes remain open.
+
+  OPEN ROUTES (2 across 2 entry/jewel pairs)
+    1. guest-wifi -> iot -> pos -> payments-db   proved
+      guest-wifi -> iot          observed traffic + proved by config   fortinet:guest>iot:1
+      iot        -> pos          proved by config   fortinet:iot>pos:2
+      pos        -> payments-db  observed traffic + proved by config   tcp/5432  sg-0paymentsdb#in0
+    2. vendor-support -> pos -> payments-db   UNPROVEN
+      vendor-support -> pos          CONDITIONAL, UNPROVEN   fortinet:wan>pos:3
+        -> depends on runtime state the config cannot prove (FQDN, App-ID, unresolved object)
+      pos            -> payments-db  observed traffic + proved by config   tcp/5432  sg-0paymentsdb#in0
+
+  CHEAPEST FIX SET (cost 1, exact search)
+    1. tighten rule set sg-0paymentsdb so pos can no longer reach payments-db
+       cuts 2 of 2 open routes · cloud_policy · rule sg-0paymentsdb#in0
+       cuts every route: yes
+```
+
+Exit codes: `0` no open route reaches a crown jewel, `1` at least one does, `2` bad input (the message
+says which key or file). `--json` prints schema `paddock.wargame.check/1`. Fix costs come from the
+engine's cost classes: a rule change is cheaper than a segmentation change. With more than 24 candidate
+changes the search is greedy and says so instead of calling the result minimal.
+
+### plan
+
+```text
+  This change opens a route to payments-db (from branch-office).
+
+  ROUTES OPENED
+   + branch-office -> payments-db
+       branch-office -> payments-db  proved by config   aws_security_group_rule.branch_to_payments_db
+```
+
+or "This change would break 2 live flows", with the flows listed. The verdict, plainly:
+
+| Verdict | Meaning | Exit |
+|---|---|---|
+| `safe` | no route to a crown jewel opens and no observed flow breaks | `0` |
+| `opens_route_to_crown_jewel` | an entry/jewel pair that was closed now has a route | `1` |
+| `breaks_live_flows` | traffic seen in `[flows]`/`--flows` would be denied | `1` |
+| `opens_and_breaks` | both | `1` |
+
+It understands `aws_security_group_rule`, `aws_vpc_security_group_{ingress,egress}_rule` and
+`aws_network_acl_rule`. Anything else in the plan, and any change to a rule set that is not in the
+model, is listed under "what we couldn't prove" rather than being ignored (`--strict` also fails on
+those). Without observed flows the live-flow check cannot run, and the output says so. No colour unless
+stdout is a terminal (`NO_COLOR`/`FORCE_COLOR` as for `scan`). `--json` prints `paddock.wargame.plan/1`;
+`--markdown` prints a PR-comment sized report.
+
+Limitation today: the Terraform parser identifies rules by their Terraform address, so a plan that
+*modifies or deletes* a rule that came from an exported config cannot be matched to it and is reported
+as not modelled. Added rules, the case that opens routes, are matched by security group / NACL id.
+
+### In CI (GitHub Actions)
+
+An example for a Terraform repository; nothing like it is installed for you (`paddock init` is for
+`scan`). Keep `wargame.toml` and the config exports in the repo or refresh them in an earlier step.
+
+```yaml
+name: wargame
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  plan-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_wrapper: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install ./cli            # or: pipx install paddock-cli, once published
+      - run: |
+          terraform init -input=false
+          terraform plan -input=false -out=tfplan
+          terraform show -json tfplan > plan.json
+      - name: Would this change open a route to a crown jewel?
+        run: paddock wargame plan plan.json --markdown > wargame-comment.md
+      - name: Comment on the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment ${{ github.event.pull_request.number }} --body-file wargame-comment.md --edit-last || gh pr comment ${{ github.event.pull_request.number }} --body-file wargame-comment.md
+```
+
+The `plan` step fails the job (exit `1`) when the change is not safe, so make it a required check to
+block the merge. Use `--json` instead of `--markdown` to feed another tool.
 
 ## Upload (opt-in)
 
