@@ -424,6 +424,8 @@ interface Props {
 
 export default function Shell({ children, noScroll }: Props) {
   const loc = useLocation();
+  // Overview carries the full aurora; working pages get a quiet corner band.
+  const quietCanvas = loc.pathname !== "/";
   const role = useAuth((s) => s.user?.role);
   const resetClassification = useStore((s) => s.resetClassification);
 
@@ -482,8 +484,8 @@ export default function Shell({ children, noScroll }: Props) {
         <UserMenu />
       </nav>
 
-      <div className="canvas">
-        <PixelField className="canvas-pixels" cell={5} animate={false} originX={0.26} />
+      <div className={`canvas${quietCanvas ? " canvas--quiet" : ""}`}>
+        <PixelField className="canvas-pixels" cell={5} animate={false} originX={quietCanvas ? 0.78 : 0.26} />
         <header className="topbar">
           <div className="crumbs">
             <span className="crumb-group">{group}</span>
