@@ -66,9 +66,28 @@ def health():
     srv.shutdown()
 
 
+def _path_without_docker(sb) -> str:
+    """A PATH with the system tools but no docker at all. Using /usr/bin:/bin
+    directly isn't enough: on CI runners (and most dev machines) the real
+    docker lives in /usr/bin."""
+    d = sb["home"].parent / "nodocker-bin"
+    if not d.exists():
+        d.mkdir()
+        for sysdir in ("/usr/bin", "/bin"):
+            for f in Path(sysdir).iterdir():
+                link = d / f.name
+                if f.name.startswith("docker") or link.exists():
+                    continue
+                try:
+                    link.symlink_to(f)
+                except OSError:
+                    pass
+    return str(d)
+
+
 def run(sb, *args, mode="", volume="", health_url=None, extra_env=None, path_extra=True):
     env = {
-        "PATH": f"{sb['bin']}:/usr/bin:/bin" if path_extra else "/usr/bin:/bin",
+        "PATH": f"{sb['bin']}:/usr/bin:/bin" if path_extra else _path_without_docker(sb),
         "HOME": str(sb["home"]),
         "FAKE_DOCKER_LOG": str(sb["log"]),
         "FAKE_DOCKER_MODE": mode,
@@ -180,7 +199,7 @@ def test_prerequisite_failures_are_clear(sandbox):
     r = run(sandbox, mode="no-daemon")
     assert r.returncode != 0 and "Docker daemon" in r.stderr
     r = run(sandbox, path_extra=False)
-    assert r.returncode != 0 and "not installed" in r.stderr or "Docker" in r.stderr
+    assert r.returncode != 0 and "Docker is not installed" in r.stderr
 
 
 def test_refuses_orphaned_database_volume(sandbox):

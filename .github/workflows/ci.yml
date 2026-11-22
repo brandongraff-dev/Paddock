@@ -103,6 +103,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The services' DB-backed suites expect a migrated TEST_DATABASE_URL;
+      # the Postgres service starts empty. (The orchestrator legs build their
+      # own throwaway databases instead.)
+      - name: Apply schema to the test database
+        if: ${{ !startsWith(matrix.service, 'orchestrator') }}
+        run: |
+          pip install -q asyncpg
+          python scripts/ci_apply_schema.py
+
       - name: Install ${{ matrix.service }} (+ ${{ matrix.extra }} extra)
         working-directory: ${{ matrix.path }}
         run: |
@@ -335,7 +344,7 @@ jobs:
         run: python -m pytest -q
       - name: Wheel installs and runs outside the checkout
         run: |
-          pip wheel --no-deps -q -w "$RUNNER_TEMP/wheel" cli
+          pip wheel --no-deps -q -w "$RUNNER_TEMP/wheel" ./cli
           python -m venv "$RUNNER_TEMP/clean"
           "$RUNNER_TEMP/clean/bin/pip" install -q "$RUNNER_TEMP"/wheel/paddock_cli-*.whl
           "$RUNNER_TEMP/clean/bin/pip" list --format=freeze | grep -v -E '^(pip|setuptools|paddock-cli)==' && exit 1 || true
