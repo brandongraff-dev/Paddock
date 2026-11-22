@@ -19,6 +19,7 @@ import logging
 import os
 import signal
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -39,8 +40,12 @@ from .engine.chain import ChainMatcher, PolicyEvaluator
 from .engine.fusion import FusionEngine
 from .engine.graph import Graph
 from .engine.policy import RuleLoader
-from .engine.wargame import report, store
+from .engine.wargame import certificate, report, store, twin_store
+from .engine.wargame.assess import assess_environment
+from .engine.wargame.fabric import EdgeSpec, SegmentSpec
 from .engine.wargame.graph_adapter import environment_from_graph
+from .engine.wargame.model import EvidenceLabel, NodeRole, PortRange, Proto
+from .engine.wargame.parsers import parse
 from .narratives.writer import NarrativeWriter
 from .orchestrator import OrchestratorClient
 
@@ -457,14 +462,35 @@ class Service:
     async def _wargame_tenant(self) -> dict[str, Any]:
         """Run one Wargame assessment for the CURRENT tenant and persist it.
 
-        DEFENSIVE: assembles a Wargame environment from the existing asset
-        graph (pure model reasoning), runs the backward-reachability engine,
-        and writes the scorecard + routes. No exploitation, no probes.
+        DEFENSIVE: pure model reasoning only — runs the backward-reachability
+        engine over a model, writes the scorecard + routes + certificates. No
+        exploitation, no probes.
 
-        The legacy asset graph carries no firewall rules, so the environment
-        is honestly all-INFERRED and coverage is reported as unmeasured
-        (``coverage_pct=None``) — never implied full.
+        Twin-first: when this tenant has a persisted, rule-aware twin (parsed
+        firewall/cloud config + declared topology), the assessment runs over it
+        and is proved by config, carrying signed closed-boundary certificates;
+        the result is labelled ``"twin"``.
+
+        Fallback: with no twin, the environment is assembled from the legacy
+        asset graph (``graph_adapter``). That graph carries no firewall rules,
+        so the environment is honestly all-INFERRED, coverage is reported as
+        unmeasured (``coverage_pct=None``) — never implied full — no
+        certificates are issued, and the result is labelled ``"auto"``.
         """
+        if await twin_store.has_twin(self.db):
+            env = await twin_store.load_environment(self.db)
+            if env is None:
+                return {"assessments": 0, "routes": 0}
+            hashes = await twin_store.config_hashes(self.db)
+            bundle = assess_environment(
+                env,
+                label="twin",
+                config_hashes=hashes,
+                issued_at=datetime.now(timezone.utc),
+            )
+            await store.persist(self.db, bundle)
+            return {"assessments": 1, "routes": len(bundle.routes)}
+
         if self.attackpaths is None:
             return {"assessments": 0, "routes": 0}
         graph = await self.attackpaths._load_graph()
@@ -695,6 +721,106 @@ async def compute_wargame() -> ComputeWargameResponse:
         routes=res["routes"],
         elapsed_ms=res["elapsed_ms"],
     )
+
+
+# ----------------------------------------------------------------------------
+# Wargame twin config ingest (parsed rule sets + declared topology)
+# ----------------------------------------------------------------------------
+
+class IngestConfigRequest(BaseModel):
+    vendor: str
+    raw: str           # raw config text, or a JSON string for JSON vendors
+    source: str = ""   # file path / connector id, for snapshot provenance
+
+
+class SetTopologyRequest(BaseModel):
+    segments: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+
+def _port_range(p: Any) -> Optional[PortRange]:
+    """Tolerant port spec: ``None``, an existing ``PortRange``, or a dict
+    ``{proto, low, high}`` (proto as a string or :class:`Proto`)."""
+    if p is None or isinstance(p, PortRange):
+        return p
+    proto = p.get("proto", "any")
+    if not isinstance(proto, Proto):
+        proto = Proto(proto)
+    return PortRange(proto, int(p.get("low", 0)), int(p.get("high", 65535)))
+
+
+def _segment_spec(d: dict[str, Any]) -> SegmentSpec:
+    role = d.get("role", NodeRole.INTERMEDIATE)
+    if not isinstance(role, NodeRole):
+        role = NodeRole(role)
+    return SegmentSpec(
+        id=d["id"],
+        cidrs=tuple(d.get("cidrs", ()) or ()),
+        role=role,
+        reason=d.get("reason", "") or "",
+        jewel_kind=d.get("jewel_kind", "") or "",
+        metadata=dict(d.get("metadata", {}) or {}),
+    )
+
+
+def _edge_spec(d: dict[str, Any]) -> EdgeSpec:
+    labels = frozenset(
+        lb if isinstance(lb, EvidenceLabel) else EvidenceLabel(lb)
+        for lb in (d.get("base_labels", ()) or ())
+    )
+    return EdgeSpec(
+        src=d["src"],
+        dst=d["dst"],
+        rule_set_id=d.get("rule_set_id"),
+        port=_port_range(d.get("port")),
+        base_labels=labels,
+        fix_candidate_id=d.get("fix_candidate_id"),
+        metadata=dict(d.get("metadata", {}) or {}),
+    )
+
+
+@app.post("/ingest-config")
+async def ingest_config(req: IngestConfigRequest) -> dict[str, int]:
+    """Parse a real firewall/cloud export into vendor-neutral rule sets and
+    merge them into the CURRENT tenant's twin (RLS-scoped). A config snapshot
+    hash is recorded for certificate provenance."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    # AWS exports are JSON; the text-config vendors (asa/fortinet/paloalto)
+    # take the raw text. Mirror what each parser expects as input.
+    raw_in: Any = req.raw
+    if req.vendor == "aws":
+        try:
+            raw_in = json.loads(req.raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"invalid aws json: {exc}"
+            ) from exc
+    try:
+        result = parse(req.vendor, raw_in)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    sha = certificate.hash_snapshot(req.raw)
+    await twin_store.persist_rulesets(
+        service.db,
+        result.rulesets,
+        replace=False,
+        snapshots=[{"vendor": req.vendor, "source": req.source, "sha256": sha}],
+    )
+    return {"rulesets": len(result.rulesets), "warnings": len(result.warnings)}
+
+
+@app.post("/set-topology")
+async def set_topology(req: SetTopologyRequest) -> dict[str, int]:
+    """Replace the CURRENT tenant's declared topology (segments + edges) in
+    the twin (RLS-scoped). Dicts are converted tolerantly into the fabric
+    spec types."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    segments = [_segment_spec(d) for d in req.segments]
+    edges = [_edge_spec(d) for d in req.edges]
+    await twin_store.persist_topology(service.db, segments, edges)
+    return {"segments": len(segments), "edges": len(edges)}
 
 
 class FuseResponse(BaseModel):
