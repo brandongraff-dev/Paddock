@@ -6,8 +6,6 @@ import { hash, ramp } from "./PixelField";
  * calm sea at a low sun. Painted once, in pixel cells and Paddock's blue-to-ember
  * palette, as a dark silhouette against a dithered glow.
  */
-/** Where the ledge sits within cliff.png, as a fraction of its height. */
-const LEDGE_FRAC = 0.652;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const LUT = (() => {
   const t = new Uint8Array(256 * 3);
@@ -125,35 +123,17 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
       ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = "source-over";
 
-      // ---- solid art: a generated cliff with a rider, over the pixel field ----
+      // ---- solid art: a tall generated cliff with a rider, anchored right at full height ----
       const ri = riderImg.current;
       if (ri && ri.complete && ri.naturalWidth) {
-        const iw = w * (phone ? 1.4 : 0.74);
-        const ih = (iw * ri.naturalHeight) / ri.naturalWidth;
-        const ix = w - iw;
-        const iy = ledge * cs - ih * LEDGE_FRAC;
-        ctx.drawImage(ri, ix, iy, iw, ih);
-        // continue the rock below the image: a feathered top, a sloping lit edge, flat dark body
-        const bottom = iy + ih;
-        if (bottom < h) {
-          const ex = ix + iw * 0.516, slope = 0.06;
-          ctx.save();
-          ctx.beginPath();
-          ctx.moveTo(ex + 4, bottom - 70); ctx.lineTo(w + 4, bottom - 70); ctx.lineTo(w + 4, h + 4);
-          ctx.lineTo(ex + (h - bottom) * slope, h + 4); ctx.lineTo(ex, bottom - 2); ctx.closePath();
-          ctx.clip();
-          const g = ctx.createLinearGradient(0, bottom - 70, 0, h);
-          g.addColorStop(0, "rgba(13,10,8,0)"); g.addColorStop(0.12, "rgba(13,10,8,0.9)"); g.addColorStop(1, "#080706");
-          ctx.fillStyle = g; ctx.fillRect(ex - 4, bottom - 70, w - ex + 8, h - bottom + 76);
-          ctx.restore();
-          ctx.strokeStyle = "rgba(240,150,100,0.32)"; ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.moveTo(ex, bottom - 2); ctx.lineTo(ex + (h - bottom) * slope, h); ctx.stroke();
-        }
+        const ih = h * (phone ? 1.0 : 1.22);
+        const iw = (ih * ri.naturalWidth) / ri.naturalHeight;
+        ctx.drawImage(ri, w - iw * (phone ? 0.97 : 1.0), h - ih, iw, ih);
       }
     };
     const im = new Image();
     im.onload = () => paint();
-    im.src = "/cliff.png";
+    im.src = "/cliff-tall.png";
     riderImg.current = im;
     paint();
     let t = 0;
