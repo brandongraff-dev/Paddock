@@ -7,6 +7,7 @@ value can be redeemed at most once even under concurrent requests.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -15,7 +16,11 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
+import asyncpg
+
+from .. import tenancy
 from ..config import settings
 from ..integrations import secrets as secret_box
 from . import mapping
@@ -62,14 +67,25 @@ async def get_settings(con) -> dict[str, Any]:
     return d
 
 
+async def user_tenant_id(pool, username: str) -> str:
+    """The tenant a username belongs to (usernames are global). Unknown names
+    map to the default tenant, so the policy applied to them is that tenant's."""
+    with tenancy.auth_lookup():
+        async with pool.acquire() as con:
+            tid = await con.fetchval("SELECT tenant_id FROM app_users WHERE username = $1", username)
+    return str(tid) if tid else tenancy.DEFAULT_TENANT_ID
+
+
 async def password_login_allowed(pool, username: str) -> bool:
     """False when SSO is required and ``username`` is not a break-glass user.
 
-    Decided from the policy alone (not from whether the user exists), so the
-    answer leaks nothing about which accounts exist.
+    The policy is the one of the tenant the username belongs to (an unknown
+    name gets the default tenant's), so a tenant that requires SSO is
+    enforced for its own users only.
     """
-    async with pool.acquire() as con:
-        s = await get_settings(con)
+    with tenancy.tenant_context(await user_tenant_id(pool, username)):
+        async with pool.acquire() as con:
+            s = await get_settings(con)
     if not s["sso_required"]:
         return True
     wanted = username.strip().lower().encode("utf-8")
@@ -119,6 +135,40 @@ async def provider_by_slug(con, slug: str, *, enabled_only: bool = True):
     return await con.fetchrow(sql, slug)
 
 
+async def provider_tenant(pool, slug: str, *, enabled_only: bool = True) -> str | None:
+    """Tenant owning provider ``slug`` (slugs are globally unique), or None
+    when it does not exist / is disabled / its tenant is suspended.
+
+    The one pre-tenant read of the SSO flow: ``auth_lookup`` mode, only
+    (tenant_id) is selected (schema/038 policy)."""
+    sql = (
+        "SELECT p.tenant_id FROM identity_providers p JOIN tenants t ON t.id = p.tenant_id "
+        "WHERE p.slug = $1 AND t.status = 'active'"
+    ) + (" AND p.enabled" if enabled_only else "")
+    with tenancy.auth_lookup():
+        async with pool.acquire() as con:
+            tid = await con.fetchval(sql, slug)
+    return str(tid) if tid else None
+
+
+@contextlib.asynccontextmanager
+async def provider_scope(pool, slug: str, *, enabled_only: bool = True):
+    """Resolve provider ``slug`` and run the block INSIDE its tenant.
+
+    Yields the provider row (or None for an unknown / disabled one, with no
+    tenant bound). Everything the block does -- state rows, JIT users, links,
+    exchange codes, audit -- is therefore RLS-scoped to the provider's tenant.
+    """
+    tid = await provider_tenant(pool, slug, enabled_only=enabled_only)
+    if tid is None:
+        yield None
+        return
+    with tenancy.tenant_context(tid):
+        async with pool.acquire() as con:
+            provider = await provider_by_slug(con, slug, enabled_only=enabled_only)
+        yield provider
+
+
 # --------------------------------------------------------------------------- #
 # Login state (state / nonce / PKCE) -- single use
 # --------------------------------------------------------------------------- #
@@ -154,9 +204,10 @@ async def consume_state(pool, *, provider_id, state: str):
             """
             DELETE FROM sso_login_states
              WHERE state_hash = $1 AND provider_id = $2 AND expires_at > NOW()
+               AND tenant_id = $3
          RETURNING nonce, code_verifier, spa_challenge, return_to
             """,
-            sha256_hex(state), provider_id,
+            sha256_hex(state), provider_id, tenancy.current_tenant_id() or tenancy.DEFAULT_TENANT_ID,
         )
 
 
@@ -177,21 +228,45 @@ async def remember_once(pool, key: str, expires_at: datetime) -> bool:
 # --------------------------------------------------------------------------- #
 
 async def issue_exchange_code(pool, *, user_id, provider_id, spa_challenge: str | None) -> str:
-    code = secrets.token_urlsafe(32)
+    # The code is redeemed with no credentials, so it names its tenant:
+    # "<tenant uuid hex>.<random>". The prefix only selects where to look; the
+    # row is still bound to that tenant by RLS and by the user it points at.
+    tenant = tenancy.current_tenant_id() or tenancy.DEFAULT_TENANT_ID
+    code = f"{UUID(tenant).hex}.{secrets.token_urlsafe(32)}"
     exp = _now() + timedelta(seconds=settings.sso_code_ttl_sec)
     async with pool.acquire() as con:
         await con.execute("DELETE FROM sso_exchange_codes WHERE expires_at < NOW()")
         await con.execute(
-            "INSERT INTO sso_exchange_codes (code_hash, user_id, provider_id, spa_challenge, expires_at) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            sha256_hex(code), user_id, provider_id, spa_challenge, exp,
+            "INSERT INTO sso_exchange_codes (code_hash, user_id, provider_id, spa_challenge, expires_at, tenant_id) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            sha256_hex(code), user_id, provider_id, spa_challenge, exp, tenant,
         )
     return code
 
 
+def code_tenant(code: str) -> str | None:
+    """Tenant named by an exchange code's prefix (None = malformed). A code
+    with no prefix predates tenant-bound codes and belongs to the default one."""
+    head, sep, _ = code.partition(".")
+    if not sep:
+        return tenancy.DEFAULT_TENANT_ID
+    try:
+        return str(UUID(hex=head)) if len(head) == 32 else None
+    except ValueError:
+        return None
+
+
 async def redeem_exchange_code(pool, *, code: str, verifier: str | None):
     """Consume a code (always, even on a verifier mismatch) and return the
-    user row, or None."""
+    user row (with its ``tenant_id``), or None. Runs in the code's tenant."""
+    tid = code_tenant(code)
+    if tid is None:
+        return None
+    with tenancy.tenant_context(tid):
+        return await _redeem(pool, code, verifier)
+
+
+async def _redeem(pool, code: str, verifier: str | None):
     async with pool.acquire() as con:
         row = await con.fetchrow(
             "DELETE FROM sso_exchange_codes WHERE code_hash = $1 "
@@ -206,7 +281,7 @@ async def redeem_exchange_code(pool, *, code: str, verifier: str | None):
         ):
             return None
         return await con.fetchrow(
-            "SELECT id, username, role, clearance, active FROM app_users WHERE id = $1",
+            "SELECT id, username, role, clearance, active, tenant_id FROM app_users WHERE id = $1",
             row["user_id"],
         )
 
@@ -302,6 +377,16 @@ async def provision(pool, provider, ident: ExternalIdentity) -> ProvisionResult:
         ident.email_verified is True or bool(cfg.get("trust_unverified_email"))
     )
     cols = "id, username, email, role, clearance, active, provisioned_by"
+    # Usernames are globally unique but users are tenant rows: this tenant
+    # cannot see a same-named user of ANOTHER tenant, so ask across tenants
+    # (auth-lookup read) and refuse instead of failing on the unique index.
+    jit_username = email or (ident.preferred_username or "").strip().lower() or f"{slug}:{ident.subject}"
+    with tenancy.auth_lookup():
+        async with pool.acquire() as lcon:
+            other_tenant_taken = bool(await lcon.fetchval(
+                "SELECT 1 FROM app_users WHERE lower(username) = lower($1) AND tenant_id <> $2",
+                jit_username, tenancy.current_tenant_id() or tenancy.DEFAULT_TENANT_ID,
+            ))
     ucols = ", ".join("u." + c for c in cols.split(", "))
 
     async with pool.acquire() as con:
@@ -347,18 +432,27 @@ async def provision(pool, provider, ident: ExternalIdentity) -> ProvisionResult:
             if user is None:
                 if not provider["jit_provisioning"]:
                     raise ProvisionError("provisioning_disabled", "no linked account and JIT is off")
-                username = email or (ident.preferred_username or "").strip().lower() or f"{slug}:{ident.subject}"
+                username = jit_username
+                if other_tenant_taken:
+                    raise ProvisionError(
+                        "account_conflict",
+                        "this username already exists in another organization; it cannot be provisioned here",
+                    )
                 taken = await con.fetchval("SELECT 1 FROM app_users WHERE lower(username) = lower($1)", username)
                 if taken or username.lower() in break_glass:
                     raise ProvisionError("account_conflict", "username already taken by an unlinked account")
-                row = await con.fetchrow(
-                    f"""
-                    INSERT INTO app_users (username, email, display_name, role, clearance, provisioned_by)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    RETURNING {cols}
-                    """,
-                    username, email, ident.name, decision.role, decision.clearance, f"sso:{slug}",
-                )
+                try:
+                    row = await con.fetchrow(
+                        f"""
+                        INSERT INTO app_users (username, email, display_name, role, clearance, provisioned_by)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        RETURNING {cols}
+                        """,
+                        username, email, ident.name, decision.role, decision.clearance, f"sso:{slug}",
+                    )
+                except asyncpg.UniqueViolationError as exc:  # raced another tenant's JIT
+                    raise ProvisionError(
+                        "account_conflict", "username already taken by an unlinked account") from exc
                 user, linked, created = dict(row), "jit", True
 
             if not user["active"]:

@@ -47,6 +47,7 @@ EXTRA_POLICIES = {
     ("sensor_enroll_tokens", "sensor_token_auth_lookup"): "app.auth_lookup",
     ("trust_links", "trust_public_lookup"): "app.trust_hash",
     ("scim_tokens", "scim_token_auth_lookup"): "app.auth_lookup",
+    ("identity_providers", "identity_provider_auth_lookup"): "app.auth_lookup",
 }
 
 #: Tenant tables whose RLS policy may also honour credential lookup.
