@@ -56,6 +56,13 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
       // background
       for (let o = 0; o < px.length; o += 4) { px[o] = 14; px[o + 1] = 12; px[o + 2] = 10; px[o + 3] = 255; }
 
+      // illustration geometry (shared by the glow and the drawing): ledge sits near the horizon,
+      // so the dark horse stands in front of the brightest part of the sky
+      const rih = h * (phone ? 1.35 : 1.6);
+      const riw = (rih * 783) / 1200;
+      const rix = phone ? w * 0.62 - 0.4 * riw : w - riw * 0.78;
+      const riy = h * (phone ? 0.6 : 0.62) - 0.19 * rih;
+      const horseCol = Math.round((rix + riw * 0.24) / cs);
       const hy = Math.round(rows * (phone ? 0.58 : 0.66));        // horizon row
       const cliffX = Math.round(cols * (phone ? 0.44 : 0.63));    // cliff face start (at ledge)
       const ledge = hy - Math.round(rows * 0.035);                // ledge row
@@ -69,7 +76,7 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
         const g = Math.exp(-dep * 3.4);
         for (let i = 0; i < cols; i++) {
           const x = i / cols;
-          const near = Math.max(Math.exp(-Math.pow((i - orbX) / (cols * 0.3), 2)), Math.exp(-Math.pow((i - (cliffX + 14)) / (cols * 0.22), 2)));
+          const near = Math.max(Math.exp(-Math.pow((i - orbX) / (cols * 0.3), 2)), Math.exp(-Math.pow((i - horseCol) / (cols * 0.14), 2)) * 1.25);
           const lit = (g * (0.5 + 0.75 * near) * 2.2) - (BAYER[(j & 3) * 4 + (i & 3)] / 16 * 0.55 + hash(i, j) * 0.45) * 0.5;
           if (lit <= 0.02) continue;
           const li = ((0.12 + 0.74 * x) * 255) | 0;
@@ -127,10 +134,7 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
       const ri = riderImg.current;
       if (ri && ri.complete && ri.naturalWidth) {
         // cropped in: the rider is large, the ruins and bottom of the cliff run off the frame
-        const ih = h * (phone ? 1.35 : 1.6);
-        const iw = (ih * ri.naturalWidth) / ri.naturalHeight;
-        const ix = phone ? w * 0.62 - 0.4 * iw : w - iw * 0.78;
-        const iy = h * (phone ? 0.3 : 0.33) - 0.14 * ih;
+        const ih = rih, iw = riw, ix = rix, iy = riy;
         // tone the illustration down on its own layer so it sits in the scene
         const layer = document.createElement("canvas");
         layer.width = Math.ceil(iw); layer.height = Math.ceil(ih);
