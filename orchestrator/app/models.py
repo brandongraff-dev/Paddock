@@ -1334,3 +1334,131 @@ class ProvenanceOut(BaseModel):
 
 class ProvenanceBackfillOut(BaseModel):
     created: dict[str, int]
+
+
+# --------------------------------------------------------------------------- #
+# Wargame assessments (schema 039)
+#
+# Read-only summaries over persisted assessment runs computed by the
+# correlation service. Narratives/routes are impact-only (as written by the
+# compute service); nothing here aids exploitation.
+# --------------------------------------------------------------------------- #
+
+WargameVerdict = Literal["pass", "fail_open", "conditional", "insufficient"]
+WargameOptimality = Literal["exact", "greedy"]
+WargameCertStatus = Literal["valid", "expired", "contradicted"]
+WargameEvidenceStatus = Literal["met", "exception", "not_assessed"]
+
+
+class WargameAssessmentOut(BaseModel):
+    """One assessment run's headline scorecard.
+
+    Crown-Jewel Closure is always carried alongside coverage (never one
+    alone), mirroring the schema.
+    """
+
+    id: UUID
+    label: str
+    crownjewel_total: int
+    crownjewel_open: int
+    crownjewel_closed: int
+    crownjewel_conditional: int
+    closure_pct: float
+    coverage_pct: float | None = None
+    false_closed_rate: float | None = None
+    board_line: str
+    blind_spots: list[Any] = Field(default_factory=list)
+    computed_at: datetime
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WargameAssessmentPage(BaseModel):
+    items: list[WargameAssessmentOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class WargameRouteOut(BaseModel):
+    """An open route to a crown jewel. Hops are impact-only, stored as the
+    compute service wrote them (ordered nodes, not an exploitation recipe)."""
+
+    id: UUID
+    entry: str
+    jewel: str
+    length: int
+    weakest_label: str
+    hops: list[Any] = Field(default_factory=list)
+    fingerprint: str
+
+
+class WargameRoutePage(BaseModel):
+    items: list[WargameRouteOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class WargameBoundaryOut(BaseModel):
+    """A per-boundary three-way agreement verdict."""
+
+    id: UUID
+    boundary_src: str
+    boundary_dst: str
+    port: str
+    verdict: WargameVerdict
+    disagreements: list[Any] = Field(default_factory=list)
+    note: str
+
+
+class WargameCertificateOut(BaseModel):
+    """A signed closed-boundary certificate."""
+
+    id: UUID
+    boundary_src: str
+    boundary_dst: str
+    port: str
+    claim: str
+    assumptions: list[Any] = Field(default_factory=list)
+    config_hashes: list[Any] = Field(default_factory=list)
+    status: WargameCertStatus
+    issued_at: datetime | None = None
+    expires_at: datetime | None = None
+    fingerprint: str
+
+
+class WargameFixSetOut(BaseModel):
+    """The minimum-cost fix set that cuts every open route."""
+
+    id: UUID
+    total_cost: float
+    optimality: WargameOptimality
+    cuts_all: bool
+    selected: list[Any] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WargameEvidenceOut(BaseModel):
+    """A hash-chained auditor evidence item (PCI / CIP)."""
+
+    id: UUID
+    framework: str
+    control_id: str
+    status: WargameEvidenceStatus
+    statement: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    item_hash: str
+    ordinal: int
+
+
+class WargameRecomputeOut(BaseModel):
+    """Result of POST /v1/wargame/recompute.
+
+    `status` is `computed` when the synchronous correlation call returned,
+    `queued` when a recompute job was enqueued on Redis as a fallback, or
+    `unavailable` when correlation was unreachable AND the enqueue failed
+    (the request never fails hard). `detail` carries a short human note.
+    """
+
+    status: Literal["computed", "queued", "unavailable"]
+    detail: str | None = None

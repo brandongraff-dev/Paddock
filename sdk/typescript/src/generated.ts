@@ -2709,6 +2709,125 @@ export interface VerifyOut {
   scope_entry_id: number;
 }
 
+/**
+ * One assessment run's headline scorecard.
+ *
+ * Crown-Jewel Closure is always carried alongside coverage (never one
+ * alone), mirroring the schema.
+ */
+export interface WargameAssessmentOut {
+  blind_spots?: unknown[];
+  board_line: string;
+  closure_pct: number;
+  computed_at: string;
+  coverage_pct?: number | null;
+  crownjewel_closed: number;
+  crownjewel_conditional: number;
+  crownjewel_open: number;
+  crownjewel_total: number;
+  false_closed_rate?: number | null;
+  id: string;
+  label: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WargameAssessmentPage {
+  items: WargameAssessmentOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+/**
+ * A per-boundary three-way agreement verdict.
+ */
+export interface WargameBoundaryOut {
+  boundary_dst: string;
+  boundary_src: string;
+  disagreements?: unknown[];
+  id: string;
+  note: string;
+  port: string;
+  verdict: "pass" | "fail_open" | "conditional" | "insufficient";
+}
+
+/**
+ * A signed closed-boundary certificate.
+ */
+export interface WargameCertificateOut {
+  assumptions?: unknown[];
+  boundary_dst: string;
+  boundary_src: string;
+  claim: string;
+  config_hashes?: unknown[];
+  expires_at?: string | null;
+  fingerprint: string;
+  id: string;
+  issued_at?: string | null;
+  port: string;
+  status: "valid" | "expired" | "contradicted";
+}
+
+/**
+ * A hash-chained auditor evidence item (PCI / CIP).
+ */
+export interface WargameEvidenceOut {
+  control_id: string;
+  evidence?: Record<string, unknown>;
+  framework: string;
+  id: string;
+  item_hash: string;
+  ordinal: number;
+  statement: string;
+  status: "met" | "exception" | "not_assessed";
+}
+
+/**
+ * The minimum-cost fix set that cuts every open route.
+ */
+export interface WargameFixSetOut {
+  cuts_all: boolean;
+  id: string;
+  metadata?: Record<string, unknown>;
+  optimality: "exact" | "greedy";
+  selected?: unknown[];
+  total_cost: number;
+}
+
+/**
+ * Result of POST /v1/wargame/recompute.
+ *
+ * `status` is `computed` when the synchronous correlation call returned,
+ * `queued` when a recompute job was enqueued on Redis as a fallback, or
+ * `unavailable` when correlation was unreachable AND the enqueue failed
+ * (the request never fails hard). `detail` carries a short human note.
+ */
+export interface WargameRecomputeOut {
+  detail?: string | null;
+  status: "computed" | "queued" | "unavailable";
+}
+
+/**
+ * An open route to a crown jewel. Hops are impact-only, stored as the
+ * compute service wrote them (ordered nodes, not an exploitation recipe).
+ */
+export interface WargameRouteOut {
+  entry: string;
+  fingerprint: string;
+  hops?: unknown[];
+  id: string;
+  jewel: string;
+  length: number;
+  weakest_label: string;
+}
+
+export interface WargameRoutePage {
+  items: WargameRouteOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
 export interface WhyFactor {
   key: string;
   label: string;
@@ -3150,6 +3269,14 @@ export const OPERATIONS = {
   takeSnapshot: ["POST", "/v1/usage/snapshot", false],
   listSnapshots: ["GET", "/v1/usage/snapshots", false],
   postResultVerification: ["POST", "/v1/verifications/{verification_id}/result", false],
+  listAssessments: ["GET", "/v1/wargame/assessments", true],
+  getAssessment: ["GET", "/v1/wargame/assessments/{assessment_id}", false],
+  listBoundaries: ["GET", "/v1/wargame/assessments/{assessment_id}/boundaries", false],
+  listCertificates: ["GET", "/v1/wargame/assessments/{assessment_id}/certificates", false],
+  listEvidence: ["GET", "/v1/wargame/assessments/{assessment_id}/evidence", false],
+  getFixSet: ["GET", "/v1/wargame/assessments/{assessment_id}/fix-set", false],
+  listRoutes: ["GET", "/v1/wargame/assessments/{assessment_id}/routes", true],
+  recomputeWargame: ["POST", "/v1/wargame/recompute", false],
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -5343,6 +5470,70 @@ export abstract class GeneratedOperations {
    */
   postResultVerification(verificationId: string, body: app__verification__models__ResultIn, options?: RequestOptions): Promise<VerificationOut> {
     return this._request<VerificationOut>("POST", "/v1/verifications/{verification_id}/result", { pathParams: { verification_id: verificationId }, body, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments — List Assessments
+   */
+  listAssessments(query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<WargameAssessmentPage> {
+    return this._request<WargameAssessmentPage>("GET", "/v1/wargame/assessments", { query, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id} — Get Assessment
+   */
+  getAssessment(assessmentId: string, options?: RequestOptions): Promise<WargameAssessmentOut> {
+    return this._request<WargameAssessmentOut>("GET", "/v1/wargame/assessments/{assessment_id}", { pathParams: { assessment_id: assessmentId }, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/boundaries — List Boundaries
+   */
+  listBoundaries(assessmentId: string, options?: RequestOptions): Promise<WargameBoundaryOut[]> {
+    return this._request<WargameBoundaryOut[]>("GET", "/v1/wargame/assessments/{assessment_id}/boundaries", { pathParams: { assessment_id: assessmentId }, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/certificates — List Certificates
+   */
+  listCertificates(assessmentId: string, options?: RequestOptions): Promise<WargameCertificateOut[]> {
+    return this._request<WargameCertificateOut[]>("GET", "/v1/wargame/assessments/{assessment_id}/certificates", { pathParams: { assessment_id: assessmentId }, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/evidence — List Evidence
+   */
+  listEvidence(assessmentId: string, query?: { framework?: string | null }, options?: RequestOptions): Promise<WargameEvidenceOut[]> {
+    return this._request<WargameEvidenceOut[]>("GET", "/v1/wargame/assessments/{assessment_id}/evidence", { pathParams: { assessment_id: assessmentId }, query, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/fix-set — Get Fix Set
+   */
+  getFixSet(assessmentId: string, options?: RequestOptions): Promise<WargameFixSetOut> {
+    return this._request<WargameFixSetOut>("GET", "/v1/wargame/assessments/{assessment_id}/fix-set", { pathParams: { assessment_id: assessmentId }, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/routes — List Routes
+   */
+  listRoutes(assessmentId: string, query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<WargameRoutePage> {
+    return this._request<WargameRoutePage>("GET", "/v1/wargame/assessments/{assessment_id}/routes", { pathParams: { assessment_id: assessmentId }, query, options });
+  }
+
+  /**
+   * POST /v1/wargame/recompute — Recompute Wargame
+   *
+   * Trigger a recompute of wargame assessments.
+   *
+   * Preferred path: a short synchronous POST to the correlation service's
+   * `/compute-wargame`. If that is unreachable (or httpx is unavailable), fall
+   * back to publishing a `correlate:recompute_wargame` job on Redis. The request
+   * never fails hard when correlation is down -- the worst case is
+   * `status=unavailable` (correlation unreachable *and* the enqueue failed).
+   */
+  recomputeWargame(options?: RequestOptions): Promise<WargameRecomputeOut> {
+    return this._request<WargameRecomputeOut>("POST", "/v1/wargame/recompute", { options });
   }
 
 }

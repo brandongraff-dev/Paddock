@@ -3699,6 +3699,138 @@ VerifyOut = TypedDict(
     total=False,
 )
 
+WargameAssessmentOut = TypedDict(
+    'WargameAssessmentOut',
+    {
+        'blind_spots': NotRequired['list[Any]'],
+        'board_line': Required['str'],
+        'closure_pct': Required['float'],
+        'computed_at': Required['str'],
+        'coverage_pct': NotRequired['float | None'],
+        'crownjewel_closed': Required['int'],
+        'crownjewel_conditional': Required['int'],
+        'crownjewel_open': Required['int'],
+        'crownjewel_total': Required['int'],
+        'false_closed_rate': NotRequired['float | None'],
+        'id': Required['str'],
+        'label': Required['str'],
+        'metadata': NotRequired['dict[str, Any]'],
+    },
+    total=False,
+)
+"""One assessment run's headline scorecard."""
+
+WargameAssessmentPage = TypedDict(
+    'WargameAssessmentPage',
+    {
+        'items': Required['list[WargameAssessmentOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
+WargameBoundaryOut = TypedDict(
+    'WargameBoundaryOut',
+    {
+        'boundary_dst': Required['str'],
+        'boundary_src': Required['str'],
+        'disagreements': NotRequired['list[Any]'],
+        'id': Required['str'],
+        'note': Required['str'],
+        'port': Required['str'],
+        'verdict': Required["Literal['pass', 'fail_open', 'conditional', 'insufficient']"],
+    },
+    total=False,
+)
+"""A per-boundary three-way agreement verdict."""
+
+WargameCertificateOut = TypedDict(
+    'WargameCertificateOut',
+    {
+        'assumptions': NotRequired['list[Any]'],
+        'boundary_dst': Required['str'],
+        'boundary_src': Required['str'],
+        'claim': Required['str'],
+        'config_hashes': NotRequired['list[Any]'],
+        'expires_at': NotRequired['str | None'],
+        'fingerprint': Required['str'],
+        'id': Required['str'],
+        'issued_at': NotRequired['str | None'],
+        'port': Required['str'],
+        'status': Required["Literal['valid', 'expired', 'contradicted']"],
+    },
+    total=False,
+)
+"""A signed closed-boundary certificate."""
+
+WargameEvidenceOut = TypedDict(
+    'WargameEvidenceOut',
+    {
+        'control_id': Required['str'],
+        'evidence': NotRequired['dict[str, Any]'],
+        'framework': Required['str'],
+        'id': Required['str'],
+        'item_hash': Required['str'],
+        'ordinal': Required['int'],
+        'statement': Required['str'],
+        'status': Required["Literal['met', 'exception', 'not_assessed']"],
+    },
+    total=False,
+)
+"""A hash-chained auditor evidence item (PCI / CIP)."""
+
+WargameFixSetOut = TypedDict(
+    'WargameFixSetOut',
+    {
+        'cuts_all': Required['bool'],
+        'id': Required['str'],
+        'metadata': NotRequired['dict[str, Any]'],
+        'optimality': Required["Literal['exact', 'greedy']"],
+        'selected': NotRequired['list[Any]'],
+        'total_cost': Required['float'],
+    },
+    total=False,
+)
+"""The minimum-cost fix set that cuts every open route."""
+
+WargameRecomputeOut = TypedDict(
+    'WargameRecomputeOut',
+    {
+        'detail': NotRequired['str | None'],
+        'status': Required["Literal['computed', 'queued', 'unavailable']"],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/recompute."""
+
+WargameRouteOut = TypedDict(
+    'WargameRouteOut',
+    {
+        'entry': Required['str'],
+        'fingerprint': Required['str'],
+        'hops': NotRequired['list[Any]'],
+        'id': Required['str'],
+        'jewel': Required['str'],
+        'length': Required['int'],
+        'weakest_label': Required['str'],
+    },
+    total=False,
+)
+"""An open route to a crown jewel. Hops are impact-only, stored as the"""
+
+WargameRoutePage = TypedDict(
+    'WargameRoutePage',
+    {
+        'items': Required['list[WargameRouteOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
 WhyFactor = TypedDict(
     'WhyFactor',
     {
@@ -4190,6 +4322,14 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'take_snapshot': ('POST', '/v1/usage/snapshot', False),
     'list_snapshots': ('GET', '/v1/usage/snapshots', False),
     'post_result_verification': ('POST', '/v1/verifications/{verification_id}/result', False),
+    'list_assessments': ('GET', '/v1/wargame/assessments', True),
+    'get_assessment': ('GET', '/v1/wargame/assessments/{assessment_id}', False),
+    'list_boundaries': ('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', False),
+    'list_certificates': ('GET', '/v1/wargame/assessments/{assessment_id}/certificates', False),
+    'list_evidence': ('GET', '/v1/wargame/assessments/{assessment_id}/evidence', False),
+    'get_fix_set': ('GET', '/v1/wargame/assessments/{assessment_id}/fix-set', False),
+    'list_routes': ('GET', '/v1/wargame/assessments/{assessment_id}/routes', True),
+    'recompute_wargame': ('POST', '/v1/wargame/recompute', False),
 }
 
 
@@ -5905,6 +6045,54 @@ class GeneratedOperations:
         or API key, even an admin's, can never post a verdict.
         """
         return self._request('POST', '/v1/verifications/{verification_id}/result', path_params={'verification_id': verification_id}, body=body)
+
+    def list_assessments(self, *, limit: int | None = None, offset: int | None = None) -> WargameAssessmentPage:
+        """GET /v1/wargame/assessments -- List Assessments
+        """
+        return self._request('GET', '/v1/wargame/assessments', query={'limit': limit, 'offset': offset})
+
+    def get_assessment(self, assessment_id: str) -> WargameAssessmentOut:
+        """GET /v1/wargame/assessments/{assessment_id} -- Get Assessment
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}', path_params={'assessment_id': assessment_id})
+
+    def list_boundaries(self, assessment_id: str) -> list[WargameBoundaryOut]:
+        """GET /v1/wargame/assessments/{assessment_id}/boundaries -- List Boundaries
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', path_params={'assessment_id': assessment_id})
+
+    def list_certificates(self, assessment_id: str) -> list[WargameCertificateOut]:
+        """GET /v1/wargame/assessments/{assessment_id}/certificates -- List Certificates
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/certificates', path_params={'assessment_id': assessment_id})
+
+    def list_evidence(self, assessment_id: str, *, framework: str | None = None) -> list[WargameEvidenceOut]:
+        """GET /v1/wargame/assessments/{assessment_id}/evidence -- List Evidence
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/evidence', path_params={'assessment_id': assessment_id}, query={'framework': framework})
+
+    def get_fix_set(self, assessment_id: str) -> WargameFixSetOut:
+        """GET /v1/wargame/assessments/{assessment_id}/fix-set -- Get Fix Set
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/fix-set', path_params={'assessment_id': assessment_id})
+
+    def list_routes(self, assessment_id: str, *, limit: int | None = None, offset: int | None = None) -> WargameRoutePage:
+        """GET /v1/wargame/assessments/{assessment_id}/routes -- List Routes
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/routes', path_params={'assessment_id': assessment_id}, query={'limit': limit, 'offset': offset})
+
+    def recompute_wargame(self) -> WargameRecomputeOut:
+        """POST /v1/wargame/recompute -- Recompute Wargame
+
+        Trigger a recompute of wargame assessments.
+
+        Preferred path: a short synchronous POST to the correlation service's
+        `/compute-wargame`. If that is unreachable (or httpx is unavailable), fall
+        back to publishing a `correlate:recompute_wargame` job on Redis. The request
+        never fails hard when correlation is down -- the worst case is
+        `status=unavailable` (correlation unreachable *and* the enqueue failed).
+        """
+        return self._request('POST', '/v1/wargame/recompute')
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError

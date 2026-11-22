@@ -16269,6 +16269,465 @@
         "title": "VerifyOut",
         "type": "object"
       },
+      "WargameAssessmentOut": {
+        "description": "One assessment run's headline scorecard.\n\nCrown-Jewel Closure is always carried alongside coverage (never one\nalone), mirroring the schema.",
+        "properties": {
+          "blind_spots": {
+            "items": {},
+            "title": "Blind Spots",
+            "type": "array"
+          },
+          "board_line": {
+            "title": "Board Line",
+            "type": "string"
+          },
+          "closure_pct": {
+            "title": "Closure Pct",
+            "type": "number"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "coverage_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Pct"
+          },
+          "crownjewel_closed": {
+            "title": "Crownjewel Closed",
+            "type": "integer"
+          },
+          "crownjewel_conditional": {
+            "title": "Crownjewel Conditional",
+            "type": "integer"
+          },
+          "crownjewel_open": {
+            "title": "Crownjewel Open",
+            "type": "integer"
+          },
+          "crownjewel_total": {
+            "title": "Crownjewel Total",
+            "type": "integer"
+          },
+          "false_closed_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Closed Rate"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "crownjewel_total",
+          "crownjewel_open",
+          "crownjewel_closed",
+          "crownjewel_conditional",
+          "closure_pct",
+          "board_line",
+          "computed_at"
+        ],
+        "title": "WargameAssessmentOut",
+        "type": "object"
+      },
+      "WargameAssessmentPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WargameAssessmentOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "WargameAssessmentPage",
+        "type": "object"
+      },
+      "WargameBoundaryOut": {
+        "description": "A per-boundary three-way agreement verdict.",
+        "properties": {
+          "boundary_dst": {
+            "title": "Boundary Dst",
+            "type": "string"
+          },
+          "boundary_src": {
+            "title": "Boundary Src",
+            "type": "string"
+          },
+          "disagreements": {
+            "items": {},
+            "title": "Disagreements",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "pass",
+              "fail_open",
+              "conditional",
+              "insufficient"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "boundary_src",
+          "boundary_dst",
+          "port",
+          "verdict",
+          "note"
+        ],
+        "title": "WargameBoundaryOut",
+        "type": "object"
+      },
+      "WargameCertificateOut": {
+        "description": "A signed closed-boundary certificate.",
+        "properties": {
+          "assumptions": {
+            "items": {},
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "boundary_dst": {
+            "title": "Boundary Dst",
+            "type": "string"
+          },
+          "boundary_src": {
+            "title": "Boundary Src",
+            "type": "string"
+          },
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "config_hashes": {
+            "items": {},
+            "title": "Config Hashes",
+            "type": "array"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "port": {
+            "title": "Port",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "expired",
+              "contradicted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "boundary_src",
+          "boundary_dst",
+          "port",
+          "claim",
+          "status",
+          "fingerprint"
+        ],
+        "title": "WargameCertificateOut",
+        "type": "object"
+      },
+      "WargameEvidenceOut": {
+        "description": "A hash-chained auditor evidence item (PCI / CIP).",
+        "properties": {
+          "control_id": {
+            "title": "Control Id",
+            "type": "string"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "framework": {
+            "title": "Framework",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_hash": {
+            "title": "Item Hash",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "exception",
+              "not_assessed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "framework",
+          "control_id",
+          "status",
+          "statement",
+          "item_hash",
+          "ordinal"
+        ],
+        "title": "WargameEvidenceOut",
+        "type": "object"
+      },
+      "WargameFixSetOut": {
+        "description": "The minimum-cost fix set that cuts every open route.",
+        "properties": {
+          "cuts_all": {
+            "title": "Cuts All",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "optimality": {
+            "enum": [
+              "exact",
+              "greedy"
+            ],
+            "title": "Optimality",
+            "type": "string"
+          },
+          "selected": {
+            "items": {},
+            "title": "Selected",
+            "type": "array"
+          },
+          "total_cost": {
+            "title": "Total Cost",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "total_cost",
+          "optimality",
+          "cuts_all"
+        ],
+        "title": "WargameFixSetOut",
+        "type": "object"
+      },
+      "WargameRecomputeOut": {
+        "description": "Result of POST /v1/wargame/recompute.\n\n`status` is `computed` when the synchronous correlation call returned,\n`queued` when a recompute job was enqueued on Redis as a fallback, or\n`unavailable` when correlation was unreachable AND the enqueue failed\n(the request never fails hard). `detail` carries a short human note.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "status": {
+            "enum": [
+              "computed",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameRecomputeOut",
+        "type": "object"
+      },
+      "WargameRouteOut": {
+        "description": "An open route to a crown jewel. Hops are impact-only, stored as the\ncompute service wrote them (ordered nodes, not an exploitation recipe).",
+        "properties": {
+          "entry": {
+            "title": "Entry",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "hops": {
+            "items": {},
+            "title": "Hops",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "jewel": {
+            "title": "Jewel",
+            "type": "string"
+          },
+          "length": {
+            "title": "Length",
+            "type": "integer"
+          },
+          "weakest_label": {
+            "title": "Weakest Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "entry",
+          "jewel",
+          "length",
+          "weakest_label",
+          "fingerprint"
+        ],
+        "title": "WargameRouteOut",
+        "type": "object"
+      },
+      "WargameRoutePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WargameRouteOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "WargameRoutePage",
+        "type": "object"
+      },
       "WhyFactor": {
         "properties": {
           "key": {
@@ -31133,6 +31592,393 @@
         "summary": "Post Result",
         "tags": [
           "verification"
+        ]
+      }
+    },
+    "/v1/wargame/assessments": {
+      "get": {
+        "operationId": "list_assessments_v1_wargame_assessments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameAssessmentPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Assessments",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}": {
+      "get": {
+        "operationId": "get_assessment_v1_wargame_assessments__assessment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameAssessmentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Assessment",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/boundaries": {
+      "get": {
+        "operationId": "list_boundaries_v1_wargame_assessments__assessment_id__boundaries_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WargameBoundaryOut"
+                  },
+                  "title": "Response List Boundaries V1 Wargame Assessments  Assessment Id  Boundaries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Boundaries",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/certificates": {
+      "get": {
+        "operationId": "list_certificates_v1_wargame_assessments__assessment_id__certificates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WargameCertificateOut"
+                  },
+                  "title": "Response List Certificates V1 Wargame Assessments  Assessment Id  Certificates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Certificates",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/evidence": {
+      "get": {
+        "operationId": "list_evidence_v1_wargame_assessments__assessment_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "framework",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Framework"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WargameEvidenceOut"
+                  },
+                  "title": "Response List Evidence V1 Wargame Assessments  Assessment Id  Evidence Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Evidence",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/fix-set": {
+      "get": {
+        "operationId": "get_fix_set_v1_wargame_assessments__assessment_id__fix_set_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameFixSetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Fix Set",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/routes": {
+      "get": {
+        "operationId": "list_routes_v1_wargame_assessments__assessment_id__routes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameRoutePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Routes",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/recompute": {
+      "post": {
+        "description": "Trigger a recompute of wargame assessments.\n\nPreferred path: a short synchronous POST to the correlation service's\n`/compute-wargame`. If that is unreachable (or httpx is unavailable), fall\nback to publishing a `correlate:recompute_wargame` job on Redis. The request\nnever fails hard when correlation is down -- the worst case is\n`status=unavailable` (correlation unreachable *and* the enqueue failed).",
+        "operationId": "recompute_wargame_v1_wargame_recompute_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameRecomputeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Recompute Wargame",
+        "tags": [
+          "wargame"
         ]
       }
     }

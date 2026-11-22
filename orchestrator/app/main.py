@@ -34,6 +34,7 @@ from .routers import audit as audit_router
 from .routers import auth as auth_router
 from .routers import attack as attack_router
 from .routers import attackpaths as attackpaths_router
+from .routers import wargame as wargame_router
 from .routers import changes as changes_router
 from .routers import code as code_router
 from .routers import findings as findings_router
@@ -276,6 +277,7 @@ def create_app() -> FastAPI:
     app.include_router(findings_router.outbound_router)
     app.include_router(timeline_router.router)
     app.include_router(attackpaths_router.router)
+    app.include_router(wargame_router.router)
     app.include_router(changes_router.router)
     app.include_router(changes_router.alerts_router)
     app.include_router(monitoring_router.router)
