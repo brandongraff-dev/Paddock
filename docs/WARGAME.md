@@ -406,16 +406,29 @@ Python, no new deps, ~390 tests). Built so far:
   (closure always shown with coverage) — `report.py`.
 - **Impossible-traffic** detection and **replica verification**
   (preconditions only, no exploit) — `impossible.py`, `replica.py`.
-- Runnable demos: `python -m app.engine.wargame.demo` and
-  `… .demo_changegate`.
+- **Topology assembly** (declared segments + parsed rule sets + bindings +
+  observed flows + identity edges → a searchable `Environment`, with drift
+  surfaced as discovered edges) — `fabric.py`, `topology.py`.
+- **Route/NAT reachability** (route tables, blackholes, NAT-as-conditional;
+  a firewall allow with no route is not a hop) — `routing.py`.
+- **Identity / credential paths** (vendor VPN, shared admin creds, IAM role
+  assumption; credential hops only ever inferred/conditional, never tested)
+  — `identity.py`.
+- **Evidence ingest** (observed-flow logs + SARIF pentest results →
+  flows / imported hops) — `ingest.py`.
+- **Auditor evidence packs** (hash-chained PCI Req 1 / 12.5.2 / 11.4.x and
+  NERC CIP-005 items; 11.4.x only met with a probe) — `compliance.py`.
+- Runnable demos: `python -m app.engine.wargame.demo`,
+  `… .demo_changegate`, and `… .demo_assess` (model → routes → fix →
+  evidence, end to end).
 
-Not yet built: live connector wiring (read-only firewall/cloud/IoT-tool
-ingest and the topology that maps rule sets onto graph edges), probe
-deployment mode, auditor-formatted compliance packs, the sandbox runner
-behind `replica.ReplicaRunner`, twin ranges with a published
-false-"closed" rate, and the dashboard. A known gap: Terraform rule ids
-(resource addresses) don't match the AWS parser's ids, so remove/modify
-across the two needs an id-mapping layer (add composes today).
+Not yet built: live connector wiring (the read-only API clients that feed
+the parsers and ingest from real tenants), probe deployment mode, the
+sandbox runner behind `replica.ReplicaRunner`, twin ranges with a
+published false-"closed" rate, and the dashboard. A known gap: Terraform
+rule ids (resource addresses) don't match the AWS parser's ids, so
+remove/modify across the two needs an id-mapping layer (add composes
+today).
 
 | Exists today | Needs building |
 |---|---|
