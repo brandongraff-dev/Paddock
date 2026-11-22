@@ -169,14 +169,14 @@ for how they're captured against the demo graph). The hero is the **Graph** page
 
 | | |
 |---|---|
-| ![Asset graph](docs/screenshots/graph.png) | ![Attack paths](docs/screenshots/attack-paths.png) |
+| ![Asset graph](docs/screenshots/graph.jpg) | ![Attack paths](docs/screenshots/attack-paths.jpg) |
 | **Asset graph** — the live surface, high/critical nodes highlighted | **Attack paths** — foothold → crown jewel, hop by hop |
-| ![Findings](docs/screenshots/findings.png) | ![Chains](docs/screenshots/chains.png) |
+| ![Findings](docs/screenshots/findings.jpg) | ![Chains](docs/screenshots/chains.jpg) |
 | **Findings** — keyboard-driven, KEV/EPSS aware | **Chains** — correlated multi-finding stories |
 
-> The repo ships the capture instructions, not binary image files — generate the
-> PNGs locally with `make quickstart` then Playwright (see
-> [`docs/screenshots/README.md`](docs/screenshots/README.md)).
+> Captured from the real dashboard at 1600×1000 (2× density) against the fictional
+> `acme-demo.example` graph. To retake them, see
+> [`docs/screenshots/README.md`](docs/screenshots/README.md).
 
 ## Architecture
 
