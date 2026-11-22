@@ -73,7 +73,9 @@ services:
       retries: 20
 
   orchestrator:
-    build: ./orchestrator
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
     <<: *hardened-py
     # The dashboard proxies /v1/*, so the API itself only needs loopback.
     ports: ["${LITE_API_BIND:-127.0.0.1}:8080:8080"]

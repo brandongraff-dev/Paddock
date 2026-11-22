@@ -1,0 +1,19 @@
+# Context for images built from the repository root (orchestrator, cli).
+# Service images built from their own directory are unaffected.
+.git
+.claude
+.github
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+**/.ruff_cache
+dashboard
+sdk/typescript
+terraform-provider-paddock
+site
+docs/screenshots
+*.zip
+.env
+.env.*

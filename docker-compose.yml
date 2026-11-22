@@ -67,7 +67,9 @@ services:
   # wait for it with `condition: service_completed_successfully`. It baselines
   # databases created by the old initdb path on first run.
   migrate:
-    build: ./orchestrator
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
     <<: *hardened-py
     restart: "no"
     # then give paddock_app and the paddock_svc_* roles LOGIN + passwords
@@ -124,7 +126,9 @@ services:
 
   # ======================= frontend tier (published) =======================
   orchestrator:
-    build: ./orchestrator
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
     <<: *hardened-py
     ports: ["8080:8080"]
     environment:
@@ -209,7 +213,9 @@ services:
   # Integrations dispatcher + delivery worker (Slack/Teams/PagerDuty/webhooks/
   # email). Same image as the orchestrator; egress only, nothing published.
   integrations:
-    build: ./orchestrator
+    build:
+      context: .
+      dockerfile: orchestrator/Dockerfile
     <<: *hardened-py
     command: ["python", "-m", "app.integrations.worker"]
     environment:
