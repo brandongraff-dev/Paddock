@@ -26,11 +26,22 @@ from .parsers.base import proto_from
 _ALLOW_ACTIONS = frozenset({"allow", "accept", "permit"})
 _ESTABLISHED_STATES = frozenset({"established", "sf"})
 
-#: Zeek conn_state values where data flowed / the handshake completed.
-#: S0 (no reply) and REJ (rejected) are deliberately absent: a dropped or
-#: half-open attempt proves the boundary works. Unknown states are treated
-#: as not established (never over-claim a crossing).
-ZEEK_ESTABLISHED: frozenset[str] = frozenset({"SF", "S1", "RSTO", "RSTR"})
+#: Zeek conn_state values proving a *completed* connection (the handshake
+#: finished and data/teardown followed). Per the Zeek docs: S1 (established,
+#: not terminated), S2/S3 (established, one side closing), SF (normal), RSTO
+#: (established, originator aborted), RSTR (established, responder aborted).
+ZEEK_ESTABLISHED: frozenset[str] = frozenset({"SF", "S1", "S2", "S3", "RSTO", "RSTR"})
+
+#: States where the *responder* demonstrably answered although the handshake is
+#: not fully seen (asymmetric capture): RSTRH (responder SYN-ACK then RST) and
+#: SHR (responder SYN-ACK then FIN). The traffic reached the destination, so
+#: it counts as destination-side evidence, but not as a completed handshake.
+ZEEK_DST_ANSWERED: frozenset[str] = frozenset({"RSTRH", "SHR"})
+
+#: Deliberately NOT real: S0 (SYN, no reply), REJ (rejected), RSTOS0 and SH
+#: (originator-only evidence: nothing proves the destination answered), OTH
+#: (midstream, no SYN seen: cannot tell direction or success) and anything
+#: unrecognised. A dropped or half-open attempt proves the boundary works.
 
 _FORMATS = frozenset({"auto", "generic", "zeek", "firewall"})
 
@@ -75,9 +86,11 @@ def _load_records(raw: Any, stats: IngestStats) -> tuple[list[Any], bool]:
     if not isinstance(raw, str):
         stats.skip(f"unsupported input type {type(raw).__name__}")
         return [], False
-    text = raw.strip()
+    text = raw.lstrip("\ufeff").strip()
     if not text:
         return [], False
+    if text.startswith("#separator") or text.startswith("#fields"):
+        return _load_zeek_tsv(text, stats), False
     if text.startswith("["):
         try:
             data = json.loads(text)
@@ -103,6 +116,38 @@ class _BadLine:
     lineno: int
 
 
+def _load_zeek_tsv(text: str, stats: IngestStats) -> list[Any]:
+    """Zeek's native tab-separated ``conn.log`` -> dict records, using the
+    ``#fields`` header. ``-`` (unset) and ``(empty)`` fields are left out so
+    they can never be mistaken for values."""
+    sep = "\t"
+    fields: list[str] = []
+    out: list[Any] = []
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        if line.startswith("#"):
+            if line.startswith("#separator"):
+                tok = line.split(None, 1)[1].strip() if len(line.split(None, 1)) > 1 else ""
+                if tok.startswith("\\x"):
+                    try:
+                        sep = chr(int(tok[2:], 16))
+                    except ValueError:
+                        pass
+            elif line.startswith("#fields"):
+                fields = line.split(sep)[1:]
+            continue
+        if not fields:
+            stats.skip(f"line {n}: row before #fields header")
+            continue
+        cols = line.split(sep)
+        if len(cols) != len(fields):
+            out.append(_BadLine(n))
+            continue
+        out.append({f: v for f, v in zip(fields, cols) if v not in _UNSET})
+    return out
+
+
 def _sniff(records: list[Any]) -> str:
     dicts = [r for r in records if isinstance(r, dict)]
     if any("id.orig_h" in r or "conn_state" in r for r in dicts):
@@ -117,6 +162,19 @@ def _first(rec: dict, *keys: str) -> Any:
         if k in rec and rec[k] not in (None, ""):
             return rec[k]
     return None
+
+
+_UNSET = frozenset({"-", "(empty)", "(unset)"})
+
+
+def _addr(v: Any) -> Optional[str]:
+    """A cleaned address token, or ``None`` for a Zeek unset ``-`` / blank /
+    non-string. Not forced to be an IP literal (logs may carry hostnames, and
+    IPv6 may carry a zone id); a non-IP simply never matches a CIDR."""
+    if not isinstance(v, str):
+        return None
+    t = v.strip()
+    return None if (not t or t in _UNSET) else t
 
 
 def _port(v: Any) -> Optional[int]:
@@ -146,12 +204,14 @@ def _one_flow(rec: dict, fmt: str) -> Flow:
         dst = _first(rec, "dst", "dst_ip")
         dport = _first(rec, "dport", "dst_port")
         proto_tok = rec.get("proto")
-    if not isinstance(src, str) or not isinstance(dst, str):
-        raise ValueError("missing src/dst address")
+    src, dst = _addr(src), _addr(dst)
+    if src is None or dst is None:
+        raise ValueError("missing or invalid src/dst address")
     port = _port(dport)
     if port is None:
-        # ICMP has no port; tolerate a missing one only for icmp.
-        if dport is None and proto_from(proto_tok).value == "icmp":
+        # ICMP has no port; tolerate a missing (or Zeek-unset) one only for icmp.
+        if (dport is None or str(dport).strip() in _UNSET) \
+                and proto_from(proto_tok).value == "icmp":
             port = 0
         else:
             raise ValueError("missing or invalid destination port")
@@ -163,11 +223,13 @@ def _one_flow(rec: dict, fmt: str) -> Flow:
         state = str(rec.get("conn_state", "")).strip().upper()
         if not state:
             raise ValueError("missing conn_state")
+        if state in _UNSET:
+            raise ValueError("missing conn_state")
         handshake = state in ZEEK_ESTABLISHED
         # Zeek sits where it can see the responder, but only an answered
         # flow is evidence the traffic got *through*. A dropped S0/REJ
         # attempt must not read as a crossing (see impossible.flow_is_real).
-        dst_seen = handshake
+        dst_seen = handshake or state in ZEEK_DST_ANSWERED
         svc = rec.get("service")
         kind = str(svc) if svc else ""
     else:
@@ -180,8 +242,8 @@ def _one_flow(rec: dict, fmt: str) -> Flow:
         svc = rec.get("service")
         kind = str(svc) if svc else ""
     return Flow(
-        src_ip=src.strip(),
-        dst_ip=dst.strip(),
+        src_ip=src,
+        dst_ip=dst,
         proto=proto,
         dst_port=port,
         handshake_completed=handshake,
@@ -245,54 +307,81 @@ def parse_sarif(raw: Any) -> list[ImportedFinding]:
     """
     try:
         if isinstance(raw, (bytes, bytearray)):
-            raw = bytes(raw).decode("utf-8")
+            raw = bytes(raw).decode("utf-8-sig")
+        if isinstance(raw, str):
+            raw = raw.lstrip("\ufeff")
         doc = json.loads(raw) if isinstance(raw, str) else raw
         if not isinstance(doc, dict):
             return []
         out: list[ImportedFinding] = []
-        for run in doc.get("runs") or []:
+        runs = doc.get("runs")
+        for run in runs if isinstance(runs, list) else []:
             if not isinstance(run, dict):
                 continue
-            for res in run.get("results") or []:
-                if not isinstance(res, dict):
+            results = run.get("results")
+            for res in results if isinstance(results, list) else []:
+                try:
+                    found = _sarif_result(res, run)
+                except Exception:      # one bad result never loses the rest
                     continue
-                rule_id = _text(res.get("ruleId"))
-                if not rule_id:
-                    continue
-                msg = res.get("message")
-                message = _text(msg.get("text")) if isinstance(msg, dict) else _text(msg)
-                uris: list[str] = []
-                logical: list[str] = []
-                for loc in res.get("locations") or []:
-                    if not isinstance(loc, dict):
-                        continue
-                    phys = loc.get("physicalLocation")
-                    if isinstance(phys, dict):
-                        art = phys.get("artifactLocation")
-                        if isinstance(art, dict) and _text(art.get("uri")):
-                            uris.append(_text(art.get("uri")))
-                    for ll in loc.get("logicalLocations") or []:
-                        if isinstance(ll, dict) and _text(ll.get("fullyQualifiedName")):
-                            logical.append(_text(ll.get("fullyQualifiedName")))
-                src_hint = uris[0] if uris else ""
-                if logical:
-                    dst_hint = logical[0]
-                elif len(uris) > 1:
-                    dst_hint = uris[1]
-                else:
-                    dst_hint = ""
-                out.append(
-                    ImportedFinding(
-                        rule_id=rule_id,
-                        message=message,
-                        src_hint=src_hint,
-                        dst_hint=dst_hint,
-                        level=_text(res.get("level")),
-                    )
-                )
+                if found is not None:
+                    out.append(found)
         return out
     except Exception:
         return []
+
+
+def _sarif_rule_id(res: dict, run: dict) -> str:
+    rid = _text(res.get("ruleId"))
+    if rid:
+        return rid
+    rule = res.get("rule")
+    if isinstance(rule, dict) and _text(rule.get("id")):
+        return _text(rule.get("id"))
+    idx = res.get("ruleIndex")
+    tool = run.get("tool")
+    driver = tool.get("driver") if isinstance(tool, dict) else None
+    rules = driver.get("rules") if isinstance(driver, dict) else None
+    if isinstance(idx, int) and not isinstance(idx, bool) and isinstance(rules, list) \
+            and 0 <= idx < len(rules) and isinstance(rules[idx], dict):
+        return _text(rules[idx].get("id"))
+    return ""
+
+
+def _sarif_result(res: Any, run: dict) -> Optional[ImportedFinding]:
+    if not isinstance(res, dict):
+        return None
+    rule_id = _sarif_rule_id(res, run)
+    if not rule_id:
+        return None
+    msg = res.get("message")
+    message = _text(msg.get("text")) if isinstance(msg, dict) else _text(msg)
+    uris: list[str] = []
+    logical: list[str] = []
+    locs = res.get("locations")
+    for loc in locs if isinstance(locs, list) else []:
+        if not isinstance(loc, dict):
+            continue
+        phys = loc.get("physicalLocation")
+        if isinstance(phys, dict):
+            art = phys.get("artifactLocation")
+            if isinstance(art, dict) and _text(art.get("uri")):
+                uris.append(_text(art.get("uri")))
+        lls = loc.get("logicalLocations")
+        for ll in lls if isinstance(lls, list) else []:
+            if isinstance(ll, dict) and _text(ll.get("fullyQualifiedName")):
+                logical.append(_text(ll.get("fullyQualifiedName")))
+    src_hint = uris[0] if uris else ""
+    if logical:
+        dst_hint = logical[0]
+    elif len(uris) > 1:
+        dst_hint = uris[1]
+    else:
+        dst_hint = ""
+    return ImportedFinding(
+        rule_id=rule_id, message=message, src_hint=src_hint,
+        dst_hint=dst_hint, level=_text(res.get("level")),
+    )
 
 
 def imported_edges(findings: list[ImportedFinding], mapping: dict[str, str]) -> list[Edge]:

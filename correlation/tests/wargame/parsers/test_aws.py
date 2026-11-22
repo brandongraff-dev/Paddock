@@ -268,3 +268,247 @@ def test_conditional_count_reflects_unresolved(sgs):
     r = _rule_on_port(res2.rulesets["sg-0app"], Proto.TCP, 9090)
     assert r.conditional is True
     assert ConditionalFeature.UNRESOLVED  # feature enum is the one we flag
+
+
+# -- audit regressions -------------------------------------------------------
+
+from app.engine.wargame.parsers.aws import combine_security_groups  # noqa: E402
+
+
+def _sg(perms=None, egress=None, gid="sg-t", **extra) -> dict:
+    sg = {"GroupId": gid, "OwnerId": "111111111111"}
+    if perms is not None:
+        sg["IpPermissions"] = perms
+    if egress is not None:
+        sg["IpPermissionsEgress"] = egress
+    sg.update(extra)
+    return {"SecurityGroups": [sg]}
+
+
+def _cidr(c="10.0.0.0/8"):
+    return [{"CidrIp": c}]
+
+
+@pytest.mark.parametrize("tok,proto", [
+    ("-1", Proto.ANY), ("6", Proto.TCP), ("tcp", Proto.TCP),
+    ("17", Proto.UDP), ("udp", Proto.UDP), ("1", Proto.ICMP),
+    ("icmp", Proto.ICMP), ("58", Proto.ICMP), ("icmpv6", Proto.ICMP),
+])
+def test_sg_protocol_tokens(tok, proto):
+    raw = _sg([{"IpProtocol": tok, "FromPort": 80, "ToPort": 80, "IpRanges": _cidr()}])
+    r = parse("aws", raw).rulesets["sg-t"].rules[0]
+    assert not r.conditional
+    assert all(p.proto is proto for p in r.ports)
+    if proto is Proto.ANY:
+        assert r.ports == (PortRange.any(),)      # ports ignored for "all"
+    elif proto is Proto.ICMP:
+        assert r.ports == (PortRange(Proto.ICMP, 0, 65535),)
+    else:
+        assert r.ports == (PortRange(proto, 80, 80),)
+
+
+def test_sg_unmodelled_protocol_is_conditional_any():
+    # GRE (47): over-approximated, never dropped or narrowed
+    res = parse("aws", _sg([{"IpProtocol": "47", "IpRanges": _cidr()}]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.ports == (PortRange.any(),)
+    assert any(w.level is WarningLevel.UNSUPPORTED for w in res.warnings)
+
+
+def test_sg_garbage_port_does_not_crash_and_widens():
+    res = parse("aws", _sg([{"IpProtocol": "tcp", "FromPort": "x", "ToPort": None,
+                             "IpRanges": _cidr()}]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.ports == (PortRange(Proto.TCP, 0, 65535),)
+
+
+def test_icmp_minus_one_ports_and_ipv6_ranges():
+    res = parse("aws", _sg([{"IpProtocol": "icmpv6", "FromPort": -1, "ToPort": -1,
+                             "Ipv6Ranges": [{"CidrIpv6": "2001:db8::/32"}]}]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.src_cidrs == ("2001:db8::/32",) and not r.conditional
+    assert r.ports == (PortRange(Proto.ICMP, 0, 65535),)
+
+
+def test_prefix_list_is_conditional_not_dropped():
+    res = parse("aws", _sg([{"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+                             "IpRanges": _cidr("192.0.2.0/24"),
+                             "PrefixListIds": [{"PrefixListId": "pl-0abc"}]}]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.src_cidrs == base.ANY_CIDRS
+    assert any("pl-0abc" in w.message for w in res.warnings)
+
+
+def test_group_pair_without_group_id_is_not_silently_dropped():
+    # A GroupName-only pair next to a literal CIDR used to leave just the CIDR:
+    # the real source set was narrowed (false closed).
+    res = parse("aws", _sg([{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+                             "IpRanges": _cidr("192.0.2.0/24"),
+                             "UserIdGroupPairs": [{"GroupName": "bastion"}]}]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.src_cidrs == base.ANY_CIDRS
+
+
+def test_group_ref_without_members_is_conditional_any_even_with_cidrs():
+    res = parse("aws", _sg([{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+                             "IpRanges": _cidr("192.0.2.0/24"),
+                             "UserIdGroupPairs": [{"GroupId": "sg-other"}]}]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.src_cidrs == base.ANY_CIDRS
+
+
+def test_cross_account_group_ref_stays_conditional_even_with_members():
+    perm = {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+            "UserIdGroupPairs": [{"GroupId": "sg-peer", "UserId": "999999999999"}]}
+    res = AwsParser().parse(_sg([perm]), sg_members={"sg-peer": ["10.7.0.0/24"]})
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.src_cidrs == ("10.7.0.0/24",)
+    # same-account ref with members is a hard allow
+    perm["UserIdGroupPairs"][0]["UserId"] = "111111111111"
+    res = AwsParser().parse(_sg([perm]), sg_members={"sg-peer": ["10.7.0.0/24"]})
+    assert not res.rulesets["sg-t"].rules[0].conditional
+
+
+def test_unparseable_cidr_widens_instead_of_matching_nothing():
+    res = parse("aws", _sg([{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+                             "IpRanges": [{"CidrIp": "not-a-cidr"}]}]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.src_cidrs == base.ANY_CIDRS
+
+
+def test_permission_with_no_source_is_conditional_any():
+    res = parse("aws", _sg([{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22}]))
+    assert res.rulesets["sg-t"].rules[0].conditional
+
+
+def test_missing_ingress_key_is_not_deny_all():
+    res = parse("aws", {"SecurityGroups": [{"GroupId": "sg-t"}]})
+    rules_ = res.rulesets["sg-t"].rules
+    assert len(rules_) == 1 and rules_[0].conditional
+    assert rules_[0].src_cidrs == base.ANY_CIDRS
+
+
+def test_empty_egress_is_deny_all_but_missing_egress_is_unmodelled():
+    res = parse("aws", _sg([], egress=[]))
+    assert res.rulesets["sg-t:egress"].rules == []
+    assert res.rulesets["sg-t:egress"].default_action is Action.DENY
+    res = parse("aws", _sg([]))
+    assert "sg-t:egress" not in res.rulesets
+    assert any("IpPermissionsEgress" in w.message for w in res.warnings)
+
+
+def test_default_sg_egress_allow_all():
+    res = parse("aws", _sg([], egress=[{"IpProtocol": "-1", "IpRanges": _cidr("0.0.0.0/0")}]))
+    r = res.rulesets["sg-t:egress"].rules[0]
+    assert "0.0.0.0/0" in r.dst_cidrs and r.ports == (PortRange.any(),)
+    assert r.src_cidrs == base.ANY_CIDRS and r.action is Action.ALLOW
+
+
+def test_non_object_permission_is_widened_not_dropped():
+    res = parse("aws", _sg(["junk"]))
+    r = res.rulesets["sg-t"].rules[0]
+    assert r.conditional and r.src_cidrs == base.ANY_CIDRS
+
+
+def test_combine_security_groups_is_a_union():
+    raw = {"SecurityGroups": [
+        {"GroupId": "sg-a", "IpPermissions": [
+            {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "IpRanges": _cidr("10.0.0.0/8")}]},
+        {"GroupId": "sg-b", "IpPermissions": [
+            {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": _cidr("0.0.0.0/0")}]},
+    ]}
+    res = parse("aws", raw)
+    merged = combine_security_groups(res, ["sg-b", "sg-a"], "eni-1")
+    assert merged is res.rulesets["eni-1"] and merged.default_action is Action.DENY
+    ports = {(p.low, p.high) for r in merged.rules for p in r.ports}
+    assert ports == {(22, 22), (443, 443)}
+    assert [r.order for r in merged.rules] == [0, 1]
+    # originals untouched, unknown ids warn rather than raise
+    assert len(res.rulesets["sg-a"].rules) == 1
+    assert combine_security_groups(res, ["sg-zzz"], "eni-2") is None
+
+
+# -- NACL audit regressions --------------------------------------------------
+
+def _nacl(entries, nid="acl-t") -> dict:
+    return {"NetworkAcls": [{"NetworkAclId": nid, "Entries": entries,
+                             "Associations": [{"SubnetId": "subnet-1"}]}]}
+
+
+def _e(num, action="allow", proto="6", cidr="0.0.0.0/0", egress=False, ports=(22, 22), **x):
+    e = {"RuleNumber": num, "RuleAction": action, "Protocol": proto,
+         "CidrBlock": cidr, "Egress": egress}
+    if ports:
+        e["PortRange"] = {"From": ports[0], "To": ports[1]}
+    e.update(x)
+    return e
+
+
+def test_nacl_orders_by_rule_number_regardless_of_export_order():
+    entries = [_e(32767, "deny", "-1", ports=None), _e(200), _e(100, "deny")]
+    rs = parse("aws", _nacl(entries)).rulesets["acl-t:ingress"]
+    assert [r.order for r in rs.rules] == [100, 200, 32767]
+    assert rs.default_action is Action.DENY
+    assert rs.rules[0].action is Action.DENY and rs.rules[0].id == "acl-t:ingress#100"
+
+
+def test_nacl_egress_flag_and_string_flag():
+    res = parse("aws", _nacl([_e(100, egress=True), _e(110, egress="false")]))
+    assert [r.order for r in res.rulesets["acl-t:egress"].rules] == [100]
+    assert [r.order for r in res.rulesets["acl-t:ingress"].rules] == [110]
+
+
+def test_nacl_deny_for_unmodelled_protocol_is_dropped_not_widened():
+    # A deny for GRE (47) read as "deny any" would shadow every later allow.
+    entries = [_e(100, "deny", "47", ports=None), _e(200, "allow", "6", ports=(443, 443))]
+    res = parse("aws", _nacl(entries))
+    assert [r.order for r in res.rulesets["acl-t:ingress"].rules] == [200]
+    assert any("deny entry skipped" in w.message for w in res.warnings)
+
+
+def test_nacl_specific_icmp_deny_is_dropped_not_widened_to_all_icmp():
+    entries = [_e(100, "deny", "1", ports=None, IcmpTypeCode={"Type": 8, "Code": -1}),
+               _e(200, "allow", "1", ports=None)]
+    res = parse("aws", _nacl(entries))
+    assert [r.order for r in res.rulesets["acl-t:ingress"].rules] == [200]
+
+
+def test_nacl_deny_with_bad_cidr_is_dropped_allow_is_conditional():
+    res = parse("aws", _nacl([_e(100, "deny", cidr="bogus"), _e(110, "allow", cidr="bogus")]))
+    rs = res.rulesets["acl-t:ingress"]
+    assert [(r.order, r.conditional) for r in rs.rules] == [(110, True)]
+
+
+def test_nacl_unmodelled_protocol_allow_is_conditional_any():
+    res = parse("aws", _nacl([_e(100, "allow", "47", ports=None)]))
+    r = res.rulesets["acl-t:ingress"].rules[0]
+    assert r.conditional and r.ports == (PortRange.any(),)
+
+
+def test_nacl_unknown_action_reads_as_conditional_allow():
+    res = parse("aws", _nacl([_e(100, "maybe")]))
+    r = res.rulesets["acl-t:ingress"].rules[0]
+    assert r.action is Action.ALLOW and r.conditional
+
+
+def test_nacl_ipv4_ipv6_same_number_keep_unique_ids():
+    v6 = {"RuleNumber": 100, "RuleAction": "allow", "Protocol": "-1", "Egress": False,
+          "Ipv6CidrBlock": "::/0"}
+    res = parse("aws", _nacl([_e(100, "deny"), v6]))
+    ids = [r.id for r in res.rulesets["acl-t:ingress"].rules]
+    assert len(ids) == len(set(ids)) == 2
+
+
+def test_nacl_missing_entries_is_not_deny_all():
+    res = parse("aws", {"NetworkAcls": [{"NetworkAclId": "acl-t"}]})
+    for d in ("ingress", "egress"):
+        (r,) = res.rulesets[f"acl-t:{d}"].rules
+        assert r.conditional and r.action is Action.ALLOW
+
+
+def test_nacl_stateless_return_path_warning():
+    res = parse("aws", _nacl([_e(100, "allow", ports=(443, 443))]))
+    assert any("stateless" in w.message for w in res.warnings)
+    ok = parse("aws", _nacl([_e(100, "allow", ports=(443, 443)),
+                             _e(100, "allow", egress=True, ports=(1024, 65535))]))
+    assert not any("stateless" in w.message for w in ok.warnings)

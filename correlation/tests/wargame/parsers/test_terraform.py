@@ -32,9 +32,13 @@ def plan() -> dict:
         return json.load(f)
 
 
+def _addr(o) -> str:
+    """The plan address an op came from (rule ids may be in the AWS scheme)."""
+    return o.rule.raw_ref if o.rule else o.description.removeprefix("remove ")
+
+
 def _op(change, address: str):
-    ops = [o for o in change.ops
-           if (o.rule.id if o.rule else o.rule_id) == address]
+    ops = [o for o in change.ops if _addr(o) == address]
     assert len(ops) == 1, f"expected one op for {address}"
     return ops[0]
 
@@ -146,7 +150,7 @@ def test_update_is_modify(plan):
 
 def test_unrelated_and_noop_resources_ignored_without_raising(plan):
     result = parse_plan_detailed(plan)
-    addrs = {(o.rule.id if o.rule else o.rule_id) for o in result.change.ops}
+    addrs = {_addr(o) for o in result.change.ops}
     assert "aws_s3_bucket.logs" not in addrs
     assert "aws_security_group_rule.untouched" not in addrs
     assert len(result.change.ops) == 4
@@ -182,7 +186,7 @@ def test_deterministic_and_ordered_by_address(plan):
     a, b = parse_plan(plan), parse_plan(rev)
     assert a == b
     assert parse_plan(json.dumps(plan)) == a
-    keys = [o.rule.id if o.rule else o.rule_id for o in a.ops]
+    keys = [_addr(o) for o in a.ops]
     assert keys == sorted(keys)
 
 
@@ -204,3 +208,216 @@ def test_change_composes_with_environment(plan):
         "aws_security_group_rule.db_from_app"]
     # original untouched
     assert env.rulesets["sg-db"].rules == []
+
+
+# -- AWS export <-> Terraform plan id matching (audit) -------------------------
+
+from app.engine.wargame.parsers import parse as _parse_vendor  # noqa: E402
+from app.engine.wargame.parsers.terraform import bind_to_environment  # noqa: E402
+
+
+def _live_env(sgs=(), nacls=()) -> Environment:
+    res = _parse_vendor("aws", {"SecurityGroups": list(sgs), "NetworkAcls": list(nacls)})
+    env = Environment()
+    for rs in res.rulesets.values():
+        env.add_ruleset(rs)
+    return env
+
+
+def _perm(proto, lo, hi, *cidrs):
+    return {"IpProtocol": proto, "FromPort": lo, "ToPort": hi,
+            "IpRanges": [{"CidrIp": c} for c in cidrs]}
+
+
+def _plan(*rcs) -> dict:
+    return {"resource_changes": list(rcs)}
+
+
+def _rc(addr, rtype, actions, before=None, after=None, unknown=None):
+    return {"address": addr, "type": rtype,
+            "change": {"actions": actions, "before": before, "after": after,
+                       "after_unknown": unknown or {}}}
+
+
+def _sg_before(**kw):
+    base = {"type": "ingress", "protocol": "tcp", "from_port": 5432, "to_port": 5432,
+            "security_group_id": "sg-db", "cidr_blocks": ["10.9.0.0/24"]}
+    base.update(kw)
+    return base
+
+
+def test_remove_one_cidr_of_a_bundled_aws_permission_splits_not_deletes():
+    # The AWS parser makes ONE rule for the permission; removing one of its
+    # CIDRs must leave the other (removing the rule whole = false closed).
+    env = _live_env([{"GroupId": "sg-db", "IpPermissions": [
+        _perm("tcp", 5432, 5432, "10.9.0.0/24", "10.8.0.0/24")]}])
+    live_id = env.rulesets["sg-db"].rules[0].id
+    plan = _plan(_rc("aws_security_group_rule.a", "aws_security_group_rule",
+                     ["delete"], before=_sg_before()))
+    new = apply_change(env, parse_plan(plan, env))
+    (r,) = new.rulesets["sg-db"].rules
+    assert r.id == live_id and r.src_cidrs == ("10.8.0.0/24",)
+    assert env.rulesets["sg-db"].rules[0].src_cidrs == ("10.9.0.0/24", "10.8.0.0/24")
+
+
+def test_remove_whole_rule_from_live_export_lands():
+    env = _live_env([{"GroupId": "sg-db", "IpPermissions": [
+        _perm("tcp", 5432, 5432, "10.9.0.0/24"), _perm("tcp", 22, 22, "10.1.0.0/16")]}])
+    plan = _plan(_rc("aws_security_group_rule.a", "aws_security_group_rule",
+                     ["delete"], before=_sg_before()))
+    new = apply_change(env, parse_plan(plan, env))
+    assert [r.ports[0].low for r in new.rulesets["sg-db"].rules] == [22]
+
+
+def test_modify_cidr_in_live_rule_lands_as_remove_plus_add():
+    env = _live_env([{"GroupId": "sg-db", "IpPermissions": [
+        _perm("tcp", 5432, 5432, "10.9.0.0/24")]}])
+    plan = _plan(_rc("aws_security_group_rule.a", "aws_security_group_rule", ["update"],
+                     before=_sg_before(),
+                     after=_sg_before(cidr_blocks=["10.7.0.0/24"])))
+    new = apply_change(env, parse_plan(plan, env))
+    assert [r.src_cidrs for r in new.rulesets["sg-db"].rules] == [("10.7.0.0/24",)]
+
+
+def test_vpc_egress_rule_removal_matches_egress_ruleset():
+    env = _live_env([{"GroupId": "sg-w", "IpPermissions": [],
+                      "IpPermissionsEgress": [
+                          {"IpProtocol": "-1", "IpRanges": [{"CidrIp": "10.0.0.0/8"}]}]}])
+    plan = _plan(_rc("aws_vpc_security_group_egress_rule.e",
+                     "aws_vpc_security_group_egress_rule", ["delete"],
+                     before={"security_group_id": "sg-w", "ip_protocol": "-1",
+                             "cidr_ipv4": "10.0.0.0/8"}))
+    new = apply_change(env, parse_plan(plan, env))
+    assert new.rulesets["sg-w:egress"].rules == []
+
+
+def test_unmatchable_removal_is_retained_with_a_warning_never_applied_wrongly():
+    env = _live_env([{"GroupId": "sg-db", "IpPermissions": [
+        {"IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432,
+         "UserIdGroupPairs": [{"GroupId": "sg-app"}]}]}])
+    plan = _plan(_rc("aws_security_group_rule.a", "aws_security_group_rule", ["delete"],
+                     before=_sg_before(cidr_blocks=[], source_security_group_id="sg-app")))
+    pp = parse_plan_detailed(plan, env)
+    assert pp.change.ops == []                       # nothing narrows the model
+    assert any("retained" in n for _, n in pp.warnings)
+    new = apply_change(env, pp.change)
+    assert len(new.rulesets["sg-db"].rules) == 1     # the allow is still there
+
+
+def test_removal_of_cidr_not_in_live_export_is_retained_with_warning():
+    env = _live_env([{"GroupId": "sg-db", "IpPermissions": [
+        _perm("tcp", 5432, 5432, "10.1.0.0/24")]}])
+    plan = _plan(_rc("aws_security_group_rule.a", "aws_security_group_rule",
+                     ["delete"], before=_sg_before()))
+    pp = parse_plan_detailed(plan, env)
+    assert pp.change.ops == [] and pp.warnings
+
+
+def test_nacl_ids_match_aws_scheme_so_remove_and_modify_land():
+    env = _live_env(nacls=[{"NetworkAclId": "acl-1", "Entries": [
+        {"RuleNumber": 100, "RuleAction": "allow", "Protocol": "6", "Egress": False,
+         "CidrBlock": "0.0.0.0/0", "PortRange": {"From": 22, "To": 22}},
+        {"RuleNumber": 32767, "RuleAction": "deny", "Protocol": "-1", "Egress": False,
+         "CidrBlock": "0.0.0.0/0"}]}])
+    before = {"network_acl_id": "acl-1", "rule_number": 100, "egress": False,
+              "protocol": "6", "rule_action": "allow", "cidr_block": "0.0.0.0/0",
+              "from_port": 22, "to_port": 22}
+    # remove
+    rm = _plan(_rc("aws_network_acl_rule.ssh", "aws_network_acl_rule", ["delete"],
+                   before=before))
+    assert parse_plan(rm).ops[0].rule_id == "acl-1:ingress#100"
+    new = apply_change(env, parse_plan(rm))
+    assert [r.order for r in new.rulesets["acl-1:ingress"].rules] == [32767]
+    # modify (renumbering moves the live rule)
+    mod = _plan(_rc("aws_network_acl_rule.ssh", "aws_network_acl_rule", ["update"],
+                    before=before, after=dict(before, rule_number=90, rule_action="deny")))
+    new = apply_change(env, parse_plan(mod))
+    got = [(r.order, r.action) for r in new.rulesets["acl-1:ingress"].rules]
+    assert got == [(90, Action.DENY), (32767, Action.DENY)]
+
+
+def test_nacl_remove_of_missing_rule_is_retained_with_warning():
+    env = _live_env(nacls=[{"NetworkAclId": "acl-1", "Entries": []}])
+    plan = _plan(_rc("aws_network_acl_rule.x", "aws_network_acl_rule", ["delete"],
+                     before={"network_acl_id": "acl-1", "rule_number": 5, "egress": False,
+                             "protocol": "-1", "rule_action": "deny", "cidr_block": "0.0.0.0/0"}))
+    pp = parse_plan_detailed(plan, env)
+    assert pp.change.ops == [] and pp.warnings
+
+
+def test_unknown_or_unmodelled_nacl_deny_is_dropped_never_widened():
+    after = {"network_acl_id": "acl-1", "rule_number": 50, "egress": False,
+             "protocol": "-1", "rule_action": "deny", "cidr_block": None}
+    plan = _plan(_rc("aws_network_acl_rule.d", "aws_network_acl_rule", ["create"],
+                     after=after, unknown={"cidr_block": True}))
+    pp = parse_plan_detailed(plan)
+    assert pp.change.ops == [] and pp.warnings
+    gre = dict(after, cidr_block="10.0.0.0/8", protocol="47")
+    pp = parse_plan_detailed(_plan(_rc("aws_network_acl_rule.g", "aws_network_acl_rule",
+                                       ["create"], after=gre)))
+    assert pp.change.ops == []
+    # an unknown ALLOW is widened + conditional instead
+    allow = dict(after, rule_action="allow")
+    op = parse_plan(_plan(_rc("aws_network_acl_rule.a", "aws_network_acl_rule",
+                              ["create"], after=allow, unknown={"cidr_block": True}))).ops[0]
+    assert op.rule.conditional and op.rule.src_cidrs == ANY_CIDRS
+
+
+def test_unmodelled_protocol_sg_rule_is_conditional_any():
+    plan = _plan(_rc("aws_security_group_rule.g", "aws_security_group_rule", ["create"],
+                     after=_sg_before(protocol="47", cidr_blocks=["10.0.0.0/8"])))
+    op = parse_plan(plan).ops[0]
+    assert op.rule.conditional and op.rule.ports == (PortRange.any(),)
+
+
+def test_inline_sg_blocks_diff_into_add_and_remove_against_live_export():
+    env = _live_env([{"GroupId": "sg-9", "IpPermissions": [
+        _perm("tcp", 22, 22, "10.0.0.0/8"), _perm("tcp", 80, 80, "0.0.0.0/0")]}])
+    blk = lambda port, cidr: {"protocol": "tcp", "from_port": port, "to_port": port,  # noqa: E731
+                              "cidr_blocks": [cidr], "ipv6_cidr_blocks": [],
+                              "security_groups": [], "prefix_list_ids": [], "self": False}
+    before = {"id": "sg-9", "ingress": [blk(22, "10.0.0.0/8"), blk(80, "0.0.0.0/0")],
+              "egress": []}
+    after = {"id": "sg-9", "ingress": [blk(80, "0.0.0.0/0"), blk(443, "10.5.0.0/16")],
+             "egress": []}
+    plan = _plan(_rc("aws_security_group.web", "aws_security_group", ["update"],
+                     before=before, after=after))
+    new = apply_change(env, parse_plan(plan, env))
+    got = sorted((r.ports[0].low, tuple(r.src_cidrs)) for r in new.rulesets["sg-9"].rules)
+    assert got == [(80, ("0.0.0.0/0",)), (443, ("10.5.0.0/16",))]
+
+
+def test_inline_sg_unknown_blocks_never_remove_and_add_conditional_any():
+    before = {"id": "sg-9", "ingress": [{"protocol": "tcp", "from_port": 22, "to_port": 22,
+                                         "cidr_blocks": ["10.0.0.0/8"]}], "egress": []}
+    after = {"id": "sg-9", "ingress": None, "egress": []}
+    plan = _plan(_rc("aws_security_group.web", "aws_security_group", ["update"],
+                     before=before, after=after, unknown={"ingress": True}))
+    ops = parse_plan(plan).ops
+    assert [o.kind for o in ops] == [ChangeKind.ADD_RULE]
+    assert ops[0].rule.conditional and ops[0].rule.src_cidrs == ANY_CIDRS
+
+
+def test_new_inline_sg_is_an_add_ruleset_and_delete_is_retained():
+    after = {"id": None, "ingress": [{"protocol": "tcp", "from_port": 22, "to_port": 22,
+                                      "cidr_blocks": ["0.0.0.0/0"]}], "egress": []}
+    plan = _plan(_rc("aws_security_group.n", "aws_security_group", ["create"],
+                     after=after, unknown={"id": True}))
+    ops = parse_plan(plan).ops
+    assert ops[0].kind is ChangeKind.ADD_RULESET and ops[0].ruleset.rules
+    gone = _plan(_rc("aws_security_group.n", "aws_security_group", ["delete"],
+                     before={"id": "sg-9", "ingress": [], "egress": []}))
+    pp = parse_plan_detailed(gone)
+    assert pp.change.ops == [] and pp.warnings
+
+
+def test_bind_does_not_mutate_inputs():
+    env = _live_env([{"GroupId": "sg-db", "IpPermissions": [
+        _perm("tcp", 5432, 5432, "10.9.0.0/24", "10.8.0.0/24")]}])
+    plan = parse_plan_detailed(_plan(_rc("aws_security_group_rule.a",
+                                         "aws_security_group_rule", ["delete"],
+                                         before=_sg_before())))
+    snapshot = list(plan.change.ops)
+    bound = bind_to_environment(plan, env)
+    assert plan.change.ops == snapshot and bound is not plan
+    assert env.rulesets["sg-db"].rules[0].src_cidrs == ("10.9.0.0/24", "10.8.0.0/24")

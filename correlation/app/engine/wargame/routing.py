@@ -218,23 +218,70 @@ class RoutingFabric:
             if any(_overlaps(src_cidr, c) for c in t.associated_cidrs)
         ]
 
-    def _best_match(self, src_cidr: str, dst_cidr: str) -> Optional[RouteEntry]:
-        """The single longest-prefix-matching route entry for ``dst_cidr``
-        across every table associated with ``src_cidr``, or ``None`` if no
-        associated table has a covering route. Ties on prefix length are
-        broken by table id order (tables are pre-sorted), then by entry order,
-        which is deterministic."""
+    def _table_match(
+        self, table: RouteTableModel, dst_cidr: str
+    ) -> tuple[Optional[RouteEntry], bool]:
+        """``(entry, routable)`` for ``dst_cidr`` in one table.
+
+        ``entry`` is the longest-prefix route covering the *whole* destination
+        (``None`` if none does). ``routable`` is True if any non-blackhole
+        route carries at least part of ``dst_cidr`` and is not wholly
+        shadowed by a longer blackhole. A destination wider than any single
+        route (e.g. ``0.0.0.0/0`` asked of a table with only a local route)
+        is therefore routable when *some* of its addresses are: reachability
+        is over-approximated, never narrowed.
+        """
+        tgt = _as_network(dst_cidr)
         best: Optional[RouteEntry] = None
         best_len = -1
+        routable = False
+        entries = self._effective_entries(table)
+        holes = [
+            (n, e) for e in entries
+            if e.is_blackhole and (n := _as_network(e.dest_cidr)) is not None
+        ]
+        for e in entries:
+            net = _as_network(e.dest_cidr)
+            if net is None or tgt is None or net.version != tgt.version:
+                continue
+            if _covers(e.dest_cidr, dst_cidr):
+                if net.prefixlen > best_len or (
+                    net.prefixlen == best_len and best is not None
+                    and best.is_blackhole and not e.is_blackhole
+                ):
+                    best, best_len = e, net.prefixlen
+            if e.is_blackhole or not net.overlaps(tgt):
+                continue
+            inter = tgt if tgt.subnet_of(net) else net     # T ∩ R
+            shadowed = any(
+                h.version == inter.version and h.prefixlen > net.prefixlen
+                and inter.subnet_of(h)
+                for h, _ in holes
+            )
+            if not shadowed:
+                routable = True
+        return best, routable
+
+    def _best_match(self, src_cidr: str, dst_cidr: str) -> Optional[RouteEntry]:
+        """The route that would carry ``src_cidr`` -> ``dst_cidr``, or ``None``
+        if no associated table covers the destination.
+
+        Each associated table is longest-prefix-matched on its own. When the
+        source overlaps several tables (a modelling imprecision: a subnet uses
+        exactly one), the answer favours *reachable*: a non-blackhole match
+        beats a blackhole one, then the longer prefix wins, then table id. A
+        blackhole in one table can therefore never close a path another
+        candidate table carries."""
+        best: Optional[RouteEntry] = None
+        best_key: tuple[int, int] = (-1, -1)
         for table in self._tables_for(src_cidr):  # already id-sorted
-            for entry in self._effective_entries(table):
-                if not _covers(entry.dest_cidr, dst_cidr):
-                    continue
-                net = _as_network(entry.dest_cidr)
-                if net is None:
-                    continue
-                if net.prefixlen > best_len:
-                    best, best_len = entry, net.prefixlen
+            entry, _ = self._table_match(table, dst_cidr)
+            if entry is None:
+                continue
+            net = _as_network(entry.dest_cidr)
+            key = (0 if entry.is_blackhole else 1, net.prefixlen if net else -1)
+            if key > best_key:
+                best, best_key = entry, key
         return best
 
     # -- public API --------------------------------------------------------
@@ -251,18 +298,21 @@ class RoutingFabric:
 
         Signature matches :data:`app.engine.wargame.fabric.RouteReachable`.
         """
+        if _as_network(src_cidr) is None or _as_network(dst_cidr) is None:
+            self._record_assumption(
+                f"unparseable address in {src_cidr!r} -> {dst_cidr!r}; assumed reachable"
+            )
+            return True
         tables = self._tables_for(src_cidr)
         if not tables:
             self._record_assumption(
                 f"no route table modelled for {src_cidr}; assumed reachable"
             )
             return True
-        best = self._best_match(src_cidr, dst_cidr)
-        if best is None:
-            # Routing is modelled for this source but nothing covers the
-            # destination — no route exists.
-            return False
-        return not best.is_blackhole
+        # Reachable if ANY candidate table routes it: with a broad association
+        # we cannot tell which table the source really uses, and a blackhole or
+        # missing route in a different table must not close this path.
+        return any(self._table_match(t, dst_cidr)[1] for t in tables)
 
     def route_target(self, src_cidr: str, dst_cidr: str) -> Optional[str]:
         """The target of the route that would carry ``src_cidr`` → ``dst_cidr``
@@ -276,7 +326,11 @@ class RoutingFabric:
         """True if any NAT rule matches this (src, dst) pair. The caller
         should mark such a hop conditional (the post-NAT identity is runtime
         state this model can't pin down)."""
-        return any(r.matches(src_ip_or_cidr, dst_ip_or_cidr) for r in self.nat_rules)
+        if any(r.matches(src_ip_or_cidr, dst_ip_or_cidr) for r in self.nat_rules):
+            return True
+        # A route whose next hop is a NAT gateway/instance translates too.
+        target = self.route_target(src_ip_or_cidr, dst_ip_or_cidr)
+        return bool(target) and target.startswith("nat-")
 
     def translate(self, src: str, dst: str) -> tuple[str, str]:
         """Apply the first matching NAT rule's translation to ``(src, dst)``.
@@ -389,6 +443,7 @@ def from_aws(
                     vpc_cidrs.append(str(dest))
 
     tables: list[RouteTableModel] = []
+    unknown_dests: list[str] = []
     for rt in rts:
         if not isinstance(rt, dict):
             continue
@@ -402,11 +457,22 @@ def from_aws(
             dest = route.get("DestinationCidrBlock") or route.get(
                 "DestinationIpv6CidrBlock"
             )
-            if not dest:
-                # Prefix-list / gateway-only destinations aren't a CIDR we can
-                # match on; skip rather than guess.
-                continue
             target = _aws_route_target(route)
+            if not dest or _as_network(str(dest)) is None:
+                # A prefix-list (pl-…) or otherwise unreadable destination is
+                # not a CIDR we can match on. Dropping it would hide a real
+                # route (a false "unreachable"), so a live route over-
+                # approximates to "everything", and a blackhole is ignored
+                # (ignoring a drop can only make the model more reachable).
+                if target != BLACKHOLE:
+                    unknown_dests.append(
+                        f"{table_id}: route via {target} with destination "
+                        f"{route.get('DestinationPrefixListId') or dest or '?'} is "
+                        "not a CIDR; assumed to reach any destination"
+                    )
+                    entries.append(RouteEntry(dest_cidr="0.0.0.0/0", target=target))
+                    entries.append(RouteEntry(dest_cidr="::/0", target=target))
+                continue
             entries.append(RouteEntry(dest_cidr=str(dest), target=target))
             if target == "local":
                 local_cidrs.append(str(dest))
@@ -434,8 +500,11 @@ def from_aws(
             )
         )
 
-    return RoutingFabric(
+    fabric = RoutingFabric(
         tables,
         vpc_cidrs=tuple(vpc_cidrs),
         nat_rules=nat_rules,
     )
+    for note in unknown_dests:
+        fabric._record_assumption(note)
+    return fabric

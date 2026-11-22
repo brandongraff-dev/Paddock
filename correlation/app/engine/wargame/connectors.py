@@ -119,20 +119,41 @@ class AwsApiConfigSource:
             raise ConfigSourceError(f"cannot build AWS EC2 client: {exc}") from exc
         return cls(vendor=vendor, client=client)
 
+    #: Every client method this class may ever call. All are ``describe_*``.
+    ALLOWED_CALLS = ("describe_security_groups", "describe_network_acls")
+
+    def _describe(self, method: str, key: str) -> list:
+        """One read-only describe call, following ``NextToken`` pagination so a
+        large account is not silently truncated (a missing group would be a
+        missing rule set)."""
+        if not method.startswith("describe_") or method not in self.ALLOWED_CALLS:
+            raise ConfigSourceError(f"refusing non-read-only call {method!r}")
+        fn = getattr(self.client, method)
+        items: list = []
+        token: Optional[str] = None
+        for _ in range(1000):                    # hard bound against a loop
+            resp = fn(NextToken=token) if token else fn()
+            if not isinstance(resp, dict):
+                raise ConfigSourceError(f"{method} returned {type(resp).__name__}")
+            items.extend(resp.get(key) or [])
+            token = resp.get("NextToken")
+            if not token:
+                return items
+        raise ConfigSourceError(f"{method}: pagination did not terminate")
+
     def fetch(self) -> dict:
         if self.client is None:
             raise ConfigSourceError(
                 "no AWS client supplied; boto3 + read-only credentials required"
             )
         try:
-            sgs = self.client.describe_security_groups()
-            nacls = self.client.describe_network_acls()
+            sgs = self._describe("describe_security_groups", "SecurityGroups")
+            nacls = self._describe("describe_network_acls", "NetworkAcls")
+        except ConfigSourceError:
+            raise
         except Exception as exc:
             raise ConfigSourceError(f"AWS describe call failed: {exc}") from exc
-        return {
-            "SecurityGroups": list((sgs or {}).get("SecurityGroups", [])),
-            "NetworkAcls": list((nacls or {}).get("NetworkAcls", [])),
-        }
+        return {"SecurityGroups": sgs, "NetworkAcls": nacls}
 
 
 def _source_id(vendor: str, index: int) -> str:
@@ -143,19 +164,22 @@ def collect_map(sources: Iterable[ConfigSource]) -> dict[str, ParseResult]:
     """Parse each source separately, keyed by a stable id ``"<vendor>#<index>"``.
 
     The index is the source's position in ``sources``, so ids are stable for a
-    fixed input order. A source raising :class:`ConfigSourceError` still gets
-    an entry: an empty :class:`ParseResult` carrying one UNSUPPORTED warning.
+    fixed input order. Any failure of one source (a fetch error, an
+    unexpected parser exception, a source with no ``vendor``) is isolated: it
+    still gets an entry, an empty :class:`ParseResult` carrying one
+    UNSUPPORTED warning, and never aborts the others.
     """
     out: dict[str, ParseResult] = {}
     for i, src in enumerate(sources):
-        sid = _source_id(src.vendor, i)
+        vendor = str(getattr(src, "vendor", "") or "unknown")
+        sid = _source_id(vendor, i)
         try:
             out[sid] = parse(src.vendor, src.fetch())
-        except ConfigSourceError as exc:
-            res = ParseResult(vendor=src.vendor)
+        except Exception as exc:  # isolation: one bad source must not abort all
+            res = ParseResult(vendor=vendor)
             res.add_warning(
                 WarningLevel.UNSUPPORTED,
-                f"source skipped: {exc}",
+                f"source skipped: {type(exc).__name__}: {exc}",
                 ref=sid,
             )
             out[sid] = res
@@ -176,6 +200,35 @@ def collect(sources: Iterable[ConfigSource]) -> ParseResult:
     per_source = collect_map(sources)
     vendors = {r.vendor for r in per_source.values()}
     merged = ParseResult(vendor=vendors.pop() if len(vendors) == 1 else "multi")
-    for res in per_source.values():
+    for sid, res in per_source.items():
+        clash = sorted(set(res.rulesets) & set(merged.rulesets))
+        if clash:
+            # Two sources defining the same rule set id (e.g. two firewalls
+            # each with "outside_in"): overwriting would silently DROP rules.
+            # Keep both, namespacing the later one by its source id.
+            res = _namespaced(res, clash, sid)
+            merged.add_warning(
+                WarningLevel.INFO,
+                f"rule set id(s) {', '.join(clash)} defined by more than one "
+                f"source; the later ones are kept as '<id>@{sid}'",
+                ref=sid,
+            )
         merged.merge(res)
     return merged
+
+
+def _namespaced(res: ParseResult, clash: list[str], sid: str) -> ParseResult:
+    from dataclasses import replace
+
+    rename = {c: f"{c}@{sid}" for c in clash}
+    out = ParseResult(vendor=res.vendor)
+    for rid, rs in res.rulesets.items():
+        if rid in rename:
+            rs = replace(rs, id=rename[rid])
+        out.rulesets[rs.id] = rs
+    out.bindings = [
+        replace(b, ruleset_id=rename.get(b.ruleset_id, b.ruleset_id))
+        for b in res.bindings
+    ]
+    out.warnings = list(res.warnings)
+    return out
