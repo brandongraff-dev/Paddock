@@ -588,10 +588,10 @@
 .lp-open:hover { color: #fff; }
 .lp-open:hover span { transform: translateX(4px); }
 @media (min-width: 960px) {
-  .lp-card-body { margin: -92px 8px 8px; padding: 16px 16px 14px; }
+  .lp-card-body { margin: -56px 8px 8px; padding: 16px 16px 14px; }
   .lp-card-body h3 { font-size: clamp(26px, 2.3vw, 34px); }
   .lp-card-body p { font-size: 13.5px; }
-  .lp-card-img { aspect-ratio: 1 / 0.9; }
+  .lp-card-img { aspect-ratio: 1 / 1.08; }
 }
 @media (max-width: 720px) { .lp-card-body p { font-size: 14.5px; } }
 .lp-card-body h3 { text-transform: none; }
@@ -655,3 +655,7 @@ html { scrollbar-color: #2b2621 #0e0c0a; scrollbar-width: thin; }
 .lp-404-scene { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
 .lp-404 h1 { text-shadow: 0 2px 24px rgba(0, 0, 0, 0.7); }
 @media (min-width: 900px) { .lp-404 > div:not(.lp-404-scene) { max-width: 52%; } }
+@media (max-width: 959px) {
+  .lp-card-img { aspect-ratio: 1 / 1.12; }
+  .lp-card-body { margin: -64px 10px 10px; }
+}
