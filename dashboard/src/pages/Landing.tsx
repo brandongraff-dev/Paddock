@@ -7,6 +7,8 @@ import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
 import AgentArt from "./landing/AgentArt";
+import PixelSprite from "../brand/PixelSprite";
+import type { SpriteName } from "../brand/spriteData";
 import Faq from "./landing/Faq";
 import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
@@ -83,10 +85,10 @@ const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
 ];
 
 const RULES = [
-  ["No exploitation", "Findings describe impact. They never carry a working payload."],
-  ["No credential attacks", "Default-credential risk is fingerprinted, never tried."],
-  ["No evasion", "The scanner names itself. No decoys, no spoofing, no WAF bypass."],
-  ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited."],
+  ["No exploitation", "Findings describe impact. They never carry a working payload.", "anvil"],
+  ["No credential attacks", "Default-credential risk is fingerprinted, never tried.", "key"],
+  ["No evasion", "The scanner names itself. No decoys, no spoofing, no WAF bypass.", "lantern"],
+  ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited.", "compass"],
 ];
 
 export default function Landing() {
@@ -192,11 +194,12 @@ export default function Landing() {
           <h2>A defender&rsquo;s instrument, by construction.</h2>
         </div>
         <div className="lp-rules">
-          {RULES.map(([t, d]) => (
-            <div className="lp-rule" key={t}>
+          {RULES.map(([t, d, icon]) => (
+            <article className="lp-rule" key={t}>
+              <PixelSprite name={icon as SpriteName} size={92} slash />
               <h4>{t}</h4>
               <p>{d}</p>
-            </div>
+            </article>
           ))}
         </div>
       </section>

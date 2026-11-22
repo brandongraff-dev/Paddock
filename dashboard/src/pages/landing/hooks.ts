@@ -42,3 +42,50 @@ export function useFit<T extends HTMLElement>(designW: number) {
   }, [designW]);
   return [ref, scale] as const;
 }
+
+/** 0..1 progress of an element through the viewport (0 = its top meets the viewport bottom, 1 = its bottom leaves the top). */
+export function useScrollProgress<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [p, setP] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let raf = 0;
+    const calc = () => {
+      raf = 0;
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight;
+      const total = r.height + vh;
+      setP(Math.min(1, Math.max(0, (vh - r.top) / total)));
+    };
+    const on = () => { if (!raf) raf = requestAnimationFrame(calc); };
+    calc();
+    window.addEventListener("scroll", on, { passive: true });
+    window.addEventListener("resize", on);
+    return () => { window.removeEventListener("scroll", on); window.removeEventListener("resize", on); if (raf) cancelAnimationFrame(raf); };
+  }, []);
+  return [ref, p] as const;
+}
+
+/** Same, but for a tall section containing a sticky stage: 0 at the start of the section, 1 when its end reaches the viewport bottom. */
+export function useStickyProgress<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [p, setP] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let raf = 0;
+    const calc = () => {
+      raf = 0;
+      const r = el.getBoundingClientRect();
+      const span = r.height - window.innerHeight;
+      setP(span <= 0 ? 0 : Math.min(1, Math.max(0, -r.top / span)));
+    };
+    const on = () => { if (!raf) raf = requestAnimationFrame(calc); };
+    calc();
+    window.addEventListener("scroll", on, { passive: true });
+    window.addEventListener("resize", on);
+    return () => { window.removeEventListener("scroll", on); window.removeEventListener("resize", on); if (raf) cancelAnimationFrame(raf); };
+  }, []);
+  return [ref, p] as const;
+}

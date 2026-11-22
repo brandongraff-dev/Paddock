@@ -11,7 +11,7 @@
   background: var(--lp-field);
   color: var(--lp-ink);
   min-height: 100vh;
-  overflow-x: hidden;
+  overflow-x: clip;
   font-family: var(--sans);
 }
 
@@ -664,3 +664,16 @@ html { scrollbar-color: #2b2621 #0e0c0a; scrollbar-width: thin; }
 .lp-footer::before { display: block; content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(90deg, rgba(14, 12, 10, 0.72) 0%, rgba(14, 12, 10, 0.5) 30%, rgba(14, 12, 10, 0.18) 52%, rgba(14, 12, 10, 0) 66%); }
 .lp-footer-in { z-index: 1; }
 @media (max-width: 899px) { .lp-footer::before { background: linear-gradient(180deg, rgba(14, 12, 10, 0.6) 0%, rgba(14, 12, 10, 0.3) 45%, rgba(14, 12, 10, 0) 70%); } }
+
+/* ================= Hard rules: seals on glass, over the dimmed Warden arch ================= */
+.lp-principles { position: relative; isolation: isolate; overflow: hidden; padding: clamp(64px, 11vh, 120px) 0; background: #0e0c0a; content-visibility: visible; }
+.lp-principles::before { content: ""; position: absolute; inset: 0; z-index: -2; background: url("/agents/warden.webp") center 30% / cover no-repeat; opacity: 0.4; }
+.lp-principles::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, #0e0c0a 0%, rgba(14, 12, 10, 0.55) 30%, rgba(14, 12, 10, 0.7) 70%, #0e0c0a 100%); }
+.lp-principles .lp-rules { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(12px, 1.4vw, 20px); padding: 0 clamp(16px, 4vw, 44px); margin: 0; max-width: none; border: 0; }
+.lp-principles .lp-rule { padding: 26px 24px 24px; border-radius: 22px; background: linear-gradient(160deg, rgba(255, 246, 232, 0.07), rgba(255, 246, 232, 0) 42%), rgba(12, 10, 8, 0.6); -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%); border: 1px solid rgba(255, 244, 226, 0.12); transition: border-color 300ms var(--ease), transform 400ms var(--ease); }
+.lp-principles .lp-rule:hover { border-color: rgba(230, 115, 80, 0.45); transform: translateY(-4px); }
+.lp-principles .lp-rule svg { display: block; margin-bottom: 18px; }
+.lp-principles .lp-rule h4 { margin: 0 0 8px; font: 400 clamp(24px, 2vw, 30px)/1.1 var(--serif); letter-spacing: -0.02em; color: var(--lp-ink); text-transform: none; }
+.lp-principles .lp-rule p { margin: 0; font-size: 14px; line-height: 1.55; color: rgba(236, 230, 218, 0.74); max-width: none; }
+@media (max-width: 1080px) { .lp-principles .lp-rules { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .lp-principles .lp-rules { grid-template-columns: 1fr; padding: 0 18px; } .lp-principles .lp-rule { display: grid; grid-template-columns: 72px 1fr; column-gap: 16px; padding: 18px; } .lp-principles .lp-rule svg { grid-row: 1 / span 2; width: 72px; height: 72px; margin: 0; } }
