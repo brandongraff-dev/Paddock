@@ -610,3 +610,5 @@
 .lp-footer nav a, .lp-footer-brand p, .cta-note { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.8); }
 @media (max-width: 899px) { .lp-footer-in::before { width: 100%; background: linear-gradient(180deg, rgba(14,12,10,.7), transparent); } }
 
+
+@media (max-width: 899px) { .lp-footer-in { padding-bottom: 470px; } .lp-footer-px { height: 560px; } }
