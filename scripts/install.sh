@@ -1,7 +1,7 @@
 #!/bin/sh
 # Paddock one-line installer (single-node "lite" stack).
 #
-#   curl -fsSL https://raw.githubusercontent.com/brandongraff-dev/cybersec/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/brandongraff-dev/paddock/main/scripts/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- --dir /srv/paddock --active
 #
 # What it does: checks Docker, downloads Paddock, generates strong secrets into
@@ -14,7 +14,7 @@
 # Options:
 #   --dir DIR        install directory            (default: $HOME/paddock, or $PADDOCK_HOME)
 #   --ref REF        git branch or tag to install (default: main, or $PADDOCK_REF)
-#   --repo OWNER/R   GitHub repository            (default: brandongraff-dev/cybersec, or $PADDOCK_REPO)
+#   --repo OWNER/R   GitHub repository            (default: brandongraff-dev/paddock, or $PADDOCK_REPO)
 #   --active         also start the active worker (polite HTTP/TLS/port probing)
 #   --upgrade        re-download the sources even if the directory already has them
 #   --no-start       prepare files and secrets, do not start containers
@@ -30,7 +30,7 @@
 # PADDOCK_SHA256 (pin the downloaded tarball).
 set -eu
 
-REPO="${PADDOCK_REPO:-brandongraff-dev/cybersec}"
+REPO="${PADDOCK_REPO:-brandongraff-dev/paddock}"
 REF="${PADDOCK_REF:-main}"
 DIR="${PADDOCK_HOME:-${HOME:-.}/paddock}"
 API_URL="${PADDOCK_API_URL:-http://127.0.0.1:8080}"

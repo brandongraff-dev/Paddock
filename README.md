@@ -12,9 +12,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml"><img alt="Integration" src="https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml/badge.svg"></a>
-  <a href="https://github.com/brandongraff-dev/cybersec/actions/workflows/install.yml"><img alt="Clean install" src="https://github.com/brandongraff-dev/cybersec/actions/workflows/install.yml/badge.svg"></a>
+  <a href="https://github.com/brandongraff-dev/paddock/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/brandongraff-dev/paddock/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/brandongraff-dev/paddock/actions/workflows/integration.yml"><img alt="Integration" src="https://github.com/brandongraff-dev/paddock/actions/workflows/integration.yml/badge.svg"></a>
+  <a href="https://github.com/brandongraff-dev/paddock/actions/workflows/install.yml"><img alt="Clean install" src="https://github.com/brandongraff-dev/paddock/actions/workflows/install.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-1f6feb"></a>
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-docker%20%7C%20helm-3b3b3b">
 </p>
@@ -29,10 +29,17 @@
 </p>
 
 <p align="center">
+  <a href="docs/media/paddock-launch.mp4">
+    <img src="docs/media/paddock-launch-poster.jpg" alt="Paddock launch film: every network has a surface, attackers see it first. Discover. Correlate. Defend. Click to watch." width="860">
+  </a>
+  <br><sub>▶ <a href="docs/media/paddock-launch.mp4"><b>Watch the launch film</b></a> (14 s, with sound)</sub>
+</p>
+
+<p align="center">
   <a href="docs/media/paddock-demo.mp4">
     <img src="docs/media/paddock-demo.gif" alt="Paddock in 20 seconds: landing, overview, attack graph, verified findings, chains, executive report, free exposure check" width="860">
   </a>
-  <br><sub>20-second tour on the built-in demo data · <a href="docs/media/paddock-demo.mp4">full-quality MP4</a></sub>
+  <br><sub>Product tour on the built-in demo data (20 s) · <a href="docs/media/paddock-demo.mp4">full-quality MP4</a></sub>
 </p>
 
 ---
@@ -79,7 +86,7 @@ audit-logged ([hard rules](#safety-by-design)).
 **Run the platform** (Docker + Compose, about 5 minutes):
 
 ```bash
-git clone https://github.com/brandongraff-dev/cybersec paddock && cd paddock
+git clone https://github.com/brandongraff-dev/paddock && cd paddock
 make quickstart        # builds the stack, seeds a demo surface, prints the URL + login
 ```
 
@@ -90,7 +97,7 @@ hardening. Production: [Helm chart and operations guide](docs/OPERATIONS.md).
 **Scan your own repo, no server needed** (the open-source `paddock` CLI):
 
 ```bash
-pipx install "git+https://github.com/brandongraff-dev/cybersec#subdirectory=cli"
+pipx install "git+https://github.com/brandongraff-dev/paddock#subdirectory=cli"
 paddock scan .         # vulnerable dependencies, secrets, code and config issues
 paddock fix .          # deterministic fixes as a diff, or --pr to open a pull request
 ```

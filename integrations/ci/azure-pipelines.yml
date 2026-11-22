@@ -22,7 +22,7 @@ steps:
 
   - script: |
       set -euo pipefail
-      curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh" -o paddock-ci
+      curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/paddock/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh" -o paddock-ci
       chmod +x paddock-ci
       # Any scanner works; Trivy shown. Formats Paddock reads: SARIF, CycloneDX, SPDX,
       # OCSF, Trivy, Grype, Semgrep, Nuclei, ZAP JSON, CSV.

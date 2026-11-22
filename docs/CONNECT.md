@@ -12,7 +12,7 @@ Plus a one-line installer if you do not have a Paddock yet.
 ## 0. Install (optional)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/brandongraff-dev/cybersec/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/brandongraff-dev/paddock/main/scripts/install.sh | sh
 ```
 
 Checks Docker, downloads Paddock to `~/paddock`, generates strong secrets into
@@ -100,7 +100,7 @@ rejection) is in the ingest log: `GET /v1/ingest/log` and the dashboard.
 
 ## 2. CI/CD
 
-Templates live in `integrations/ci/` ([README](https://github.com/brandongraff-dev/cybersec/tree/main/integrations/ci)):
+Templates live in `integrations/ci/` ([README](https://github.com/brandongraff-dev/paddock/tree/main/integrations/ci)):
 GitLab CI, Bitbucket Pipelines, Azure DevOps, CircleCI, Jenkins and pre-commit. They call one
 script, `paddock-ci.sh` (`ingest`, `lockfiles`, `gate`). For GitHub Actions use
 `.github/actions/paddock-scan` (see [Standards](STANDARDS.md)), or:

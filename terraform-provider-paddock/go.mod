@@ -1,4 +1,4 @@
-module github.com/brandongraff-dev/cybersec/terraform-provider-paddock
+module github.com/brandongraff-dev/paddock/terraform-provider-paddock
 
 go 1.24.0
 

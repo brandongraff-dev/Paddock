@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     scope_proof_min_interval_sec: float = 5
     scope_proof_timeout_sec: float = 5
     scope_proof_user_agent: str = (
-        "Paddock-Verifier/1.0 (+https://github.com/brandongraff-dev/cybersec; scope ownership check)"
+        "Paddock-Verifier/1.0 (+https://github.com/brandongraff-dev/paddock; scope ownership check)"
     )
 
     # Deployment shape: "full" (every service) or "lite" (single node: no

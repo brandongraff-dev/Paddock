@@ -642,7 +642,7 @@ async def delete_group(group_id: str, request: Request, pool=Depends(get_pool)):
 def _spc() -> dict[str, Any]:
     return {
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
-        "documentationUri": "https://github.com/brandongraff-dev/cybersec/blob/main/docs/SSO.md",
+        "documentationUri": "https://github.com/brandongraff-dev/paddock/blob/main/docs/SSO.md",
         "patch": {"supported": True},
         "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
         "filter": {"supported": True, "maxResults": sl.MAX_COUNT},

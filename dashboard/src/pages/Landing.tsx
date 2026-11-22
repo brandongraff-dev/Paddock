@@ -75,7 +75,7 @@ const AGENTS: Agent[] = [
   },
 ];
 
-const REPO = "https://github.com/brandongraff-dev/cybersec";
+const REPO = "https://github.com/brandongraff-dev/paddock";
 const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
   { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["How it works", "#how"], ["Principles", "#principles"], ["FAQ", "#faq"], ["Console", "/login"]] },
   { title: "Project", links: [["Source", REPO], ["Documentation", "https://paddock-docs.vercel.app"], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
