@@ -41,6 +41,7 @@ export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58, 
       if (!w || !h) return;
       const phone = w < 720;
       const cs = phone ? 3 : cell;
+      wrapRef.current?.style.setProperty("--cs", `${cs}px`);
       const cols = Math.ceil(w / cs), rows = Math.ceil(h / cs);
       const small = document.createElement("canvas");
       small.width = cols; small.height = rows;
@@ -194,6 +195,7 @@ export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58, 
     <div ref={wrapRef} className={className} aria-hidden="true" style={{ overflow: "hidden" }}>
       <canvas ref={ref} className="scene-sky" />
       <canvas ref={cliffRef} className="scene-cliff" />
+      <div className="scene-grid" />
     </div>
   );
 }
