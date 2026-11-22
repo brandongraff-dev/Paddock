@@ -111,10 +111,12 @@ def test_backward_search_finds_the_open_route_and_the_closed_pair():
     assert [h.src for h in r.hops] + [r.hops[-1].dst] == [
         "guest_wifi", "fridge", "pos", "payments_db"
     ]
-    # Weakest hop is the observed guest->fridge hop; the governed hops are
-    # proved by config.
-    assert r.weakest_label == EvidenceLabel.OBSERVED
+    # The ungoverned guest->fridge hop is OBSERVED (strong); the two
+    # governed hops are PROVED_CONFIG. In the ladder config-proof is weaker
+    # than a seen flow, so the route is limited by its config-proved hops.
+    assert r.hops[0].labels == frozenset({EvidenceLabel.OBSERVED})
     assert EvidenceLabel.PROVED_CONFIG in r.hops[1].labels
+    assert r.weakest_label == EvidenceLabel.PROVED_CONFIG
 
 
 def test_determinism():
