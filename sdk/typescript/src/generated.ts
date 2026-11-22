@@ -2840,6 +2840,21 @@ export interface WargameFlowRef {
 }
 
 /**
+ * One recorded probe result: a connect from segment `src` to segment
+ * `dst` on `proto`/`port` crossed, was blocked, or errored. `error` is kept
+ * but never counts as a probe.
+ */
+export interface WargameProbeResultIn {
+  dst: string;
+  observed_at: string;
+  port: number;
+  proto?: "tcp" | "udp" | "icmp";
+  result: "crossed" | "blocked" | "error";
+  source?: string;
+  src: string;
+}
+
+/**
  * Result of POST /v1/wargame/recompute.
  *
  * `status` is `computed` when the synchronous correlation call returned,
@@ -2891,6 +2906,30 @@ export interface WargameTwinConfigRequest {
 }
 
 /**
+ * Result of POST /v1/wargame/twin/flows (same `status` semantics as
+ * /twin/config). Counts are present only when `status` is `ingested`.
+ */
+export interface WargameTwinFlowsOut {
+  detail?: string | null;
+  flows_parsed?: number | null;
+  flows_skipped?: number | null;
+  flows_stored?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+  warnings?: string[];
+}
+
+/**
+ * Body of POST /v1/wargame/twin/flows: raw flow logs (firewall allow/deny
+ * JSON, Zeek conn.log JSONL, or generic JSON). Only rows that parse are
+ * stored; the store keeps a rolling 30-day window.
+ */
+export interface WargameTwinFlowsRequest {
+  format?: "auto" | "zeek" | "generic" | "firewall";
+  raw: string;
+  source?: string;
+}
+
+/**
  * Result of POST /v1/wargame/twin/config. `status` is `ingested` when the
  * synchronous correlation call succeeded, `queued` when a Redis job was
  * enqueued as a fallback, or `unavailable` when both failed.
@@ -2902,11 +2941,39 @@ export interface WargameTwinIngestOut {
 }
 
 /**
+ * Result of POST /v1/wargame/twin/probes. `rejected` counts results naming
+ * a segment the twin does not hold, the same segment twice, a future time,
+ * or older than the retention window.
+ */
+export interface WargameTwinProbesOut {
+  detail?: string | null;
+  rejected?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+  stored?: number | null;
+  warnings?: string[];
+}
+
+/**
+ * Body of POST /v1/wargame/twin/probes.
+ */
+export interface WargameTwinProbesRequest {
+  results: WargameProbeResultIn[];
+}
+
+/**
  * Row counts of the persisted twin (GET /v1/wargame/twin).
+ *
+ * `flow_count` / `probe_count` are the stored boundary evidence (schema
+ * 044): observed flows in the rolling window and recorded probe results.
+ * `probe_fresh_count` is how many probe results are young enough (within the
+ * certificate TTL, not `error`) to count toward a verdict right now.
  */
 export interface WargameTwinSummaryOut {
   edge_count: number;
+  flow_count?: number;
   has_twin: boolean;
+  probe_count?: number;
+  probe_fresh_count?: number;
   rule_count: number;
   ruleset_count: number;
   segment_count: number;
@@ -3384,6 +3451,8 @@ export const OPERATIONS = {
   recomputeWargame: ["POST", "/v1/wargame/recompute", false],
   getTwinSummary: ["GET", "/v1/wargame/twin", false],
   ingestTwinConfig: ["POST", "/v1/wargame/twin/config", false],
+  ingestTwinFlows: ["POST", "/v1/wargame/twin/flows", false],
+  ingestTwinProbes: ["POST", "/v1/wargame/twin/probes", false],
   setTwinTopology: ["POST", "/v1/wargame/twin/topology", false],
 } as const;
 
@@ -5685,6 +5754,41 @@ export abstract class GeneratedOperations {
    */
   ingestTwinConfig(body: WargameTwinConfigRequest, options?: RequestOptions): Promise<WargameTwinIngestOut> {
     return this._request<WargameTwinIngestOut>("POST", "/v1/wargame/twin/config", { body, options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/flows — Ingest Twin Flows
+   *
+   * Store observed flows (the customer's own firewall / Zeek / generic
+   * logs) as twin evidence.
+   *
+   * Forwards to correlation `POST /ingest-flows`; falls back to a
+   * `correlate:twin_ingest_flows` Redis job when correlation is down. Only rows
+   * that parse are stored (rolling 30-day window, capped per tenant). On the
+   * next recompute a real flow from an entry to a crown jewel the config proves
+   * closed makes that pair `fail_open`, and one across a still-valid
+   * certificate raises an impossible-traffic alert. Nothing is probed.
+   */
+  ingestTwinFlows(body: WargameTwinFlowsRequest, options?: RequestOptions): Promise<WargameTwinFlowsOut> {
+    return this._request<WargameTwinFlowsOut>("POST", "/v1/wargame/twin/flows", { body, options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/probes — Ingest Twin Probes
+   *
+   * Record probe results produced by the customer's own probe or scanner.
+   *
+   * Paddock sends NO packets here: each result is a recorded fact (a connect
+   * from segment `src` to segment `dst` on `proto`/`port` `crossed`, was
+   * `blocked`, or hit an `error`). Forwards to correlation `POST /ingest-probes`;
+   * falls back to a `correlate:twin_ingest_probes` Redis job. A result naming a
+   * segment the twin does not hold is rejected (counted); no topology is a 409.
+   * A probe counts for an (entry, crown jewel) pair only if it ran from that
+   * entry segment to that jewel segment, within the certificate TTL (24 h);
+   * `error` never counts. A blocked one turns a config-proved pair into `pass`.
+   */
+  ingestTwinProbes(body: WargameTwinProbesRequest, options?: RequestOptions): Promise<WargameTwinProbesOut> {
+    return this._request<WargameTwinProbesOut>("POST", "/v1/wargame/twin/probes", { body, options });
   }
 
   /**

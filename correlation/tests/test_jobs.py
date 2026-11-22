@@ -127,6 +127,8 @@ def wired(monkeypatch):
     monkeypatch.setattr(main_mod.service, "run_wargame_scoped", rec("wargame"))
     monkeypatch.setattr(main_mod, "do_ingest_config", rec("config"))
     monkeypatch.setattr(main_mod, "do_set_topology", rec("topology"))
+    monkeypatch.setattr(main_mod, "do_ingest_flows", rec("flows"))
+    monkeypatch.setattr(main_mod, "do_ingest_probes", rec("probes"))
     return seen, main_mod._job_handlers(main_mod.service)
 
 
@@ -147,4 +149,26 @@ async def test_real_handlers_invalid_payload_is_poison(wired):
     seen, h = wired
     assert await jobs.process(h, _fields("twin_ingest_config", TA, {"vendor": "asa"}))  # no raw
     assert await jobs.process(h, _fields("twin_set_topology", TA, {"segments": "x"}))
+    assert seen == []
+
+
+async def test_real_handlers_dispatch_twin_evidence(wired):
+    seen, h = wired
+    assert {"twin_ingest_flows", "twin_ingest_probes"} <= set(h)
+    await jobs.process(h, _fields("twin_ingest_flows", TB,
+                                  {"raw": "[]", "format": "zeek", "source": "s"}))
+    probe = {"src": "a", "dst": "b", "port": 443, "result": "blocked",
+             "observed_at": "2026-11-22T10:00:00+00:00", "source": "scanner"}
+    await jobs.process(h, _fields("twin_ingest_probes", TA, {"results": [probe]}))
+    assert [(n, t) for n, _, t in seen] == [("flows", TB), ("probes", TA)]
+    assert seen[0][1][0].format == "zeek"
+    (p,) = seen[1][1][0].results
+    assert p.result == "blocked" and p.observed_at.tzinfo is not None
+
+
+async def test_real_handlers_invalid_evidence_payload_is_poison(wired):
+    seen, h = wired
+    assert await jobs.process(h, _fields("twin_ingest_flows", TA, {"format": "zeek"}))  # no raw
+    assert await jobs.process(h, _fields("twin_ingest_probes", TA, {"results": [
+        {"src": "a", "dst": "b", "port": 1, "result": "open", "observed_at": "x"}]}))
     assert seen == []

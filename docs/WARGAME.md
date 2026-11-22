@@ -435,6 +435,14 @@ Python, no new deps, ~390 tests). Built so far:
   `/compute-wargame` now assesses the persisted twin when present —
   **config-proved routes with signed certificates for closed boundaries**
   (`assess.py`) — and falls back to the all-inferred asset graph otherwise.
+- **Twin evidence**: schema `044_wargame_evidence.sql`, `evidence.py`, correlation
+  `/ingest-flows` + `/ingest-probes`, orchestrator `POST /v1/wargame/twin/flows`
+  + `/twin/probes`. Stored flow logs and **recorded** probe results (from the
+  customer's own probe or scanner; Paddock sends no packets) feed the
+  three-way agreement: a blocked probe from an entry to a jewel turns
+  `proved_config` into `pass`, a real crossing flow makes the pair
+  `fail_open` and raises an impossible-traffic alert against a standing
+  certificate (WARGAME_ENGINE.md §15).
 - Runnable demos: `python -m app.engine.wargame.demo`,
   `… .demo_changegate`, and `… .demo_assess` (model → routes → fix →
   evidence, end to end).
@@ -445,9 +453,8 @@ Redis fallback for twin ingest (`twin_ingest_config` / `twin_set_topology`
 jobs carrying a payload) is consumed by correlation's `app/jobs.py`
 (tenant-scoped, bounded retry, dead-letter `queue:correlate:dead`); certificates are signed
 with a documented demo key (`assess.DEMO_SIGNING_KEY`) pending real
-per-tenant key wiring; the compute-side agreement uses model reachability
-as its probe source when no live probe/flow exists (disclosed via the
-certificate's sensor-absent assumption); and Terraform rule ids don't
+per-tenant key wiring; with no stored probe result a closed pair is `proved_config`
+(a no-packet proof), never `pass`; and Terraform rule ids don't
 match the AWS parser's ids, so remove/modify across the two needs an
 id-mapping layer (add composes today).
 

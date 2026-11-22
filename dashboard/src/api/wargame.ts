@@ -8,8 +8,11 @@ import type {
   WargameChangeImpactRequest,
   WargameFixSet,
   WargameRecomputeResult,
+  WargameProbeResultIn,
   WargameRoutePage,
+  WargameTwinFlowsResult,
   WargameTwinIngestResult,
+  WargameTwinProbesResult,
   WargameTwinSummary,
 } from "./types";
 
@@ -17,6 +20,7 @@ import type {
  * Wargame read API + triggers (orchestrator/app/routers/wargame.py).
  * Everything here is read-only against the customer's estate: config is
  * parsed into the twin, never applied; nothing is probed or exploited.
+ * Flow logs and probe results are recorded facts the customer already has.
  */
 
 const seg = (id: string) => encodeURIComponent(id);
@@ -66,6 +70,22 @@ export function getWargameTwin(): Promise<WargameTwinSummary> {
 /** POST /v1/wargame/twin/config — one read-only vendor export into the twin. */
 export function ingestWargameConfig(body: { vendor: string; raw: string; source?: string }): Promise<WargameTwinIngestResult> {
   return apiFetch<WargameTwinIngestResult>("/v1/wargame/twin/config", { method: "POST", body });
+}
+
+/**
+ * POST /v1/wargame/twin/flows — the customer's own flow logs (firewall, Zeek,
+ * generic JSON) stored as evidence. Only rows that parse are kept.
+ */
+export function ingestWargameFlows(body: { raw: string; format?: string; source?: string }): Promise<WargameTwinFlowsResult> {
+  return apiFetch<WargameTwinFlowsResult>("/v1/wargame/twin/flows", { method: "POST", body });
+}
+
+/**
+ * POST /v1/wargame/twin/probes — results the customer's own probe or scanner
+ * recorded. Paddock sends no packets for this.
+ */
+export function ingestWargameProbes(body: { results: WargameProbeResultIn[] }): Promise<WargameTwinProbesResult> {
+  return apiFetch<WargameTwinProbesResult>("/v1/wargame/twin/probes", { method: "POST", body });
 }
 
 /**

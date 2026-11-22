@@ -20,8 +20,9 @@ import os
 import signal
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Literal, Optional
 
+import asyncpg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -40,7 +41,7 @@ from .engine.chain import ChainMatcher, PolicyEvaluator
 from .engine.fusion import FusionEngine
 from .engine.graph import Graph
 from .engine.policy import RuleLoader
-from .engine.wargame import certificate, report, store, twin_store
+from .engine.wargame import certificate, evidence, report, store, twin_store
 from .engine.wargame.assess import assess_environment, assess_unproven_environment
 from .engine.wargame.fabric import EdgeSpec, SegmentSpec
 from .engine.wargame.graph_adapter import environment_from_graph
@@ -512,9 +513,18 @@ class Service:
         Certificates are signed with this tenant's key, derived from
         ``WARGAME_SIGNING_KEY`` (``signing.py``). With no key configured they
         are labelled ``unsigned-dev`` (public development key), never passed
-        off as signed. No probe results or observed flows are stored in the
-        twin yet, so every closed pair is ``proved_config`` (no probe), never
-        ``pass``; coverage is unmeasured.
+        off as signed. Coverage is unmeasured.
+
+        Evidence (schema 044, ``evidence.py``): the stored observed flows
+        (rolling window) and the recorded probe results young enough to count
+        are fed into the agreement. A closed pair reads ``pass`` only when a
+        probe run from its entry segment to its jewel segment was blocked
+        within the certificate TTL; with no such probe it stays
+        ``proved_config``. A real stored flow from the entry to the jewel, or a
+        probe that crossed, makes it ``fail_open``. Real flows are also
+        classified against the certificates of the previous twin assessment
+        still valid now; the impossible-traffic alerts go into the assessment
+        ``metadata``.
 
         Fallback: with no twin, the environment is assembled from the legacy
         asset graph (``graph_adapter``). That graph carries no firewall rules,
@@ -528,12 +538,18 @@ class Service:
             if env is None:
                 return {"assessments": 0, "routes": 0}
             hashes = await twin_store.config_hashes(self.db)
+            now = datetime.now(timezone.utc)
+            flows, window_days, probes, standing = await self._wargame_evidence(env, now)
             bundle = assess_environment(
                 env,
                 label="twin",
                 config_hashes=hashes,
-                issued_at=datetime.now(timezone.utc),
+                issued_at=now,
                 signing_key=_wargame_signing_key(),
+                probes=probes,
+                observed_flows=flows,
+                observation_window_days=window_days,
+                standing_certificates=standing,
             )
             await store.persist(self.db, bundle)
             return {"assessments": 1, "routes": len(bundle.routes)}
@@ -545,6 +561,30 @@ class Service:
         bundle = assess_unproven_environment(env, label="auto")
         await store.persist(self.db, bundle)
         return {"assessments": 1, "routes": len(bundle.routes)}
+
+    async def _wargame_evidence(
+        self, env: Any, now: datetime
+    ) -> tuple[list[Any], int, dict[tuple[str, str], bool], list[dict[str, Any]]]:
+        """The CURRENT tenant's stored evidence for a twin assessment: flows in
+        the rolling window (+ the days they span), probe results mapped onto
+        (entry, jewel) pairs (``evidence.pair_probes``: entry -> jewel only,
+        within the certificate TTL, ``error`` ignored), and the previous twin
+        assessment's still-valid certificates. If the 044 evidence tables are
+        missing (migration not applied yet) the assessment runs without
+        evidence, exactly as before, and says so in the log."""
+        try:
+            flows, window_days = await evidence.load_flows(self.db, now=now)
+            entries, jewels = evidence.env_entries_and_jewels(env)
+            probes = evidence.pair_probes(
+                await evidence.load_probes(self.db, now=now),
+                now=now, entries=entries, jewels=jewels,
+            )
+            standing = await evidence.standing_certificates(self.db, now=now)
+        except asyncpg.UndefinedTableError:
+            log.warning("wargame_evidence_unavailable: schema 044 not applied; "
+                        "assessing without flows or probe results")
+            return [], 0, {}, []
+        return flows, window_days, probes, standing
 
     async def run_wargame_scoped(self) -> dict[str, Any]:
         """The tenant named by the request, else every active tenant.
@@ -912,6 +952,158 @@ async def do_set_topology(req: SetTopologyRequest) -> dict[str, int]:
     return {"segments": len(segments), "edges": len(edges)}
 
 
+# ----------------------------------------------------------------------------
+# Wargame twin evidence: observed flows + recorded probe results (schema 044)
+# ----------------------------------------------------------------------------
+
+_MAX_PROBE_RESULTS = 10_000
+_MAX_WARNINGS = 20
+
+
+class IngestFlowsRequest(BaseModel):
+    # raw firewall / Zeek / generic flow text (JSON array or JSONL)
+    raw: str = Field(min_length=1, max_length=_MAX_FLOWS_CHARS)
+    format: Literal["auto", "zeek", "generic", "firewall"] = "auto"
+    source: str = Field("", max_length=512)  # log file / sensor id
+
+
+class ProbeResultIn(BaseModel):
+    src: str = Field(min_length=1, max_length=256)   # twin segment it ran FROM
+    dst: str = Field(min_length=1, max_length=256)   # twin segment it tried to reach
+    proto: Literal["tcp", "udp", "icmp"] = "tcp"
+    port: int = Field(ge=0, le=65535)
+    result: Literal["crossed", "blocked", "error"]
+    observed_at: datetime
+    source: str = Field("", max_length=512)          # probe / scanner id
+
+
+class IngestProbesRequest(BaseModel):
+    results: list[ProbeResultIn] = Field(min_length=1, max_length=_MAX_PROBE_RESULTS)
+
+
+@app.post("/ingest-flows")
+async def ingest_flows(req: IngestFlowsRequest) -> dict[str, Any]:
+    """Store observed flows parsed from the customer's own logs in the CURRENT
+    tenant's twin evidence (RLS-scoped). Only rows that parse are stored; the
+    store keeps a rolling window (``evidence.FLOW_WINDOW_DAYS``) and a
+    per-tenant row cap. Nothing is sent anywhere."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    return await do_ingest_flows(req)
+
+
+async def do_ingest_flows(req: IngestFlowsRequest) -> dict[str, Any]:
+    """Shared body of ``/ingest-flows`` and the ``twin_ingest_flows`` queue job."""
+    from .engine.wargame import ingest as flow_ingest
+
+    flows, stats = await asyncio.to_thread(
+        flow_ingest.parse_flows_detailed, req.raw, req.format
+    )
+    now = datetime.now(timezone.utc)
+    rows = [
+        evidence.flow_to_row(
+            f,
+            observed_at=evidence.flow_observed_at(f.ts, ingested_at=now),
+            source=req.source,
+        )
+        for f in flows
+    ]
+    stored = 0
+    if rows:
+        stored = (await evidence.persist_flows(service.db, rows, now=now))["stored"]
+    warnings = [r[:160] for r in stats.reasons[:_MAX_WARNINGS]]
+    if len(stats.reasons) > _MAX_WARNINGS:
+        warnings.append(f"... and {len(stats.reasons) - _MAX_WARNINGS} more skipped row(s)")
+    if len(rows) > stored:
+        warnings.append(
+            f"{len(rows) - stored} flow(s) older than {evidence.FLOW_WINDOW_DAYS} days "
+            "or over the per-tenant cap were not kept"
+        )
+    if not flows:
+        warnings.append("no flows parsed")
+    return {
+        "flows_parsed": stats.parsed,
+        "flows_skipped": stats.skipped,
+        "flows_stored": stored,
+        "warnings": warnings,
+    }
+
+
+@app.post("/ingest-probes")
+async def ingest_probes(req: IngestProbesRequest) -> dict[str, Any]:
+    """Record probe results the customer's own probe / scanner produced
+    (crossed / blocked / error from a src segment to a dst segment on a
+    proto/port). Paddock sends NO packets here: these are recorded facts.
+    Each result must name segments declared in the twin; one that does not,
+    names the same segment twice, or is dated in the future is rejected
+    (counted, with a warning) and the rest are stored. 409 when the tenant has
+    no topology."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    return await do_ingest_probes(req)
+
+
+async def do_ingest_probes(req: IngestProbesRequest) -> dict[str, Any]:
+    """Shared body of ``/ingest-probes`` and the ``twin_ingest_probes`` queue job."""
+    segs = await evidence.segment_keys(service.db)
+    if not segs:
+        raise HTTPException(
+            status_code=409,
+            detail="no twin topology for this tenant: declare segments first "
+            "(POST /v1/wargame/twin/topology)",
+        )
+    now = datetime.now(timezone.utc)
+    keep: list[evidence.ProbeResult] = []
+    warnings: list[str] = []
+    rejected = 0
+
+    def _reject(i: int, why: str) -> None:
+        nonlocal rejected
+        rejected += 1
+        if len(warnings) < _MAX_WARNINGS:
+            warnings.append(f"result {i}: {why}"[:200])
+
+    for i, p in enumerate(req.results):
+        at = p.observed_at if p.observed_at.tzinfo else p.observed_at.replace(
+            tzinfo=timezone.utc)
+        unknown = [s for s in (p.src, p.dst) if s not in segs]
+        if unknown:
+            _reject(i, f"segment {unknown[0][:64]!r} is not in the twin")
+        elif p.src == p.dst:
+            _reject(i, "src and dst are the same segment")
+        elif at > now + evidence.CLOCK_SKEW:
+            _reject(i, "observed_at is in the future")
+        else:
+            keep.append(evidence.ProbeResult(
+                src=p.src, dst=p.dst, proto=p.proto, port=p.port,
+                result=p.result, observed_at=at, source=p.source,
+            ))
+    if rejected > _MAX_WARNINGS:
+        warnings.append(f"... and {rejected - _MAX_WARNINGS} more rejected result(s)")
+    stored = 0
+    if keep:
+        stored = (await evidence.persist_probes(service.db, keep, now=now))["stored"]
+    if len(keep) > stored:
+        warnings.append(
+            f"{len(keep) - stored} result(s) older than "
+            f"{evidence.PROBE_RETENTION_DAYS} days were not kept"
+        )
+    stale = sum(
+        1 for p in keep
+        if p.result != "error" and not evidence.probe_counts(p, now=now)
+    )
+    if stale:
+        warnings.append(
+            f"{stale} result(s) are older than {evidence.PROBE_MAX_AGE_HOURS} h "
+            "and do not count toward a verdict"
+        )
+    return {
+        "stored": stored,
+        "rejected": rejected + (len(keep) - stored),
+        "warnings": warnings,
+    }
+
+
 def _job_handlers(svc: "Service") -> dict[str, Any]:
     """``op`` -> handler for the Redis fallback jobs. Every handler runs inside
     the job's tenant context (bound by ``jobs.process``) and calls the SAME
@@ -936,11 +1128,19 @@ def _job_handlers(svc: "Service") -> dict[str, Any]:
     async def twin_set_topology(p: Any) -> Any:
         return await do_set_topology(_model(SetTopologyRequest, p))
 
+    async def twin_ingest_flows(p: Any) -> Any:
+        return await do_ingest_flows(_model(IngestFlowsRequest, p))
+
+    async def twin_ingest_probes(p: Any) -> Any:
+        return await do_ingest_probes(_model(IngestProbesRequest, p))
+
     return {
         "recompute_paths": recompute_paths,
         "recompute_wargame": recompute_wargame,
         "twin_ingest_config": twin_ingest_config,
         "twin_set_topology": twin_set_topology,
+        "twin_ingest_flows": twin_ingest_flows,
+        "twin_ingest_probes": twin_ingest_probes,
     }
 
 

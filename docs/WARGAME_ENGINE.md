@@ -24,7 +24,8 @@ the orchestrator API tests and the CLI tests).
 There are three ways to use Wargame; all of them sit on this engine:
 
 - **The API.** Orchestrator `/v1/wargame/*` (read assessments, routes,
-  boundaries, certificates, fix set, evidence; recompute; ingest a twin;
+  boundaries, certificates, fix set, evidence; recompute; ingest a twin and
+  its evidence (flow logs, recorded probe results);
   `POST /v1/wargame/change-impact`). See §15.
 - **The dashboard page.** `/wargame` (`dashboard/src/pages/Wargame.tsx`):
   scorecard, routes with per-hop evidence labels, the cheapest fix set,
@@ -406,6 +407,12 @@ the exact config hashes it was proved against, without access to Paddock.
   such as "false positive" is refused) and returns a read-only record — the model is **never**
   auto-amended to explain a flow away (that could legitimise an attacker's
   tunnel).
+- In the product, the twin's **stored** flows (schema 044, §15) are
+  classified on every twin assessment against the certificates of the
+  previous twin assessment that are still valid; the alerts land in the
+  assessment `metadata` (`impossible_traffic_alerts`,
+  `impossible_traffic_sample`). The same flows make the crossed pair
+  `fail_open` in that run, so it gets no new certificate.
 
 ---
 
@@ -651,17 +658,84 @@ checks — without ever running a payload. `ReplicaRunner` is a documented
   `probe_tested=false`), computes the fix set and the scorecard, and returns
   a persistable bundle. `assess_unproven_environment(env)` is the legacy-graph
   ("auto") variant: no verdicts, no certificates, closure unproven.
+- `evidence.py` + schema `044_wargame_evidence.sql` — the twin's **boundary
+  evidence**: `wargame_observed_flows` (flows parsed from the customer's own
+  logs) and `wargame_probe_results` (recorded probe results: `src_segment`,
+  `dst_segment`, `proto`, `port`, `result` ∈ `crossed|blocked|error`,
+  `observed_at`, `source`). Both tenant-scoped (RLS, as 042) and bounded:
+  flows keep a rolling **30-day** window by `observed_at` (the flow's own
+  timestamp when it parses and is not in the future, else the ingest time)
+  and at most **100,000** rows per tenant, newest kept; probe results keep
+  **30 days** and at most **50,000** rows. Pruning runs on every ingest.
+  `_wargame_tenant` loads them and calls `assess_environment(probes=...,
+  observed_flows=..., observation_window_days=..., standing_certificates=...)`
+  (rules below).
 - Schema `043_wargame_verdicts.sql` widens the boundary verdict CHECK with
   `proved_config` and adds `wargame_certificates.key_id` and
   `.corroboration` (so a stored certificate can be re-verified and shows
   whether a probe backed it). The API's `WargameCertificateOut` exposes
   `key_id`, `signed` and `corroboration`.
 
+### Evidence: how stored flows and probes become verdicts
+
+- **Pair mapping.** A probe result counts for an `(entry, jewel)` pair only if
+  it was run from that entry segment **to** that jewel segment
+  (`src == entry`, `dst == jewel`). Probes between other segments (hops) are
+  stored but never inferred into a pair verdict: hop results do not compose
+  into an end-to-end test. Per `(src, dst, proto, port)` the newest result
+  wins; the pair reads *crossed* if any port's newest result crossed (a tie
+  in time goes to crossed), else *blocked*.
+- **Staleness.** A result older than the certificate TTL (`CERT_TTL_HOURS` =
+  `evidence.PROBE_MAX_AGE_HOURS` = **24 h**) does not count, so a `pass`
+  certificate never outlives the probe behind it; nor does one dated more
+  than 5 minutes in the future. `error` results never count (an error is no
+  probe). The age is measured from the result's own `observed_at`, not from
+  when it was uploaded.
+- **Verdicts.** Config-closed + a fresh mapped *blocked* probe + no real
+  crossing → `pass` (certificate `probe_tested=true`, no `proof_basis`
+  assumption). No mapped fresh probe → `proved_config`, as before. A mapped
+  *crossed* probe, or a stored **real** flow (`impossible.flow_is_real`) from
+  the entry's CIDRs to the jewel's, → `fail_open` and no certificate.
+  Observation never proves closure.
+- **Impossible traffic.** Real stored flows are classified against the
+  previous twin assessment's still-valid certificates (and this run's); see
+  §8. Metadata also records `probed_pairs`, `pass_pairs`, `observed_flows`
+  and `observation_window_days` (the whole days the loaded flows span, ≤ 30).
+
+**Where probe results come from.** Paddock does not send packets for this
+path: `/twin/probes` records results the customer's own probe or scanner
+produced. Wargame's own probe deployment (WARGAME.md §2.2, §12 "approve probe
+mode") is not built. The existing active worker's **`open_port` safe check**
+(`workers/active/app/modules/safe_checks/network_checks.py`, `tcp_banner`:
+TCP connect + passive banner read, nothing sent, scope-gated and audited) is
+the building block that mode would deploy. If its results are submitted, map
+them conservatively:
+
+| `tcp_banner` state | `/twin/probes` `result` | Why |
+|---|---|---|
+| `open` (handshake completed) | `crossed` | the connect got through |
+| `filtered` (timeout, no answer) | `blocked` | dropped on the way |
+| `closed` (connection refused / RST) | `error` | a RST may come from the far host (the boundary let the SYN through) or from a firewall that rejects with a reset; it is not proof of a block |
+| `error` | `error` | no evidence |
+
+and set `src` to the segment the worker ran in, `dst` to the target's
+segment, `observed_at` to when the check ran. Today the worker runs from
+Paddock's own vantage point, not from an entry segment, so its results map
+onto a pair only when that vantage point *is* a declared entry segment.
+
 ### The HTTP surface
 Correlation (internal, not in the public OpenAPI):
 - `POST /ingest-config` `{vendor, raw, source}` → parse → store rule sets in
   the twin (+ a config snapshot hash);
 - `POST /set-topology` `{segments, edges}` → store the topology;
+- `POST /ingest-flows` `{raw, format: auto|zeek|generic|firewall, source}` →
+  `ingest.parse_flows_detailed`, store only the flows that parse →
+  `{flows_parsed, flows_skipped, flows_stored, warnings}`;
+- `POST /ingest-probes` `{results: [{src, dst, proto=tcp|udp|icmp, port,
+  result: crossed|blocked|error, observed_at, source}]}` (≤ 10,000) → a
+  result naming a segment the twin does not hold, the same segment twice, or
+  a future time is rejected (counted, with a warning), the rest are stored →
+  `{stored, rejected, warnings}`; 409 when the tenant has no topology;
 - `POST /compute-wargame` → assess the **persisted twin** when present
   (config-proved, with certificates), else the all-inferred asset graph, and
   persist the result;
@@ -670,10 +744,11 @@ Correlation (internal, not in the public OpenAPI):
 
 Size caps (each exceeded cap is a 413/422, never an OOM): config `raw` ≤ 8 MiB
 of characters, ≤ 5,000 topology segments and ≤ 20,000 topology edges, `flows`
-≤ 8 MiB of characters, and a `/change-impact` body ≤ 32 MiB. The orchestrator
+≤ 8 MiB of characters (`/change-impact` and `/ingest-flows`), ≤ 10,000 probe results,
+and a `/change-impact` body ≤ 32 MiB. The orchestrator
 enforces raw body caps **before** parsing (by `Content-Length` and by counting
-streamed bytes): 16 MiB for `/v1/wargame/twin/config`, 8 MiB for
-`/twin/topology`, 32 MiB for `/change-impact`.
+streamed bytes): 16 MiB for `/v1/wargame/twin/config` and `/twin/flows`, 8 MiB
+for `/twin/topology`, 4 MiB for `/twin/probes`, 32 MiB for `/change-impact`.
 
 **Change impact.** Correlation `POST /change-impact` and orchestrator
 `POST /v1/wargame/change-impact` (which proxies synchronously, 60 s timeout, no
@@ -705,8 +780,15 @@ SDKs):
 - `POST /v1/wargame/recompute` — trigger a run (sync call to correlation,
   Redis fallback, never fails hard);
 - `POST /v1/wargame/change-impact` — the change gate (above);
-- `POST /v1/wargame/twin/config`, `/twin/topology`, `GET /v1/wargame/twin` —
-  ingest config / declare topology / read a twin summary.
+- `POST /v1/wargame/twin/config`, `/twin/topology`, `/twin/flows`,
+  `/twin/probes`, `GET /v1/wargame/twin` — ingest config / declare topology /
+  store flow logs / record probe results / read a twin summary (row counts,
+  including `flow_count`, `probe_count` and `probe_fresh_count`, the results
+  young enough to count). The four writes are `admin` (a blocked probe
+  upgrades a pair to `pass`, so submitting one is as sensitive as submitting
+  the config); each falls back to a Redis job (`twin_ingest_config`,
+  `twin_set_topology`, `twin_ingest_flows`, `twin_ingest_probes`) when
+  correlation is unreachable, and passes a correlation 4xx through unqueued.
 
 **Grants.** The correlation service role (`paddock_svc_correlation`) must be
 granted the wargame tables. `schema/042_wargame_twin.sql` extends 029's
@@ -714,7 +796,9 @@ service-grant allow-list in `paddock_apply_service_grants()` with the eleven
 tables (`wargame_assessments`, `_routes`, `_boundaries`, `_certificates`,
 `_fix_sets`, `_evidence`, `_rulesets`, `_rules`, `_segments`, `_edges`,
 `_config_snapshots`) so a later grant run does not revoke them, and also grants
-`SELECT, INSERT, UPDATE, DELETE` on them directly.
+`SELECT, INSERT, UPDATE, DELETE` on them directly. `044_wargame_evidence.sql`
+extends the same allow-list (as 042 left it) with `wargame_observed_flows` and
+`wargame_probe_results` the same way.
 
 All read endpoints serve routes and narratives verbatim as the compute
 service wrote them; no endpoint aids exploitation.
@@ -789,12 +873,16 @@ Three runnable demos print this end to end:
 ## 18. What is not built yet
 
 Built since the earlier version of this list: the dashboard page
-(`/wargame`), the change-impact endpoint and the `paddock wargame` CLI.
+(`/wargame`), the change-impact endpoint, the `paddock wargame` CLI, and the
+twin's boundary evidence (stored flows + recorded probe results, schema 044),
+so a closed pair can now read `pass` and a real crossing `fail_open`.
 
 Still missing:
 
 - **Probe deployment mode** — the active worker on out-of-scope segments that
-  would produce real probe results.
+  would produce real probe results (an owner decision, WARGAME.md §12).
+  Results from the customer's own probe or scanner can already be recorded
+  (`/v1/wargame/twin/probes`, §15); Paddock itself sends none for Wargame.
 - **The replica sandbox runner** behind `replica.ReplicaRunner` (only the
   precondition checks exist).
 - **Redis fallback consumer: built, with limits.** Correlation's
@@ -812,9 +900,10 @@ Still missing:
 - **`scripts/install.sh` does not generate `WARGAME_SIGNING_KEY`**, so an
   install without it signs with the labelled public development key
   (`unsigned-dev`).
-- **The twin stores no observed flows or probe results**, so every closed pair
-  of a twin assessment is `proved_config`, never `pass`, until a probe source is
-  wired into `assess_environment(probes=..., observed_flows=...)`.
+- **Impossible-traffic alerts live in assessment `metadata`** (count + the
+  first five), not in their own table, and a contradicted earlier certificate
+  keeps its stored `status` (`valid`); there is no resolution workflow in the
+  API yet (`impossible.resolve` exists in the engine only).
 - **The fix set's uncut pairs live in assessment `metadata`**
   (`fix_set_uncut_pairs`, `fix_set_uncuttable_pairs`), not in a fix-set column,
   so the stored fix-set row alone does not say which pairs it fails to cut.

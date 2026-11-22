@@ -3842,6 +3842,21 @@ WargameFlowRef = TypedDict(
 )
 """An observed flow whose verdict flips at an affected boundary."""
 
+WargameProbeResultIn = TypedDict(
+    'WargameProbeResultIn',
+    {
+        'dst': Required['str'],
+        'observed_at': Required['str'],
+        'port': Required['int'],
+        'proto': NotRequired["Literal['tcp', 'udp', 'icmp']"],
+        'result': Required["Literal['crossed', 'blocked', 'error']"],
+        'source': NotRequired['str'],
+        'src': Required['str'],
+    },
+    total=False,
+)
+"""One recorded probe result: a connect from segment `src` to segment"""
+
 WargameRecomputeOut = TypedDict(
     'WargameRecomputeOut',
     {
@@ -3899,6 +3914,31 @@ WargameTwinConfigRequest = TypedDict(
 )
 """Body of POST /v1/wargame/twin/config: one read-only vendor config."""
 
+WargameTwinFlowsOut = TypedDict(
+    'WargameTwinFlowsOut',
+    {
+        'detail': NotRequired['str | None'],
+        'flows_parsed': NotRequired['int | None'],
+        'flows_skipped': NotRequired['int | None'],
+        'flows_stored': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+        'warnings': NotRequired['list[str]'],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/flows (same `status` semantics as"""
+
+WargameTwinFlowsRequest = TypedDict(
+    'WargameTwinFlowsRequest',
+    {
+        'format': NotRequired["Literal['auto', 'zeek', 'generic', 'firewall']"],
+        'raw': Required['str'],
+        'source': NotRequired['str'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/flows: raw flow logs (firewall allow/deny"""
+
 WargameTwinIngestOut = TypedDict(
     'WargameTwinIngestOut',
     {
@@ -3910,11 +3950,36 @@ WargameTwinIngestOut = TypedDict(
 )
 """Result of POST /v1/wargame/twin/config. `status` is `ingested` when the"""
 
+WargameTwinProbesOut = TypedDict(
+    'WargameTwinProbesOut',
+    {
+        'detail': NotRequired['str | None'],
+        'rejected': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+        'stored': NotRequired['int | None'],
+        'warnings': NotRequired['list[str]'],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/probes. `rejected` counts results naming"""
+
+WargameTwinProbesRequest = TypedDict(
+    'WargameTwinProbesRequest',
+    {
+        'results': Required['list[WargameProbeResultIn]'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/probes."""
+
 WargameTwinSummaryOut = TypedDict(
     'WargameTwinSummaryOut',
     {
         'edge_count': Required['int'],
+        'flow_count': NotRequired['int'],
         'has_twin': Required['bool'],
+        'probe_count': NotRequired['int'],
+        'probe_fresh_count': NotRequired['int'],
         'rule_count': Required['int'],
         'ruleset_count': Required['int'],
         'segment_count': Required['int'],
@@ -4448,6 +4513,8 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'recompute_wargame': ('POST', '/v1/wargame/recompute', False),
     'get_twin_summary': ('GET', '/v1/wargame/twin', False),
     'ingest_twin_config': ('POST', '/v1/wargame/twin/config', False),
+    'ingest_twin_flows': ('POST', '/v1/wargame/twin/flows', False),
+    'ingest_twin_probes': ('POST', '/v1/wargame/twin/probes', False),
     'set_twin_topology': ('POST', '/v1/wargame/twin/topology', False),
 }
 
@@ -6249,6 +6316,37 @@ class GeneratedOperations:
         422, not a queued job.
         """
         return self._request('POST', '/v1/wargame/twin/config', body=body)
+
+    def ingest_twin_flows(self, body: WargameTwinFlowsRequest | dict[str, Any]) -> WargameTwinFlowsOut:
+        """POST /v1/wargame/twin/flows -- Ingest Twin Flows
+
+        Store observed flows (the customer's own firewall / Zeek / generic
+        logs) as twin evidence.
+
+        Forwards to correlation `POST /ingest-flows`; falls back to a
+        `correlate:twin_ingest_flows` Redis job when correlation is down. Only rows
+        that parse are stored (rolling 30-day window, capped per tenant). On the
+        next recompute a real flow from an entry to a crown jewel the config proves
+        closed makes that pair `fail_open`, and one across a still-valid
+        certificate raises an impossible-traffic alert. Nothing is probed.
+        """
+        return self._request('POST', '/v1/wargame/twin/flows', body=body)
+
+    def ingest_twin_probes(self, body: WargameTwinProbesRequest | dict[str, Any]) -> WargameTwinProbesOut:
+        """POST /v1/wargame/twin/probes -- Ingest Twin Probes
+
+        Record probe results produced by the customer's own probe or scanner.
+
+        Paddock sends NO packets here: each result is a recorded fact (a connect
+        from segment `src` to segment `dst` on `proto`/`port` `crossed`, was
+        `blocked`, or hit an `error`). Forwards to correlation `POST /ingest-probes`;
+        falls back to a `correlate:twin_ingest_probes` Redis job. A result naming a
+        segment the twin does not hold is rejected (counted); no topology is a 409.
+        A probe counts for an (entry, crown jewel) pair only if it ran from that
+        entry segment to that jewel segment, within the certificate TTL (24 h);
+        `error` never counts. A blocked one turns a config-proved pair into `pass`.
+        """
+        return self._request('POST', '/v1/wargame/twin/probes', body=body)
 
     def set_twin_topology(self, body: WargameTwinTopologyRequest | dict[str, Any]) -> WargameTwinTopologyOut:
         """POST /v1/wargame/twin/topology -- Set Twin Topology

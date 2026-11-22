@@ -15,6 +15,7 @@ import type {
   WargameChangeImpact,
   WargameFixSet,
   WargameHop,
+  WargameProbeResultIn,
   WargameRoute,
 } from "../api/types";
 
@@ -400,6 +401,38 @@ export const FLOW_FORMATS: { value: string; label: string }[] = [
   { value: "zeek", label: "Zeek conn.log" },
   { value: "firewall", label: "Firewall allow/deny log" },
 ];
+
+/**
+ * Read probe results pasted or uploaded by the user: a JSON array, an object
+ * `{ "results": [...] }`, or JSON lines. Throws an Error with a plain message
+ * when the text is not one of those; field checks are the server's job.
+ */
+export function parseProbeResults(text: string): WargameProbeResultIn[] {
+  const t = text.trim();
+  if (!t) throw new Error("No probe results to send.");
+  let rows: unknown;
+  try {
+    rows = JSON.parse(t);
+  } catch {
+    try {
+      rows = t
+        .split(/\r?\n/)
+        .filter((l) => l.trim())
+        .map((l) => JSON.parse(l));
+    } catch {
+      throw new Error("Probe results must be JSON: an array, { \"results\": [...] }, or one object per line.");
+    }
+  }
+  if (rows && typeof rows === "object" && !Array.isArray(rows) && Array.isArray((rows as { results?: unknown }).results)) {
+    rows = (rows as { results: unknown[] }).results;
+  }
+  if (!Array.isArray(rows)) rows = [rows];
+  const list = rows as unknown[];
+  if (!list.length || !list.every((r) => r && typeof r === "object" && !Array.isArray(r))) {
+    throw new Error("Each probe result must be an object with src, dst, port, result and observed_at.");
+  }
+  return list as WargameProbeResultIn[];
+}
 
 export const CONFIG_VENDORS: { value: string; label: string }[] = [
   { value: "paloalto", label: "Palo Alto (PAN-OS set format)" },

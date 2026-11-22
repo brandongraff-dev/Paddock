@@ -1170,6 +1170,12 @@ export interface WargameTwinSummary {
   edge_count: number;
   snapshot_count: number;
   has_twin: boolean;
+  /** Stored observed flows (rolling 30-day window). */
+  flow_count?: number;
+  /** Stored probe results (recorded facts from the customer's own probe/scanner). */
+  probe_count?: number;
+  /** Probe results young enough (24 h, not `error`) to count toward a verdict. */
+  probe_fresh_count?: number;
 }
 
 export type WargameTriggerStatus = "computed" | "ingested" | "queued" | "unavailable" | (string & {});
@@ -1183,6 +1189,36 @@ export interface WargameTwinIngestResult {
   status: WargameTriggerStatus;
   detail?: string | null;
   rulesets?: number | null;
+}
+
+/** Result of POST /v1/wargame/twin/flows. */
+export interface WargameTwinFlowsResult {
+  status: WargameTriggerStatus;
+  detail?: string | null;
+  flows_parsed?: number | null;
+  flows_skipped?: number | null;
+  flows_stored?: number | null;
+  warnings?: string[];
+}
+
+/** One recorded probe result (POST /v1/wargame/twin/probes). */
+export interface WargameProbeResultIn {
+  src: string;
+  dst: string;
+  proto?: "tcp" | "udp" | "icmp";
+  port: number;
+  result: "crossed" | "blocked" | "error";
+  observed_at: string;
+  source?: string;
+}
+
+/** Result of POST /v1/wargame/twin/probes. */
+export interface WargameTwinProbesResult {
+  status: WargameTriggerStatus;
+  detail?: string | null;
+  stored?: number | null;
+  rejected?: number | null;
+  warnings?: string[];
 }
 
 /** Body of POST /v1/wargame/change-impact. */

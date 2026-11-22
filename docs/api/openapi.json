@@ -16791,6 +16791,68 @@
         "title": "WargameFlowRef",
         "type": "object"
       },
+      "WargameProbeResultIn": {
+        "description": "One recorded probe result: a connect from segment `src` to segment\n`dst` on `proto`/`port` crossed, was blocked, or errored. `error` is kept\nbut never counts as a probe.",
+        "properties": {
+          "dst": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Dst",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535.0,
+            "minimum": 0.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "proto": {
+            "default": "tcp",
+            "enum": [
+              "tcp",
+              "udp",
+              "icmp"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "result": {
+            "enum": [
+              "crossed",
+              "blocked",
+              "error"
+            ],
+            "title": "Result",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Source",
+            "type": "string"
+          },
+          "src": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Src",
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "dst",
+          "port",
+          "result",
+          "observed_at"
+        ],
+        "title": "WargameProbeResultIn",
+        "type": "object"
+      },
       "WargameRecomputeOut": {
         "description": "Result of POST /v1/wargame/recompute.\n\n`status` is `computed` when the synchronous correlation call returned,\n`queued` when a recompute job was enqueued on Redis as a fallback, or\n`unavailable` when correlation was unreachable AND the enqueue failed\n(the request never fails hard). `detail` carries a short human note.",
         "properties": {
@@ -16949,6 +17011,109 @@
         "title": "WargameTwinConfigRequest",
         "type": "object"
       },
+      "WargameTwinFlowsOut": {
+        "description": "Result of POST /v1/wargame/twin/flows (same `status` semantics as\n/twin/config). Counts are present only when `status` is `ingested`.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "flows_parsed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows Parsed"
+          },
+          "flows_skipped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows Skipped"
+          },
+          "flows_stored": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows Stored"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinFlowsOut",
+        "type": "object"
+      },
+      "WargameTwinFlowsRequest": {
+        "description": "Body of POST /v1/wargame/twin/flows: raw flow logs (firewall allow/deny\nJSON, Zeek conn.log JSONL, or generic JSON). Only rows that parse are\nstored; the store keeps a rolling 30-day window.",
+        "properties": {
+          "format": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "zeek",
+              "generic",
+              "firewall"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "raw": {
+            "maxLength": 8388608,
+            "minLength": 1,
+            "title": "Raw",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "raw"
+        ],
+        "title": "WargameTwinFlowsRequest",
+        "type": "object"
+      },
       "WargameTwinIngestOut": {
         "description": "Result of POST /v1/wargame/twin/config. `status` is `ingested` when the\nsynchronous correlation call succeeded, `queued` when a Redis job was\nenqueued as a fallback, or `unavailable` when both failed.",
         "properties": {
@@ -16990,16 +17155,109 @@
         "title": "WargameTwinIngestOut",
         "type": "object"
       },
+      "WargameTwinProbesOut": {
+        "description": "Result of POST /v1/wargame/twin/probes. `rejected` counts results naming\na segment the twin does not hold, the same segment twice, a future time,\nor older than the retention window.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "rejected": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejected"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stored": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stored"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinProbesOut",
+        "type": "object"
+      },
+      "WargameTwinProbesRequest": {
+        "description": "Body of POST /v1/wargame/twin/probes.",
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/WargameProbeResultIn"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "WargameTwinProbesRequest",
+        "type": "object"
+      },
       "WargameTwinSummaryOut": {
-        "description": "Row counts of the persisted twin (GET /v1/wargame/twin).",
+        "description": "Row counts of the persisted twin (GET /v1/wargame/twin).\n\n`flow_count` / `probe_count` are the stored boundary evidence (schema\n044): observed flows in the rolling window and recorded probe results.\n`probe_fresh_count` is how many probe results are young enough (within the\ncertificate TTL, not `error`) to count toward a verdict right now.",
         "properties": {
           "edge_count": {
             "title": "Edge Count",
             "type": "integer"
           },
+          "flow_count": {
+            "default": 0,
+            "title": "Flow Count",
+            "type": "integer"
+          },
           "has_twin": {
             "title": "Has Twin",
             "type": "boolean"
+          },
+          "probe_count": {
+            "default": 0,
+            "title": "Probe Count",
+            "type": "integer"
+          },
+          "probe_fresh_count": {
+            "default": 0,
+            "title": "Probe Fresh Count",
+            "type": "integer"
           },
           "rule_count": {
             "title": "Rule Count",
@@ -32531,6 +32789,90 @@
           }
         },
         "summary": "Ingest Twin Config",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/flows": {
+      "post": {
+        "description": "Store observed flows (the customer's own firewall / Zeek / generic\nlogs) as twin evidence.\n\nForwards to correlation `POST /ingest-flows`; falls back to a\n`correlate:twin_ingest_flows` Redis job when correlation is down. Only rows\nthat parse are stored (rolling 30-day window, capped per tenant). On the\nnext recompute a real flow from an entry to a crown jewel the config proves\nclosed makes that pair `fail_open`, and one across a still-valid\ncertificate raises an impossible-traffic alert. Nothing is probed.",
+        "operationId": "ingest_twin_flows_v1_wargame_twin_flows_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinFlowsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinFlowsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Twin Flows",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/probes": {
+      "post": {
+        "description": "Record probe results produced by the customer's own probe or scanner.\n\nPaddock sends NO packets here: each result is a recorded fact (a connect\nfrom segment `src` to segment `dst` on `proto`/`port` `crossed`, was\n`blocked`, or hit an `error`). Forwards to correlation `POST /ingest-probes`;\nfalls back to a `correlate:twin_ingest_probes` Redis job. A result naming a\nsegment the twin does not hold is rejected (counted); no topology is a 409.\nA probe counts for an (entry, crown jewel) pair only if it ran from that\nentry segment to that jewel segment, within the certificate TTL (24 h);\n`error` never counts. A blocked one turns a config-proved pair into `pass`.",
+        "operationId": "ingest_twin_probes_v1_wargame_twin_probes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinProbesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinProbesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Twin Probes",
         "tags": [
           "wargame"
         ]

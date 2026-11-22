@@ -1500,6 +1500,7 @@ WARGAME_MAX_CONFIG_CHARS = 8 * 1024 * 1024
 WARGAME_MAX_TOPOLOGY_SEGMENTS = 5_000
 WARGAME_MAX_TOPOLOGY_EDGES = 20_000
 WARGAME_MAX_FLOWS_CHARS = 8 * 1024 * 1024
+WARGAME_MAX_PROBE_RESULTS = 10_000
 
 
 class WargameTwinConfigRequest(BaseModel):
@@ -1542,7 +1543,12 @@ class WargameTwinTopologyOut(BaseModel):
 
 
 class WargameTwinSummaryOut(BaseModel):
-    """Row counts of the persisted twin (GET /v1/wargame/twin)."""
+    """Row counts of the persisted twin (GET /v1/wargame/twin).
+
+    `flow_count` / `probe_count` are the stored boundary evidence (schema
+    044): observed flows in the rolling window and recorded probe results.
+    `probe_fresh_count` is how many probe results are young enough (within the
+    certificate TTL, not `error`) to count toward a verdict right now."""
 
     ruleset_count: int
     rule_count: int
@@ -1550,6 +1556,76 @@ class WargameTwinSummaryOut(BaseModel):
     edge_count: int
     snapshot_count: int
     has_twin: bool
+    flow_count: int = 0
+    probe_count: int = 0
+    probe_fresh_count: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# Wargame twin evidence (schema 044): observed flows + recorded probe results.
+#
+# Both are RECORDED facts from the customer's own logs, probes or scanners.
+# Paddock sends no packets for either; the orchestrator forwards them to the
+# correlation service, which owns the evidence tables.
+# --------------------------------------------------------------------------- #
+
+WargameFlowsFormat = Literal["auto", "zeek", "generic", "firewall"]
+
+
+class WargameTwinFlowsRequest(BaseModel):
+    """Body of POST /v1/wargame/twin/flows: raw flow logs (firewall allow/deny
+    JSON, Zeek conn.log JSONL, or generic JSON). Only rows that parse are
+    stored; the store keeps a rolling 30-day window."""
+
+    raw: str = Field(min_length=1, max_length=WARGAME_MAX_FLOWS_CHARS)
+    format: WargameFlowsFormat = "auto"
+    source: str = Field("", max_length=512)
+
+
+class WargameTwinFlowsOut(BaseModel):
+    """Result of POST /v1/wargame/twin/flows (same `status` semantics as
+    /twin/config). Counts are present only when `status` is `ingested`."""
+
+    status: WargameTwinTriggerStatus
+    detail: str | None = None
+    flows_parsed: int | None = None
+    flows_skipped: int | None = None
+    flows_stored: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WargameProbeResultIn(BaseModel):
+    """One recorded probe result: a connect from segment `src` to segment
+    `dst` on `proto`/`port` crossed, was blocked, or errored. `error` is kept
+    but never counts as a probe."""
+
+    src: str = Field(min_length=1, max_length=256)
+    dst: str = Field(min_length=1, max_length=256)
+    proto: Literal["tcp", "udp", "icmp"] = "tcp"
+    port: int = Field(ge=0, le=65535)
+    result: Literal["crossed", "blocked", "error"]
+    observed_at: datetime
+    source: str = Field("", max_length=512)
+
+
+class WargameTwinProbesRequest(BaseModel):
+    """Body of POST /v1/wargame/twin/probes."""
+
+    results: list[WargameProbeResultIn] = Field(
+        min_length=1, max_length=WARGAME_MAX_PROBE_RESULTS
+    )
+
+
+class WargameTwinProbesOut(BaseModel):
+    """Result of POST /v1/wargame/twin/probes. `rejected` counts results naming
+    a segment the twin does not hold, the same segment twice, a future time,
+    or older than the retention window."""
+
+    status: WargameTwinTriggerStatus
+    detail: str | None = None
+    stored: int | None = None
+    rejected: int | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

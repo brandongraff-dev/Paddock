@@ -17,6 +17,10 @@ reads the persisted artifacts and exposes a recompute trigger.
 - `POST /v1/wargame/twin/config` -- forward one read-only vendor config to the
   correlation service for ingest into the twin (nothing is applied anywhere).
 - `POST /v1/wargame/twin/topology` -- forward segments/edges to correlation.
+- `POST /v1/wargame/twin/flows` -- forward observed flow logs (the customer's
+  own firewall / Zeek / generic logs) to correlation for the twin's evidence.
+- `POST /v1/wargame/twin/probes` -- forward RECORDED probe results (from the
+  customer's own probe / scanner) to correlation. Nothing is sent to any host.
 - `POST /v1/wargame/change-impact` -- evaluate a Terraform plan against the
   tenant's twin (synchronous proxy to correlation; read-only, nothing applied).
 - `POST /v1/wargame/recompute` -- prefer a synchronous call to the correlation
@@ -51,7 +55,11 @@ from ..models import (
     WargameRouteOut,
     WargameRoutePage,
     WargameTwinConfigRequest,
+    WargameTwinFlowsOut,
+    WargameTwinFlowsRequest,
     WargameTwinIngestOut,
+    WargameTwinProbesOut,
+    WargameTwinProbesRequest,
     WargameTwinSummaryOut,
     WargameTwinTopologyOut,
     WargameTwinTopologyRequest,
@@ -67,6 +75,8 @@ logger = logging.getLogger(__name__)
 _BODY_CAPS = {
     "/v1/wargame/twin/config": 16 * 1024 * 1024,
     "/v1/wargame/twin/topology": 8 * 1024 * 1024,
+    "/v1/wargame/twin/flows": 16 * 1024 * 1024,
+    "/v1/wargame/twin/probes": 4 * 1024 * 1024,
     "/v1/wargame/change-impact": 32 * 1024 * 1024,
 }
 
@@ -132,6 +142,9 @@ _CERT_COLS = (
     "id, boundary_src, boundary_dst, port, claim, assumptions, config_hashes, "
     "status, issued_at, expires_at, fingerprint, key_id, corroboration"
 )
+#: A probe result older than this does not count toward a verdict (= the
+#: certificate TTL; correlation app/engine/wargame/evidence.py).
+_PROBE_MAX_AGE_HOURS = 24
 #: Key ids whose fingerprint is not a real signature (schema 043).
 _UNSIGNED_KEY_IDS = ("", "unsigned-dev")
 _FIX_COLS = "id, total_cost, optimality, cuts_all, selected, metadata"
@@ -582,8 +595,15 @@ async def get_twin_summary(pool=Depends(get_pool)):
                    (SELECT COUNT(*) FROM wargame_rules)            AS rules,
                    (SELECT COUNT(*) FROM wargame_segments)         AS segments,
                    (SELECT COUNT(*) FROM wargame_edges)            AS edges,
-                   (SELECT COUNT(*) FROM wargame_config_snapshots) AS snapshots
-            """
+                   (SELECT COUNT(*) FROM wargame_config_snapshots) AS snapshots,
+                   (SELECT COUNT(*) FROM wargame_observed_flows)   AS flows,
+                   (SELECT COUNT(*) FROM wargame_probe_results)    AS probes,
+                   (SELECT COUNT(*) FROM wargame_probe_results
+                     WHERE result <> 'error'
+                       AND observed_at >= NOW() - make_interval(hours => $1)
+                       AND observed_at <= NOW() + INTERVAL '5 minutes') AS probes_fresh
+            """,
+            _PROBE_MAX_AGE_HOURS,
         )
     d = dict(row) if row is not None else {}
     rulesets = int(d.get("rulesets") or 0)
@@ -598,6 +618,9 @@ async def get_twin_summary(pool=Depends(get_pool)):
         edge_count=edges,
         snapshot_count=snapshots,
         has_twin=bool(rulesets or segments or edges),
+        flow_count=int(d.get("flows") or 0),
+        probe_count=int(d.get("probes") or 0),
+        probe_fresh_count=int(d.get("probes_fresh") or 0),
     )
 
 
@@ -722,6 +745,70 @@ async def set_twin_topology(
     return WargameTwinTopologyOut(
         status=status, detail=detail, segments=segments, edges=edges
     )
+
+
+@router.post("/twin/flows", response_model=WargameTwinFlowsOut)
+async def ingest_twin_flows(req: WargameTwinFlowsRequest, r=Depends(get_redis)):
+    """Store observed flows (the customer's own firewall / Zeek / generic
+    logs) as twin evidence.
+
+    Forwards to correlation `POST /ingest-flows`; falls back to a
+    `correlate:twin_ingest_flows` Redis job when correlation is down. Only rows
+    that parse are stored (rolling 30-day window, capped per tenant). On the
+    next recompute a real flow from an entry to a crown jewel the config proves
+    closed makes that pair `fail_open`, and one across a still-valid
+    certificate raises an impossible-traffic alert. Nothing is probed.
+    """
+    status, detail, body = await _trigger_twin(
+        r, "/ingest-flows", "twin_ingest_flows", req.model_dump()
+    )
+    out = WargameTwinFlowsOut(status=status, detail=detail)
+    if status == "ingested":
+        out.flows_parsed = _opt_int(body, "flows_parsed")
+        out.flows_skipped = _opt_int(body, "flows_skipped")
+        out.flows_stored = _opt_int(body, "flows_stored")
+        out.warnings = _str_list(body.get("warnings"))
+        out.detail = (
+            f"correlation stored {out.flows_stored} flow(s)"
+            if out.flows_stored is not None
+            else "correlation ingested the flows"
+        )
+    return out
+
+
+@router.post("/twin/probes", response_model=WargameTwinProbesOut)
+async def ingest_twin_probes(req: WargameTwinProbesRequest, r=Depends(get_redis)):
+    """Record probe results produced by the customer's own probe or scanner.
+
+    Paddock sends NO packets here: each result is a recorded fact (a connect
+    from segment `src` to segment `dst` on `proto`/`port` `crossed`, was
+    `blocked`, or hit an `error`). Forwards to correlation `POST /ingest-probes`;
+    falls back to a `correlate:twin_ingest_probes` Redis job. A result naming a
+    segment the twin does not hold is rejected (counted); no topology is a 409.
+    A probe counts for an (entry, crown jewel) pair only if it ran from that
+    entry segment to that jewel segment, within the certificate TTL (24 h);
+    `error` never counts. A blocked one turns a config-proved pair into `pass`.
+    """
+    status, detail, body = await _trigger_twin(
+        r, "/ingest-probes", "twin_ingest_probes", req.model_dump(mode="json")
+    )
+    out = WargameTwinProbesOut(status=status, detail=detail)
+    if status == "ingested":
+        out.stored = _opt_int(body, "stored")
+        out.rejected = _opt_int(body, "rejected")
+        out.warnings = _str_list(body.get("warnings"))
+        out.detail = (
+            f"correlation stored {out.stored} probe result(s)"
+            if out.stored is not None
+            else "correlation recorded the probe results"
+        )
+    return out
+
+
+def _str_list(v: Any, limit: int = 50) -> list[str]:
+    if not isinstance(v, list):
+        return []
+    return [str(x)[:300] for x in v[:limit] if isinstance(x, (str, int, float))]
 
 
 # --------------------------------------------------------------------------- #

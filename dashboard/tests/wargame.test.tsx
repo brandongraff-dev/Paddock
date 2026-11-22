@@ -21,6 +21,7 @@ import {
   evidenceMeta,
   hopWeakest,
   impactHeadline,
+  parseProbeResults,
   routeStrengthSentence,
   uncutRoutes,
   verdictMeta,
@@ -112,6 +113,18 @@ describe("wargame presentation logic", () => {
     expect(impactHeadline({ ...baseImpact, verdict: "mystery" }).tone).toBe("unknown");
   });
 
+  it("reads probe results as an array, { results }, or JSON lines", () => {
+    const one = { src: "a", dst: "b", port: 443, result: "blocked", observed_at: "2026-11-22T09:00:00Z" };
+    expect(parseProbeResults(JSON.stringify([one]))).toEqual([one]);
+    expect(parseProbeResults(JSON.stringify({ results: [one, one] }))).toHaveLength(2);
+    expect(parseProbeResults(`${JSON.stringify(one)}\n${JSON.stringify(one)}\n`)).toHaveLength(2);
+    expect(parseProbeResults(JSON.stringify(one))).toEqual([one]);
+    expect(() => parseProbeResults("")).toThrow(/No probe results/);
+    expect(() => parseProbeResults("not json")).toThrow(/must be JSON/);
+    expect(() => parseProbeResults("[1, 2]")).toThrow(/must be an object/);
+    expect(() => parseProbeResults("[]")).toThrow(/must be an object/);
+  });
+
   it("sample mode only answers for its own plans", () => {
     expect(sampleImpactFor(SAMPLE_PLANS[0].plan)?.verdict).toBe("breaks_live_flows");
     expect(sampleImpactFor('{"resource_changes": []}')).toBeNull();
@@ -134,6 +147,50 @@ describe("Wargame page", () => {
     expect(screen.getAllByRole("button", { name: "Recompute" }).length).toBeGreaterThan(0);
     // no change gate without a twin
     expect(screen.queryByText(/Change gate/)).not.toBeInTheDocument();
+  });
+
+  it("offers the optional evidence step, shows its counts and posts to the twin", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v1/wargame/twin/probes") || url.endsWith("/v1/wargame/twin/flows")) {
+        calls.push({ url, body: JSON.parse(String(init?.body)) });
+        return url.endsWith("/probes")
+          ? json({ status: "ingested", detail: "correlation stored 1 probe result(s)", stored: 1, rejected: 0, warnings: [] })
+          : json({ status: "ingested", detail: "correlation stored 2 flow(s)", flows_parsed: 2, flows_skipped: 0, flows_stored: 2, warnings: [] });
+      }
+      if (url.endsWith("/v1/wargame/twin"))
+        return json({
+          ruleset_count: 1, rule_count: 2, segment_count: 2, edge_count: 1, snapshot_count: 1, has_twin: true,
+          flow_count: 12, probe_count: 3, probe_fresh_count: 1,
+        });
+      if (url.includes("/v1/wargame/assessments")) return json({ items: [], total: 0, limit: 20, offset: 0 });
+      return json({});
+    });
+    renderPage();
+    expect(await screen.findByText(/Add evidence \(optional\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/Stored so far: 12 flows, 3 probe results \(1 recent/)).toBeInTheDocument();
+
+    const probeForm = screen.getByRole("form", { name: "Probe results" });
+    const probeBox = within(probeForm).getByLabelText("Probe results JSON");
+    fireEvent.change(probeBox, { target: { value: "nope" } });
+    fireEvent.click(within(probeForm).getByRole("button", { name: "Record results" }));
+    await waitFor(() => expect(useStore.getState().toasts.some((t) => /must be JSON/.test(t.text))).toBe(true));
+    expect(calls.length).toBe(0);
+
+    const row = { src: "guest", dst: "db", port: 5432, result: "blocked", observed_at: "2026-11-22T09:00:00Z" };
+    fireEvent.change(probeBox, { target: { value: JSON.stringify([row]) } });
+    fireEvent.click(within(probeForm).getByRole("button", { name: "Record results" }));
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0].url).toMatch(/\/v1\/wargame\/twin\/probes$/);
+    expect(calls[0].body).toEqual({ results: [row] });
+
+    const flowForm = screen.getByRole("form", { name: "Flow logs" });
+    fireEvent.change(within(flowForm).getByLabelText("Format"), { target: { value: "zeek" } });
+    fireEvent.change(within(flowForm).getByLabelText("Flow log text"), { target: { value: '{"id.orig_h":"10.9.0.5"}' } });
+    fireEvent.click(within(flowForm).getByRole("button", { name: "Load flows" }));
+    await waitFor(() => expect(calls.length).toBe(2));
+    expect(calls[1].body).toEqual({ raw: '{"id.orig_h":"10.9.0.5"}', format: "zeek", source: "" });
   });
 
   it("shows an error, not invented data, when the API fails", async () => {

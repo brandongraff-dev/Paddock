@@ -34,15 +34,20 @@ development key is used and every certificate is labelled
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
-from . import agreement, certificate, mincut, report, signing, store
+from . import agreement, certificate, evidence, mincut, report, signing, store
 from .environment import Environment
 from .model import Assumption, Corroboration, Edge, FixCandidate, Flow
 
 #: The PUBLIC development key (re-exported for compatibility). A fingerprint
 #: made with it is not a signature; see :mod:`.signing`.
 DEMO_SIGNING_KEY = signing.DEMO_SIGNING_KEY
+
+#: Certificate lifetime. A probe result older than this does not count
+#: (``evidence.PROBE_MAX_AGE_HOURS`` is kept equal), so a ``pass`` certificate
+#: never outlives the probe behind it.
+CERT_TTL_HOURS = 24
 
 #: Assumption key on a certificate no active probe stands behind.
 PROOF_BASIS_KEY = "proof_basis"
@@ -101,6 +106,7 @@ def assess_environment(
     probes: Optional[Mapping[tuple[str, str], bool]] = None,
     observed_flows: Sequence[Flow] = (),
     observation_window_days: int = 0,
+    standing_certificates: Sequence[Mapping[str, Any]] = (),
 ) -> store.AssessmentBundle:
     """Run a full Wargame assessment over ``env`` and assemble the bundle.
 
@@ -109,6 +115,16 @@ def assess_environment(
     not probed. ``observed_flows`` are real observed flows over
     ``observation_window_days`` (0 = none looked at). ``signing_key`` is the
     tenant's key; ``None`` falls back to the labelled development key.
+
+    ``standing_certificates`` are certificates issued earlier and still valid
+    at ``issued_at`` (dicts with ``boundary_src``, ``boundary_dst``,
+    ``fingerprint``, ``status``, ``expires_at``). Every real observed flow is
+    classified (``impossible.classify_flow``) against them and against this
+    run's certificates; the alerts go into ``metadata``
+    (``impossible_traffic_alerts`` = count, ``impossible_traffic_sample`` =
+    the first few). A flow crossing a pair the config proves closed also makes
+    that pair ``fail_open`` here, so it gets no new certificate; the alert is
+    what names the earlier certificate it contradicts.
 
     Deterministic and pure (see the module docstring). Pairs, reports and
     certificates are all produced in sorted order.
@@ -169,10 +185,22 @@ def assess_environment(
                 probe_tested=probed,
             ),
             issued_at=issued_at,
-            ttl_hours=24,
+            ttl_hours=CERT_TTL_HOURS,
         )
         certificate.sign_with(cert, signing_key)
         certificates_out.append(cert)
+
+    # Impossible traffic: real flows across a certificate still standing
+    # (an earlier run's, or this run's). Never used to amend the model.
+    standing = list(standing_certificates) + [
+        {"boundary_src": c.boundary_src, "boundary_dst": c.boundary_dst,
+         "fingerprint": c.fingerprint, "status": c.status,
+         "expires_at": c.expires_at or None}
+        for c in certificates_out
+    ]
+    alerts = evidence.impossible_alerts(
+        flows, evidence.closed_boundaries(env, standing, now=issued_at)
+    ) if flows else []
 
     candidates = _fix_candidates(env)
     # Verified, not just solved: the fix set is applied to the model and the
@@ -201,6 +229,15 @@ def assess_environment(
             "key_id": signing_key.kid,
             "probed_pairs": len(probes),
             "observed_flows": len(flows),
+            "observation_window_days": (
+                max(0, int(observation_window_days)) if flows else 0
+            ),
+            "probe_max_age_hours": CERT_TTL_HOURS,
+            "pass_pairs": sum(1 for r in reports if r.verdict == "pass"),
+            "impossible_traffic_alerts": len(alerts),
+            "impossible_traffic_sample": [
+                evidence.alert_dict(a) for a in alerts[: evidence.ALERT_SAMPLE]
+            ],
             "fix_set_verified": bool(fs.verified),
             "fix_set_solver": fs.solver,
             "fix_set_uncut_pairs": [list(p) for p in sorted(fs.uncut_pairs)],

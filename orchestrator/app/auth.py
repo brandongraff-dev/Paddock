@@ -586,6 +586,10 @@ _rule("POST", r"/v1/attack-paths/recompute", "scan")
 # or applied), usable from CI with a `scan`-scoped key. Other wargame writes
 # (twin ingest, recompute) stay on the deny-closed admin default.
 _rule("POST", r"/v1/wargame/change-impact", "scan")
+# Twin evidence (observed flows, recorded probe results) is admin, like
+# /twin/config: a blocked probe upgrades a pair to "pass", so who may submit
+# one is as sensitive as who may submit the config itself.
+_rule("POST", r"/v1/wargame/twin/(flows|probes)", "admin")
 _rule("POST", r"/v1/ml/retrain", "scan")
 
 # --- ask -------------------------------------------------------------------- #
