@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/brandongraff-dev/cybersec/terraform-provider-paddock/internal/client"
+	"github.com/brandongraff-dev/paddock/terraform-provider-paddock/internal/client"
 )
 
 // clientFrom extracts the configured API client from provider data.

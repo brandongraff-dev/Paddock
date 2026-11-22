@@ -22,7 +22,7 @@ from .base import DeliveryResult
 from .pinned import PinnedTransport
 from .settings import isettings
 
-USER_AGENT = "Paddock-Integrations/1.0 (+https://github.com/brandongraff-dev/cybersec)"
+USER_AGENT = "Paddock-Integrations/1.0 (+https://github.com/brandongraff-dev/paddock)"
 
 
 class GuardedAsyncClient(httpx.AsyncClient):

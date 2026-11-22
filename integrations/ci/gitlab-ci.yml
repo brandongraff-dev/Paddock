@@ -8,7 +8,7 @@
 # Pin PADDOCK_CI_REF to a tag or commit SHA in production.
 variables:
   PADDOCK_CI_REF: main
-  PADDOCK_CI_URL: https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh
+  PADDOCK_CI_URL: https://raw.githubusercontent.com/brandongraff-dev/paddock/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh
 
 .paddock-base:
   stage: test

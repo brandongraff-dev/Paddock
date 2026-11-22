@@ -15,7 +15,7 @@ jobs:
           name: Install helper
           command: |
             apk add --no-cache -q bash curl jq
-            curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF:-main}/integrations/ci/paddock-ci.sh" \
+            curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/paddock/${PADDOCK_CI_REF:-main}/integrations/ci/paddock-ci.sh" \
               -o /usr/local/bin/paddock-ci
             chmod +x /usr/local/bin/paddock-ci
       - run:

@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"github.com/brandongraff-dev/cybersec/terraform-provider-paddock/internal/client"
+	"github.com/brandongraff-dev/paddock/terraform-provider-paddock/internal/client"
 )
 
 var ctx = context.Background()

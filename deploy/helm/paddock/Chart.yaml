@@ -10,6 +10,6 @@ version: 0.1.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.25.0-0"
 keywords: [security, asm, attack-surface, defensive]
-home: https://github.com/brandongraff-dev/cybersec
+home: https://github.com/brandongraff-dev/paddock
 sources:
-  - https://github.com/brandongraff-dev/cybersec
+  - https://github.com/brandongraff-dev/paddock

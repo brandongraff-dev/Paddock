@@ -20,7 +20,7 @@ pipeline {
         sh '''
           set -eu
           apk add --no-cache -q bash curl jq
-          curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/cybersec/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh" -o paddock-ci
+          curl -fsSL "https://raw.githubusercontent.com/brandongraff-dev/paddock/${PADDOCK_CI_REF}/integrations/ci/paddock-ci.sh" -o paddock-ci
           chmod +x paddock-ci
           trivy fs --quiet --format json --output trivy.json .
           ./paddock-ci ingest trivy.json

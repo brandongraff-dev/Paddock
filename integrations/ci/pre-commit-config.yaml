@@ -6,7 +6,7 @@
 # they never block an offline commit. (The gate hook only blocks when Paddock
 # answers and reports unsuppressed high+ findings.)
 repos:
-  - repo: https://github.com/brandongraff-dev/cybersec
+  - repo: https://github.com/brandongraff-dev/paddock
     rev: main            # pin a tag or commit SHA
     hooks:
       - id: paddock-lockfiles   # on commit: send changed lockfiles to Paddock
