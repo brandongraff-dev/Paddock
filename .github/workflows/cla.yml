@@ -23,8 +23,14 @@ jobs:
   cla:
     name: CLA Assistant
     runs-on: ubuntu-latest
+    # Only outside contributors sign. The repository's owner, members and
+    # collaborators already hold the rights the CLA grants, including for
+    # commits made on their behalf by coding agents (authored as a bot identity
+    # that can't sign). For those PRs the job is skipped, which GitHub treats
+    # as passing.
     if: >-
-      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'pull_request_target' &&
+       !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) ||
       (github.event.issue.pull_request &&
        (github.event.comment.body == 'recheck' ||
         github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
