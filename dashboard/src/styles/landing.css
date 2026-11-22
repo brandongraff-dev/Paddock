@@ -690,4 +690,4 @@ html { scrollbar-color: #2b2621 #0e0c0a; scrollbar-width: thin; }
 .tone-sepia .lp-card-img, .tone-ash .lp-card-img, .tone-patina .lp-card-img, .tone-ember .lp-card-img, .lp-card-img { background: #232220 !important; }
 
 /* the pixel grid laid over the painted cliff, on the same cell pitch as the sky, so they read as one surface */
-.scene-grid { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(to right, rgba(14, 12, 10, 0.72) 1px, transparent 1px), linear-gradient(to bottom, rgba(14, 12, 10, 0.72) 1px, transparent 1px); background-size: var(--cs, 5px) var(--cs, 5px); background-position: calc(var(--cs, 5px) - 1px) calc(var(--cs, 5px) - 1px); }
+.scene-grid { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(to right, rgba(14, 12, 10, 0.4) 1px, transparent 1px), linear-gradient(to bottom, rgba(14, 12, 10, 0.4) 1px, transparent 1px); background-size: var(--cs, 5px) var(--cs, 5px); background-position: calc(var(--cs, 5px) - 1px) calc(var(--cs, 5px) - 1px); }
