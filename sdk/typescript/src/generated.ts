@@ -2828,6 +2828,57 @@ export interface WargameRoutePage {
   total: number;
 }
 
+/**
+ * Body of POST /v1/wargame/twin/config: one read-only vendor config.
+ */
+export interface WargameTwinConfigRequest {
+  raw: string;
+  source?: string;
+  vendor: string;
+}
+
+/**
+ * Result of POST /v1/wargame/twin/config. `status` is `ingested` when the
+ * synchronous correlation call succeeded, `queued` when a Redis job was
+ * enqueued as a fallback, or `unavailable` when both failed.
+ */
+export interface WargameTwinIngestOut {
+  detail?: string | null;
+  rulesets?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+}
+
+/**
+ * Row counts of the persisted twin (GET /v1/wargame/twin).
+ */
+export interface WargameTwinSummaryOut {
+  edge_count: number;
+  has_twin: boolean;
+  rule_count: number;
+  ruleset_count: number;
+  segment_count: number;
+  snapshot_count: number;
+}
+
+/**
+ * Result of POST /v1/wargame/twin/topology (same status semantics).
+ */
+export interface WargameTwinTopologyOut {
+  detail?: string | null;
+  edges?: number | null;
+  segments?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+}
+
+/**
+ * Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded
+ * verbatim to the correlation service which validates them.
+ */
+export interface WargameTwinTopologyRequest {
+  edges?: Record<string, unknown>[];
+  segments?: Record<string, unknown>[];
+}
+
 export interface WhyFactor {
   key: string;
   label: string;
@@ -3277,6 +3328,9 @@ export const OPERATIONS = {
   getFixSet: ["GET", "/v1/wargame/assessments/{assessment_id}/fix-set", false],
   listRoutes: ["GET", "/v1/wargame/assessments/{assessment_id}/routes", true],
   recomputeWargame: ["POST", "/v1/wargame/recompute", false],
+  getTwinSummary: ["GET", "/v1/wargame/twin", false],
+  ingestTwinConfig: ["POST", "/v1/wargame/twin/config", false],
+  setTwinTopology: ["POST", "/v1/wargame/twin/topology", false],
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -5534,6 +5588,41 @@ export abstract class GeneratedOperations {
    */
   recomputeWargame(options?: RequestOptions): Promise<WargameRecomputeOut> {
     return this._request<WargameRecomputeOut>("POST", "/v1/wargame/recompute", { options });
+  }
+
+  /**
+   * GET /v1/wargame/twin — Get Twin Summary
+   *
+   * Row counts of the persisted twin. Read-only; tenant scoping is applied
+   * by the pool's RLS session, exactly like the other reads here.
+   */
+  getTwinSummary(options?: RequestOptions): Promise<WargameTwinSummaryOut> {
+    return this._request<WargameTwinSummaryOut>("GET", "/v1/wargame/twin", { options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/config — Ingest Twin Config
+   *
+   * Ingest one read-only vendor config into the twin (compute-side).
+   *
+   * Forwards to correlation `POST /ingest-config`; falls back to a
+   * `correlate:twin_ingest_config` Redis job. The config is parsed, never
+   * applied to any device. Never fails hard when correlation is down.
+   */
+  ingestTwinConfig(body: WargameTwinConfigRequest, options?: RequestOptions): Promise<WargameTwinIngestOut> {
+    return this._request<WargameTwinIngestOut>("POST", "/v1/wargame/twin/config", { body, options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/topology — Set Twin Topology
+   *
+   * Set the twin's segments/edges (compute-side).
+   *
+   * Forwards to correlation `POST /set-topology`; falls back to a
+   * `correlate:twin_set_topology` Redis job. Never fails hard.
+   */
+  setTwinTopology(body: WargameTwinTopologyRequest, options?: RequestOptions): Promise<WargameTwinTopologyOut> {
+    return this._request<WargameTwinTopologyOut>("POST", "/v1/wargame/twin/topology", { body, options });
   }
 
 }

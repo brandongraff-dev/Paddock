@@ -1462,3 +1462,60 @@ class WargameRecomputeOut(BaseModel):
 
     status: Literal["computed", "queued", "unavailable"]
     detail: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Wargame twin management (schema 040)
+#
+# Read-only configuration ingest into the digital twin. The orchestrator only
+# forwards the payload to the correlation service (which owns the twin
+# tables); nothing is applied to any device and nothing is probed.
+# --------------------------------------------------------------------------- #
+
+WargameTwinTriggerStatus = Literal["ingested", "queued", "unavailable"]
+
+
+class WargameTwinConfigRequest(BaseModel):
+    """Body of POST /v1/wargame/twin/config: one read-only vendor config."""
+
+    vendor: str
+    raw: str
+    source: str = ""
+
+
+class WargameTwinTopologyRequest(BaseModel):
+    """Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded
+    verbatim to the correlation service which validates them."""
+
+    segments: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WargameTwinIngestOut(BaseModel):
+    """Result of POST /v1/wargame/twin/config. `status` is `ingested` when the
+    synchronous correlation call succeeded, `queued` when a Redis job was
+    enqueued as a fallback, or `unavailable` when both failed."""
+
+    status: WargameTwinTriggerStatus
+    detail: str | None = None
+    rulesets: int | None = None
+
+
+class WargameTwinTopologyOut(BaseModel):
+    """Result of POST /v1/wargame/twin/topology (same status semantics)."""
+
+    status: WargameTwinTriggerStatus
+    detail: str | None = None
+    segments: int | None = None
+    edges: int | None = None
+
+
+class WargameTwinSummaryOut(BaseModel):
+    """Row counts of the persisted twin (GET /v1/wargame/twin)."""
+
+    ruleset_count: int
+    rule_count: int
+    segment_count: int
+    edge_count: int
+    snapshot_count: int
+    has_twin: bool

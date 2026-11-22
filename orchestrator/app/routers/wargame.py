@@ -13,6 +13,10 @@ reads the persisted artifacts and exposes a recompute trigger.
 - `GET  /v1/wargame/assessments/{id}/certificates` -- closed-boundary certs.
 - `GET  /v1/wargame/assessments/{id}/fix-set` -- the minimum-cost fix set.
 - `GET  /v1/wargame/assessments/{id}/evidence` -- hash-chained evidence items.
+- `GET  /v1/wargame/twin` -- row counts of the persisted twin (read-only).
+- `POST /v1/wargame/twin/config` -- forward one read-only vendor config to the
+  correlation service for ingest into the twin (nothing is applied anywhere).
+- `POST /v1/wargame/twin/topology` -- forward segments/edges to correlation.
 - `POST /v1/wargame/recompute` -- prefer a synchronous call to the correlation
   service; fall back to a Redis job. Never fails hard when correlation is down.
 
@@ -41,6 +45,11 @@ from ..models import (
     WargameRecomputeOut,
     WargameRouteOut,
     WargameRoutePage,
+    WargameTwinConfigRequest,
+    WargameTwinIngestOut,
+    WargameTwinSummaryOut,
+    WargameTwinTopologyOut,
+    WargameTwinTopologyRequest,
 )
 from ..queue import get_redis
 from .. import tenancy
@@ -445,3 +454,148 @@ async def recompute_wargame(r=Depends(get_redis)):
         return WargameRecomputeOut(
             status="unavailable", detail=f"correlation unreachable: {exc!s}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Twin management: read-only summary + ingest triggers
+# --------------------------------------------------------------------------- #
+
+@router.get("/twin", response_model=WargameTwinSummaryOut)
+async def get_twin_summary(pool=Depends(get_pool)):
+    """Row counts of the persisted twin. Read-only; tenant scoping is applied
+    by the pool's RLS session, exactly like the other reads here."""
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            """
+            SELECT (SELECT COUNT(*) FROM wargame_rulesets)         AS rulesets,
+                   (SELECT COUNT(*) FROM wargame_rules)            AS rules,
+                   (SELECT COUNT(*) FROM wargame_segments)         AS segments,
+                   (SELECT COUNT(*) FROM wargame_edges)            AS edges,
+                   (SELECT COUNT(*) FROM wargame_config_snapshots) AS snapshots
+            """
+        )
+    d = dict(row) if row is not None else {}
+    rulesets = int(d.get("rulesets") or 0)
+    rules = int(d.get("rules") or 0)
+    segments = int(d.get("segments") or 0)
+    edges = int(d.get("edges") or 0)
+    snapshots = int(d.get("snapshots") or 0)
+    return WargameTwinSummaryOut(
+        ruleset_count=rulesets,
+        rule_count=rules,
+        segment_count=segments,
+        edge_count=edges,
+        snapshot_count=snapshots,
+        has_twin=bool(rulesets or segments or edges),
+    )
+
+
+async def _trigger_twin(
+    r, path: str, op: str, payload: dict[str, Any]
+) -> tuple[str, str | None, dict[str, Any]]:
+    """Mirror of the recompute trigger for twin ingest.
+
+    Returns `(status, detail, sync_body)`. Tries a short synchronous POST to
+    the correlation service; on failure falls back to a Redis job on the
+    correlate queue. Never raises.
+    """
+    url = settings.correlation_url.rstrip("/") + path
+
+    # 1) Synchronous correlation call.
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            resp = await http.post(url, json=payload, headers=service_headers())
+        if resp.status_code < 400:
+            body: dict[str, Any] = {}
+            try:
+                parsed = resp.json()
+                if isinstance(parsed, dict):
+                    body = parsed
+            except Exception:  # noqa: BLE001
+                body = {}
+            return "ingested", None, body
+        logger.warning(
+            "correlation_twin_http_error",
+            extra={"path": path, "status": resp.status_code},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.info(
+            "correlation_unreachable_falling_back", extra={"error": str(exc)}
+        )
+
+    # 2) Fall back to a Redis job on the correlate queue.
+    try:
+        await r.xadd(
+            settings.queue_correlate,
+            {
+                "job": json.dumps(
+                    {
+                        "kind": f"correlate_{op}",
+                        "op": op,
+                        "payload": payload,
+                        "tenant_id": tenancy.current_tenant_id(),
+                    }
+                )
+            },
+        )
+        return "queued", f"{op} job enqueued on correlate queue", {}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("wargame_twin_enqueue_failed")
+        return "unavailable", f"correlation unreachable: {exc!s}", {}
+
+
+def _opt_int(body: dict[str, Any], *keys: str) -> int | None:
+    for k in keys:
+        v = body.get(k)
+        if v is not None:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+@router.post("/twin/config", response_model=WargameTwinIngestOut)
+async def ingest_twin_config(
+    req: WargameTwinConfigRequest, r=Depends(get_redis)
+):
+    """Ingest one read-only vendor config into the twin (compute-side).
+
+    Forwards to correlation `POST /ingest-config`; falls back to a
+    `correlate:twin_ingest_config` Redis job. The config is parsed, never
+    applied to any device. Never fails hard when correlation is down.
+    """
+    status, detail, body = await _trigger_twin(
+        r, "/ingest-config", "twin_ingest_config", req.model_dump()
+    )
+    rulesets = _opt_int(body, "rulesets", "count")
+    if status == "ingested":
+        detail = (
+            f"correlation ingested {rulesets} ruleset(s)"
+            if rulesets is not None
+            else "correlation ingested the config"
+        )
+    return WargameTwinIngestOut(status=status, detail=detail, rulesets=rulesets)
+
+
+@router.post("/twin/topology", response_model=WargameTwinTopologyOut)
+async def set_twin_topology(
+    req: WargameTwinTopologyRequest, r=Depends(get_redis)
+):
+    """Set the twin's segments/edges (compute-side).
+
+    Forwards to correlation `POST /set-topology`; falls back to a
+    `correlate:twin_set_topology` Redis job. Never fails hard.
+    """
+    status, detail, body = await _trigger_twin(
+        r, "/set-topology", "twin_set_topology", req.model_dump()
+    )
+    segments = _opt_int(body, "segments")
+    edges = _opt_int(body, "edges")
+    if status == "ingested":
+        detail = "correlation set the topology"
+    return WargameTwinTopologyOut(
+        status=status, detail=detail, segments=segments, edges=edges
+    )

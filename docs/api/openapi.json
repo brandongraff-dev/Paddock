@@ -16728,6 +16728,185 @@
         "title": "WargameRoutePage",
         "type": "object"
       },
+      "WargameTwinConfigRequest": {
+        "description": "Body of POST /v1/wargame/twin/config: one read-only vendor config.",
+        "properties": {
+          "raw": {
+            "title": "Raw",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "vendor": {
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor",
+          "raw"
+        ],
+        "title": "WargameTwinConfigRequest",
+        "type": "object"
+      },
+      "WargameTwinIngestOut": {
+        "description": "Result of POST /v1/wargame/twin/config. `status` is `ingested` when the\nsynchronous correlation call succeeded, `queued` when a Redis job was\nenqueued as a fallback, or `unavailable` when both failed.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "rulesets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rulesets"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinIngestOut",
+        "type": "object"
+      },
+      "WargameTwinSummaryOut": {
+        "description": "Row counts of the persisted twin (GET /v1/wargame/twin).",
+        "properties": {
+          "edge_count": {
+            "title": "Edge Count",
+            "type": "integer"
+          },
+          "has_twin": {
+            "title": "Has Twin",
+            "type": "boolean"
+          },
+          "rule_count": {
+            "title": "Rule Count",
+            "type": "integer"
+          },
+          "ruleset_count": {
+            "title": "Ruleset Count",
+            "type": "integer"
+          },
+          "segment_count": {
+            "title": "Segment Count",
+            "type": "integer"
+          },
+          "snapshot_count": {
+            "title": "Snapshot Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ruleset_count",
+          "rule_count",
+          "segment_count",
+          "edge_count",
+          "snapshot_count",
+          "has_twin"
+        ],
+        "title": "WargameTwinSummaryOut",
+        "type": "object"
+      },
+      "WargameTwinTopologyOut": {
+        "description": "Result of POST /v1/wargame/twin/topology (same status semantics).",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "edges": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edges"
+          },
+          "segments": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segments"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinTopologyOut",
+        "type": "object"
+      },
+      "WargameTwinTopologyRequest": {
+        "description": "Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded\nverbatim to the correlation service which validates them.",
+        "properties": {
+          "edges": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "title": "WargameTwinTopologyRequest",
+        "type": "object"
+      },
       "WhyFactor": {
         "properties": {
           "key": {
@@ -31977,6 +32156,112 @@
           }
         },
         "summary": "Recompute Wargame",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin": {
+      "get": {
+        "description": "Row counts of the persisted twin. Read-only; tenant scoping is applied\nby the pool's RLS session, exactly like the other reads here.",
+        "operationId": "get_twin_summary_v1_wargame_twin_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinSummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Twin Summary",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/config": {
+      "post": {
+        "description": "Ingest one read-only vendor config into the twin (compute-side).\n\nForwards to correlation `POST /ingest-config`; falls back to a\n`correlate:twin_ingest_config` Redis job. The config is parsed, never\napplied to any device. Never fails hard when correlation is down.",
+        "operationId": "ingest_twin_config_v1_wargame_twin_config_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinIngestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Twin Config",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/topology": {
+      "post": {
+        "description": "Set the twin's segments/edges (compute-side).\n\nForwards to correlation `POST /set-topology`; falls back to a\n`correlate:twin_set_topology` Redis job. Never fails hard.",
+        "operationId": "set_twin_topology_v1_wargame_twin_topology_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinTopologyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinTopologyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Twin Topology",
         "tags": [
           "wargame"
         ]

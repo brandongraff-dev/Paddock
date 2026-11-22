@@ -3831,6 +3831,64 @@ WargameRoutePage = TypedDict(
     total=False,
 )
 
+WargameTwinConfigRequest = TypedDict(
+    'WargameTwinConfigRequest',
+    {
+        'raw': Required['str'],
+        'source': NotRequired['str'],
+        'vendor': Required['str'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/config: one read-only vendor config."""
+
+WargameTwinIngestOut = TypedDict(
+    'WargameTwinIngestOut',
+    {
+        'detail': NotRequired['str | None'],
+        'rulesets': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/config. `status` is `ingested` when the"""
+
+WargameTwinSummaryOut = TypedDict(
+    'WargameTwinSummaryOut',
+    {
+        'edge_count': Required['int'],
+        'has_twin': Required['bool'],
+        'rule_count': Required['int'],
+        'ruleset_count': Required['int'],
+        'segment_count': Required['int'],
+        'snapshot_count': Required['int'],
+    },
+    total=False,
+)
+"""Row counts of the persisted twin (GET /v1/wargame/twin)."""
+
+WargameTwinTopologyOut = TypedDict(
+    'WargameTwinTopologyOut',
+    {
+        'detail': NotRequired['str | None'],
+        'edges': NotRequired['int | None'],
+        'segments': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/topology (same status semantics)."""
+
+WargameTwinTopologyRequest = TypedDict(
+    'WargameTwinTopologyRequest',
+    {
+        'edges': NotRequired['list[dict[str, Any]]'],
+        'segments': NotRequired['list[dict[str, Any]]'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded"""
+
 WhyFactor = TypedDict(
     'WhyFactor',
     {
@@ -4330,6 +4388,9 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_fix_set': ('GET', '/v1/wargame/assessments/{assessment_id}/fix-set', False),
     'list_routes': ('GET', '/v1/wargame/assessments/{assessment_id}/routes', True),
     'recompute_wargame': ('POST', '/v1/wargame/recompute', False),
+    'get_twin_summary': ('GET', '/v1/wargame/twin', False),
+    'ingest_twin_config': ('POST', '/v1/wargame/twin/config', False),
+    'set_twin_topology': ('POST', '/v1/wargame/twin/topology', False),
 }
 
 
@@ -6093,6 +6154,35 @@ class GeneratedOperations:
         `status=unavailable` (correlation unreachable *and* the enqueue failed).
         """
         return self._request('POST', '/v1/wargame/recompute')
+
+    def get_twin_summary(self) -> WargameTwinSummaryOut:
+        """GET /v1/wargame/twin -- Get Twin Summary
+
+        Row counts of the persisted twin. Read-only; tenant scoping is applied
+        by the pool's RLS session, exactly like the other reads here.
+        """
+        return self._request('GET', '/v1/wargame/twin')
+
+    def ingest_twin_config(self, body: WargameTwinConfigRequest | dict[str, Any]) -> WargameTwinIngestOut:
+        """POST /v1/wargame/twin/config -- Ingest Twin Config
+
+        Ingest one read-only vendor config into the twin (compute-side).
+
+        Forwards to correlation `POST /ingest-config`; falls back to a
+        `correlate:twin_ingest_config` Redis job. The config is parsed, never
+        applied to any device. Never fails hard when correlation is down.
+        """
+        return self._request('POST', '/v1/wargame/twin/config', body=body)
+
+    def set_twin_topology(self, body: WargameTwinTopologyRequest | dict[str, Any]) -> WargameTwinTopologyOut:
+        """POST /v1/wargame/twin/topology -- Set Twin Topology
+
+        Set the twin's segments/edges (compute-side).
+
+        Forwards to correlation `POST /set-topology`; falls back to a
+        `correlate:twin_set_topology` Redis job. Never fails hard.
+        """
+        return self._request('POST', '/v1/wargame/twin/topology', body=body)
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError
