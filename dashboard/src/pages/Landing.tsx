@@ -8,7 +8,6 @@ import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
 import AgentArt from "./landing/AgentArt";
 import Faq from "./landing/Faq";
-import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
@@ -131,7 +130,6 @@ export default function Landing() {
         </h1>
 
         <div className="lp-horse">
-          <GallopTrail className="lp-trail" />
           <DigitHorse body={0.42} />
         </div>
 
