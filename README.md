@@ -7,6 +7,8 @@
 
 **Map the real attack paths from your internet-facing surface to your crown jewels — plus SCA, threat-intel, and an adaptive risk model, in one self-hosted platform.**
 
+**[openpaddock.dev](https://openpaddock.dev)** · [Docs](https://docs.openpaddock.dev)
+
 [![CI](https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml/badge.svg)](https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml)
 [![Integration](https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml/badge.svg)](https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)

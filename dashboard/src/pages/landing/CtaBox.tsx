@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../state/auth";
 import { BRAND_ICONS } from "../../brand/brandIcons";
 
-const DOCS = "https://paddock-docs.vercel.app";
+const DOCS = "https://docs.openpaddock.dev";
 const CMD = "make quickstart";
 export const PENDING_DOMAIN_KEY = "paddock.cta.domain";
 
@@ -61,7 +61,7 @@ export default function CtaBox({ className }: { className?: string }) {
             {copied ? <path d="M3 8.5l3.2 3L13 4.5" /> : (<><rect x="5.5" y="5.5" width="8" height="8" rx="1.8" /><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" /></>)}
           </svg>
         </button>
-        <a className="cta-link" href="https://paddock-docs.vercel.app" target="_blank" rel="noreferrer">Read the docs</a>
+        <a className="cta-link" href="https://docs.openpaddock.dev" target="_blank" rel="noreferrer">Read the docs</a>
       </div>
       <p className="cta-note">Open source. Self-hosted. Your data and keys stay on your own infrastructure.</p>
     </div>

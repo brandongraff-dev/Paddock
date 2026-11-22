@@ -77,7 +77,7 @@ const AGENTS: Agent[] = [
 const REPO = "https://github.com/brandongraff-dev/cybersec";
 const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
   { title: "Product", links: [["Agents", "#agents"], ["See it work", "#product"], ["How it works", "#how"], ["Principles", "#principles"], ["FAQ", "#faq"], ["Console", "/login"]] },
-  { title: "Project", links: [["Source", REPO], ["Documentation", "https://paddock-docs.vercel.app"], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
+  { title: "Project", links: [["Source", REPO], ["Documentation", "https://docs.openpaddock.dev"], ["Issues", `${REPO}/issues`], ["Contributing", `${REPO}/blob/main/CONTRIBUTING.md`]] },
   { title: "Security", links: [["Security policy", `${REPO}/blob/main/SECURITY.md`], ["Report a vulnerability", `${REPO}/security/advisories/new`], ["Code of conduct", `${REPO}/blob/main/CODE_OF_CONDUCT.md`]] },
 ];
 
@@ -112,7 +112,7 @@ export default function Landing() {
             <a href="#agents">Agents</a>
             <a href="#product">Product</a>
             <a href="#principles">Principles</a>
-            <a href="https://paddock-docs.vercel.app" target="_blank" rel="noreferrer">
+            <a href="https://docs.openpaddock.dev" target="_blank" rel="noreferrer">
               Docs
             </a>
             <GitHubStars />
