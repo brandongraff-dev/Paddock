@@ -223,19 +223,44 @@ export function PathWindow({ run }: { run: boolean }) {
   );
 }
 
+const ROWS = [
+  {
+    key: "path",
+    title: "Every path, hop by hop",
+    body: "Paddock walks the graph from the internet to your crown jewels and shows the route an attacker would take: each asset, each weakness, and where it ends.",
+    points: ["Exploited-in-the-wild flaws are flagged and ranked first", "Every hop shows why it matters and who owns it", "One click opens the fix as a ticket"],
+  },
+  {
+    key: "overview",
+    title: "Your whole surface, continuously mapped",
+    body: "New subdomains, services and exposures are discovered and re-checked as they change, so the picture is never a snapshot from last quarter.",
+    points: ["One exposure index you can watch fall", "Open findings by severity, with owners", "Only assets you have proven you own"],
+  },
+] as const;
+
 export default function Showcase() {
-  const [ref, seen] = useInView<HTMLElement>(0.18);
+  const [ref, seen] = useInView<HTMLElement>(0.1);
+  const [r1, in1] = useInView<HTMLDivElement>(0.25);
+  const [r2, in2] = useInView<HTMLDivElement>(0.25);
+  const refs = [r1, r2];
+  const ins = [in1, in2];
   return (
-    <section className="lp-showcase" id="product" ref={ref}>
+    <section className="lp-showcase lp-desktop-only" id="product" ref={ref}>
       <PixelField className="lp-showcase-px" cell={6} animate={false} originX={-0.1} />
       <div className="lp-section-head">
         <span className="lp-eyebrow mono">The product</span>
         <h2>See the path before they do.</h2>
       </div>
-      <div className={`sc-stage${seen ? " in" : ""}`}>
-        <div className="sc-back"><OverviewWindow run={seen} /></div>
-        <div className="sc-fore"><PathWindow run={seen} /></div>
-      </div>
+      {ROWS.map((r, i) => (
+        <div className={`sc-row${i % 2 ? " flip" : ""}`} key={r.key} ref={refs[i]}>
+          <div className="sc-copy">
+            <h3>{r.title}</h3>
+            <p>{r.body}</p>
+            <ul>{r.points.map((t) => <li key={t}>{t}</li>)}</ul>
+          </div>
+          <div className="sc-shot">{r.key === "path" ? <PathWindow run={ins[i] && seen} /> : <OverviewWindow run={ins[i] && seen} />}</div>
+        </div>
+      ))}
       <p className="sc-note mono">Mock data, real interface.</p>
     </section>
   );

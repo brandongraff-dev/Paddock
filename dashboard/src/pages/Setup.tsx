@@ -155,7 +155,7 @@ function WorkspaceStep({ ob, save }: StepProps) {
 function DomainStep({ ob, save }: StepProps) {
   const user = useAuth((s) => s.user);
   const existing = ob.scope_entry;
-  const [domain, setDomain] = useState(existing?.value ?? "");
+  const [domain, setDomain] = useState(existing?.value ?? pendingDomain());
   const [wildcard, setWildcard] = useState(existing ? existing.kind === "subdomain_wildcard" : true);
   const [authRef, setAuthRef] = useState("");
   const [busy, setBusy] = useState(false);
@@ -541,6 +541,11 @@ const STEP_VIEWS: Record<WizardStep, (p: StepProps) => JSX.Element> = {
 /* ------------------------------------------------------------------ */
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
+
+/** A domain typed into the landing page CTA, handed over through sessionStorage. */
+function pendingDomain(): string {
+  try { return sessionStorage.getItem("paddock.cta.domain") ?? ""; } catch { return ""; }
+}
 
 export default function Setup() {
   const qc = useQueryClient();
