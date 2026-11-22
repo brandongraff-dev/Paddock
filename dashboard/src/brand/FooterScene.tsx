@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { hash, ramp } from "./PixelField";
-import { RIDER_W } from "./riderData";
 
 /**
  * Footer scene: a rider on horseback at the edge of a cliff, looking out over a
@@ -27,6 +26,7 @@ function vnoise(x: number, y: number): number {
 
 export default function FooterScene({ className, cell = 5 }: { className?: string; cell?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const riderImg = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -57,7 +57,7 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
       for (let o = 0; o < px.length; o += 4) { px[o] = 14; px[o + 1] = 12; px[o + 2] = 10; px[o + 3] = 255; }
 
       const hy = Math.round(rows * (phone ? 0.58 : 0.66));        // horizon row
-      const cliffX = Math.round(cols * (phone ? 0.5 : 0.66));    // cliff face start (at ledge)
+      const cliffX = Math.round(cols * (phone ? 0.44 : 0.63));    // cliff face start (at ledge)
       const ledge = hy - Math.round(rows * 0.035);                // ledge row
       const orbX = Math.round(cols * (phone ? 0.3 : 0.5));
       const orbY = Math.round(hy - rows * (phone ? 0.2 : 0.36));
@@ -163,27 +163,18 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
         ctx.fillStyle = "rgba(240,160,110,0.35)"; ctx.fillRect(cx, top, 2, ledgeY - top);
       });
 
-      // rider and horse (solid silhouette)
-      const u = (cs * RIDER_W) / 64 * (phone ? 1.1 : 1.15);
-      const ox = cliffPx + (phone ? 6 : 14), oy = ledgeY - 46 * u;
-      const poly = (pts: [number, number][]) => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(ox + x * u, oy + y * u) : ctx.moveTo(ox + x * u, oy + y * u))); ctx.closePath(); ctx.fill(); };
-      ctx.fillStyle = "#070605";
-      poly([[22,18],[30,16.5],[42,17],[50,18.5],[55,21],[56,27],[51,31.5],[40,32.5],[30,32],[24,29.5],[21,24]]);
-      poly([[20,23],[25,16.5],[20,9],[14,5.5],[11,9.5],[15,19]]);
-      poly([[9,4.5],[15,3.5],[16.5,7],[12.5,15.5],[8.5,17.5],[5.8,15],[8,9]]);
-      poly([[13,3.8],[14.6,0.2],[16.4,4]]);
-      poly([[21,17],[18,12],[16,14],[19,20]]);
-      poly([[22,30],[25.6,30],[25.2,38],[25.6,46],[22.8,46],[22.6,38]]);
-      poly([[26.8,30],[30.2,30],[29.6,38],[30.2,46],[27.4,46],[27.4,38]]);
-      poly([[48,28.5],[54.5,28.5],[52.5,36],[53.4,46],[50.6,46],[49.6,38],[45.5,33]]);
-      poly([[43.5,30],[47.5,30],[47,37],[47.4,46],[44.6,46],[44.4,38]]);
-      poly([[54.5,20],[59,23],[61.5,33],[60,42],[57.8,41],[58.2,32],[54.6,26]]);
-      poly([[34.8,16.5],[40.5,16.5],[41.8,7.5],[36.2,6.2]]);
-      ctx.beginPath(); ctx.ellipse(ox + 37.7 * u, oy + 3.7 * u, 2.9 * u, 2.9 * u, 0, 0, Math.PI * 2); ctx.fill();
-      poly([[39.5,7.5],[44,8.6],[56,15.5],[61,22],[54.5,22.5],[46.5,15.5],[40,13]]);
-      poly([[35.5,16],[40.5,17],[38.5,27.5],[35,26.5]]);
-      poly([[36.5,8.5],[39.5,8.5],[33.5,14.5],[31.2,13]]);
+      // rider and horse: the generated illustration, its stone slab joined to the cliff
+      const ri = riderImg.current;
+      if (ri && ri.complete && ri.naturalWidth) {
+        const iw = w * (phone ? 0.56 : 0.37);
+        const ih = (iw * ri.naturalHeight) / ri.naturalWidth;
+        ctx.drawImage(ri, cliffPx - 4, ledgeY - ih * 0.8186, iw, ih);
+      }
     };
+    const im = new Image();
+    im.onload = () => paint();
+    im.src = "/rider.png";
+    riderImg.current = im;
     paint();
     let t = 0;
     const on = () => { window.clearTimeout(t); t = window.setTimeout(paint, 120); };
