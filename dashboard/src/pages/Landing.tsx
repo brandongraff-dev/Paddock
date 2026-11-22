@@ -7,6 +7,9 @@ import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
 import AgentArt from "./landing/AgentArt";
+import PixelArches from "../brand/PixelArches";
+import PixelSprite from "../brand/PixelSprite";
+import type { SpriteName } from "../brand/spriteData";
 import Faq from "./landing/Faq";
 import DitherRule from "../brand/DitherRule";
 import { useAuth } from "../state/auth";
@@ -83,10 +86,10 @@ const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
 ];
 
 const RULES = [
-  ["No exploitation", "Findings describe impact. They never carry a working payload."],
-  ["No credential attacks", "Default-credential risk is fingerprinted, never tried."],
-  ["No evasion", "The scanner names itself. No decoys, no spoofing, no WAF bypass."],
-  ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited."],
+  ["No exploitation", "Findings describe impact. They never carry a working payload.", "anvil"],
+  ["No credential attacks", "Default-credential risk is fingerprinted, never tried.", "key"],
+  ["No evasion", "The scanner names itself. No decoys, no spoofing, no WAF bypass.", "lantern"],
+  ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited.", "compass"],
 ];
 
 export default function Landing() {
@@ -186,16 +189,17 @@ export default function Landing() {
       <DitherRule className="lp-rule-dither" rows={5} />
 
 
-      <section className="lp-principles" id="principles">
+      <section className="lp-principles scene" id="principles">
+        <PixelArches className="scene-bg" variant="dawn" />
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Hard rules · enforced in code</span>
           <h2>A defender&rsquo;s instrument, by construction.</h2>
         </div>
         <ul className="rows rules in">
-          {RULES.map(([t, d], i) => (
+          {RULES.map(([t, d, icon], i) => (
             <li key={t}>
-              <span className="mono">0{i + 1}</span>
-              <h3>{t}</h3>
+              <PixelSprite name={icon as SpriteName} size={72} />
+              <h3><span className="mono">0{i + 1}</span>{t}</h3>
               <p>{d}</p>
             </li>
           ))}

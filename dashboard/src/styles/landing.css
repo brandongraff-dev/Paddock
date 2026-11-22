@@ -666,6 +666,6 @@ html { scrollbar-color: #2b2621 #0e0c0a; scrollbar-width: thin; }
 @media (max-width: 899px) { .lp-footer::before { background: linear-gradient(180deg, rgba(14, 12, 10, 0.6) 0%, rgba(14, 12, 10, 0.3) 45%, rgba(14, 12, 10, 0) 70%); } }
 
 /* ================= Hard rules: the same plain rows ================= */
-.lp-principles { position: relative; padding: clamp(64px, 11vh, 120px) clamp(16px, 4vw, 44px); background: #0e0c0a; }
+.lp-principles { position: relative; padding: clamp(64px, 11vh, 120px) clamp(16px, 4vw, 44px); background: #0e0c0a; min-height: 640px; }
 .lp-principles .lp-section-head { padding: 0; margin-bottom: clamp(28px, 6vh, 56px); max-width: 980px; }
 .rows.rules h3 { font-size: clamp(28px, 3.2vw, 44px); }
