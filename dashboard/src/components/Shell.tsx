@@ -75,6 +75,13 @@ const Icon = {
       <path d="M14.5 12.5 L17 15 L19.5 12.5" />
     </svg>
   ),
+  Wargame: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z" />
+      <path d="M12 8.5 L15 10.25 L15 13.75 L12 15.5 L9 13.75 L9 10.25 Z" />
+      <path d="M4 7.5 L9 10.25 M20 7.5 L15 10.25 M12 21 L12 15.5" strokeDasharray="1.6 2" />
+    </svg>
+  ),
   Changes: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 14 L7 14 L10 6 L14 19 L16.5 11 L18 14 L21 14" />
@@ -264,6 +271,7 @@ const navGroups: NavGroup[] = [
       { to: "/suppressions", label: "Suppressions", icon: Icon.Suppressions },
       { to: "/chains", label: "Chains", icon: Icon.Chains },
       { to: "/attack-paths", label: "Attack Paths", icon: Icon.AttackPaths },
+      { to: "/wargame", label: "Wargame", icon: Icon.Wargame },
       { to: "/risk-model", label: "Risk Model", icon: Icon.RiskModel },
       { to: "/attack", label: "ATT&CK", icon: Icon.Attack },
       { to: "/threat-intel", label: "Threat Intel", icon: Icon.ThreatIntel },
