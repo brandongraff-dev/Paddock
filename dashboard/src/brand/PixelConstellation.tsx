@@ -20,10 +20,11 @@ function vn(x: number, y: number) {
 }
 const fbm = (x: number, y: number) => vn(x, y) * 0.55 + vn(x * 2.1, y * 2.1) * 0.3 + vn(x * 4.3, y * 4.3) * 0.15;
 
-export type ConstellationVariant = "path" | "rules";
+export type ConstellationVariant = "path" | "rules" | "card";
 const VARIANTS = {
   path: { haze: [0.72, 0.5], seed: 4, nodes: [[0.5, 0.8], [0.64, 0.55], [0.78, 0.66], [0.9, 0.3]] },
   rules: { haze: [0.78, 0.46], seed: 17, nodes: [[0.56, 0.3], [0.7, 0.52], [0.62, 0.76], [0.86, 0.7], [0.93, 0.34]] },
+  card: { haze: [0.5, 0.5], seed: 9, nodes: [] },
 } as const;
 
 export default function PixelConstellation({ className, variant = "path", cell = 6 }: { className?: string; variant?: ConstellationVariant; cell?: number }) {
@@ -48,7 +49,7 @@ export default function PixelConstellation({ className, variant = "path", cell =
       };
       for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
         const x = i / cols, y = j / rows;
-        const neb = fbm(i * 0.03 + V.seed, j * 0.05 + V.seed * 0.4) * Math.exp(-Math.pow((x - V.haze[0]) / 0.34, 2)) * Math.exp(-Math.pow((y - V.haze[1]) / 0.5, 2));
+        const neb = fbm(i * 0.03 + V.seed, j * 0.05 + V.seed * 0.4) * Math.exp(-Math.pow((x - V.haze[0]) / (variant === "card" ? 0.5 : 0.34), 2)) * Math.exp(-Math.pow((y - V.haze[1]) / 0.5, 2));
         if (neb > 0.12 && neb * 2.2 > (BAYER[(j & 3) * 4 + (i & 3)] / 16) * 0.6 + hash(i, j) * 0.5) { const [r, g, b] = ramp(0.1 + neb * 1.3); px(i, j, r, g, b, 0.55); }
         if (hash(i * 3 + 1, j * 7 + 2) > 0.992) {
           const br = hash(i, j * 5), [r, g, b] = ramp(0.5 + br * 0.6);
@@ -56,7 +57,7 @@ export default function PixelConstellation({ className, variant = "path", cell =
           if (br > 0.8) { px(i + 1, j, r, g, b, 0.4); px(i - 1, j, r, g, b, 0.4); px(i, j + 1, r, g, b, 0.4); px(i, j - 1, r, g, b, 0.4); }
         }
       }
-      const P = V.nodes.map(([x, y]) => [Math.round(x * cols), Math.round(y * rows)] as const);
+      const P = (V.nodes as readonly (readonly number[])[]).map(([x, y]) => [Math.round(x * cols), Math.round(y * rows)] as const);
       for (let n = 0; n < P.length - 1; n++) {
         const [a, b] = P[n], [c, d] = P[n + 1], L = Math.hypot(c - a, d - b);
         for (let t = 0; t <= L; t++) if (t % 3 < 2) px(Math.round(a + ((c - a) * t) / L), Math.round(b + ((d - b) * t) / L), 150, 190, 215, 0.8);
