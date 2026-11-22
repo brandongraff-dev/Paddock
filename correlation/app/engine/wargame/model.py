@@ -326,6 +326,26 @@ class ReachabilityResult:
     #: Pairs where every route depends on a CONDITIONAL hop (needs probe /
     #: observation to settle). Reported separately from open/closed.
     conditional_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: Open pairs (decided exactly, by graph reachability) for which no
+    #: example route fits inside the enumeration limits (``max_hops``, the
+    #: per-pair cap, the visit budget). Still OPEN — never closed. A shortest
+    #: witness for each is in ``witness_routes``.
+    truncated_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: Open pairs whose listed ``routes`` may not be *all* of their routes
+    #: (cap hit, hop limit bit, budget exhausted; includes
+    #: ``truncated_pairs``). A fix set solved over the listing alone is not
+    #: proven to cut these — see ``mincut.verified_fix_set``.
+    incomplete_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: Open pairs where every route leans on a hop whose weakest evidence is
+    #: INFERRED/UNKNOWN (the model merely infers it). Still open; reported
+    #: so corroboration can be requested. May overlap ``conditional_pairs``.
+    inferred_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: One deterministic shortest route per ``truncated_pairs`` entry, with
+    #: no hop limit (so possibly longer than ``max_hops``). Not in ``routes``.
+    witness_routes: list[Route] = field(default_factory=list)
+    #: True when route enumeration hit a per-jewel visit budget (the listing
+    #: for that jewel is partial; open/closed is unaffected).
+    budget_exhausted: bool = False
 
     def routes_for(self, pair: tuple[str, str]) -> list[Route]:
         return [r for r in self.routes if r.pair == pair]
@@ -431,6 +451,10 @@ class Certificate:
     expires_at: str                       # ISO-8601 UTC
     status: str = "valid"                 # valid | expired | contradicted
     fingerprint: str = ""                 # set by certificate.sign()
+    #: Which key signed it (see ``signing.py``): a ``wg1-…`` id for a real
+    #: per-tenant key, ``"unsigned-dev"`` for the public development key, or
+    #: ``""`` for a legacy certificate signed before key ids existed.
+    key_id: str = ""
 
 
 # ---------------------------------------------------------------------------

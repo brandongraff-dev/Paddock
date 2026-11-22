@@ -21,6 +21,15 @@ certificate's semantic fields, so tampering with any of them breaks
 verification. Determinism: no wall-clock time is ever embedded — every
 timestamp comes from the ``datetime`` values passed in.
 
+Keys (:mod:`.signing`): :func:`sign_with` signs with a per-tenant key derived
+from ``WARGAME_SIGNING_KEY`` and records its ``key_id``; with no key
+configured it uses the public development key, sets ``key_id="unsigned-dev"``
+and adds an ``unsigned_dev_signature`` assumption, so an unkeyed fingerprint
+can never pass as a signature. :func:`verify_with` picks the key by
+``key_id``; :func:`signature_status` says ``signed`` / ``unsigned-dev`` /
+``invalid``. :func:`sign` / :func:`verify` with a raw key are kept for callers
+that manage their own key.
+
 stdlib only (``hashlib`` / ``hmac`` / ``datetime`` / ``json``).
 """
 from __future__ import annotations
@@ -30,7 +39,9 @@ import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
-from . import safety
+from typing import Optional
+
+from . import safety, signing
 from .model import Assumption, Certificate, Corroboration, PortRange, Proto
 
 #: Assumption key used to make the "absence of evidence only" limit explicit
@@ -41,6 +52,18 @@ _OBSERVATION_SIDE_TEXT = (
     "No sensor sits on the protected side of this boundary, so this certifies "
     "absence of evidence of a route, not a protected-side observation that the "
     "boundary is closed."
+)
+
+
+#: Assumption key stating that the fingerprint was made with the public
+#: development key and so is not a signature.
+UNSIGNED_DEV_KEY = "unsigned_dev_signature"
+
+_UNSIGNED_DEV_TEXT = (
+    "UNSIGNED (development): no signing key was configured "
+    "(WARGAME_SIGNING_KEY), so this certificate's fingerprint was made with a "
+    "public development key. Anyone can produce it; it is not a signature and "
+    "must not be presented as signed evidence."
 )
 
 
@@ -138,46 +161,95 @@ def build_certificate(
     )
 
 
+def _canonical_ts(value: "str | datetime | None") -> "str | None":
+    """A timestamp as UTC ISO-8601, whatever offset/format it arrived in, so a
+    certificate re-read from Postgres (``timestamptz``) or written with
+    ``Z`` / a non-UTC offset canonicalises to the same bytes it was signed
+    over. ``build_certificate`` already stores this form, so legacy
+    fingerprints are unchanged."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return _to_utc_iso(value)
+    try:
+        return _to_utc_iso(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
+    except ValueError:
+        return str(value)  # not a timestamp: sign it verbatim
+
+
+def _canonical_port(port: "PortRange | None") -> "dict | None":
+    """``None`` and the protocol-agnostic full range mean the same thing ("any
+    port") and are stored identically (``store.format_port`` -> ``"any"``), so
+    they canonicalise identically too."""
+    if port is None:
+        return None
+    if port.proto is Proto.ANY and port.low == 0 and port.high == 65535:
+        return None
+    return {"proto": port.proto.value, "low": port.low, "high": port.high}
+
+
 def _canonical(cert: Certificate) -> bytes:
     """Stable, deterministic serialisation of the semantic fields.
 
     Covers claim, boundaries, port, sorted config hashes, sorted assumptions,
-    corroboration and issued/expires timestamps — but NOT the fingerprint or
-    mutable status. ``json.dumps`` with ``sort_keys`` and a fixed key order
-    makes this independent of dict/list ordering.
+    corroboration, issued/expires timestamps (normalised to UTC) and the
+    ``key_id`` (bound so a fingerprint can't be relabelled as made by another
+    key; omitted when empty so legacy fingerprints still verify) — but NOT the
+    fingerprint or the mutable ``status`` (so :func:`mark_contradicted` works
+    without the key; ``status`` is therefore not tamper-evident: read it
+    together with the impossible-traffic log). ``json.dumps`` with
+    ``sort_keys`` and sorted lists makes this independent of dict/list order.
     """
-    port = cert.port
-    port_obj = (
-        None
-        if port is None
-        else {"proto": port.proto.value, "low": port.low, "high": port.high}
-    )
     payload = {
         "claim": cert.claim,
         "boundary_src": cert.boundary_src,
         "boundary_dst": cert.boundary_dst,
-        "port": port_obj,
+        "port": _canonical_port(cert.port),
         "config_hashes": sorted(cert.config_hashes),
         "assumptions": sorted(
             ([a.key, a.text] for a in cert.assumptions),
             key=lambda kv: (kv[0], kv[1]),
         ),
         "corroboration": {
-            "observed_flows": cert.corroboration.observed_flows,
-            "window_days": cert.corroboration.window_days,
-            "sensor_on_protected_side": cert.corroboration.sensor_on_protected_side,
-            "probe_tested": cert.corroboration.probe_tested,
+            "observed_flows": int(cert.corroboration.observed_flows),
+            "window_days": int(cert.corroboration.window_days),
+            "sensor_on_protected_side": bool(cert.corroboration.sensor_on_protected_side),
+            "probe_tested": bool(cert.corroboration.probe_tested),
         },
-        "issued_at": cert.issued_at,
-        "expires_at": cert.expires_at,
+        "issued_at": _canonical_ts(cert.issued_at),
+        "expires_at": _canonical_ts(cert.expires_at),
     }
+    kid = getattr(cert, "key_id", "") or ""
+    if kid:
+        payload["key_id"] = kid
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def sign(cert: Certificate, key: bytes) -> Certificate:
-    """Compute and set the HMAC-SHA256 fingerprint over the canonical form."""
+def sign(cert: Certificate, key: bytes, *, key_id: Optional[str] = None) -> Certificate:
+    """Compute and set the HMAC-SHA256 fingerprint over the canonical form.
+
+    ``key_id`` (when given) is recorded on the certificate first, so it is
+    bound into the fingerprint. Prefer :func:`sign_with`, which also labels a
+    development-key fingerprint as unsigned."""
+    if key_id is not None:
+        cert.key_id = key_id
     cert.fingerprint = hmac.new(key, _canonical(cert), hashlib.sha256).hexdigest()
     return cert
+
+
+def sign_with(cert: Certificate, signing_key: "signing.SigningKey") -> Certificate:
+    """Sign ``cert`` with a :class:`signing.SigningKey` and record its id.
+
+    With the public development key (``signing_key.unsigned``) the
+    ``unsigned_dev_signature`` assumption is added *before* fingerprinting, so
+    the certificate itself says, in a signed field, that it is not signed."""
+    if signing_key.unsigned and not any(
+        a.key == UNSIGNED_DEV_KEY for a in cert.assumptions
+    ):
+        cert.assumptions = list(cert.assumptions) + [
+            Assumption(key=UNSIGNED_DEV_KEY, text=_UNSIGNED_DEV_TEXT)
+        ]
+    return sign(cert, signing_key.key, key_id=signing_key.kid)
 
 
 def verify(cert: Certificate, key: bytes) -> bool:
@@ -185,11 +257,53 @@ def verify(cert: Certificate, key: bytes) -> bool:
 
     Any change to a semantic field after signing (e.g. the claim) changes the
     canonical form and so fails this check. Uses a constant-time compare.
+    This checks integrity under ``key`` only; whether that key is a real one
+    is :func:`signature_status`'s job.
     """
-    if not cert.fingerprint:
+    fp = cert.fingerprint
+    if not fp or not isinstance(fp, str) or not fp.isascii():
         return False
     expected = hmac.new(key, _canonical(cert), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(cert.fingerprint, expected)
+    return hmac.compare_digest(fp, expected)
+
+
+def verify_with(
+    cert: Certificate, keyring: "signing.Keyring", tenant_id: Optional[str]
+) -> bool:
+    """Verify with the key ``cert.key_id`` names, derived for ``tenant_id``.
+
+    False when the key id matches no configured master (forged or foreign),
+    or the fingerprint does not match. A development-key certificate verifies
+    here (its integrity is intact) but :func:`signature_status` reports it as
+    ``unsigned-dev``."""
+    try:
+        key = keyring.verification_key(getattr(cert, "key_id", "") or "", tenant_id)
+    except ValueError:
+        return False  # no tenant to derive for
+    if key is None:
+        return False
+    return verify(cert, key)
+
+
+def signature_status(
+    cert: Certificate, keyring: "signing.Keyring", tenant_id: Optional[str]
+) -> str:
+    """``"signed"`` (a real per-tenant key verifies it), ``"unsigned-dev"``
+    (intact, but fingerprinted with the public development key or a legacy
+    certificate) or ``"invalid"`` (does not verify)."""
+    if not verify_with(cert, keyring, tenant_id):
+        return "invalid"
+    if is_unsigned(cert):
+        return "unsigned-dev"
+    return "signed"
+
+
+def is_unsigned(cert: Certificate) -> bool:
+    """True when the certificate's fingerprint is not a real signature: it was
+    made with the public development key (or predates key ids)."""
+    return signing.is_unsigned_kid(getattr(cert, "key_id", "") or "") or any(
+        a.key == UNSIGNED_DEV_KEY for a in (cert.assumptions or [])
+    )
 
 
 def is_current(cert: Certificate, now: datetime) -> bool:

@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from . import compliance, report
-from .agreement import from_environment
+from .agreement import from_environment, from_reachability
 from .fabric import EdgeSpec, SegmentSpec, TopologySpec
 from .identity import IdentityPrincipal, PrincipalKind, build_identity_layer
 from .ingest import parse_flows
@@ -127,16 +127,20 @@ def main() -> None:
 
     # 7) Boundary agreement for the DIRECT guest→CDE firewall boundary.
     ag_guest = from_environment(env, "guest_wifi", "payments_db",
-                                PortRange.single(Proto.TCP, 5432), probe=False)
+                                PortRange.single(Proto.TCP, 5432))  # no probe was run
     print("Direct firewall boundary guest_wifi → payments_db (tcp/5432):")
     print(f"  verdict: {ag_guest.verdict}  "
           f"({ag_guest.note or '; '.join(ag_guest.disagreements)})")
     print("  (note: the DIRECT boundary is closed, yet a route exists via POS "
-          "— that is the point of searching end-to-end)\n")
+          "— that is the point of searching end-to-end)")
+    # The auditor-facing verdict is for the PAIR, from the end-to-end search.
+    ag_pair = from_reachability(rr, "guest_wifi", "payments_db", env=env)
+    print(f"Pair guest_wifi → payments_db (end-to-end): verdict {ag_pair.verdict}\n")
 
-    # 8) PCI evidence pack from the boundary verdicts.
+    # 8) PCI evidence pack from the pair-level verdict (not the direct edge:
+    #    a closed direct boundary must not read as a closed CDE).
     pack = compliance.pci_segmentation_pack(
-        boundary_reports=[ag_guest],
+        boundary_reports=[ag_pair],
         generated_at=datetime(2026, 11, 22, tzinfo=timezone.utc).isoformat(),
         coverage_pct=0.97, has_probe=True)
     print(f"PCI evidence pack ({pack.framework}), fingerprint "
@@ -146,7 +150,7 @@ def main() -> None:
     print()
 
     # 9) Scorecard.
-    sc = report.build_scorecard(rr, agreement_reports=[ag_guest],
+    sc = report.build_scorecard(rr, agreement_reports=[ag_pair],
                                 coverage_pct=97.0,
                                 blind_spots=["serial links to building HVAC"])
     print("Scorecard:")

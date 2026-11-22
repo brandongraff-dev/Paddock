@@ -36,17 +36,42 @@ from .model import Flow, Route, RuleSet
 class RouteDelta:
     """One (entry, jewel) pair whose reachability changed.
 
-    ``status`` is ``"opened"`` (no open route before, at least one after) or
-    ``"closed"`` (open route before, none after). ``example_route`` is a
-    single representative route for the ticket — the first in the solver's
-    stable order, from the side where the route exists (``after`` for an
-    opened pair, ``before`` for a closed one). It is ``None`` only in the
-    degenerate case where the pair carries no concrete route.
+    ``status`` is ``"opened"`` (the pair is more reachable after: closed ->
+    open, closed -> conditional, or conditional -> open) or ``"closed"`` (open
+    or conditional before, closed after). ``before`` / ``after`` give the
+    pair's state on each side: ``"open"``, ``"conditional"`` (every route
+    rests on runtime state the config can't prove — *possibly* open) or
+    ``"closed"``. ``conditional`` is True for an opened pair whose new route is
+    conditional ("opens a route, possibly"): never read as safe.
+    ``example_route`` is a single representative route for the ticket — the
+    first in the solver's stable order, from the side where the route exists
+    (``after`` for an opened pair, ``before`` for a closed one). It is
+    ``None`` only in the degenerate case where the pair carries no concrete
+    route.
     """
 
     pair: tuple[str, str]
     status: str
     example_route: Route | None = None
+    before: str = ""
+    after: str = ""
+    conditional: bool = False
+
+
+#: Reachability rank of a pair state: a change that raises it opens a route.
+_RANK = {"closed": 0, "conditional": 1, "open": 2}
+
+
+def _pair_state(result, pair: tuple[str, str]) -> str:
+    """``"open"`` / ``"conditional"`` / ``"closed"`` for one pair. A pair the
+    solver reports as truncated is open (it never proves closure)."""
+    if pair in set(result.conditional_pairs):
+        return "conditional"
+    if pair in set(result.open_pairs) or pair in set(
+        getattr(result, "truncated_pairs", None) or ()
+    ):
+        return "open"
+    return "closed"
 
 
 @dataclass
@@ -74,8 +99,11 @@ class ChangeImpact:
 
     ``verdict`` is one of:
 
-    * ``"safe"`` — no crown-jewel route opened and no live flow broken.
-    * ``"opens_route_to_crown_jewel"`` — a new (entry, jewel) route appears.
+    * ``"safe"`` — no crown-jewel route opened (not even conditionally) and
+      no live flow broken.
+    * ``"opens_route_to_crown_jewel"`` — a new (entry, jewel) route appears,
+      a closed pair becomes conditional (possibly open), or a conditional
+      route becomes a definite one.
     * ``"breaks_live_flows"`` — an observed flow that was permitted is now
       denied.
     * ``"opens_and_breaks"`` — both of the above.
@@ -106,6 +134,13 @@ class ChangeImpact:
             f"Live flows newly denied (broken): {len(self.newly_denied_flows)}; "
             f"newly allowed: {len(self.newly_allowed_flows)}.",
         ]
+        n_cond = sum(1 for d in self.routes_opened if d.conditional)
+        if n_cond:
+            parts.append(
+                f"{n_cond} of the opened routes are conditional: they depend on "
+                "runtime state the configuration can't prove, so treat them as "
+                "possibly open."
+            )
         if self.affected_boundaries:
             parts.append(
                 "Boundaries touched: " + ", ".join(self.affected_boundaries) + "."
@@ -164,21 +199,41 @@ def evaluate_change(
     after = after_env.reachability(max_hops=max_hops)
 
     # -- route deltas -------------------------------------------------------
-    opened_pairs = after.open_pairs - before.open_pairs
-    closed_pairs = before.open_pairs - after.open_pairs
-
+    # Diff each pair's state (closed < conditional < open), not just the open
+    # sets, so a closed pair turning conditional, or a conditional route
+    # turning definite, is reported as opening a route — never as "safe".
     def _example(result, pair: tuple[str, str]) -> Route | None:
         routes = result.routes_for(pair)
+        if not routes:
+            routes = [
+                r for r in (getattr(result, "witness_routes", None) or ())
+                if r.pair == pair
+            ]
         return routes[0] if routes else None
 
-    routes_opened = sorted(
-        (RouteDelta(pair, "opened", _example(after, pair)) for pair in opened_pairs),
-        key=lambda d: d.pair,
-    )
-    routes_closed = sorted(
-        (RouteDelta(pair, "closed", _example(before, pair)) for pair in closed_pairs),
-        key=lambda d: d.pair,
-    )
+    def _all_pairs(result) -> set[tuple[str, str]]:
+        return (
+            set(result.open_pairs)
+            | set(result.closed_pairs)
+            | set(result.conditional_pairs)
+            | set(getattr(result, "truncated_pairs", None) or ())
+        )
+
+    routes_opened: list[RouteDelta] = []
+    routes_closed: list[RouteDelta] = []
+    for pair in sorted(_all_pairs(before) | _all_pairs(after)):
+        was, now = _pair_state(before, pair), _pair_state(after, pair)
+        if _RANK[now] > _RANK[was]:
+            routes_opened.append(
+                RouteDelta(
+                    pair, "opened", _example(after, pair),
+                    before=was, after=now, conditional=(now == "conditional"),
+                )
+            )
+        elif now == "closed" and was != "closed":
+            routes_closed.append(
+                RouteDelta(pair, "closed", _example(before, pair), before=was, after=now)
+            )
 
     # -- flow impact over the affected boundaries ---------------------------
     affected_ids = change.affected_ruleset_ids()
@@ -240,7 +295,12 @@ def impact_table(impact: ChangeImpact) -> list[str]:
     if impact.routes_opened:
         lines.append("Crown-jewel routes OPENED:")
         for d in impact.routes_opened:
-            lines.append(f"  + {d.pair[0]} -> {d.pair[1]}")
+            tail = ""
+            if d.conditional:
+                tail = "  (possibly: depends on runtime state the config can't prove)"
+            elif d.before == "conditional":
+                tail = "  (was conditional, now definite)"
+            lines.append(f"  + {d.pair[0]} -> {d.pair[1]}{tail}")
     if impact.routes_closed:
         lines.append("Crown-jewel routes CLOSED:")
         for d in impact.routes_closed:

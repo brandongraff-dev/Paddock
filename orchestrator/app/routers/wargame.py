@@ -17,6 +17,8 @@ reads the persisted artifacts and exposes a recompute trigger.
 - `POST /v1/wargame/twin/config` -- forward one read-only vendor config to the
   correlation service for ingest into the twin (nothing is applied anywhere).
 - `POST /v1/wargame/twin/topology` -- forward segments/edges to correlation.
+- `POST /v1/wargame/change-impact` -- evaluate a Terraform plan against the
+  tenant's twin (synchronous proxy to correlation; read-only, nothing applied).
 - `POST /v1/wargame/recompute` -- prefer a synchronous call to the correlation
   service; fall back to a Redis job. Never fails hard when correlation is down.
 
@@ -31,7 +33,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.routing import APIRoute
 
 from ..config import settings
 from ..db import get_pool
@@ -40,6 +43,8 @@ from ..models import (
     WargameAssessmentPage,
     WargameBoundaryOut,
     WargameCertificateOut,
+    WargameChangeImpact,
+    WargameChangeImpactRequest,
     WargameEvidenceOut,
     WargameFixSetOut,
     WargameRecomputeOut,
@@ -56,7 +61,60 @@ from .. import tenancy
 from ..service_client import service_headers
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/v1/wargame", tags=["wargame"])
+
+# Raw request-body caps in bytes, enforced BEFORE the body is parsed: a huge
+# config / plan is a 413, never an OOM. Keyed by full path.
+_BODY_CAPS = {
+    "/v1/wargame/twin/config": 16 * 1024 * 1024,
+    "/v1/wargame/twin/topology": 8 * 1024 * 1024,
+    "/v1/wargame/change-impact": 32 * 1024 * 1024,
+}
+
+
+class _CappedBodyRoute(APIRoute):
+    """Rejects an oversize request body (by Content-Length, and by counting
+    streamed bytes when there is none) before FastAPI buffers and parses it."""
+
+    def get_route_handler(self):
+        inner = super().get_route_handler()
+
+        async def handler(request: Request):
+            cap = _BODY_CAPS.get(request.url.path)
+            if cap is not None and request.method == "POST":
+                cl = request.headers.get("content-length")
+                if cl is not None:
+                    try:
+                        declared = int(cl)
+                    except ValueError:
+                        raise HTTPException(status_code=400, detail="bad Content-Length") from None
+                    if declared > cap:
+                        raise HTTPException(
+                            status_code=413, detail=f"request body exceeds {cap} bytes"
+                        )
+                buf = bytearray()
+                async for chunk in request.stream():
+                    buf.extend(chunk)
+                    if len(buf) > cap:
+                        raise HTTPException(
+                            status_code=413, detail=f"request body exceeds {cap} bytes"
+                        )
+                body = bytes(buf)
+                sent = False
+
+                async def receive():
+                    nonlocal sent
+                    if sent:
+                        return {"type": "http.disconnect"}
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+
+                request = Request(request.scope, receive)
+            return await inner(request)
+
+        return handler
+
+
+router = APIRouter(prefix="/v1/wargame", tags=["wargame"], route_class=_CappedBodyRoute)
 
 
 _ASSESS_COLS = (
@@ -72,8 +130,10 @@ _BOUNDARY_COLS = (
 )
 _CERT_COLS = (
     "id, boundary_src, boundary_dst, port, claim, assumptions, config_hashes, "
-    "status, issued_at, expires_at, fingerprint"
+    "status, issued_at, expires_at, fingerprint, key_id, corroboration"
 )
+#: Key ids whose fingerprint is not a real signature (schema 041).
+_UNSIGNED_KEY_IDS = ("", "unsigned-dev")
 _FIX_COLS = "id, total_cost, optimality, cuts_all, selected, metadata"
 _EVID_COLS = (
     "id, framework, control_id, status, statement, evidence, item_hash, ordinal"
@@ -168,6 +228,9 @@ def _certificate(row) -> WargameCertificateOut:
         issued_at=d["issued_at"],
         expires_at=d["expires_at"],
         fingerprint=d["fingerprint"],
+        key_id=d.get("key_id") or "",
+        signed=(d.get("key_id") or "") not in _UNSIGNED_KEY_IDS,
+        corroboration=_jsonb_obj(d.get("corroboration")),
     )
 
 
@@ -287,7 +350,12 @@ async def list_routes(
     "/assessments/{assessment_id}/boundaries",
     response_model=list[WargameBoundaryOut],
 )
-async def list_boundaries(assessment_id: UUID, pool=Depends(get_pool)):
+async def list_boundaries(
+    assessment_id: UUID,
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    pool=Depends(get_pool),
+):
     async with pool.acquire() as con:
         if not await _assessment_exists(con, assessment_id):
             raise HTTPException(
@@ -299,8 +367,11 @@ async def list_boundaries(assessment_id: UUID, pool=Depends(get_pool)):
               FROM wargame_boundaries
              WHERE assessment_id = $1
              ORDER BY boundary_src ASC, boundary_dst ASC, port ASC, id ASC
+             LIMIT $2 OFFSET $3
             """,
             assessment_id,
+            limit,
+            offset,
         )
     return [_boundary(r) for r in rows]
 
@@ -309,7 +380,12 @@ async def list_boundaries(assessment_id: UUID, pool=Depends(get_pool)):
     "/assessments/{assessment_id}/certificates",
     response_model=list[WargameCertificateOut],
 )
-async def list_certificates(assessment_id: UUID, pool=Depends(get_pool)):
+async def list_certificates(
+    assessment_id: UUID,
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    pool=Depends(get_pool),
+):
     async with pool.acquire() as con:
         if not await _assessment_exists(con, assessment_id):
             raise HTTPException(
@@ -321,8 +397,11 @@ async def list_certificates(assessment_id: UUID, pool=Depends(get_pool)):
               FROM wargame_certificates
              WHERE assessment_id = $1
              ORDER BY boundary_src ASC, boundary_dst ASC, port ASC, id ASC
+             LIMIT $2 OFFSET $3
             """,
             assessment_id,
+            limit,
+            offset,
         )
     return [_certificate(r) for r in rows]
 
@@ -357,7 +436,9 @@ async def get_fix_set(assessment_id: UUID, pool=Depends(get_pool)):
 )
 async def list_evidence(
     assessment_id: UUID,
-    framework: str | None = Query(None),
+    framework: str | None = Query(None, max_length=64),
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
     pool=Depends(get_pool),
 ):
     clauses = ["assessment_id = $1"]
@@ -366,6 +447,8 @@ async def list_evidence(
         args.append(framework)
         clauses.append(f"framework = ${len(args)}")
     where = " AND ".join(clauses)
+    args.extend([limit, offset])
+    lim_ph, off_ph = f"${len(args) - 1}", f"${len(args)}"
     async with pool.acquire() as con:
         if not await _assessment_exists(con, assessment_id):
             raise HTTPException(
@@ -377,10 +460,34 @@ async def list_evidence(
               FROM wargame_evidence
              WHERE {where}
              ORDER BY framework ASC, ordinal ASC, id ASC
+             LIMIT {lim_ph} OFFSET {off_ph}
             """,
             *args,
         )
     return [_evidence(r) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Calling correlation
+# --------------------------------------------------------------------------- #
+
+def _corr_url(path: str) -> str:
+    return settings.correlation_url.rstrip("/") + path
+
+
+def _client_error(status_code: int, resp) -> HTTPException:
+    """Surface a correlation 4xx (the caller's input was refused) as the same
+    4xx. Only the short `detail` string correlation wrote for the caller is
+    passed on; anything else is dropped so nothing internal leaks."""
+    detail = "request rejected by the wargame service"
+    try:
+        body = resp.json()
+        d = body.get("detail") if isinstance(body, dict) else None
+        if isinstance(d, str) and d:
+            detail = d[:500]
+    except Exception:  # noqa: BLE001
+        pass
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 # --------------------------------------------------------------------------- #
@@ -391,26 +498,30 @@ async def list_evidence(
 async def recompute_wargame(r=Depends(get_redis)):
     """Trigger a recompute of wargame assessments.
 
-    Preferred path: a short synchronous POST to the correlation service's
-    `/compute-wargame`. If that is unreachable (or httpx is unavailable), fall
-    back to publishing a `correlate:recompute_wargame` job on Redis. The request
-    never fails hard when correlation is down -- the worst case is
-    `status=unavailable` (correlation unreachable *and* the enqueue failed).
+    Preferred path: a synchronous POST to the correlation service's
+    `/compute-wargame` (connect fails fast, the read allows a real compute).
+    If that is unreachable or errors, fall back to publishing a
+    `correlate:recompute_wargame` job on Redis. The request never fails hard
+    when correlation is down -- the worst case is `status=unavailable`
+    (correlation unreachable *and* the enqueue failed). Failures are logged;
+    the response carries a generic note, never the exception text.
     """
-    url = settings.correlation_url.rstrip("/") + "/compute-wargame"
+    url = _corr_url("/compute-wargame")
 
     # 1) Try the synchronous correlation call.
     try:
         import httpx
 
-        async with httpx.AsyncClient(timeout=5.0) as http:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=3.0)
+        ) as http:
             resp = await http.post(url, json={}, headers=service_headers())
         if resp.status_code < 400:
             computed = None
             try:
                 body = resp.json()
                 if isinstance(body, dict):
-                    val = body.get("computed", body.get("count"))
+                    val = body.get("assessments", body.get("computed", body.get("count")))
                     if val is not None:
                         computed = int(val)
             except Exception:  # noqa: BLE001
@@ -449,10 +560,10 @@ async def recompute_wargame(r=Depends(get_redis)):
         return WargameRecomputeOut(
             status="queued", detail="recompute job enqueued on correlate queue"
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("wargame_recompute_enqueue_failed")
         return WargameRecomputeOut(
-            status="unavailable", detail=f"correlation unreachable: {exc!s}"
+            status="unavailable", detail="correlation is unreachable; try again shortly"
         )
 
 
@@ -496,16 +607,21 @@ async def _trigger_twin(
     """Mirror of the recompute trigger for twin ingest.
 
     Returns `(status, detail, sync_body)`. Tries a short synchronous POST to
-    the correlation service; on failure falls back to a Redis job on the
-    correlate queue. Never raises.
+    the correlation service; on connection failure / 5xx falls back to a Redis
+    job on the correlate queue. A correlation **4xx** (the config was refused:
+    bad vendor payload, too large) is the caller's error, not an outage: it is
+    raised as that 4xx and never queued (a queued bad payload could only
+    poison the queue).
     """
-    url = settings.correlation_url.rstrip("/") + path
+    url = _corr_url(path)
 
     # 1) Synchronous correlation call.
     try:
         import httpx
 
-        async with httpx.AsyncClient(timeout=5.0) as http:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0, connect=3.0)
+        ) as http:
             resp = await http.post(url, json=payload, headers=service_headers())
         if resp.status_code < 400:
             body: dict[str, Any] = {}
@@ -516,10 +632,14 @@ async def _trigger_twin(
             except Exception:  # noqa: BLE001
                 body = {}
             return "ingested", None, body
+        if 400 <= resp.status_code < 500 and resp.status_code not in (408, 429):
+            raise _client_error(resp.status_code, resp)
         logger.warning(
             "correlation_twin_http_error",
             extra={"path": path, "status": resp.status_code},
         )
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.info(
             "correlation_unreachable_falling_back", extra={"error": str(exc)}
@@ -541,9 +661,9 @@ async def _trigger_twin(
             },
         )
         return "queued", f"{op} job enqueued on correlate queue", {}
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("wargame_twin_enqueue_failed")
-        return "unavailable", f"correlation unreachable: {exc!s}", {}
+        return "unavailable", "correlation is unreachable; try again shortly", {}
 
 
 def _opt_int(body: dict[str, Any], *keys: str) -> int | None:
@@ -564,8 +684,10 @@ async def ingest_twin_config(
     """Ingest one read-only vendor config into the twin (compute-side).
 
     Forwards to correlation `POST /ingest-config`; falls back to a
-    `correlate:twin_ingest_config` Redis job. The config is parsed, never
-    applied to any device. Never fails hard when correlation is down.
+    `correlate:twin_ingest_config` Redis job when correlation is down. The
+    config is parsed, never applied to any device. Vendor is an allowlist,
+    size is capped (413 / 422), and a config correlation cannot parse is a
+    422, not a queued job.
     """
     status, detail, body = await _trigger_twin(
         r, "/ingest-config", "twin_ingest_config", req.model_dump()
@@ -587,7 +709,8 @@ async def set_twin_topology(
     """Set the twin's segments/edges (compute-side).
 
     Forwards to correlation `POST /set-topology`; falls back to a
-    `correlate:twin_set_topology` Redis job. Never fails hard.
+    `correlate:twin_set_topology` Redis job. Malformed segments/edges are a
+    422 from correlation, passed through.
     """
     status, detail, body = await _trigger_twin(
         r, "/set-topology", "twin_set_topology", req.model_dump()
@@ -599,3 +722,52 @@ async def set_twin_topology(
     return WargameTwinTopologyOut(
         status=status, detail=detail, segments=segments, edges=edges
     )
+
+
+# --------------------------------------------------------------------------- #
+# Change gate
+# --------------------------------------------------------------------------- #
+
+@router.post("/change-impact", response_model=WargameChangeImpact)
+async def change_impact(req: WargameChangeImpactRequest):
+    """Say what a proposed Terraform plan would do, BEFORE it is applied.
+
+    Proxies synchronously to correlation `POST /change-impact`, which loads
+    this tenant's twin, evaluates the plan before/after against it, and
+    returns routes opened/closed to crown jewels and live flows broken. Strictly
+    read-only: nothing is persisted, applied, or sent anywhere. There is no
+    queue fallback (the caller needs the answer): correlation down is a 503,
+    no twin is a 409, a bad plan is a 422, an oversize body a 413.
+    """
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=3.0)
+        ) as http:
+            resp = await http.post(
+                _corr_url("/change-impact"),
+                json=req.model_dump(exclude_none=True),
+                headers=service_headers(),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("correlation_change_impact_unreachable", extra={"error": str(exc)})
+        raise HTTPException(
+            status_code=503, detail="wargame service is unreachable; try again shortly"
+        ) from None
+    if resp.status_code >= 500 or resp.status_code in (408, 429):
+        logger.warning(
+            "correlation_change_impact_http_error", extra={"status": resp.status_code}
+        )
+        raise HTTPException(
+            status_code=503, detail="wargame service could not evaluate the change"
+        )
+    if resp.status_code >= 400:
+        raise _client_error(resp.status_code, resp)
+    try:
+        return WargameChangeImpact.model_validate(resp.json())
+    except Exception:  # noqa: BLE001
+        logger.warning("correlation_change_impact_bad_body")
+        raise HTTPException(
+            status_code=502, detail="wargame service returned an unreadable result"
+        ) from None

@@ -3740,7 +3740,7 @@ WargameBoundaryOut = TypedDict(
         'id': Required['str'],
         'note': Required['str'],
         'port': Required['str'],
-        'verdict': Required["Literal['pass', 'fail_open', 'conditional', 'insufficient']"],
+        'verdict': Required["Literal['pass', 'proved_config', 'fail_open', 'conditional', 'insufficient']"],
     },
     total=False,
 )
@@ -3754,16 +3754,50 @@ WargameCertificateOut = TypedDict(
         'boundary_src': Required['str'],
         'claim': Required['str'],
         'config_hashes': NotRequired['list[Any]'],
+        'corroboration': NotRequired['dict[str, Any]'],
         'expires_at': NotRequired['str | None'],
         'fingerprint': Required['str'],
         'id': Required['str'],
         'issued_at': NotRequired['str | None'],
+        'key_id': NotRequired['str'],
         'port': Required['str'],
+        'signed': NotRequired['bool'],
         'status': Required["Literal['valid', 'expired', 'contradicted']"],
     },
     total=False,
 )
 """A signed closed-boundary certificate."""
+
+WargameChangeImpact = TypedDict(
+    'WargameChangeImpact',
+    {
+        'affected_boundaries': NotRequired['list[str]'],
+        'change_title': NotRequired['str'],
+        'complete': NotRequired['bool'],
+        'flows_parsed': NotRequired['int'],
+        'flows_skipped': NotRequired['int'],
+        'newly_allowed_flows': NotRequired['list[WargameFlowRef]'],
+        'newly_denied_flows': NotRequired['list[WargameFlowRef]'],
+        'routes_closed': NotRequired['list[WargameRouteRef]'],
+        'routes_opened': NotRequired['list[WargameRouteRef]'],
+        'summary': NotRequired['str'],
+        'verdict': Required['str'],
+        'warnings': NotRequired['list[str]'],
+    },
+    total=False,
+)
+"""What a proposed change does, before it is applied."""
+
+WargameChangeImpactRequest = TypedDict(
+    'WargameChangeImpactRequest',
+    {
+        'flows': NotRequired['str | None'],
+        'flows_format': NotRequired["Literal['auto', 'zeek', 'generic', 'firewall']"],
+        'plan': Required['dict[str, Any]'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/change-impact."""
 
 WargameEvidenceOut = TypedDict(
     'WargameEvidenceOut',
@@ -3794,6 +3828,19 @@ WargameFixSetOut = TypedDict(
     total=False,
 )
 """The minimum-cost fix set that cuts every open route."""
+
+WargameFlowRef = TypedDict(
+    'WargameFlowRef',
+    {
+        'dst_ip': Required['str'],
+        'dst_port': Required['int'],
+        'proto': Required['str'],
+        'ruleset_id': NotRequired['str'],
+        'src_ip': Required['str'],
+    },
+    total=False,
+)
+"""An observed flow whose verdict flips at an affected boundary."""
 
 WargameRecomputeOut = TypedDict(
     'WargameRecomputeOut',
@@ -3831,12 +3878,22 @@ WargameRoutePage = TypedDict(
     total=False,
 )
 
+WargameRouteRef = TypedDict(
+    'WargameRouteRef',
+    {
+        'entry': Required['str'],
+        'jewel': Required['str'],
+    },
+    total=False,
+)
+"""An (entry, crown jewel) pair whose reachability the change flips."""
+
 WargameTwinConfigRequest = TypedDict(
     'WargameTwinConfigRequest',
     {
         'raw': Required['str'],
         'source': NotRequired['str'],
-        'vendor': Required['str'],
+        'vendor': Required["Literal['aws', 'cisco_asa', 'fortinet', 'paloalto']"],
     },
     total=False,
 )
@@ -4382,11 +4439,12 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'post_result_verification': ('POST', '/v1/verifications/{verification_id}/result', False),
     'list_assessments': ('GET', '/v1/wargame/assessments', True),
     'get_assessment': ('GET', '/v1/wargame/assessments/{assessment_id}', False),
-    'list_boundaries': ('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', False),
-    'list_certificates': ('GET', '/v1/wargame/assessments/{assessment_id}/certificates', False),
-    'list_evidence': ('GET', '/v1/wargame/assessments/{assessment_id}/evidence', False),
+    'list_boundaries': ('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', True),
+    'list_certificates': ('GET', '/v1/wargame/assessments/{assessment_id}/certificates', True),
+    'list_evidence': ('GET', '/v1/wargame/assessments/{assessment_id}/evidence', True),
     'get_fix_set': ('GET', '/v1/wargame/assessments/{assessment_id}/fix-set', False),
     'list_routes': ('GET', '/v1/wargame/assessments/{assessment_id}/routes', True),
+    'change_impact': ('POST', '/v1/wargame/change-impact', False),
     'recompute_wargame': ('POST', '/v1/wargame/recompute', False),
     'get_twin_summary': ('GET', '/v1/wargame/twin', False),
     'ingest_twin_config': ('POST', '/v1/wargame/twin/config', False),
@@ -6117,20 +6175,20 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/wargame/assessments/{assessment_id}', path_params={'assessment_id': assessment_id})
 
-    def list_boundaries(self, assessment_id: str) -> list[WargameBoundaryOut]:
+    def list_boundaries(self, assessment_id: str, *, limit: int | None = None, offset: int | None = None) -> list[WargameBoundaryOut]:
         """GET /v1/wargame/assessments/{assessment_id}/boundaries -- List Boundaries
         """
-        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', path_params={'assessment_id': assessment_id})
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', path_params={'assessment_id': assessment_id}, query={'limit': limit, 'offset': offset})
 
-    def list_certificates(self, assessment_id: str) -> list[WargameCertificateOut]:
+    def list_certificates(self, assessment_id: str, *, limit: int | None = None, offset: int | None = None) -> list[WargameCertificateOut]:
         """GET /v1/wargame/assessments/{assessment_id}/certificates -- List Certificates
         """
-        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/certificates', path_params={'assessment_id': assessment_id})
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/certificates', path_params={'assessment_id': assessment_id}, query={'limit': limit, 'offset': offset})
 
-    def list_evidence(self, assessment_id: str, *, framework: str | None = None) -> list[WargameEvidenceOut]:
+    def list_evidence(self, assessment_id: str, *, framework: str | None = None, limit: int | None = None, offset: int | None = None) -> list[WargameEvidenceOut]:
         """GET /v1/wargame/assessments/{assessment_id}/evidence -- List Evidence
         """
-        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/evidence', path_params={'assessment_id': assessment_id}, query={'framework': framework})
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/evidence', path_params={'assessment_id': assessment_id}, query={'framework': framework, 'limit': limit, 'offset': offset})
 
     def get_fix_set(self, assessment_id: str) -> WargameFixSetOut:
         """GET /v1/wargame/assessments/{assessment_id}/fix-set -- Get Fix Set
@@ -6142,16 +6200,32 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/wargame/assessments/{assessment_id}/routes', path_params={'assessment_id': assessment_id}, query={'limit': limit, 'offset': offset})
 
+    def change_impact(self, body: WargameChangeImpactRequest | dict[str, Any]) -> WargameChangeImpact:
+        """POST /v1/wargame/change-impact -- Change Impact
+
+        Say what a proposed Terraform plan would do, BEFORE it is applied.
+
+        Proxies synchronously to correlation `POST /change-impact`, which loads
+        this tenant's twin, evaluates the plan before/after against it, and
+        returns routes opened/closed to crown jewels and live flows broken. Strictly
+        read-only: nothing is persisted, applied, or sent anywhere. There is no
+        queue fallback (the caller needs the answer): correlation down is a 503,
+        no twin is a 409, a bad plan is a 422, an oversize body a 413.
+        """
+        return self._request('POST', '/v1/wargame/change-impact', body=body)
+
     def recompute_wargame(self) -> WargameRecomputeOut:
         """POST /v1/wargame/recompute -- Recompute Wargame
 
         Trigger a recompute of wargame assessments.
 
-        Preferred path: a short synchronous POST to the correlation service's
-        `/compute-wargame`. If that is unreachable (or httpx is unavailable), fall
-        back to publishing a `correlate:recompute_wargame` job on Redis. The request
-        never fails hard when correlation is down -- the worst case is
-        `status=unavailable` (correlation unreachable *and* the enqueue failed).
+        Preferred path: a synchronous POST to the correlation service's
+        `/compute-wargame` (connect fails fast, the read allows a real compute).
+        If that is unreachable or errors, fall back to publishing a
+        `correlate:recompute_wargame` job on Redis. The request never fails hard
+        when correlation is down -- the worst case is `status=unavailable`
+        (correlation unreachable *and* the enqueue failed). Failures are logged;
+        the response carries a generic note, never the exception text.
         """
         return self._request('POST', '/v1/wargame/recompute')
 
@@ -6169,8 +6243,10 @@ class GeneratedOperations:
         Ingest one read-only vendor config into the twin (compute-side).
 
         Forwards to correlation `POST /ingest-config`; falls back to a
-        `correlate:twin_ingest_config` Redis job. The config is parsed, never
-        applied to any device. Never fails hard when correlation is down.
+        `correlate:twin_ingest_config` Redis job when correlation is down. The
+        config is parsed, never applied to any device. Vendor is an allowlist,
+        size is capped (413 / 422), and a config correlation cannot parse is a
+        422, not a queued job.
         """
         return self._request('POST', '/v1/wargame/twin/config', body=body)
 
@@ -6180,7 +6256,8 @@ class GeneratedOperations:
         Set the twin's segments/edges (compute-side).
 
         Forwards to correlation `POST /set-topology`; falls back to a
-        `correlate:twin_set_topology` Redis job. Never fails hard.
+        `correlate:twin_set_topology` Redis job. Malformed segments/edges are a
+        422 from correlation, passed through.
         """
         return self._request('POST', '/v1/wargame/twin/topology', body=body)
 

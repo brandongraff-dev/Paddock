@@ -2,8 +2,11 @@
 -- An assessment is one backward-search-from-crown-jewels run over the
 -- modelled environment. Computed by the correlation service (which writes
 -- these tables); read by the orchestrator API (routers/wargame.py).
--- tenant_id + RLS are retrofitted by 099_tenancy.sql (applied later), the
--- same way attack_paths (007) is made tenant-scoped.
+-- tenant_id + RLS: 099_tenancy.sql retrofits every table (applied last), and
+-- the block at the end of this file applies the same policy NOW via
+-- paddock_enable_tenant_rls (029), so the tables are tenant-safe on their own
+-- and the correlation service role (a least-privilege, NOBYPASSRLS login role)
+-- gets explicit grants -- 029's allow-list cannot know these tables.
 -- =====================================================================
 
 -- One assessment run, with its headline scorecard numbers.
@@ -102,3 +105,22 @@ CREATE TABLE IF NOT EXISTS wargame_evidence (
 );
 CREATE INDEX IF NOT EXISTS idx_wargame_evid_assess ON wargame_evidence(assessment_id);
 CREATE INDEX IF NOT EXISTS idx_wargame_evid_fw ON wargame_evidence(framework, control_id);
+
+-- ---------------------------------------------------------------------------
+-- Tenancy: tenant_id + FORCEd RLS on every wargame table (idempotent; 099 does
+-- the same later), and per-tenant grants for the correlation service role.
+-- ---------------------------------------------------------------------------
+-- (029 defines paddock_enable_tenant_rls; if it has not been applied yet, 099
+-- retrofits the same policy to these tables when it runs.)
+DO $$
+DECLARE t text;
+BEGIN
+  IF to_regprocedure('paddock_enable_tenant_rls(regclass)') IS NOT NULL THEN
+    FOREACH t IN ARRAY ARRAY[
+    'wargame_assessments', 'wargame_routes', 'wargame_boundaries',
+    'wargame_certificates', 'wargame_fix_sets', 'wargame_evidence'
+  ] LOOP
+      PERFORM paddock_enable_tenant_rls(t::regclass);
+    END LOOP;
+  END IF;
+END $$;

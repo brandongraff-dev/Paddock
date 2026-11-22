@@ -238,3 +238,27 @@ async def test_db_null_coverage_and_no_fix(db):
 async def test_db_load_missing(db):
     await _require_tables(db)
     assert await store.load(db, "00000000-0000-0000-0000-000000000000") is None
+
+
+def test_certificate_row_carries_key_id_and_corroboration():
+    (c,) = _bundle().certificates
+    assert c["key_id"] == ""                    # legacy object: no key id
+    assert set(c["corroboration"]) == {
+        "observed_flows", "window_days", "sensor_on_protected_side", "probe_tested",
+    }
+
+
+def test_proved_config_verdict_serialises_and_unknown_verdict_is_refused():
+    import pytest
+
+    from app.engine.wargame.agreement import AgreementReport
+    from app.engine.wargame.report import build_scorecard
+    from app.engine.wargame.store import assemble_bundle
+
+    rr = _reach()
+    ok = AgreementReport("a", "b", None, "proved_config", False, [], "n")
+    b = assemble_bundle(reachability=rr, scorecard=build_scorecard(rr), agreement_reports=[ok])
+    assert b.boundaries[0]["verdict"] == "proved_config"
+    bad = AgreementReport("a", "b", None, "closed-ish", False, [], "n")
+    with pytest.raises(ValueError):
+        assemble_bundle(reachability=rr, scorecard=build_scorecard(rr), agreement_reports=[bad])

@@ -1344,7 +1344,12 @@ class ProvenanceBackfillOut(BaseModel):
 # compute service); nothing here aids exploitation.
 # --------------------------------------------------------------------------- #
 
-WargameVerdict = Literal["pass", "fail_open", "conditional", "insufficient"]
+#: ``pass`` = configuration AND a real active probe agree the boundary is
+#: closed; ``proved_config`` = configuration proves it closed but no probe has
+#: tested it yet (a no-packet proof, not a segmentation test).
+WargameVerdict = Literal[
+    "pass", "proved_config", "fail_open", "conditional", "insufficient"
+]
 WargameOptimality = Literal["exact", "greedy"]
 WargameCertStatus = Literal["valid", "expired", "contradicted"]
 WargameEvidenceStatus = Literal["met", "exception", "not_assessed"]
@@ -1425,6 +1430,16 @@ class WargameCertificateOut(BaseModel):
     issued_at: datetime | None = None
     expires_at: datetime | None = None
     fingerprint: str
+    #: Which key made ``fingerprint``: ``wg1-…`` = a per-tenant key derived
+    #: from WARGAME_SIGNING_KEY; ``unsigned-dev`` (or ``""`` on a legacy row)
+    #: = the public development key, so the fingerprint is NOT a signature.
+    key_id: str = ""
+    #: False when ``key_id`` is ``unsigned-dev`` or legacy ``""``.
+    signed: bool = False
+    #: The signed corroboration fields: ``observed_flows``, ``window_days``,
+    #: ``sensor_on_protected_side``, ``probe_tested`` (``{}`` on legacy rows).
+    #: ``probe_tested`` false = a configuration-only proof.
+    corroboration: dict[str, Any] = Field(default_factory=dict)
 
 
 class WargameFixSetOut(BaseModel):
@@ -1475,20 +1490,36 @@ class WargameRecomputeOut(BaseModel):
 WargameTwinTriggerStatus = Literal["ingested", "queued", "unavailable"]
 
 
+#: Vendors the correlation service can parse (parsers/__init__.py). An
+#: allowlist, not free text: an unknown vendor is a 422 here, not a 500 there.
+WargameVendor = Literal["aws", "cisco_asa", "fortinet", "paloalto"]
+
+#: Size caps. The router also enforces a byte cap on the raw request body
+#: *before* it is parsed (a huge config must be a 413, never an OOM).
+WARGAME_MAX_CONFIG_CHARS = 8 * 1024 * 1024
+WARGAME_MAX_TOPOLOGY_SEGMENTS = 5_000
+WARGAME_MAX_TOPOLOGY_EDGES = 20_000
+WARGAME_MAX_FLOWS_CHARS = 8 * 1024 * 1024
+
+
 class WargameTwinConfigRequest(BaseModel):
     """Body of POST /v1/wargame/twin/config: one read-only vendor config."""
 
-    vendor: str
-    raw: str
-    source: str = ""
+    vendor: WargameVendor
+    raw: str = Field(min_length=1, max_length=WARGAME_MAX_CONFIG_CHARS)
+    source: str = Field("", max_length=512)
 
 
 class WargameTwinTopologyRequest(BaseModel):
     """Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded
     verbatim to the correlation service which validates them."""
 
-    segments: list[dict[str, Any]] = Field(default_factory=list)
-    edges: list[dict[str, Any]] = Field(default_factory=list)
+    segments: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=WARGAME_MAX_TOPOLOGY_SEGMENTS
+    )
+    edges: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=WARGAME_MAX_TOPOLOGY_EDGES
+    )
 
 
 class WargameTwinIngestOut(BaseModel):
@@ -1519,3 +1550,66 @@ class WargameTwinSummaryOut(BaseModel):
     edge_count: int
     snapshot_count: int
     has_twin: bool
+
+
+# --------------------------------------------------------------------------- #
+# Wargame change gate (POST /v1/wargame/change-impact)
+#
+# Read-only: a Terraform plan is evaluated against the tenant's persisted twin
+# and nothing is stored or applied. Proxied synchronously to correlation.
+# --------------------------------------------------------------------------- #
+
+class WargameChangeImpactRequest(BaseModel):
+    """Body of POST /v1/wargame/change-impact."""
+
+    #: The object printed by ``terraform show -json <planfile>``.
+    plan: dict[str, Any]
+    #: Optional observed flows (raw firewall/Zeek/generic JSON array or JSONL
+    #: text) used to say which live flows the change would break.
+    flows: str | None = Field(default=None, max_length=WARGAME_MAX_FLOWS_CHARS)
+    flows_format: Literal["auto", "zeek", "generic", "firewall"] = "auto"
+
+
+class WargameRouteRef(BaseModel):
+    """An (entry, crown jewel) pair whose reachability the change flips."""
+
+    entry: str
+    jewel: str
+
+
+class WargameFlowRef(BaseModel):
+    """An observed flow whose verdict flips at an affected boundary."""
+
+    src_ip: str
+    dst_ip: str
+    proto: str
+    dst_port: int
+    #: The rule set / boundary where the flip was found (additive field).
+    ruleset_id: str = ""
+
+
+class WargameChangeImpact(BaseModel):
+    """What a proposed change does, before it is applied.
+
+    ``verdict`` is the change gate's: ``safe``, ``opens_route_to_crown_jewel``,
+    ``breaks_live_flows`` or ``opens_and_breaks`` (open string: treat an
+    unknown value as "needs review").
+    """
+
+    verdict: str
+    routes_opened: list[WargameRouteRef] = Field(default_factory=list)
+    routes_closed: list[WargameRouteRef] = Field(default_factory=list)
+    newly_denied_flows: list[WargameFlowRef] = Field(default_factory=list)
+    newly_allowed_flows: list[WargameFlowRef] = Field(default_factory=list)
+    summary: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    # -- additive fields (the contract above is unchanged) ------------------
+    change_title: str = ""
+    #: Rule sets / boundaries the change touches.
+    affected_boundaries: list[str] = Field(default_factory=list)
+    #: False when part of the plan could not be evaluated against the twin
+    #: (unmodelled rule set, unhandled resource type...). A "safe" verdict with
+    #: ``complete=false`` is NOT a proof; read ``warnings``.
+    complete: bool = True
+    flows_parsed: int = 0
+    flows_skipped: int = 0

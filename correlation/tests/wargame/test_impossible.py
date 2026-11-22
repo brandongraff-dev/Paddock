@@ -114,3 +114,43 @@ def test_resolve_requires_reason_and_by(reason, by):
     alert = classify_flow(flow(handshake_completed=True), [boundary()])
     with pytest.raises(ValueError):
         resolve(alert, ImpossibleResolution.RULE_DEFECT_CONFIRMED, reason, by)
+
+
+def test_unparsable_boundary_cidr_fails_loud():
+    # A boundary CIDR that does not parse used to match nothing, so real
+    # traffic could cross a "closed" boundary silently. It now covers any
+    # address on that side (a human resolves every alert).
+    b = boundary(src_cidrs=("guest-zone-object",))
+    assert flow_crosses(flow(src_ip="192.168.7.7"), b)
+    assert classify_flow(flow(src_ip="192.168.7.7", handshake_completed=True), [b]) is not None
+    # The parsable side and the port still have to match.
+    assert not flow_crosses(flow(src_ip="192.168.7.7", dst_ip="8.8.8.8"), b)
+    assert not flow_crosses(flow(src_ip="192.168.7.7", dst_port=443), b)
+
+
+def test_ipv4_mapped_ipv6_flow_address_still_crosses():
+    f = flow(src_ip="::ffff:10.1.2.3", dst_ip="::ffff:10.9.0.5", handshake_completed=True)
+    assert flow_crosses(f, boundary())
+    assert classify_flow(f, [boundary()]) is not None
+    assert not flow_crosses(flow(src_ip="::ffff:192.168.0.1"), boundary())
+
+
+def test_exact_per_address_not_representative_host():
+    # A flow from the last host of the source block crosses, too.
+    assert flow_crosses(flow(src_ip="10.1.255.254"), boundary())
+    assert flow_crosses(flow(dst_ip="10.9.0.255"), boundary())
+
+
+@pytest.mark.parametrize("bad", ["false_positive", "explained", "", None, 3])
+def test_resolve_refuses_a_resolution_outside_the_taxonomy(bad):
+    alert = classify_flow(flow(handshake_completed=True), [boundary()])
+    with pytest.raises(ValueError):
+        resolve(alert, bad, "looked fine", "alice")
+
+
+def test_resolve_accepts_the_enum_value_string_and_record_is_read_only():
+    alert = classify_flow(flow(handshake_completed=True), [boundary()])
+    rec = resolve(alert, "escalated_incident", "tunnel found", "alice")
+    assert rec["resolution"] is ImpossibleResolution.ESCALATED_INCIDENT
+    with pytest.raises(TypeError):
+        rec["reason"] = "rewritten"  # type: ignore[index]

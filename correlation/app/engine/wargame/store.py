@@ -1,4 +1,6 @@
-"""Persistence for Wargame assessments (schema/039_wargame.sql).
+"""Persistence for Wargame assessments (schema/039_wargame.sql, plus
+041_wargame_verdicts.sql: the ``proved_config`` verdict and certificate
+``key_id``).
 
 Two layers:
 
@@ -101,12 +103,25 @@ def _route_sort_key(d: dict[str, Any]) -> tuple[Any, ...]:
     return (d["entry"], d["jewel"], d["length"], d["fingerprint"])
 
 
+#: Every boundary verdict the 041 CHECK accepts (mirrors
+#: ``agreement.VERDICTS``; a test keeps them in sync). ``pass`` = config and a
+#: real active probe agree; ``proved_config`` = config-proved closed, not yet
+#: tested by a probe.
+BOUNDARY_VERDICTS: tuple[str, ...] = (
+    "pass", "proved_config", "conditional", "insufficient", "fail_open",
+)
+
+
 def _boundary_dict(r: Any) -> dict[str, Any]:
+    verdict = str(r.verdict)
+    if verdict not in BOUNDARY_VERDICTS:
+        # Fail at assembly, not as a CHECK violation mid-transaction.
+        raise ValueError(f"unknown boundary verdict {verdict!r}")
     return {
         "boundary_src": r.boundary_src,
         "boundary_dst": r.boundary_dst,
         "port": format_port(getattr(r, "port", None)),
-        "verdict": r.verdict,
+        "verdict": verdict,
         "disagreements": sorted(str(d) for d in (r.disagreements or [])),
         "note": str(getattr(r, "note", "") or ""),
     }
@@ -124,6 +139,22 @@ def _cert_dict(c: Any) -> dict[str, Any]:
         "issued_at": c.issued_at or None,
         "expires_at": c.expires_at or None,
         "fingerprint": c.fingerprint,
+        # Which key made the fingerprint ("unsigned-dev" = public dev key).
+        "key_id": str(getattr(c, "key_id", "") or ""),
+        # Signed fields too: without them a stored certificate could not be
+        # re-verified, and an auditor could not see whether a probe backed it.
+        "corroboration": _corroboration_dict(getattr(c, "corroboration", None)),
+    }
+
+
+def _corroboration_dict(co: Any) -> dict[str, Any]:
+    if co is None:
+        return {}
+    return {
+        "observed_flows": int(co.observed_flows),
+        "window_days": int(co.window_days),
+        "sensor_on_protected_side": bool(co.sensor_on_protected_side),
+        "probe_tested": bool(co.probe_tested),
     }
 
 
@@ -313,15 +344,17 @@ async def persist(db: Database, bundle: AssessmentBundle) -> str:
                     INSERT INTO wargame_certificates
                       (assessment_id, boundary_src, boundary_dst, port, claim,
                        assumptions, config_hashes, status, issued_at,
-                       expires_at, fingerprint)
+                       expires_at, fingerprint, key_id, corroboration)
                     VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7::jsonb,
-                            $8, $9::timestamptz, $10::timestamptz, $11)
+                            $8, $9::timestamptz, $10::timestamptz, $11, $12,
+                            $13::jsonb)
                     """,
                     [
                         (aid, c["boundary_src"], c["boundary_dst"], c["port"],
                          c["claim"], c["assumptions"], c["config_hashes"],
                          c["status"], _ts(c["issued_at"]), _ts(c["expires_at"]),
-                         c["fingerprint"])
+                         c["fingerprint"], c.get("key_id", ""),
+                         c.get("corroboration", {}))
                         for c in bundle.certificates
                     ],
                 )
@@ -383,7 +416,8 @@ async def _children(db: Database, aid: str) -> dict[str, Any]:
     )
     certs = await db.fetch(
         "SELECT boundary_src, boundary_dst, port, claim, assumptions, "
-        "config_hashes, status, issued_at, expires_at, fingerprint "
+        "config_hashes, status, issued_at, expires_at, fingerprint, key_id, "
+        "corroboration "
         "FROM wargame_certificates WHERE assessment_id = $1::uuid "
         "ORDER BY boundary_src, boundary_dst, port, fingerprint",
         aid,

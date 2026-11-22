@@ -253,3 +253,65 @@ def test_change_impact_dataclass_shape():
     ci = ChangeImpact(change_title="t")
     assert ci.verdict == "safe"
     assert ci.routes_opened == [] and ci.newly_denied_flows == []
+
+
+# ---------------------------------------------------------------------------
+# Conditional pairs: "opens a route, possibly" is never "safe"
+# ---------------------------------------------------------------------------
+
+def _conditional_allow() -> Rule:
+    return Rule(
+        "app_id", Action.ALLOW, 5,
+        ("10.9.0.0/24",), ("10.1.0.0/24",),
+        (PortRange.single(Proto.TCP, 5432),), conditional=True,
+    )
+
+
+def _closed_env() -> Environment:
+    env = _env()
+    env.rulesets["fw"].rules.clear()  # default deny: entry -> jewel closed
+    return env
+
+
+def test_closed_pair_turning_conditional_is_reported_as_possibly_opened():
+    env = _closed_env()
+    assert PAIR in env.reachability().closed_pairs
+    op = ChangeOp(ChangeKind.ADD_RULE, ruleset_id="fw", rule=_conditional_allow())
+    impact = evaluate_change(env, ProposedChange([op], title="app-id allow"))
+    assert impact.verdict == "opens_route_to_crown_jewel"
+    assert impact.verdict != "safe"
+    [d] = impact.routes_opened
+    assert d.pair == PAIR and d.conditional and (d.before, d.after) == ("closed", "conditional")
+    assert any("possibly" in ln for ln in impact_table(impact))
+    assert "conditional" in impact.summary()
+
+
+def test_conditional_route_turning_definite_is_an_opened_route():
+    env = _closed_env()
+    env.rulesets["fw"].rules.append(_conditional_allow())
+    assert PAIR in env.reachability().conditional_pairs
+    first = Rule("allow_first", Action.ALLOW, 1, ("10.9.0.0/24",), ("10.1.0.0/24",),
+                 (PortRange.single(Proto.TCP, 5432),))   # evaluated before app_id
+    op = ChangeOp(ChangeKind.ADD_RULE, ruleset_id="fw", rule=first)
+    impact = evaluate_change(env, ProposedChange([op], title="plain allow"))
+    assert impact.verdict == "opens_route_to_crown_jewel"
+    [d] = impact.routes_opened
+    assert (d.before, d.after, d.conditional) == ("conditional", "open", False)
+    assert any("was conditional, now definite" in ln for ln in impact_table(impact))
+
+
+def test_open_route_becoming_conditional_is_not_reported_as_closed():
+    env = _env()
+    op = ChangeOp(ChangeKind.MODIFY_RULE, ruleset_id="fw",
+                  rule=Rule("allow", Action.ALLOW, 10, ("10.9.0.0/24",), ("10.1.0.0/24",),
+                            (PortRange.single(Proto.TCP, 5432),), conditional=True))
+    impact = evaluate_change(env, ProposedChange([op], title="make it app-id"))
+    assert impact.routes_closed == [] and impact.routes_opened == []
+
+
+def test_conditional_route_closing_is_reported_closed():
+    env = _closed_env()
+    env.rulesets["fw"].rules.append(_conditional_allow())
+    impact = evaluate_change(env, ProposedChange([remove_rule("fw", "app_id")], title="drop"))
+    [d] = impact.routes_closed
+    assert (d.before, d.after) == ("conditional", "closed")

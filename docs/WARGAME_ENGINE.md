@@ -204,10 +204,28 @@ boundary.
   observed closure. The claim text passes `safety.assert_safe_text`.
 - `sign(cert, key)` computes an HMAC-SHA256 `fingerprint` over a canonical
   serialization of the *semantic* fields (claim, boundary, port, sorted
-  config hashes, sorted assumptions, corroboration, issued/expires) —
-  deliberately **excluding** `status`, so `mark_contradicted(cert)` can flag
-  a cert without invalidating its signature. `verify(cert, key)` recomputes
-  with `hmac.compare_digest`.
+  config hashes, sorted assumptions, corroboration, issued/expires normalised
+  to UTC, and the `key_id`) — deliberately **excluding** `status`, so
+  `mark_contradicted(cert)` can flag a cert without invalidating its
+  signature (so `status` itself is not tamper-evident). `None` and the
+  protocol-agnostic full port range canonicalise identically (they are stored
+  identically), and a timestamp re-read from Postgres or written with `Z` /
+  another offset verifies. `verify(cert, key)` recomputes with
+  `hmac.compare_digest`.
+- **Keys — `signing.py`.** `WARGAME_SIGNING_KEY` (or
+  `WARGAME_SIGNING_KEY_FILE`; retired masters in
+  `WARGAME_SIGNING_PREVIOUS_KEYS`, comma/space separated — the
+  `AUDIT_HMAC_KEY` convention) is a master key read by
+  `correlation/app/config.py`. A certificate is signed with a **per-tenant**
+  key, `HMAC-SHA256(master, "paddock-wargame-cert/v1" || 0x00 || tenant_id)`,
+  and records `key_id = "wg1-" + HMAC(master, "paddock-wargame-key-id/v1")[:16]`
+  so `verify_with(cert, keyring, tenant)` picks the right master after
+  rotation; `signature_status` returns `signed` / `unsigned-dev` / `invalid`.
+  With **no key configured** the public development key is used, the
+  certificate gets `key_id = "unsigned-dev"` and an `unsigned_dev_signature`
+  assumption (inside the signed fields) saying it is not a signature, and the
+  service logs a warning outside a dev `ENV`. Legacy certificates
+  (`key_id = ""`) were all made with the public key and read as unsigned.
 - `is_current(cert, now)` = `status=="valid"` and `now < expires_at`.
 - `hash_snapshot(text)` is the config-provenance hash stored with the twin.
 
@@ -234,6 +252,9 @@ the exact config hashes it was proved against, without access to Paddock.
     before, denied after) — and `newly_allowed_flows`,
   - a `verdict` of `safe` / `opens_route_to_crown_jewel` /
     `breaks_live_flows` / `opens_and_breaks`.
+  Pairs are diffed by state (closed < conditional < open), so a closed pair
+  turning **conditional** ("opens a route, possibly", `RouteDelta.conditional`)
+  or a conditional route turning definite is an opened route — never `safe`.
   `impact_table()` renders it for a change ticket. This is what a change
   board reads *before* applying a firewall change or merging an IaC PR.
 
@@ -250,8 +271,9 @@ the exact config hashes it was proved against, without access to Paddock.
 - `classify_flow(flow, closed_boundaries) -> ImpossibleTrafficAlert | None`:
   a *real* flow across a *proved-closed* boundary raises a critical alert
   naming the contradicted certificate. The gating keeps it quiet.
-- `resolve(alert, resolution, reason, resolved_by)` requires a human and a
-  cited reason and returns an immutable record — the model is **never**
+- `resolve(alert, resolution, reason, resolved_by)` requires a human, a cited
+  reason and a resolution from the `ImpossibleResolution` taxonomy (free text
+  such as "false positive" is refused) and returns a read-only record — the model is **never**
   auto-amended to explain a flow away (that could legitimise an attacker's
   tunnel).
 
@@ -268,14 +290,28 @@ auditor verdict:
   else `UNKNOWN` — **observation can never prove closed** (absence of evidence).
 - `assess_boundary(evidence) -> AgreementReport`: any source `OPEN` →
   `fail_open`; a config verdict resting on a conditional rule → `conditional`;
-  config+probe `CLOSED` with no open observation → `pass`; otherwise
-  `insufficient` (e.g. no probe was run). `from_environment(...)` builds the
-  evidence from an `Environment` plus an optional probe and observed flows.
+  config `CLOSED` + a **real** probe `CLOSED` with no open observation →
+  `pass`; config `CLOSED` with **no probe** → `proved_config` (a no-packet
+  proof, not yet tested); otherwise `insufficient`. The full vocabulary is
+  `agreement.VERDICTS`; `CERTIFIABLE_VERDICTS = {pass, proved_config}`.
+- `from_environment(...)` checks ONE direct boundary (the rule set on the
+  `src → dst` edge) plus an optional real probe and observed flows.
+  `from_reachability(result, entry, jewel, ...)` is the **pair-level** check:
+  its config verdict comes from the end-to-end search (open → OPEN,
+  conditional → `conditional`, closed → CLOSED), never a direct-edge lookup —
+  a multi-hop pair usually has no direct edge. The probe is UNKNOWN unless a
+  real probe result is passed; the model's own reachability is never fed in
+  as a "probe" (that was circular evidence).
 
 `report.py` turns a `ReachabilityResult` into the board/auditor numbers:
 
-- `ClosureScore` — total/open/closed/conditional `(entry, jewel)` pairs,
-  `closure_pct`, and a histogram of each open pair's weakest-label.
+- `ClosureScore` — total/open/closed/conditional/unproven `(entry, jewel)`
+  pairs, `closure_pct`, and a histogram of each open pair's weakest-label.
+  `build_scorecard(..., closure_proven=False)` (a model with no rule data,
+  e.g. the legacy graph) counts "no route found" as **unproven**, not closed:
+  closure is 0% and the board line says closure is unproven. An empty model
+  says no routes were assessed rather than "0% closed". `verdict_counts`
+  separates probe-backed `pass` from config-only `proved_config`.
 - `Scorecard` with a `board_line` that **always** pairs closure with
   coverage ("… over a model explaining N% of observed traffic …", or
   "coverage not yet measured" when unknown) — closure is never shown without
@@ -432,10 +468,20 @@ checks — without ever running a payload. `ReplicaRunner` is a documented
   segments, edges, config snapshots; schema `040_wargame_twin.sql`) with
   exact round-trip ser/de, and `load_environment(db)` rebuilds a searchable
   `Environment` from stored config.
-- `assess.py` — `assess_environment(env, ...)` is the pure glue that runs
-  reachability, builds per-boundary agreement, signs certificates **only for
-  closed+pass boundaries**, computes the fix set and the scorecard, and
-  returns a persistable bundle.
+- `assess.py` — `assess_environment(env, ..., signing_key, probes,
+  observed_flows)` is the pure glue that runs reachability, builds
+  **pair-level** agreement (`from_reachability`), signs certificates **only
+  for closed pairs whose verdict is `pass` or `proved_config`** (never
+  `conditional`, open or truncated; a `proved_config` certificate carries a
+  `proof_basis` assumption saying no probe stood behind it and
+  `probe_tested=false`), computes the fix set and the scorecard, and returns
+  a persistable bundle. `assess_unproven_environment(env)` is the legacy-graph
+  ("auto") variant: no verdicts, no certificates, closure unproven.
+- Schema `041_wargame_verdicts.sql` widens the boundary verdict CHECK with
+  `proved_config` and adds `wargame_certificates.key_id` and
+  `.corroboration` (so a stored certificate can be re-verified and shows
+  whether a probe backed it). The API's `WargameCertificateOut` exposes
+  `key_id`, `signed` and `corroboration`.
 
 ### The HTTP surface
 Correlation (internal, not in the public OpenAPI):
@@ -471,11 +517,25 @@ to hash-chained, tamper-evident evidence items:
   confirmed), **11.4.5/11.4.6** (segmentation testing); NERC **CIP-005 R1**.
 - A boundary `pass` → `MET`, `fail_open` → `EXCEPTION`,
   `conditional`/`insufficient` → `NOT_ASSESSED` with the reason.
+- `proved_config` (config-only) for the *configuration* controls 1.3.1/1.3.2
+  and CIP-005 R1 (whose testing procedure is an NSC configuration review)
+  counts toward `MET` **only with measured coverage ≥ 90%** — with no probe,
+  the model's completeness is the only thing behind it; otherwise
+  `NOT_ASSESSED`. Statements say how many boundaries are probe-backed vs
+  config-only. 1.2.5 accepts it as assessed.
 - **11.4.5/6 stay honest:** `MET` only when an active probe backed the pass —
-  a no-packet proof is not a segmentation *test* on its own.
+  `proved_config` never satisfies them.
+- 1.2.7 is not `MET` on `unsigned-dev`/legacy certificates, nor on one that
+  has expired by `generated_at` (even if its stored status still says valid).
+- `coverage_pct` is a fraction in [0, 1]; anything else raises (so 97.0 can't
+  read as 9700%).
 - Every closure statement carries its coverage caveat; each item is chained
-  (`chain`) so `verify_chain(pack)` detects tampering; statements pass
-  `safety.safe_text`.
+  (`chain`) over every displayed field (control id, title, status, statement,
+  evidence, refs) from a seed binding the pack header (framework,
+  generated_at), so `verify_chain(pack)` detects an edited, reordered,
+  inserted or deleted item, a relabelled header or a rewritten summary. The
+  chain is unkeyed: it proves integrity against the recorded fingerprint.
+  Statements pass `safety.safe_text`.
 
 ---
 
@@ -518,10 +578,10 @@ The dashboard UI; probe deployment mode (the active worker on out-of-scope
 segments); the sandbox runner behind `replica.ReplicaRunner`. Known
 follow-ups: the orchestrator Redis fallback for twin ingest jobs isn't yet
 consumed by correlation's stream handler (the sync path works and is tried
-first); certificates use a documented demo signing key pending real
-per-tenant key wiring; with no live probe/flow the compute-side agreement
-uses model reachability as its probe source (disclosed via the certificate's
-sensor-absent assumption); and Terraform rule ids don't match the AWS
+first); the twin stores no probe results or observed flows yet, so every closed
+pair of a twin assessment is `proved_config` (never `pass`) until a probe
+source is wired into `assess_environment(probes=..., observed_flows=...)`;
+`scripts/install.sh` does not yet generate `WARGAME_SIGNING_KEY`; and Terraform rule ids don't match the AWS
 parser's ids, so remove/modify across the two needs an id-mapping layer.
 
 See [WARGAME.md §9](WARGAME.md) for the build-order status and the product

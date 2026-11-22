@@ -582,6 +582,10 @@ _rule("POST PATCH DELETE", rf"/v1/suppressions(/{_ANY})?", "triage")
 # --- scan / operational triggers (analyst + admin + service) --------------- #
 _rule("POST", r"/v1/scans", "scan")
 _rule("POST", r"/v1/attack-paths/recompute", "scan")
+# Wargame change gate: read-only evaluation of a proposed plan (nothing stored
+# or applied), usable from CI with a `scan`-scoped key. Other wargame writes
+# (twin ingest, recompute) stay on the deny-closed admin default.
+_rule("POST", r"/v1/wargame/change-impact", "scan")
 _rule("POST", r"/v1/ml/retrain", "scan")
 
 # --- ask -------------------------------------------------------------------- #

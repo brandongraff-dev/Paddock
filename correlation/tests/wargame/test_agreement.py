@@ -73,10 +73,37 @@ def test_conditional_rule_yields_conditional():
     assert r.verdict == "conditional" and not r.agree
 
 
-def test_probe_not_run_is_insufficient():
+def test_probe_not_run_is_proved_config_not_pass():
+    # Config proves the boundary closed but no probe ran: a distinct,
+    # weaker verdict than "pass", and the note never claims a probe agreed.
     r = from_environment(make_env(), "guest", "db", PORT, probe=None)
-    assert r.verdict == "insufficient" and not r.agree
-    assert "probe" in r.note
+    assert r.verdict == "proved_config" and not r.agree
+    assert "no active probe" in r.note
+    assert "probe agree" not in r.note
+
+
+def test_proved_config_with_real_flow_fails_open():
+    r = from_environment(
+        make_env(), "guest", "db", PORT, probe=None,
+        observed_flows=[flow(handshake_completed=True)],
+    )
+    assert r.verdict == "fail_open"
+
+
+def test_probe_blocked_but_config_unknown_is_insufficient():
+    assert assess_boundary(ev(config=V.UNKNOWN, probe=V.CLOSED)).verdict == "insufficient"
+
+
+def test_verdict_vocabulary_matches_store_and_schema():
+    from pathlib import Path
+
+    from app.engine.wargame import agreement, store
+
+    assert set(agreement.VERDICTS) == set(store.BOUNDARY_VERDICTS)
+    assert agreement.CERTIFIABLE_VERDICTS == {"pass", "proved_config"}
+    sql = (Path(__file__).resolve().parents[3] / "schema" / "041_wargame_verdicts.sql").read_text()
+    for v in agreement.VERDICTS:
+        assert f"'{v}'" in sql
 
 
 def test_config_unknown_is_insufficient():
@@ -123,3 +150,81 @@ def test_deterministic_disagreement_order():
         "probe says open but config says closed",
         "observed says open but config says closed",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Pair-level agreement from the end-to-end search (from_reachability)
+# ---------------------------------------------------------------------------
+
+from app.engine.wargame.agreement import from_reachability  # noqa: E402
+from app.engine.wargame.model import NodeRole  # noqa: E402
+
+
+def multi_hop_env(conditional=False):
+    """guest -> pos (allowed) -> db (allowed): NO direct guest->db edge."""
+    env = Environment()
+    env.add_node(Node("guest", NodeRole.ENTRY, ("10.1.0.0/16",)))
+    env.add_node(Node("pos", NodeRole.INTERMEDIATE, ("10.5.0.0/24",)))
+    env.add_node(Node("db", NodeRole.CROWN_JEWEL, ("10.9.0.0/24",)))
+    env.add_ruleset(RuleSet(id="fw-pos", rules=[Rule(
+        id="a1", action=Action.ALLOW, order=1, src_cidrs=("10.1.0.0/16",),
+        dst_cidrs=("10.5.0.0/24",), ports=(PORT,), conditional=conditional,
+    )], default_action=Action.DENY))
+    env.add_ruleset(RuleSet(id="fw-db", rules=[Rule(
+        id="a2", action=Action.ALLOW, order=1, src_cidrs=("10.5.0.0/24",),
+        dst_cidrs=("10.9.0.0/24",), ports=(PORT,),
+    )], default_action=Action.DENY))
+    env.add_edge(Edge("guest", "pos", rule_set_id="fw-pos", port=PORT))
+    env.add_edge(Edge("pos", "db", rule_set_id="fw-db", port=PORT))
+    return env
+
+
+def test_multi_hop_open_pair_is_fail_open_not_closed():
+    env = multi_hop_env()
+    rr = env.reachability()
+    assert ("guest", "db") in rr.open_pairs
+    # The direct-edge reading would (wrongly, for a pair) say closed:
+    assert from_environment(env, "guest", "db", None).verdict != "fail_open"
+    r = from_reachability(rr, "guest", "db", env=env)
+    assert r.verdict == "fail_open"
+    assert r.disagreements == ["config says open"]
+
+
+def test_multi_hop_conditional_pair_is_conditional():
+    env = multi_hop_env(conditional=True)
+    rr = env.reachability()
+    assert ("guest", "db") in rr.conditional_pairs
+    assert from_reachability(rr, "guest", "db", env=env).verdict == "conditional"
+
+
+def test_closed_pair_without_probe_is_proved_config_never_pass():
+    env = multi_hop_env()
+    env.rulesets["fw-db"].rules.clear()  # default deny: no route
+    rr = env.reachability()
+    assert ("guest", "db") in rr.closed_pairs
+    r = from_reachability(rr, "guest", "db", env=env)
+    assert r.verdict == "proved_config"
+    # Only a REAL probe result upgrades it to pass, or reveals it open.
+    assert from_reachability(rr, "guest", "db", env=env, probe=False).verdict == "pass"
+    assert from_reachability(rr, "guest", "db", env=env, probe=True).verdict == "fail_open"
+
+
+def test_closed_pair_with_real_observed_flow_fails_open():
+    env = multi_hop_env()
+    env.rulesets["fw-db"].rules.clear()
+    rr = env.reachability()
+    seen = flow(src_ip="10.1.4.4", dst_ip="10.9.0.7", dst_port=22, handshake_completed=True)
+    assert from_reachability(rr, "guest", "db", env=env, observed_flows=[seen]).verdict == "fail_open"
+    dropped = flow(src_ip="10.1.4.4", dst_ip="10.9.0.7")
+    assert from_reachability(rr, "guest", "db", env=env, observed_flows=[dropped]).verdict == "proved_config"
+
+
+def test_unconsidered_or_truncated_not_open_pair_is_never_closed():
+    from app.engine.wargame.model import ReachabilityResult
+
+    rr = ReachabilityResult(routes=[], open_pairs=set(), closed_pairs=set())
+    assert from_reachability(rr, "x", "y").verdict == "insufficient"
+    rr = ReachabilityResult(routes=[], open_pairs=set(), closed_pairs={("x", "y")})
+    rr.truncated_pairs = {("x", "y")}
+    r = from_reachability(rr, "x", "y")
+    assert r.verdict == "insufficient" and "budget" in r.note

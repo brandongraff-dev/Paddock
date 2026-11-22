@@ -142,3 +142,48 @@ def test_deterministic_and_render():
     assert lines == render_lines(b)
     assert lines[0] == a.board_line
     assert any("coverage: 70%" in ln for ln in lines)
+
+
+# ---------------------------------------------------------------------------
+# Honest closure: unproven models, empty models, conditional, verdict counts
+# ---------------------------------------------------------------------------
+
+def test_unproven_model_counts_no_route_as_unproven_not_closed():
+    sc = build_scorecard(_result(), closure_proven=False)
+    c = sc.closure
+    assert c.closed_pairs == 0 and c.closure_pct == 0.0
+    assert c.unproven_pairs == 3 and c.total_pairs == 5
+    assert "Closure is unproven" in sc.board_line
+    assert "not proof of closure" in sc.board_line
+    assert "% of routes to crown jewels are proved closed" not in sc.board_line
+    assert not contains_unsafe_token(sc.board_line)
+
+
+def test_empty_model_does_not_claim_a_closure_figure():
+    sc = build_scorecard(ReachabilityResult(routes=[], open_pairs=set(), closed_pairs=set()))
+    assert "No crown-jewel routes were assessed" in sc.board_line
+    assert "0% of routes" not in sc.board_line
+    assert "not yet measured" in sc.board_line
+
+
+def test_board_line_names_conditional_open_routes():
+    sc = build_scorecard(_result())
+    assert "1 of them conditional" in sc.board_line
+
+
+def test_truncated_pair_not_reported_open_is_never_closed():
+    res = ReachabilityResult(routes=[], open_pairs=set(), closed_pairs={("a", "j"), ("b", "j")})
+    res.truncated_pairs = {("a", "j")}
+    c = closure_score(res)
+    assert (c.closed_pairs, c.unproven_pairs, c.total_pairs) == (1, 1, 2)
+
+
+def test_verdict_counts_separate_probe_backed_from_config_only():
+    reps = [
+        FakeReport("a", "j", "pass"),
+        FakeReport("b", "j", "proved_config"),
+        FakeReport("c", "j", "proved_config"),
+    ]
+    sc = build_scorecard(_result(), agreement_reports=reps)
+    assert sc.verdict_counts == {"pass": 1, "proved_config": 2}
+    assert any("counts: pass 1, proved_config 2" in ln for ln in render_lines(sc))

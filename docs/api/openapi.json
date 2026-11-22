@@ -16420,6 +16420,7 @@
           "verdict": {
             "enum": [
               "pass",
+              "proved_config",
               "fail_open",
               "conditional",
               "insufficient"
@@ -16464,6 +16465,11 @@
             "title": "Config Hashes",
             "type": "array"
           },
+          "corroboration": {
+            "additionalProperties": true,
+            "title": "Corroboration",
+            "type": "object"
+          },
           "expires_at": {
             "anyOf": [
               {
@@ -16497,9 +16503,19 @@
             ],
             "title": "Issued At"
           },
+          "key_id": {
+            "default": "",
+            "title": "Key Id",
+            "type": "string"
+          },
           "port": {
             "title": "Port",
             "type": "string"
+          },
+          "signed": {
+            "default": false,
+            "title": "Signed",
+            "type": "boolean"
           },
           "status": {
             "enum": [
@@ -16521,6 +16537,125 @@
           "fingerprint"
         ],
         "title": "WargameCertificateOut",
+        "type": "object"
+      },
+      "WargameChangeImpact": {
+        "description": "What a proposed change does, before it is applied.\n\n``verdict`` is the change gate's: ``safe``, ``opens_route_to_crown_jewel``,\n``breaks_live_flows`` or ``opens_and_breaks`` (open string: treat an\nunknown value as \"needs review\").",
+        "properties": {
+          "affected_boundaries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affected Boundaries",
+            "type": "array"
+          },
+          "change_title": {
+            "default": "",
+            "title": "Change Title",
+            "type": "string"
+          },
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "flows_parsed": {
+            "default": 0,
+            "title": "Flows Parsed",
+            "type": "integer"
+          },
+          "flows_skipped": {
+            "default": 0,
+            "title": "Flows Skipped",
+            "type": "integer"
+          },
+          "newly_allowed_flows": {
+            "items": {
+              "$ref": "#/components/schemas/WargameFlowRef"
+            },
+            "title": "Newly Allowed Flows",
+            "type": "array"
+          },
+          "newly_denied_flows": {
+            "items": {
+              "$ref": "#/components/schemas/WargameFlowRef"
+            },
+            "title": "Newly Denied Flows",
+            "type": "array"
+          },
+          "routes_closed": {
+            "items": {
+              "$ref": "#/components/schemas/WargameRouteRef"
+            },
+            "title": "Routes Closed",
+            "type": "array"
+          },
+          "routes_opened": {
+            "items": {
+              "$ref": "#/components/schemas/WargameRouteRef"
+            },
+            "title": "Routes Opened",
+            "type": "array"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "verdict"
+        ],
+        "title": "WargameChangeImpact",
+        "type": "object"
+      },
+      "WargameChangeImpactRequest": {
+        "description": "Body of POST /v1/wargame/change-impact.",
+        "properties": {
+          "flows": {
+            "anyOf": [
+              {
+                "maxLength": 8388608,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows"
+          },
+          "flows_format": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "zeek",
+              "generic",
+              "firewall"
+            ],
+            "title": "Flows Format",
+            "type": "string"
+          },
+          "plan": {
+            "additionalProperties": true,
+            "title": "Plan",
+            "type": "object"
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "title": "WargameChangeImpactRequest",
         "type": "object"
       },
       "WargameEvidenceOut": {
@@ -16620,6 +16755,40 @@
           "cuts_all"
         ],
         "title": "WargameFixSetOut",
+        "type": "object"
+      },
+      "WargameFlowRef": {
+        "description": "An observed flow whose verdict flips at an affected boundary.",
+        "properties": {
+          "dst_ip": {
+            "title": "Dst Ip",
+            "type": "string"
+          },
+          "dst_port": {
+            "title": "Dst Port",
+            "type": "integer"
+          },
+          "proto": {
+            "title": "Proto",
+            "type": "string"
+          },
+          "ruleset_id": {
+            "default": "",
+            "title": "Ruleset Id",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          }
+        },
+        "required": [
+          "src_ip",
+          "dst_ip",
+          "proto",
+          "dst_port"
+        ],
+        "title": "WargameFlowRef",
         "type": "object"
       },
       "WargameRecomputeOut": {
@@ -16728,19 +16897,47 @@
         "title": "WargameRoutePage",
         "type": "object"
       },
+      "WargameRouteRef": {
+        "description": "An (entry, crown jewel) pair whose reachability the change flips.",
+        "properties": {
+          "entry": {
+            "title": "Entry",
+            "type": "string"
+          },
+          "jewel": {
+            "title": "Jewel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry",
+          "jewel"
+        ],
+        "title": "WargameRouteRef",
+        "type": "object"
+      },
       "WargameTwinConfigRequest": {
         "description": "Body of POST /v1/wargame/twin/config: one read-only vendor config.",
         "properties": {
           "raw": {
+            "maxLength": 8388608,
+            "minLength": 1,
             "title": "Raw",
             "type": "string"
           },
           "source": {
             "default": "",
+            "maxLength": 512,
             "title": "Source",
             "type": "string"
           },
           "vendor": {
+            "enum": [
+              "aws",
+              "cisco_asa",
+              "fortinet",
+              "paloalto"
+            ],
             "title": "Vendor",
             "type": "string"
           }
@@ -16892,6 +17089,7 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 20000,
             "title": "Edges",
             "type": "array"
           },
@@ -16900,6 +17098,7 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 5000,
             "title": "Segments",
             "type": "array"
           }
@@ -31886,6 +32085,29 @@
               "title": "Assessment Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -31932,6 +32154,29 @@
               "format": "uuid",
               "title": "Assessment Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
             }
           }
         ],
@@ -31988,6 +32233,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 64,
                   "type": "string"
                 },
                 {
@@ -31995,6 +32241,29 @@
                 }
               ],
               "title": "Framework"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
             }
           }
         ],
@@ -32139,9 +32408,51 @@
         ]
       }
     },
+    "/v1/wargame/change-impact": {
+      "post": {
+        "description": "Say what a proposed Terraform plan would do, BEFORE it is applied.\n\nProxies synchronously to correlation `POST /change-impact`, which loads\nthis tenant's twin, evaluates the plan before/after against it, and\nreturns routes opened/closed to crown jewels and live flows broken. Strictly\nread-only: nothing is persisted, applied, or sent anywhere. There is no\nqueue fallback (the caller needs the answer): correlation down is a 503,\nno twin is a 409, a bad plan is a 422, an oversize body a 413.",
+        "operationId": "change_impact_v1_wargame_change_impact_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameChangeImpactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameChangeImpact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Impact",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
     "/v1/wargame/recompute": {
       "post": {
-        "description": "Trigger a recompute of wargame assessments.\n\nPreferred path: a short synchronous POST to the correlation service's\n`/compute-wargame`. If that is unreachable (or httpx is unavailable), fall\nback to publishing a `correlate:recompute_wargame` job on Redis. The request\nnever fails hard when correlation is down -- the worst case is\n`status=unavailable` (correlation unreachable *and* the enqueue failed).",
+        "description": "Trigger a recompute of wargame assessments.\n\nPreferred path: a synchronous POST to the correlation service's\n`/compute-wargame` (connect fails fast, the read allows a real compute).\nIf that is unreachable or errors, fall back to publishing a\n`correlate:recompute_wargame` job on Redis. The request never fails hard\nwhen correlation is down -- the worst case is `status=unavailable`\n(correlation unreachable *and* the enqueue failed). Failures are logged;\nthe response carries a generic note, never the exception text.",
         "operationId": "recompute_wargame_v1_wargame_recompute_post",
         "responses": {
           "200": {
@@ -32185,7 +32496,7 @@
     },
     "/v1/wargame/twin/config": {
       "post": {
-        "description": "Ingest one read-only vendor config into the twin (compute-side).\n\nForwards to correlation `POST /ingest-config`; falls back to a\n`correlate:twin_ingest_config` Redis job. The config is parsed, never\napplied to any device. Never fails hard when correlation is down.",
+        "description": "Ingest one read-only vendor config into the twin (compute-side).\n\nForwards to correlation `POST /ingest-config`; falls back to a\n`correlate:twin_ingest_config` Redis job when correlation is down. The\nconfig is parsed, never applied to any device. Vendor is an allowlist,\nsize is capped (413 / 422), and a config correlation cannot parse is a\n422, not a queued job.",
         "operationId": "ingest_twin_config_v1_wargame_twin_config_post",
         "requestBody": {
           "content": {
@@ -32227,7 +32538,7 @@
     },
     "/v1/wargame/twin/topology": {
       "post": {
-        "description": "Set the twin's segments/edges (compute-side).\n\nForwards to correlation `POST /set-topology`; falls back to a\n`correlate:twin_set_topology` Redis job. Never fails hard.",
+        "description": "Set the twin's segments/edges (compute-side).\n\nForwards to correlation `POST /set-topology`; falls back to a\n`correlate:twin_set_topology` Redis job. Malformed segments/edges are a\n422 from correlation, passed through.",
         "operationId": "set_twin_topology_v1_wargame_twin_topology_post",
         "requestBody": {
           "content": {

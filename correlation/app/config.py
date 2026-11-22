@@ -20,6 +20,19 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _secret_env(name: str) -> Optional[str]:
+    """``NAME`` from the environment, or the contents of the file named by
+    ``NAME_FILE`` (a docker secret / KMS-decrypted file), which wins. Blank =
+    unset."""
+    path = os.environ.get(f"{name}_FILE")
+    if path:
+        with open(path, encoding="utf-8") as fh:
+            value = fh.read().strip()
+        return value or None
+    value = (os.environ.get(name) or "").strip()
+    return value or None
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -38,6 +51,13 @@ class Settings:
     env: str
     attack_map_enabled: bool
     fusion_enabled: bool
+    # Wargame certificate signing master key (see engine/wargame/signing.py).
+    # Keep it OUTSIDE the database: env, or a docker secret / KMS-decrypted
+    # file via WARGAME_SIGNING_KEY_FILE. Unset = certificates are labelled
+    # "unsigned-dev" (fingerprinted with a public key; not a signature).
+    wargame_signing_key: Optional[str] = None
+    # Retired masters still needed to verify older certificates (comma/space).
+    wargame_signing_previous_keys: str = ""
 
     @classmethod
     def load(cls) -> "Settings":
@@ -74,6 +94,18 @@ class Settings:
             env=os.environ.get("ENV", "dev"),
             attack_map_enabled=_bool_env("ATTACK_MAP_ENABLED", True),
             fusion_enabled=_bool_env("FUSION_ENABLED", True),
+            wargame_signing_key=_secret_env("WARGAME_SIGNING_KEY"),
+            wargame_signing_previous_keys=os.environ.get(
+                "WARGAME_SIGNING_PREVIOUS_KEYS", ""
+            ),
+        )
+
+    def wargame_keyring(self):
+        """The Wargame certificate :class:`~.engine.wargame.signing.Keyring`."""
+        from .engine.wargame.signing import Keyring
+
+        return Keyring.from_strings(
+            self.wargame_signing_key, self.wargame_signing_previous_keys
         )
 
 

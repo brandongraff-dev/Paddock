@@ -11,8 +11,10 @@ could legitimise an attacker's tunnel.
 """
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
-from typing import Any, Optional
+from types import MappingProxyType
+from typing import Any, Mapping, Optional
 
 from .model import (
     Flow,
@@ -63,12 +65,58 @@ def flow_is_real(flow: Flow) -> bool:
     )
 
 
+def _cidr_parses(cidr: str) -> bool:
+    try:
+        ipaddress.ip_network(cidr, strict=False)
+        return True
+    except (ValueError, TypeError):
+        pass
+    try:
+        ipaddress.ip_address(cidr)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _on_side(ip: str, cidrs: tuple[str, ...]) -> bool:
+    """True iff ``ip`` may lie inside ``cidrs`` (fail-loud on the boundary).
+
+    * An IPv4-mapped IPv6 address (``::ffff:10.0.0.5``, as some sensors log
+      dual-stack sockets) is also tested in its IPv4 form, so a crossing is
+      not missed just because of how the sensor wrote the address.
+    * A boundary CIDR that does not parse cannot be placed, so it is treated
+      as covering any address. ``model._ip_in_cidr`` would make it match
+      nothing, which would let real traffic cross a "closed" boundary with
+      no alert; a human resolves every alert, so failing loud is the safe
+      direction.
+    """
+    candidates = [ip]
+    try:
+        mapped = ipaddress.ip_address(ip)
+        if isinstance(mapped, ipaddress.IPv6Address) and mapped.ipv4_mapped:
+            candidates.append(str(mapped.ipv4_mapped))
+    except ValueError:
+        pass
+    for c in cidrs:
+        if not _cidr_parses(c):
+            return True
+        if any(_ip_in_cidr(x, c) for x in candidates):
+            return True
+    return False
+
+
 def flow_crosses(flow: Flow, b: ClosedBoundary) -> bool:
     """True iff the flow goes from ``b``'s source side to its destination side
-    on a port the boundary covers (``b.port`` None means any port)."""
-    if not any(_ip_in_cidr(flow.src_ip, c) for c in b.src_cidrs):
+    on a port the boundary covers (``b.port`` None means any port).
+
+    Exact per flow (no representative hosts). Ports follow
+    ``PortRange.contains``, the same literal semantics the solver proved the
+    boundary closed under. See :func:`_on_side` for the fail-loud handling
+    of unparsable CIDRs and IPv4-mapped addresses.
+    """
+    if not _on_side(flow.src_ip, b.src_cidrs):
         return False
-    if not any(_ip_in_cidr(flow.dst_ip, c) for c in b.dst_cidrs):
+    if not _on_side(flow.dst_ip, b.dst_cidrs):
         return False
     return b.port is None or b.port.contains(flow.proto, flow.dst_port)
 
@@ -111,22 +159,33 @@ def resolve(
     resolution: ImpossibleResolution,
     reason: str,
     resolved_by: str,
-) -> dict[str, Any]:
+) -> Mapping[str, Any]:
     """Record a human resolution of an alert.
 
-    Requires a non-blank ``reason`` and a non-empty ``resolved_by`` (raises
-    ``ValueError`` otherwise). Returns a new record dict; it does not touch
-    the alert, any graph, certificate, or model. The model is NEVER
-    auto-amended: adding a missing asset or fixing a rule is a separate,
-    human-driven action.
+    Requires ``resolution`` to be one of :class:`ImpossibleResolution` (a
+    free-text value such as "false positive" or "explained" is refused: there
+    is deliberately no way to wave a contradiction away), a non-blank
+    ``reason`` and a non-empty ``resolved_by`` (raises ``ValueError``
+    otherwise). Returns a new, read-only record; it does not touch the alert,
+    any graph, certificate, or model. The model is NEVER auto-amended: adding
+    a missing asset or fixing a rule is a separate, human-driven action.
     """
+    try:
+        resolution = ImpossibleResolution(resolution)
+    except ValueError:
+        raise ValueError(
+            "resolution must be one of "
+            + ", ".join(r.value for r in ImpossibleResolution)
+        ) from None
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("a cited reason is required to resolve an alert")
     if not isinstance(resolved_by, str) or not resolved_by.strip():
         raise ValueError("resolved_by is required to resolve an alert")
-    return {
-        "alert": alert,
-        "resolution": resolution,
-        "reason": reason.strip(),
-        "resolved_by": resolved_by.strip(),
-    }
+    return MappingProxyType(
+        {
+            "alert": alert,
+            "resolution": resolution,
+            "reason": reason.strip(),
+            "resolved_by": resolved_by.strip(),
+        }
+    )

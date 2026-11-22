@@ -24,7 +24,7 @@ from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import tenancy
 from .config import settings
@@ -41,15 +41,39 @@ from .engine.fusion import FusionEngine
 from .engine.graph import Graph
 from .engine.policy import RuleLoader
 from .engine.wargame import certificate, report, store, twin_store
-from .engine.wargame.assess import assess_environment
+from .engine.wargame.assess import assess_environment, assess_unproven_environment
 from .engine.wargame.fabric import EdgeSpec, SegmentSpec
 from .engine.wargame.graph_adapter import environment_from_graph
 from .engine.wargame.model import EvidenceLabel, NodeRole, PortRange, Proto
-from .engine.wargame.parsers import parse
+from .engine.wargame.parsers import available_vendors, parse
 from .narratives.writer import NarrativeWriter
 from .orchestrator import OrchestratorClient
 
 log = logging.getLogger("correlation")
+
+_DEV_ENVS = frozenset({"dev", "development", "local", "test"})
+_warned_unsigned = False
+
+
+def _wargame_signing_key() -> Any:
+    """The CURRENT tenant's Wargame certificate signing key.
+
+    Derived per tenant from ``WARGAME_SIGNING_KEY`` (``signing.py``). With no
+    key configured the public development key is returned, flagged
+    ``unsigned``: certificates then say ``unsigned-dev`` in their key id and
+    assumptions. Outside a dev ``ENV`` that is logged (once) as a warning."""
+    global _warned_unsigned
+    cfg = settings()
+    sk = cfg.wargame_keyring().signing_key(
+        tenancy.current_tenant_id() or tenancy.DEFAULT_TENANT_ID
+    )
+    if sk.unsigned and not _warned_unsigned:
+        _warned_unsigned = True
+        (log.info if cfg.env.strip().lower() in _DEV_ENVS else log.warning)(
+            "wargame_certificates_unsigned: WARGAME_SIGNING_KEY is not set; "
+            "certificates are labelled unsigned-dev (not a signature)"
+        )
+    return sk
 
 
 # ----------------------------------------------------------------------------
@@ -471,11 +495,19 @@ class Service:
         and is proved by config, carrying signed closed-boundary certificates;
         the result is labelled ``"twin"``.
 
+        Certificates are signed with this tenant's key, derived from
+        ``WARGAME_SIGNING_KEY`` (``signing.py``). With no key configured they
+        are labelled ``unsigned-dev`` (public development key), never passed
+        off as signed. No probe results or observed flows are stored in the
+        twin yet, so every closed pair is ``proved_config`` (no probe), never
+        ``pass``; coverage is unmeasured.
+
         Fallback: with no twin, the environment is assembled from the legacy
         asset graph (``graph_adapter``). That graph carries no firewall rules,
-        so the environment is honestly all-INFERRED, coverage is reported as
-        unmeasured (``coverage_pct=None``) — never implied full — no
-        certificates are issued, and the result is labelled ``"auto"``.
+        so the environment is honestly all-INFERRED: pairs with no route in it
+        are reported as *unproven*, not closed (closure 0%, the board line
+        says closure is unproven), coverage is unmeasured, no certificates are
+        issued, and the result is labelled ``"auto"``.
         """
         if await twin_store.has_twin(self.db):
             env = await twin_store.load_environment(self.db)
@@ -487,6 +519,7 @@ class Service:
                 label="twin",
                 config_hashes=hashes,
                 issued_at=datetime.now(timezone.utc),
+                signing_key=_wargame_signing_key(),
             )
             await store.persist(self.db, bundle)
             return {"assessments": 1, "routes": len(bundle.routes)}
@@ -495,11 +528,9 @@ class Service:
             return {"assessments": 0, "routes": 0}
         graph = await self.attackpaths._load_graph()
         env = environment_from_graph(graph)
-        rr = env.reachability()
-        sc = report.build_scorecard(rr, coverage_pct=None)
-        bundle = store.assemble_bundle(reachability=rr, scorecard=sc, label="auto")
+        bundle = assess_unproven_environment(env, label="auto")
         await store.persist(self.db, bundle)
-        return {"assessments": 1, "routes": len(rr.routes)}
+        return {"assessments": 1, "routes": len(bundle.routes)}
 
     async def run_wargame_scoped(self) -> dict[str, Any]:
         """The tenant named by the request, else every active tenant.
@@ -727,15 +758,23 @@ async def compute_wargame() -> ComputeWargameResponse:
 # Wargame twin config ingest (parsed rule sets + declared topology)
 # ----------------------------------------------------------------------------
 
+_MAX_CONFIG_CHARS = 8 * 1024 * 1024
+_MAX_TOPOLOGY_SEGMENTS = 5_000
+_MAX_TOPOLOGY_EDGES = 20_000
+_MAX_CHANGE_BODY_BYTES = 32 * 1024 * 1024
+_MAX_FLOWS_CHARS = 8 * 1024 * 1024
+
+
 class IngestConfigRequest(BaseModel):
-    vendor: str
-    raw: str           # raw config text, or a JSON string for JSON vendors
-    source: str = ""   # file path / connector id, for snapshot provenance
+    vendor: str = Field(max_length=32)
+    # raw config text, or a JSON string for JSON vendors
+    raw: str = Field(min_length=1, max_length=_MAX_CONFIG_CHARS)
+    source: str = Field("", max_length=512)  # file path / connector id, for snapshot provenance
 
 
 class SetTopologyRequest(BaseModel):
-    segments: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
+    segments: list[dict[str, Any]] = Field(default=[], max_length=_MAX_TOPOLOGY_SEGMENTS)
+    edges: list[dict[str, Any]] = Field(default=[], max_length=_MAX_TOPOLOGY_EDGES)
 
 
 def _port_range(p: Any) -> Optional[PortRange]:
@@ -782,30 +821,43 @@ def _edge_spec(d: dict[str, Any]) -> EdgeSpec:
 @app.post("/ingest-config")
 async def ingest_config(req: IngestConfigRequest) -> dict[str, int]:
     """Parse a real firewall/cloud export into vendor-neutral rule sets and
-    merge them into the CURRENT tenant's twin (RLS-scoped). A config snapshot
-    hash is recorded for certificate provenance."""
+    merge them into the CURRENT tenant's twin (RLS-scoped). Re-ingesting the
+    same ``source`` (or the same rule set ids) REPLACES those rule sets, it
+    never duplicates them. A config snapshot hash is recorded for certificate
+    provenance."""
     if not service._ready:
         raise HTTPException(status_code=503, detail="not ready")
+    if req.vendor not in available_vendors():
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported vendor; expected one of {sorted(available_vendors())}",
+        )
     # AWS exports are JSON; the text-config vendors (asa/fortinet/paloalto)
     # take the raw text. Mirror what each parser expects as input.
     raw_in: Any = req.raw
     if req.vendor == "aws":
         try:
             raw_in = json.loads(req.raw)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, RecursionError) as exc:
             raise HTTPException(
-                status_code=400, detail=f"invalid aws json: {exc}"
-            ) from exc
+                status_code=422, detail=f"invalid aws json: {type(exc).__name__}"
+            ) from None
     try:
-        result = parse(req.vendor, raw_in)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Parsing is CPU-bound and the config can be megabytes: keep the event
+        # loop free.
+        result = await asyncio.to_thread(parse, req.vendor, raw_in)
+    except Exception:  # noqa: BLE001 - a hostile/garbled config must be a 422
+        log.warning("ingest-config: %s config could not be parsed", req.vendor, exc_info=True)
+        raise HTTPException(
+            status_code=422, detail=f"could not parse the {req.vendor} config"
+        ) from None
     sha = certificate.hash_snapshot(req.raw)
     await twin_store.persist_rulesets(
         service.db,
         result.rulesets,
         replace=False,
         snapshots=[{"vendor": req.vendor, "source": req.source, "sha256": sha}],
+        source=req.source,
     )
     return {"rulesets": len(result.rulesets), "warnings": len(result.warnings)}
 
@@ -814,13 +866,165 @@ async def ingest_config(req: IngestConfigRequest) -> dict[str, int]:
 async def set_topology(req: SetTopologyRequest) -> dict[str, int]:
     """Replace the CURRENT tenant's declared topology (segments + edges) in
     the twin (RLS-scoped). Dicts are converted tolerantly into the fabric
-    spec types."""
+    spec types; a malformed or duplicate segment/edge is a 422."""
     if not service._ready:
         raise HTTPException(status_code=503, detail="not ready")
-    segments = [_segment_spec(d) for d in req.segments]
-    edges = [_edge_spec(d) for d in req.edges]
+    try:
+        segments = [_segment_spec(d) for d in req.segments]
+        edges = [_edge_spec(d) for d in req.edges]
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid topology: {type(exc).__name__}: {str(exc)[:120]}",
+        ) from None
+    ids = [sg.id for sg in segments]
+    if len(set(ids)) != len(ids):
+        dup = next(i for i in ids if ids.count(i) > 1)
+        raise HTTPException(status_code=422, detail=f"duplicate segment id {dup!r}")
     await twin_store.persist_topology(service.db, segments, edges)
     return {"segments": len(segments), "edges": len(edges)}
+
+
+# ----------------------------------------------------------------------------
+# Wargame change gate (read-only: evaluate a Terraform plan against the twin)
+# ----------------------------------------------------------------------------
+
+class ChangeImpactRequest(BaseModel):
+    plan: dict[str, Any]
+    flows: Optional[str] = Field(default=None, max_length=_MAX_FLOWS_CHARS)
+    flows_format: str = Field("auto", max_length=16)
+
+
+def _flow_ref(fi: Any) -> dict[str, Any]:
+    f = fi.flow
+    return {
+        "src_ip": f.src_ip,
+        "dst_ip": f.dst_ip,
+        "proto": f.proto.value,
+        "dst_port": f.dst_port,
+        "ruleset_id": fi.ruleset_id,
+    }
+
+
+def _applicable_ops(env: Any, change: Any) -> tuple[Any, list[str]]:
+    """Split a plan's ops into those that can be applied to ``env`` and
+    warnings for those that cannot (a rule set the twin does not model, a rule
+    the twin does not hold). ``apply_change`` raises on those; one unmodelled
+    resource must not make the whole plan un-evaluable, but it must never be
+    silently dropped either, so each becomes a warning."""
+    from .engine.wargame.environment import ChangeKind, ProposedChange
+
+    live: dict[str, set[str]] = {
+        rid: {r.id for r in rs.rules} for rid, rs in env.rulesets.items()
+    }
+    keep: list[Any] = []
+    warnings: list[str] = []
+    for op in change.ops:
+        k = op.kind
+        if k in (ChangeKind.ADD_RULE, ChangeKind.REMOVE_RULE, ChangeKind.MODIFY_RULE):
+            rid = op.ruleset_id
+            rule_id = op.rule_id or (op.rule.id if op.rule else "")
+            if rid not in live:
+                warnings.append(
+                    f"not evaluated: rule set {rid!r} is not in the twin ({k.value} {rule_id!r})"
+                )
+                continue
+            if k is ChangeKind.ADD_RULE:
+                live[rid].add(rule_id)
+            elif rule_id not in live[rid]:
+                warnings.append(
+                    f"not evaluated: rule {rule_id!r} is not in twin rule set {rid!r} ({k.value})"
+                )
+                continue
+            elif k is ChangeKind.REMOVE_RULE:
+                live[rid].discard(rule_id)
+        keep.append(op)
+    return ProposedChange(ops=keep, title=change.title, source=change.source), warnings
+
+
+@app.post("/change-impact")
+async def change_impact(request: Request, req: ChangeImpactRequest) -> dict[str, Any]:
+    """Evaluate a ``terraform show -json`` plan against the CURRENT tenant's
+    twin and report what it would do: crown-jewel routes opened/closed and
+    observed flows it would break/newly allow. READ-ONLY: nothing is
+    persisted, applied, or sent anywhere. 409 when the tenant has no twin."""
+    from .engine.wargame import changegate, ingest as flow_ingest
+    from .engine.wargame.parsers.terraform import parse_plan_detailed
+
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > _MAX_CHANGE_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="request body too large")
+
+    env = await twin_store.load_environment(service.db)
+    if env is None:
+        raise HTTPException(
+            status_code=409,
+            detail="no twin for this tenant: ingest firewall/cloud config and set "
+            "the topology first (POST /v1/wargame/twin/config, /twin/topology)",
+        )
+    try:
+        parsed = await asyncio.to_thread(parse_plan_detailed, req.plan)
+    except (ValueError, TypeError, RecursionError):
+        raise HTTPException(status_code=422, detail="not a terraform show -json plan") from None
+
+    # A resource TYPE the gate does not model is informational (most plans
+    # carry instances, buckets, ...); a modelled type that failed to parse, or
+    # a malformed entry, means part of the change was NOT evaluated.
+    unmodelled = [(a, w) for a, w in parsed.skipped if "unhandled resource type" in w]
+    broken = [(a, w) for a, w in parsed.skipped if "unhandled resource type" not in w]
+    warnings: list[str] = [f"skipped {a}: {w}" for a, w in broken[:50]]
+    if len(broken) > 50:
+        warnings.append(f"... and {len(broken) - 50} more unparseable resource(s)")
+    if unmodelled:
+        types = sorted({w.split("'")[1] if "'" in w else "?" for _, w in unmodelled})
+        warnings.append(
+            f"{len(unmodelled)} resource change(s) of types this gate does not model "
+            f"were ignored: {', '.join(types[:10])}"
+        )
+    complete = not broken
+    change, op_warnings = _applicable_ops(env, parsed.change)
+    warnings.extend(op_warnings)
+    if op_warnings:
+        complete = False
+    if not parsed.change.ops and not broken:
+        warnings.append("the plan contains no network rule changes this gate models")
+
+    flows: list[Any] = []
+    flows_parsed = flows_skipped = 0
+    if req.flows:
+        fmt = (req.flows_format or "auto").lower()
+        flows, stats = await asyncio.to_thread(flow_ingest.parse_flows_detailed, req.flows, fmt)
+        flows_parsed, flows_skipped = stats.parsed, stats.skipped
+        if flows_skipped:
+            warnings.append(f"{flows_skipped} flow row(s) could not be parsed")
+        if fmt != "auto" and not flows and stats.reasons:
+            warnings.append(f"no flows parsed: {stats.reasons[0][:120]}")
+
+    try:
+        impact = await asyncio.to_thread(changegate.evaluate_change, env, change, flows=flows)
+    except Exception:  # noqa: BLE001
+        log.exception("change-impact evaluation failed")
+        raise HTTPException(status_code=422, detail="the change could not be evaluated") from None
+
+    summary = impact.summary()
+    if not complete:
+        summary += " NOT a full proof: part of the plan could not be evaluated (see warnings)."
+    return {
+        "verdict": impact.verdict,
+        "routes_opened": [{"entry": d.pair[0], "jewel": d.pair[1]} for d in impact.routes_opened],
+        "routes_closed": [{"entry": d.pair[0], "jewel": d.pair[1]} for d in impact.routes_closed],
+        "newly_denied_flows": [_flow_ref(fi) for fi in impact.newly_denied_flows],
+        "newly_allowed_flows": [_flow_ref(fi) for fi in impact.newly_allowed_flows],
+        "summary": summary,
+        "warnings": warnings,
+        "change_title": impact.change_title,
+        "affected_boundaries": list(impact.affected_boundaries),
+        "complete": complete,
+        "flows_parsed": flows_parsed,
+        "flows_skipped": flows_skipped,
+    }
 
 
 class FuseResponse(BaseModel):

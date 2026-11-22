@@ -184,32 +184,72 @@ async def persist_rulesets(
     *,
     replace: bool = True,
     snapshots: list[dict[str, Any]] = (),
+    source: str = "",
 ) -> None:
     """Write the parsed rule sets (and optional config snapshots).
 
-    When ``replace`` is true the tenant's existing ``wargame_rulesets`` +
-    ``wargame_rules`` are deleted first (RLS scopes the DELETE to the tenant,
-    so a twin is replaced in place). ``snapshots`` is a list of
-    ``{vendor, source, sha256}`` dicts recorded for certificate provenance.
+    ``replace=True`` deletes the tenant's whole rule-set twin first (RLS scopes
+    every DELETE to the tenant), snapshots included.
+
+    ``replace=False`` is the incremental ingest: it **replaces by identity, it
+    never appends a second copy**. Any stored rule set with the same
+    ``ruleset_key`` as one being written is deleted first, as is every rule set
+    previously ingested from the same non-empty ``source`` (so a device whose
+    config dropped a rule set loses it). Re-ingesting the same device is
+    therefore idempotent. Snapshots for the same ``(vendor, source)`` are
+    replaced the same way, so certificate provenance only ever names configs
+    that are still in the twin.
+
+    ``snapshots`` is a list of ``{vendor, source, sha256}`` dicts recorded for
+    certificate provenance. All of it runs in one transaction.
     """
     async with db.acquire() as conn:
         async with conn.transaction():
             if replace:
                 await conn.execute("DELETE FROM wargame_rules")
                 await conn.execute("DELETE FROM wargame_rulesets")
+                await conn.execute("DELETE FROM wargame_config_snapshots")
+            else:
+                keys = sorted(rulesets)
+                stale = await conn.fetch(
+                    "SELECT ruleset_key FROM wargame_rulesets "
+                    "WHERE ruleset_key = ANY($1::text[]) "
+                    "   OR ($2::text <> '' AND metadata->>'source' = $2)",
+                    keys,
+                    source,
+                )
+                stale_keys = sorted({r["ruleset_key"] for r in stale})
+                if stale_keys:
+                    await conn.execute(
+                        "DELETE FROM wargame_rules WHERE ruleset_key = ANY($1::text[])",
+                        stale_keys,
+                    )
+                    await conn.execute(
+                        "DELETE FROM wargame_rulesets WHERE ruleset_key = ANY($1::text[])",
+                        stale_keys,
+                    )
+                for snap in snapshots:
+                    if snap.get("source"):
+                        await conn.execute(
+                            "DELETE FROM wargame_config_snapshots "
+                            "WHERE vendor = $1 AND source = $2",
+                            snap.get("vendor", ""),
+                            snap["source"],
+                        )
 
             for key in sorted(rulesets):
                 ruleset_row, rule_rows = ruleset_to_rows(rulesets[key])
                 await conn.execute(
                     """
                     INSERT INTO wargame_rulesets
-                      (ruleset_key, vendor, default_action, name)
-                    VALUES ($1, $2, $3, $4)
+                      (ruleset_key, vendor, default_action, name, metadata)
+                    VALUES ($1, $2, $3, $4, $5::jsonb)
                     """,
                     ruleset_row["ruleset_key"],
                     ruleset_row["vendor"],
                     ruleset_row["default_action"],
                     ruleset_row["name"],
+                    {"source": source} if source else {},
                 )
                 if rule_rows:
                     await conn.executemany(
@@ -233,10 +273,14 @@ async def persist_rulesets(
                     )
 
             for snap in snapshots:
+                # Identical (vendor, source, hash) is recorded once.
                 await conn.execute(
                     """
                     INSERT INTO wargame_config_snapshots (vendor, source, sha256)
-                    VALUES ($1, $2, $3)
+                    SELECT $1::text, $2::text, $3::text
+                     WHERE NOT EXISTS (
+                       SELECT 1 FROM wargame_config_snapshots
+                        WHERE vendor = $1 AND source = $2 AND sha256 = $3)
                     """,
                     snap.get("vendor", ""),
                     snap.get("source", ""),
