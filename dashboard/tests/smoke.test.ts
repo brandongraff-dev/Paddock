@@ -51,15 +51,15 @@ afterEach(() => {
 });
 
 describe("App renders", () => {
-  it("mounts without throwing and shows the brand mark", () => {
+  it("mounts without throwing and shows the brand mark", async () => {
     render(React.createElement(App));
-    expect(screen.getAllByText(/pa/i).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/pa/i, {}, { timeout: 8000 })).length).toBeGreaterThan(0);
   });
 
-  it("shows the Overview page title by default", () => {
+  it("shows the Overview page title by default", async () => {
     render(React.createElement(App));
-    // Shell renders uppercased route title in the topbar.
-    expect(screen.getByText("OVERVIEW")).toBeInTheDocument();
+    // The console is code-split, so wait for it. Shell renders the uppercased route title in the topbar.
+    expect(await screen.findByText("OVERVIEW", {}, { timeout: 8000 })).toBeInTheDocument();
   });
 });
 
@@ -188,8 +188,9 @@ describe("graph layout", () => {
 });
 
 describe("command palette", () => {
-  it("opens on ctrl-K, filters the Navigate section, and closes on Esc", () => {
+  it("opens on ctrl-K, filters the Navigate section, and closes on Esc", async () => {
     render(React.createElement(App));
+    await screen.findByText("OVERVIEW", {}, { timeout: 8000 });
 
     // Not open initially.
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -216,8 +217,9 @@ describe("command palette", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("toggles closed on a second ctrl-K", () => {
+  it("toggles closed on a second ctrl-K", async () => {
     render(React.createElement(App));
+    await screen.findByText("OVERVIEW", {}, { timeout: 8000 });
     fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });

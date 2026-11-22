@@ -6,6 +6,7 @@ import PixelField from "../brand/PixelField";
 import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
+import AgentArt from "./landing/AgentArt";
 import Faq from "./landing/Faq";
 import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
@@ -162,7 +163,7 @@ export default function Landing() {
           {AGENTS.map((a) => (
             <article className={`lp-card tone-${a.tone}`} key={a.id} role="listitem">
               <div className="lp-card-img">
-                <DigitHorse still={a.plate} strays={false} body={0.5} />
+                <AgentArt name={a.name} plate={a.plate} />
               </div>
               <div className="lp-card-body">
                 <span className="lp-tag">

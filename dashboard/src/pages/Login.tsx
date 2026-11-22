@@ -14,7 +14,7 @@
  * Dark, dense, serious — not a marketing page. One column, mono accents.
  */
 
-import PixelField from "../brand/PixelField";
+import FooterScene from "../brand/FooterScene";
 import HorseMark from "../brand/HorseMark";
 import { useEffect, useState, type FormEvent } from "react";
 import { login as loginReq, me } from "../api/auth";
@@ -152,7 +152,7 @@ export default function Login() {
 
   return (
     <div className="login-screen">
-      <PixelField className="login-pixels" cell={5} animate={false} originX={0.1} />
+      <FooterScene className="login-scene" phoneHorizon={0.8} />
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
           <span className="login-mark"><HorseMark size={40} title="" /></span>

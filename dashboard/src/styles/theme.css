@@ -543,3 +543,10 @@ textarea:focus { border-color: var(--border-focus) !important; box-shadow: 0 0 0
 .login-pixels { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0.85; }
 .setup-screen { position: relative; isolation: isolate; }
 .setup-pixels { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0.8; }
+
+/* sign-in: the cliff scene fills the screen, the form sits on the left */
+.login-scene { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; display: block; }
+.login-screen { background: #0e0c0a; }
+@media (min-width: 900px) { .login-screen { justify-content: flex-start; padding-left: clamp(40px, 9vw, 160px); } }
+.login-card { background: rgba(12, 10, 8, 0.72); -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%); }
+@media (max-width: 899px) { .login-screen { align-items: flex-start; padding-top: 12vh; } }

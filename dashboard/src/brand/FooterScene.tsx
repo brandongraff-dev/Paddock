@@ -24,7 +24,7 @@ function vnoise(x: number, y: number): number {
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
 
-export default function FooterScene({ className, cell = 5 }: { className?: string; cell?: number }) {
+export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58 }: { className?: string; cell?: number; phoneHorizon?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const riderImg = useRef<HTMLImageElement | null>(null);
 
@@ -61,9 +61,9 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
       const rih = h * (phone ? 1.35 : 1.6);
       const riw = (rih * 783) / 1200;
       const rix = phone ? w * 0.62 - 0.4 * riw : w - riw * 0.78;
-      const riy = h * (phone ? 0.6 : 0.62) - 0.19 * rih;
+      const riy = h * (phone ? phoneHorizon + 0.02 : 0.62) - 0.19 * rih;
       const horseCol = Math.round((rix + riw * 0.24) / cs);
-      const hy = Math.round(rows * (phone ? 0.58 : 0.66));        // horizon row
+      const hy = Math.round(rows * (phone ? phoneHorizon : 0.66));        // horizon row
       const cliffX = Math.round(cols * (phone ? 0.44 : 0.63));    // cliff face start (at ledge)
       const ledge = hy - Math.round(rows * 0.035);                // ledge row
       const orbX = Math.round(cols * (phone ? 0.3 : 0.5));
@@ -153,14 +153,14 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
     };
     const im = new Image();
     im.onload = () => paint();
-    im.src = "/cliff-final.png";
+    im.src = "/cliff-final.webp";
     riderImg.current = im;
     paint();
     let t = 0;
     const on = () => { window.clearTimeout(t); t = window.setTimeout(paint, 120); };
     window.addEventListener("resize", on);
     return () => { window.removeEventListener("resize", on); window.clearTimeout(t); };
-  }, [cell]);
+  }, [cell, phoneHorizon]);
 
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }

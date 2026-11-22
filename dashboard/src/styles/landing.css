@@ -612,3 +612,9 @@
 
 
 @media (max-width: 899px) { .lp-footer-in { padding-bottom: 470px; } .lp-footer-px { height: 560px; } }
+
+/* painted agent art fills the image area; the glass plate overlaps its lower part */
+.lp-card-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 900ms var(--ease); }
+.lp-card:hover .lp-card-art { transform: scale(1.04); }
+.lp-card-img:has(.lp-card-art)::before { content: ""; position: absolute; inset: auto 0 0 0; height: 55%; z-index: 1; background: linear-gradient(180deg, transparent, rgba(10, 8, 6, 0.75)); pointer-events: none; }
+.lp-card-body { z-index: 2; }
