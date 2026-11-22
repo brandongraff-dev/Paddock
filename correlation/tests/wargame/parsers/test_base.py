@@ -184,3 +184,27 @@ def test_clean_rule_is_not_conditional():
 def test_unknown_vendor_raises_helpfully():
     with pytest.raises(KeyError):
         base.get_parser("no-such-vendor")
+
+
+# -- user-defined objects win over same-named built-ins ----------------------
+
+def test_user_service_object_shadows_wellknown_name():
+    # A config that defines a service group named "DNS" (tcp+udp/53) must
+    # win over the generic WELL_KNOWN_SERVICES "dns" (udp-only).
+    t = ObjectTable()
+    t.add_service(ServiceObject("DNS", ports=(
+        PortRange(Proto.TCP, 53, 53), PortRange(Proto.UDP, 53, 53))))
+    r = t.resolve_service("DNS")
+    assert set(r.ports) == {PortRange(Proto.TCP, 53, 53), PortRange(Proto.UDP, 53, 53)}
+    assert r.conditional is False
+    # An undefined well-known name still falls back to the built-in.
+    assert ObjectTable().resolve_service("ssh").ports == (PortRange(Proto.TCP, 22, 22),)
+
+
+def test_user_address_object_shadows_literal_lookalike_is_not_an_issue_but_name_wins():
+    # A user object is resolved from the table first; a literal only when no
+    # object has that name.
+    t = ObjectTable()
+    t.add_address(AddressObject("corp", cidrs=("10.7.0.0/16",)))
+    assert t.resolve_addresses("corp").cidrs == ("10.7.0.0/16",)
+    assert t.resolve_addresses("10.7.0.0/16").cidrs == ("10.7.0.0/16",)

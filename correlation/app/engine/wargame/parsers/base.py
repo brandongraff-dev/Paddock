@@ -438,12 +438,14 @@ class ObjectTable:
     ) -> None:
         if depth > _MAX_GROUP_DEPTH or token in seen:
             return
-        literal = normalize_cidrs(token)
-        if literal is not None:
-            out.extend(literal)
-            return
+        # A user-defined object/group wins over a same-named literal: real
+        # configs do name objects, and the table is authoritative.
         obj = self.addresses.get(token)
         if obj is None:
+            literal = normalize_cidrs(token)
+            if literal is not None:
+                out.extend(literal)
+                return
             feats.add(ConditionalFeature.UNRESOLVED)
             unresolved.append(token)
             out.extend(ANY_CIDRS)
@@ -486,12 +488,15 @@ class ObjectTable:
     ) -> None:
         if depth > _MAX_GROUP_DEPTH or token in seen:
             return
-        named = service_from_name(token)
-        if named is not None:
-            out.extend(named)
-            return
+        # A user-defined service/group wins over a same-named built-in, and
+        # vendor defaults (e.g. FortiGate DNS = tcp+udp/53) differ from the
+        # generic table, so the config is authoritative when it defines one.
         obj = self.services.get(token)
         if obj is None:
+            named = service_from_name(token)
+            if named is not None:
+                out.extend(named)
+                return
             feats.add(ConditionalFeature.UNRESOLVED)
             unresolved.append(token)
             out.append(PortRange.any())

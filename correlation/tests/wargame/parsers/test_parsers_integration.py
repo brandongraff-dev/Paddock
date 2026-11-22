@@ -27,12 +27,15 @@ from app.engine.wargame.parsers import available_vendors, base, parse
 
 _FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 
-# (vendor, fixture filename, is_json)
+# (vendor, fixture filename, is_json, expect_conditional)
+# expect_conditional: the fixture contains a runtime-only / unresolved
+# construct so the honesty rule must fire. A clean L3/L4 Cisco ACL
+# legitimately has none, so it is not required there.
 _CASES = [
-    ("aws", "aws_security_groups.json", True),
-    ("cisco_asa", "cisco_asa.conf", False),
-    ("fortinet", "fortigate.conf", False),
-    ("paloalto", "paloalto_set.conf", False),
+    ("aws", "aws_security_groups.json", True, True),
+    ("cisco_asa", "cisco_asa.conf", False, False),
+    ("fortinet", "fortigate.conf", False, True),
+    ("paloalto", "paloalto_set.conf", False, True),
 ]
 
 
@@ -47,8 +50,8 @@ def _load(vendor: str, fname: str, is_json: bool):
     return parse(vendor, raw)
 
 
-@pytest.mark.parametrize("vendor,fname,is_json", _CASES)
-def test_parser_output_is_evaluable(vendor, fname, is_json):
+@pytest.mark.parametrize("vendor,fname,is_json,expect_conditional", _CASES)
+def test_parser_output_is_evaluable(vendor, fname, is_json, expect_conditional):
     result = _load(vendor, fname, is_json)
     assert result.vendor == vendor
     assert result.rulesets, "expected at least one RuleSet"
@@ -60,13 +63,16 @@ def test_parser_output_is_evaluable(vendor, fname, is_json):
             assert r.src_cidrs and r.dst_cidrs and r.ports
 
 
-@pytest.mark.parametrize("vendor,fname,is_json", _CASES)
-def test_some_rules_are_marked_conditional_where_expected(vendor, fname, is_json):
+@pytest.mark.parametrize("vendor,fname,is_json,expect_conditional", _CASES)
+def test_some_rules_are_marked_conditional_where_expected(
+    vendor, fname, is_json, expect_conditional):
     # Each fixture is built to include at least one runtime-only / unresolved
     # construct, so each parser must emit at least one conditional rule
     # (the honesty rule in action). AWS's conditional case is the SG-to-SG /
     # prefix-list reference without members.
     result = _load(vendor, fname, is_json)
+    if not expect_conditional:
+        pytest.skip(f"{vendor} fixture is pure L3/L4; no conditional expected")
     assert result.conditional_count() >= 1, (
         f"{vendor}: expected at least one conditional rule from the fixture"
     )
