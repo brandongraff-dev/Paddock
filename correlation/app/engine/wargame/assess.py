@@ -175,7 +175,13 @@ def assess_environment(
         certificates_out.append(cert)
 
     candidates = _fix_candidates(env)
-    fs = mincut.fix_set_for(rr, candidates)
+    # Verified, not just solved: the fix set is applied to the model and the
+    # search re-run until nothing it targeted is still open (lazy constraint
+    # generation), so "cuts every route" holds for routes the enumeration
+    # caps never listed, too.
+    fs = mincut.verified_fix_set(
+        env.nodes, env.edges, env.rulesets, candidates, result=rr
+    )
 
     scorecard = report.build_scorecard(
         rr, agreement_reports=reports, coverage_pct=coverage_pct
@@ -195,6 +201,10 @@ def assess_environment(
             "key_id": signing_key.kid,
             "probed_pairs": len(probes),
             "observed_flows": len(flows),
+            "fix_set_verified": bool(fs.verified),
+            "fix_set_solver": fs.solver,
+            "fix_set_uncut_pairs": [list(p) for p in sorted(fs.uncut_pairs)],
+            "fix_set_uncuttable_pairs": [list(p) for p in sorted(fs.uncuttable_pairs)],
         },
     )
 

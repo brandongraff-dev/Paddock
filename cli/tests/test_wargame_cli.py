@@ -91,7 +91,8 @@ def test_check_json_schema_is_stable(proj, capsys):
     assert set(route) == {"entry", "jewel", "weakest", "proven", "path", "hops"}
     assert set(route["hops"][0]) == {"src", "dst", "labels", "weakest", "proven", "port", "rule", "fix_candidates"}
     assert {r["proven"] for r in d["routes"]} == {True, False}
-    assert set(d["fix"]) == {"selected", "total_cost", "cuts_every_route", "optimality", "uncut_routes"}
+    assert set(d["fix"]) == {"selected", "total_cost", "cuts_every_route", "optimality", "uncut_routes",
+                            "uncuttable_pairs"}
     assert d["fix"]["cuts_every_route"] is True
     assert set(d["fix"]["selected"][0]) == {"id", "description", "from", "to", "ruleset", "rules", "cost_class",
                                            "cost", "cuts_routes"}

@@ -22,18 +22,35 @@ DEFENSIVE. Everything here is a pure synthetic model: nodes, edges and
 vendor-neutral rules. Nothing is exploited, probed or executed. All prose
 that reaches a report goes through :func:`app.engine.wargame.safety.safe_text`.
 
+Adversarial cases and an independent oracle. Cases 1–9 have hand-declared
+truth. The adversarial cases (10+) — a route longer than the enumeration hop
+limit, a dense graph that starves a later jewel of search budget, parallel
+edges carrying different fix candidates, and sub-CIDR carve-outs — take their
+truth from :func:`ground_truth`, a brute-force checker that shares **no code**
+with the engine: it re-implements first-match evaluation, tries every host of
+every (tiny) CIDR and every port breakpoint of every rule, and runs its own
+graph search. :func:`score` also checks each engine fix set against that
+oracle: a fix set that claims to cut every route while the oracle still finds
+one open is a *false cut* (``EvalReport.false_cut_rate``, which must be 0).
+
 Determinism. :func:`library` rebuilds the same cases every call; the engine
 is deterministic; the metrics are plain counting. The same inputs always
 yield an identical :class:`EvalReport`.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import ipaddress
+from collections import deque
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 
+from . import mincut
 from .environment import Environment
 from .model import (
     Action,
     Edge,
+    EvidenceLabel,
+    FixCandidate,
     Node,
     NodeRole,
     PortRange,
@@ -86,6 +103,13 @@ class CaseResult:
     false_closed: set[tuple[str, str]]
     false_open: set[tuple[str, str]]
     correct: bool
+    #: Some engine fix set (``fix_set_for`` or ``verified_fix_set``) claimed
+    #: ``cuts_all`` for this case (only checked when the engine reports an
+    #: open pair — with nothing open there is nothing to cut).
+    fix_claimed_cuts_all: bool = False
+    #: Pairs the oracle still finds open after applying a fix set that
+    #: claimed ``cuts_all`` — a false "this fix closes it". Must be empty.
+    false_cut: set[tuple[str, str]] = field(default_factory=set)
 
 
 @dataclass
@@ -125,6 +149,9 @@ class EvalReport:
     false_open_rate: float
     cases: list[CaseResult]
     summary: str
+    #: |cases where a fix set claimed cuts_all but the oracle finds a pair
+    #: still open after applying it| / |cases with a cuts_all claim|.
+    false_cut_rate: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +286,179 @@ def _env(
     return env
 
 
+def _allow_slice(rid: str, src: str, dst: str = "0.0.0.0/0") -> RuleSet:
+    """Allow only ``src -> dst`` (e.g. a /25 of a /24 node); default deny."""
+    return RuleSet(
+        id=rid,
+        rules=[
+            Rule(
+                id=rid + ".slice_allow",
+                action=Action.ALLOW,
+                order=10,
+                src_cidrs=(src,),
+                dst_cidrs=(dst,),
+            )
+        ],
+        default_action=Action.DENY,
+    )
+
+
+def _allow_priced(rid: str, cost_class: str) -> RuleSet:
+    """Allow-any whose fix falls in ``cost_class`` (prices the fix)."""
+    return RuleSet(
+        id=rid,
+        rules=[
+            Rule(
+                id=rid + ".allow",
+                action=Action.ALLOW,
+                order=10,
+                src_cidrs=("0.0.0.0/0",),
+                dst_cidrs=("0.0.0.0/0",),
+                cost_class=cost_class,
+            )
+        ],
+        default_action=Action.DENY,
+    )
+
+
 # Address blocks (documentation / test ranges, RFC 5737 / RFC 1918).
 _WEB = PortRange.single(Proto.TCP, 443)
+
+
+# ---------------------------------------------------------------------------
+# Independent brute-force oracle (shares no code with the engine)
+# ---------------------------------------------------------------------------
+
+#: Largest CIDR (in addresses) the oracle will enumerate host-by-host.
+_ORACLE_MAX_HOSTS = 1024
+
+
+def _oracle_hosts(cidr: str) -> list:
+    net = ipaddress.ip_network(cidr, strict=False)
+    if net.num_addresses > _ORACLE_MAX_HOSTS:
+        raise ValueError(f"oracle: {cidr} too large to brute-force")
+    hosts = list(net.hosts())
+    return hosts or [net.network_address]
+
+
+@lru_cache(maxsize=4096)
+def _oracle_net(cidr: str):
+    try:
+        return ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return None
+
+
+def _oracle_in(addr, cidrs: tuple) -> bool:
+    for c in cidrs:
+        net = _oracle_net(c)
+        if net is not None and addr.version == net.version and addr in net:
+            return True
+    return False
+
+
+def _oracle_proto_ok(rule_proto: Proto, flow_proto: Proto) -> bool:
+    return rule_proto is Proto.ANY or flow_proto is Proto.ANY or rule_proto is flow_proto
+
+
+def _oracle_flow_possible(
+    ruleset: RuleSet, ordered: list, s, d, proto: Proto, port: int
+) -> bool:
+    """First-match over ``ordered`` (the rules sorted by (order, id)). A
+    matching conditional rule (allow or deny) means the config cannot prove
+    the flow blocked → possible."""
+    for rule in ordered:
+        if not _oracle_in(s, rule.src_cidrs) or not _oracle_in(d, rule.dst_cidrs):
+            continue
+        if not any(
+            _oracle_proto_ok(pr.proto, proto) and pr.low <= port <= pr.high
+            for pr in rule.ports
+        ):
+            continue
+        if rule.conditional:
+            return True
+        return rule.action is Action.ALLOW
+    return ruleset.default_action is Action.ALLOW
+
+
+def _oracle_hop(env: Environment, edge: Edge) -> bool:
+    """Can *any* host of ``edge.src`` send *any* flow of the edge's port
+    class to *any* host of ``edge.dst``? Brute force over hosts; ports are
+    tried at every rule breakpoint inside the edge's range (exact, since
+    rule ports are intervals)."""
+    if edge.src not in env.nodes or edge.dst not in env.nodes:
+        return False
+    if edge.rule_set_id is None:
+        return True  # ungoverned adjacency: permitted by default
+    rs = env.rulesets.get(edge.rule_set_id)
+    if rs is None:
+        return False
+    src_nodes = env.nodes[edge.src].cidrs
+    dst_nodes = env.nodes[edge.dst].cidrs
+    if edge.port is None:
+        protos, low, high = [Proto.TCP, Proto.UDP, Proto.ICMP], 0, 65535
+    else:
+        protos, low, high = [edge.port.proto], edge.port.low, edge.port.high
+    ports = {low}
+    for rule in rs.rules:
+        for pr in rule.ports:
+            for b in (pr.low, pr.high + 1):
+                if low <= b <= high:
+                    ports.add(b)
+    src_hosts = [h for c in src_nodes for h in _oracle_hosts(c)]
+    dst_hosts = [h for c in dst_nodes for h in _oracle_hosts(c)]
+    ordered = sorted(rs.rules, key=lambda r: (r.order, r.id))
+    port_list = sorted(ports)
+    for s in src_hosts:
+        for d in dst_hosts:
+            for proto in protos:
+                for port in port_list:
+                    if _oracle_flow_possible(rs, ordered, s, d, proto, port):
+                        return True
+    return False
+
+
+def ground_truth(env: Environment) -> tuple[set, set]:
+    """``(truly_open, truly_closed)`` over every (entry, jewel) pair of
+    ``env``, computed by brute force independently of the engine. Only for
+    tiny ranges (every CIDR at most :data:`_ORACLE_MAX_HOSTS` addresses)."""
+    succ: dict[str, set[str]] = {}
+    for e in env.edges:
+        if _oracle_hop(env, e):
+            succ.setdefault(e.src, set()).add(e.dst)
+    entries = [n.id for n in env.nodes.values() if n.role is NodeRole.ENTRY]
+    jewels = {n.id for n in env.nodes.values() if n.role is NodeRole.CROWN_JEWEL}
+    open_: set[tuple[str, str]] = set()
+    for e in entries:
+        seen = {e}
+        q = deque([e])
+        while q:
+            cur = q.popleft()
+            for nxt in succ.get(cur, ()):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    q.append(nxt)
+        open_ |= {(e, j) for j in jewels if j in seen and j != e}
+    all_pairs = {(e, j) for e in entries for j in jewels}
+    return open_, all_pairs - open_
+
+
+def _oracle_case(
+    cid: str, description: str, env: Environment, notes: str = ""
+) -> "RangeCase":
+    truly_open, truly_closed = ground_truth(env)
+    return RangeCase(
+        id=cid,
+        description=description,
+        environment=env,
+        truly_open_pairs=truly_open,
+        truly_closed_pairs=truly_closed,
+        notes=notes,
+    )
+
+
+def _small(nid: str, role: NodeRole, cidr: str) -> Node:
+    return Node(id=nid, role=role, cidrs=(cidr,), reason="adversarial range")
 
 
 # ---------------------------------------------------------------------------
@@ -269,10 +467,12 @@ _WEB = PortRange.single(Proto.TCP, 443)
 
 
 def library() -> list[RangeCase]:
-    """At least eight hand-built twin ranges, each with ground truth.
+    """The twin-range library: nine hand-built ranges (truth declared by
+    hand) plus the adversarial ranges of :func:`_adversarial_cases` (truth
+    computed by the brute-force :func:`ground_truth`).
 
     Every case is small enough to verify by eye; the ground truth is what we
-    constructed, not what the engine said.
+    constructed, never what the engine said.
     """
     cases: list[RangeCase] = []
 
@@ -492,12 +692,162 @@ def library() -> list[RangeCase]:
         )
     )
 
+    cases.extend(_adversarial_cases())
     return cases
+
+
+def _adversarial_cases() -> list[RangeCase]:
+    """Cases built to break enumeration-based shortcuts. Truth comes from
+    :func:`ground_truth` (brute force), never from the engine."""
+    out: list[RangeCase] = []
+    E, M, J = NodeRole.ENTRY, NodeRole.INTERMEDIATE, NodeRole.CROWN_JEWEL
+
+    # 10. A 10-hop route: longer than the default enumeration limit (8). --
+    chain = ["r10.internet"] + [f"r10.m{i}" for i in range(1, 10)] + ["r10.db"]
+    nodes = [_small(chain[0], E, "203.0.113.0/30")]
+    nodes += [_small(n, M, f"10.10.{i}.0/30") for i, n in enumerate(chain[1:-1], 1)]
+    nodes += [_small(chain[-1], J, "10.10.99.0/30"), _small("r10.vault", J, "10.10.98.0/30")]
+    rulesets = [_allow(f"r10.fw{i}") for i in range(len(chain) - 1)] + [_deny_all("r10.fw_vault")]
+    edges = [
+        Edge(src=a, dst=b, rule_set_id=f"r10.fw{i}", port=_WEB)
+        for i, (a, b) in enumerate(zip(chain, chain[1:]))
+    ] + [Edge(src=chain[0], dst="r10.vault", rule_set_id="r10.fw_vault", port=_WEB)]
+    out.append(_oracle_case(
+        "long_chain_open",
+        "A 10-hop route (beyond the 8-hop listing limit) and a denied second jewel.",
+        _env(nodes, rulesets, edges),
+        "Enumeration finds no route within 8 hops; the pair is still open.",
+    ))
+
+    # 11. A dense graph around the first jewel that used to exhaust a
+    #     search budget shared across jewels, starving the second one. ----
+    k = 10
+    mids = [f"r11.m{i}" for i in range(k)]
+    nodes = [
+        _small("r11.internet", E, "203.0.113.0/30"),
+        _small("r11.a_vault", J, "10.11.200.0/30"),
+        _small("r11.q_vault", J, "10.11.201.0/30"),
+        _small("r11.z_vault", J, "10.11.202.0/30"),
+    ] + [_small(m, M, f"10.11.{i}.0/30") for i, m in enumerate(mids)]
+    obs = frozenset({EvidenceLabel.OBSERVED})
+    edges = []
+    for a in mids:
+        edges.append(Edge(src="r11.internet", dst=a, base_labels=obs))
+        edges.append(Edge(src=a, dst="r11.a_vault", base_labels=obs))
+        edges += [Edge(src=a, dst=b, base_labels=obs) for b in mids if b != a]
+    edges.append(Edge(src="r11.internet", dst="r11.z_vault", rule_set_id="r11.fw_z", port=_WEB))
+    edges.append(Edge(src="r11.internet", dst="r11.q_vault", rule_set_id="r11.fw_q", port=_WEB))
+    out.append(_oracle_case(
+        "dense_budget_starved",
+        "A complete 10-node mesh feeding one jewel; a later jewel has a one-hop route.",
+        _env(nodes, [_allow("r11.fw_z"), _deny_all("r11.fw_q")], edges),
+        "The direct route to the last jewel must not be lost to search budget.",
+    ))
+
+    # 12. Parallel edges with different fix candidates. Cutting only one of
+    #     the two parallel firewalls leaves the route open. --------------
+    nodes = [
+        _small("r12.internet", E, "203.0.113.0/30"),
+        _small("r12.dmz", M, "10.12.1.0/30"),
+        _small("r12.db", J, "10.12.9.0/30"),
+    ]
+    rulesets = [
+        _allow("r12.fw_primary"),
+        _allow("r12.fw_backup"),
+        _allow_priced("r12.fw_core", "device_patch"),
+    ]
+    edges = [
+        Edge(src="r12.internet", dst="r12.dmz", rule_set_id="r12.fw_primary",
+             port=_WEB, fix_candidate_id="r12.cut_primary"),
+        Edge(src="r12.internet", dst="r12.dmz", rule_set_id="r12.fw_backup",
+             port=_WEB, fix_candidate_id="r12.cut_backup"),
+        Edge(src="r12.dmz", dst="r12.db", rule_set_id="r12.fw_core",
+             port=_WEB, fix_candidate_id="r12.cut_core"),
+    ]
+    out.append(_oracle_case(
+        "parallel_edges_split_fix",
+        "Two parallel firewalls into the DMZ, each with its own fix; the core hop is a costly patch.",
+        _env(nodes, rulesets, edges),
+        "A fix set must cut both parallel edges (or the core); one alone does not.",
+    ))
+
+    # 13. Sub-CIDR carve-outs on a /24 source node. ---------------------
+    #     j1: the only allow covers 10.0.0.128/25 (not the first host).
+    #     j2: a deny of 10.0.0.0/25 sits above an allow-any.
+    #     j3: a deny of the whole /24 above an allow-any (truly closed).
+    nodes = [
+        _small("r13.lan", E, "10.0.0.0/24"),
+        _small("r13.db1", J, "10.13.1.0/30"),
+        _small("r13.db2", J, "10.13.2.0/30"),
+        _small("r13.db3", J, "10.13.3.0/30"),
+    ]
+    rulesets = [
+        _allow_slice("r13.fw1", "10.0.0.128/25"),
+        _deny_over_allow("r13.fw2", "10.0.0.0/25", "0.0.0.0/0"),
+        _deny_over_allow("r13.fw3", "10.0.0.0/24", "0.0.0.0/0"),
+    ]
+    edges = [
+        Edge(src="r13.lan", dst=f"r13.db{i}", rule_set_id=f"r13.fw{i}", port=_WEB)
+        for i in (1, 2, 3)
+    ]
+    out.append(_oracle_case(
+        "sub_cidr_carveout",
+        "Allow/deny slices that cover only part of a /24 source node.",
+        _env(nodes, rulesets, edges),
+        "Half the /24 can reach db1 and db2, so both are open; db3 is closed.",
+    ))
+    return out
 
 
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
+
+
+def _candidates(env: Environment) -> dict[str, FixCandidate]:
+    """One candidate per fix id on the edges, priced by the gating rule's
+    cost class (lowest ``(order, id)``), else ``network_rule``."""
+    cands: dict[str, FixCandidate] = {}
+    for edge in env.edges:
+        fcid = edge.fix_candidate_id
+        if not fcid or fcid in cands:
+            continue
+        cost_class = "network_rule"
+        rs = env.rulesets.get(edge.rule_set_id) if edge.rule_set_id else None
+        if rs is not None and rs.rules:
+            cost_class = min(rs.rules, key=lambda r: (r.order, r.id)).cost_class
+        cands[fcid] = FixCandidate(
+            id=fcid, kind="edge", cost_class=cost_class,
+            description=f"cut {edge.src}->{edge.dst}",
+            cost=mincut.cost_for(cost_class),
+        )
+    return cands
+
+
+def _false_cut(case: RangeCase, result) -> tuple[bool, set[tuple[str, str]]]:
+    """Apply each engine fix set that claims ``cuts_all`` and ask the oracle
+    whether any pair the engine meant to cut is still open."""
+    env = case.environment
+    targets = set(result.open_pairs) & case.universe
+    if not targets:
+        # Nothing open to cut: an empty fix set trivially "cuts all", and
+        # there is no pair the oracle could find still open among targets.
+        return False, set()
+    cands = _candidates(env)
+    fix_sets = [
+        mincut.fix_set_for(result, cands),
+        mincut.verified_fix_set(env.nodes, env.edges, env.rulesets, cands),
+    ]
+    claimed = False
+    bad: set[tuple[str, str]] = set()
+    for fs in fix_sets:
+        if not fs.cuts_all:
+            continue
+        claimed = True
+        post = replace(env, edges=mincut.apply_fix_set(env.edges, fs.selected))
+        still_open, _ = ground_truth(post)
+        bad |= still_open & targets
+    return claimed, bad
 
 
 def _score_case(case: RangeCase) -> CaseResult:
@@ -514,7 +864,8 @@ def _score_case(case: RangeCase) -> CaseResult:
 
     false_closed = engine_closed & set(case.truly_open_pairs)
     false_open = engine_open & set(case.truly_closed_pairs)
-    correct = not false_closed and not false_open
+    claimed, false_cut = _false_cut(case, result)
+    correct = not false_closed and not false_open and not false_cut
 
     return CaseResult(
         case_id=case.id,
@@ -523,6 +874,8 @@ def _score_case(case: RangeCase) -> CaseResult:
         false_closed=false_closed,
         false_open=false_open,
         correct=correct,
+        fix_claimed_cuts_all=claimed,
+        false_cut=false_cut,
     )
 
 
@@ -557,6 +910,10 @@ def score(cases: list[RangeCase]) -> EvalReport:
         n_correct_closed / n_truly_closed if n_truly_closed else 1.0
     )
 
+    n_cut_claims = sum(1 for r in results if r.fix_claimed_cuts_all)
+    n_false_cut = sum(1 for r in results if r.false_cut)
+    false_cut_rate = n_false_cut / n_cut_claims if n_cut_claims else 0.0
+
     n_cases = len(results)
     n_correct_cases = sum(1 for r in results if r.correct)
     raw_summary = (
@@ -566,7 +923,8 @@ def score(cases: list[RangeCase]) -> EvalReport:
         f"(the headline: the engine never says closed when open), "
         f"false-open rate {false_open_rate:.4f}, "
         f"closure precision {closure_precision:.4f}, "
-        f"closure recall {closure_recall:.4f}."
+        f"closure recall {closure_recall:.4f}, "
+        f"false-cut rate {false_cut_rate:.4f}."
     )
     summary = safe_text(raw_summary, "twin-range accuracy report")
 
@@ -578,6 +936,7 @@ def score(cases: list[RangeCase]) -> EvalReport:
         false_open_rate=false_open_rate,
         cases=results,
         summary=summary,
+        false_cut_rate=false_cut_rate,
     )
 
 

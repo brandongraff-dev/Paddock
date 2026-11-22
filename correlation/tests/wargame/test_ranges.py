@@ -265,3 +265,126 @@ def test_summary_is_safe_text_and_mentions_the_headline():
     # safe_text must not have replaced it with the fallback.
     assert report.summary != "twin-range accuracy report"
     assert "false-closed" in report.summary
+
+
+# --------------------------------------------------------------------------
+# adversarial cases with oracle-computed truth
+# --------------------------------------------------------------------------
+
+import pytest
+
+from app.engine.wargame import mincut
+from app.engine.wargame.model import FixSet
+
+_ADVERSARIAL = (
+    "long_chain_open",
+    "dense_budget_starved",
+    "parallel_edges_split_fix",
+    "sub_cidr_carveout",
+)
+
+
+@pytest.fixture(scope="module")
+def library_report():
+    return R.run_library()
+
+
+def test_adversarial_cases_present_and_pass(library_report):
+    by_id = {r.case_id: r for r in library_report.cases}
+    for cid in _ADVERSARIAL:
+        assert cid in by_id, cid
+        assert by_id[cid].correct, (cid, by_id[cid].false_closed, by_id[cid].false_cut)
+    assert library_report.false_cut_rate == 0.0
+    assert "false-cut" in library_report.summary
+
+
+def test_oracle_agrees_with_hand_truth_on_the_original_cases():
+    """The brute-force oracle must reproduce every hand-declared truth, so
+    the adversarial truths it computes can be trusted."""
+    for case in R.library():
+        if case.id in _ADVERSARIAL:
+            continue
+        truly_open, truly_closed = R.ground_truth(case.environment)
+        assert truly_open == case.truly_open_pairs, case.id
+        assert truly_closed == case.truly_closed_pairs, case.id
+
+
+def test_adversarial_truths_are_what_we_built():
+    cases = {c.id: c for c in R.library()}
+    assert cases["long_chain_open"].truly_open_pairs == {("r10.internet", "r10.db")}
+    assert cases["long_chain_open"].truly_closed_pairs == {("r10.internet", "r10.vault")}
+    assert cases["dense_budget_starved"].truly_open_pairs == {
+        ("r11.internet", "r11.a_vault"), ("r11.internet", "r11.z_vault")
+    }
+    assert cases["parallel_edges_split_fix"].truly_open_pairs == {("r12.internet", "r12.db")}
+    assert cases["sub_cidr_carveout"].truly_open_pairs == {
+        ("r13.lan", "r13.db1"), ("r13.lan", "r13.db2")
+    }
+    assert cases["sub_cidr_carveout"].truly_closed_pairs == {("r13.lan", "r13.db3")}
+
+
+def test_long_chain_is_open_and_truncated_in_the_engine():
+    case = {c.id: c for c in R.library()}["long_chain_open"]
+    rr = case.environment.reachability()
+    pair = ("r10.internet", "r10.db")
+    assert pair in rr.open_pairs and pair in rr.truncated_pairs
+    assert pair not in rr.closed_pairs
+
+
+def test_dense_case_lists_the_starved_jewel_route():
+    case = {c.id: c for c in R.library()}["dense_budget_starved"]
+    rr = case.environment.reachability()
+    assert [r.length for r in rr.routes_for(("r11.internet", "r11.z_vault"))] == [1]
+
+
+def test_parallel_case_fix_cuts_both_parallel_edges():
+    case = {c.id: c for c in R.library()}["parallel_edges_split_fix"]
+    env = case.environment
+    cands = R._candidates(env)
+    for fs in (
+        mincut.fix_set_for(env.reachability(), cands),
+        mincut.verified_fix_set(env.nodes, env.edges, env.rulesets, cands),
+    ):
+        assert fs.selected == ["r12.cut_backup", "r12.cut_primary"]
+        assert fs.cuts_all is True
+
+
+def test_ground_truth_brute_forces_sub_cidr_slices():
+    env = Environment()
+    env.add_node(Node(id="lan", role=NodeRole.ENTRY, cidrs=("10.0.0.0/24",)))
+    env.add_node(Node(id="db", role=NodeRole.CROWN_JEWEL, cidrs=("10.9.0.0/30",)))
+    env.add_ruleset(RuleSet(id="fw", rules=[
+        Rule(id="slice", action=Action.ALLOW, order=1, src_cidrs=("10.0.0.254/32",),
+             dst_cidrs=("10.9.0.2/32",), ports=(PortRange(Proto.TCP, 400, 500),)),
+    ]))
+    env.add_edge(Edge(src="lan", dst="db", rule_set_id="fw", port=_WEB))
+    assert R.ground_truth(env) == ({("lan", "db")}, set())
+    # port class outside the allowed range → closed
+    env.edges[0] = Edge(src="lan", dst="db", rule_set_id="fw", port=PortRange.single(Proto.TCP, 22))
+    assert R.ground_truth(env) == (set(), {("lan", "db")})
+
+
+def test_ground_truth_refuses_ranges_too_large_to_brute_force():
+    env = Environment()
+    env.add_node(Node(id="big", role=NodeRole.ENTRY, cidrs=("10.0.0.0/16",)))
+    env.add_node(Node(id="db", role=NodeRole.CROWN_JEWEL, cidrs=("10.9.0.0/30",)))
+    env.add_ruleset(RuleSet(id="fw", rules=[], default_action=Action.DENY))
+    env.add_edge(Edge(src="big", dst="db", rule_set_id="fw", port=_WEB))
+    with pytest.raises(ValueError):
+        R.ground_truth(env)
+
+
+def test_scorer_flags_a_false_cut(monkeypatch):
+    """A fix set that claims cuts_all but leaves the route open (what the
+    parallel-edge collapse used to produce) must be counted."""
+    case = {c.id: c for c in R.library()}["parallel_edges_split_fix"]
+
+    def bogus(result, candidates):
+        return FixSet(selected=["r12.cut_primary"], total_cost=1.0, cuts_all=True)
+
+    monkeypatch.setattr(mincut, "fix_set_for", bogus)
+    report = R.score([case])
+    assert report.cases[0].false_cut == {("r12.internet", "r12.db")}
+    assert report.cases[0].correct is False
+    assert report.false_cut_rate == 1.0
+    assert report.false_closed_rate == 0.0

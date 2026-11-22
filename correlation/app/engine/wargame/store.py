@@ -95,7 +95,13 @@ def _route_dict(r: Any) -> dict[str, Any]:
 
 
 def _route_fingerprint(entry: str, jewel: str, hops: list[dict[str, Any]]) -> str:
-    seq = "|".join(f"{h['src']}>{h['dst']}:{h['port']}" for h in hops)
+    # rule_ref and fix ids are part of the identity: parallel-edge route
+    # variants share src/dst/port but are distinct routes to cut.
+    seq = "|".join(
+        f"{h['src']}>{h['dst']}:{h['port']}:{h.get('rule_ref', '')}:"
+        f"{','.join(sorted(h.get('fix_candidate_ids') or ()))}"
+        for h in hops
+    )
     return hashlib.sha256(f"{entry}|{jewel}|{seq}".encode("utf-8")).hexdigest()
 
 

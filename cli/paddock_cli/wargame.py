@@ -530,7 +530,10 @@ def analyse(proj: Project, e: _E) -> Analysis:
         if cid and cid not in cands:
             cands[cid] = _candidate_of(proj, cid, e)
     sc = e.report.build_scorecard(result)
-    fix = e.mincut.fix_set_for(result, cands)
+    # Verified: the fix set is applied to the model and the search re-run, so
+    # "cuts every route" also holds for routes the enumeration caps never listed.
+    fix = e.mincut.verified_fix_set(proj.env.nodes, proj.env.edges, proj.env.rulesets,
+                                    cands, result=result)
     open_routes = sorted((r for r in result.routes if r.pair in result.open_pairs),
                          key=lambda r: (r.pair, _route_order(r, e)))
     return Analysis(proj, result, sc, fix, cands, open_routes)
@@ -587,13 +590,20 @@ def _check_dict(an: Analysis, e: _E) -> dict[str, Any]:
         "fix": {
             "selected": selected, "total_cost": fix.total_cost, "cuts_every_route": bool(fix.cuts_all),
             "optimality": fix.optimality,
-            "uncut_routes": [{"entry": an.open_routes[i].entry, "jewel": an.open_routes[i].jewel,
-                              "path": routes[i]["path"]} for i in fix.uncut_routes if i < len(routes)]},
+            "uncut_routes": [_uncut_dict(fix.routes[i], e) for i in fix.uncut_routes
+                             if i < len(fix.routes)],
+            "uncuttable_pairs": [{"entry": p[0], "jewel": p[1]}
+                                 for p in sorted(fix.uncuttable_pairs)]},
         "unproven": _unproven_summary(proj),
         "model": {"segments": sorted(n for n in proj.env.nodes), "rule_sets": sorted(proj.env.rulesets),
                   "edges": len(proj.env.edges), "sources": proj.sources,
                   "observed_flows": len(proj.flows)},
     }
+
+
+def _uncut_dict(r: Any, e: _E) -> dict[str, Any]:
+    # fix.uncut_routes indexes the verified fix set's own route list.
+    return {"entry": r.entry, "jewel": r.jewel, "path": _route_dict(r, e)["path"]}
 
 
 def _unproven_summary(proj: Project) -> dict[str, Any]:

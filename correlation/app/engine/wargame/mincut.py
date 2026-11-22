@@ -15,12 +15,31 @@ that over-counts and explodes combinatorially. We work directly over the
 **Minimum-cost hitting set is NP-hard.** So:
 
 * For small instances (``≤ _EXACT_MAX_ELEMENTS`` distinct candidate ids across
-  the routes) we run an exact branch-and-bound and label the result
-  ``optimality="exact"``. Only then is the fix set truly minimal.
+  the *reduced* routes) we run an exact branch-and-bound. It is labelled
+  ``optimality="exact"`` only when the search **completed** (it carries a
+  node limit, :data:`_BNB_NODE_LIMIT`; if that is hit the better of its
+  incumbent and the greedy answer is returned, labelled ``"greedy"``).
 * For larger instances we fall back to the classic cost-effective greedy
   (repeatedly take the candidate maximising newly-covered-routes per unit
   cost) and label it ``optimality="greedy"``. We never call a greedy result
   "minimal".
+
+``"greedy"`` therefore means "not proven minimal" (the persisted schema only
+admits ``exact``/``greedy``). :class:`VerifiedFixSet.solver` records which
+algorithm actually ran.
+
+Listed routes vs the model. The backward search lists *example* routes,
+bounded by a hop limit, a per-pair cap and a budget; a hitting set over that
+listing is only a hitting set over the listing. :func:`fix_set_for` therefore
+refuses to claim ``cuts_all``/``exact`` when the listing is incomplete for any
+open pair (:attr:`ReachabilityResult.incomplete_pairs`).
+:func:`verified_fix_set` closes the gap: it solves, removes every edge the fix
+set cuts, re-runs exact reachability and, while any pair is still open, adds
+the surviving routes as new constraints and re-solves (lazy constraint
+generation), reporting ``cuts_all=True`` only when the post-fix model has no
+open pair left. Because every added constraint is a real route, each solve is
+over a relaxation of the true problem, so an exact solve that verifies is
+the true optimum.
 
 Because cost drives selection, a cheaper **compensating control** (e.g.
 ``cost_class="compensating"``) is chosen over an expensive ``device_patch``
@@ -35,11 +54,20 @@ Pure Python, stdlib only, deterministic.
 """
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass, field
+from typing import Iterable, Optional
+
+from . import reachability
 from .model import (
     DEFAULT_COST_CLASSES,
+    Edge,
     FixCandidate,
     FixSet,
+    Node,
     ReachabilityResult,
+    Route,
+    RuleSet,
 )
 
 #: Cost used for a candidate id we cannot price (unknown cost class, or a
@@ -48,10 +76,14 @@ from .model import (
 DEFAULT_UNKNOWN_COST: float = 5.0
 
 #: Exact branch-and-bound is used when the number of distinct candidate ids
-#: appearing across the routes is at most this; otherwise we fall back to
-#: greedy. Hitting set is NP-hard, so the exact solver is only safe to run on
-#: small instances.
+#: appearing across the (reduced) routes is at most this; otherwise we fall
+#: back to greedy. Hitting set is NP-hard, so the exact solver is only safe to
+#: run on small instances.
 _EXACT_MAX_ELEMENTS: int = 24
+
+#: Hard cap on branch-and-bound search nodes. Hitting the cap means the
+#: search did not complete, so the result is NOT labelled exact.
+_BNB_NODE_LIMIT: int = 250_000
 
 
 def cost_for(cost_class: str, overrides: "dict[str, float] | None" = None) -> float:
@@ -77,6 +109,20 @@ def _cost_of(candidate_id: str, candidates: "dict[str, FixCandidate]") -> float:
     return float(cand.cost)
 
 
+def _checked_costs(
+    ids: "Iterable[str]", candidates: "dict[str, FixCandidate]"
+) -> "dict[str, float]":
+    """Price every id, rejecting negative / non-finite costs: they would make
+    the branch-and-bound pruning and lower bound unsound."""
+    out: dict[str, float] = {}
+    for cid in ids:
+        c = _cost_of(cid, candidates)
+        if not math.isfinite(c) or c < 0:
+            raise ValueError(f"fix candidate {cid!r} has invalid cost {c!r}")
+        out[cid] = c
+    return out
+
+
 def _reduce_routes(
     route_sets: "list[frozenset[str]]",
 ) -> "list[frozenset[str]]":
@@ -87,6 +133,7 @@ def _reduce_routes(
     larger (superset) route is redundant for covering purposes. Deduplicating
     and keeping only subset-minimal routes shrinks the search without changing
     the optimum. Deterministic: input order is irrelevant to the output set.
+    Empty sets must be filtered out by the caller.
     """
     uniq = sorted({r for r in route_sets}, key=lambda r: (len(r), tuple(sorted(r))))
     minimal: list[frozenset[str]] = []
@@ -99,100 +146,133 @@ def _reduce_routes(
     return minimal
 
 
-def _lower_bound(
-    remaining: "list[frozenset[str]]",
-    candidates: "dict[str, FixCandidate]",
-) -> float:
-    """Admissible lower bound on the cost to hit all ``remaining`` routes.
+def _bits(mask: int) -> "list[int]":
+    out = []
+    while mask:
+        low = mask & -mask
+        out.append(low.bit_length() - 1)
+        mask ^= low
+    return out
+
+
+def _lower_bound(eff: "list[int]", cost: "list[float]") -> float:
+    """Admissible lower bound on the cost to hit every route mask in ``eff``.
 
     Greedily collects pairwise-disjoint routes; disjoint routes need distinct
-    hitting elements, so the cost is at least the sum over them of each route's
-    cheapest element. This never over-estimates, so it is safe for pruning.
+    hitting elements, so the cost is at least the sum over them of each
+    route's cheapest (still allowed) element. Never over-estimates.
     """
-    used: set[str] = set()
+    keyed = []
+    for r in eff:
+        bs = _bits(r)
+        cheapest = min(cost[b] for b in bs)
+        keyed.append(((len(bs), -cheapest, tuple(bs)), r, cheapest))
+    keyed.sort(key=lambda k: k[0])
+    used = 0
     lb = 0.0
-    # Favour routes whose cheapest element is expensive and that are small,
-    # for a tighter (but still admissible) bound. Deterministic ordering.
-    def _route_key(r: frozenset[str]) -> tuple:
-        cheapest = min(_cost_of(c, candidates) for c in r)
-        return (len(r), -cheapest, tuple(sorted(r)))
-
-    for r in sorted(remaining, key=_route_key):
+    for _, r, cheapest in keyed:
         if r & used:
             continue
-        lb += min(_cost_of(c, candidates) for c in r)
-        used |= set(r)
+        lb += cheapest
+        used |= r
     return lb
 
 
 def _branch_and_bound(
     routes: "list[frozenset[str]]",
-    candidates: "dict[str, FixCandidate]",
-) -> "list[str]":
-    """Exact minimum-cost hitting set via branch-and-bound.
+    costs: "dict[str, float]",
+    *,
+    node_limit: Optional[int] = None,
+) -> "tuple[Optional[list[str]], bool]":
+    """Exact minimum-cost hitting set via branch-and-bound over bitmasks.
 
-    ``routes`` must be non-empty element-sets (already reduced). Returns the
-    selected candidate ids. Deterministic throughout:
+    ``routes`` must be non-empty element-sets (already reduced). Returns
+    ``(selected, proven)``; ``proven`` is False when the node limit stopped
+    the search (``selected`` is then the best incumbent, possibly ``None``).
+    Deterministic throughout:
 
-    * the most-constrained uncovered route (fewest options, then lexically
-      smallest) is chosen to branch on;
-    * its candidates are tried in ascending (cost, id) order;
-    * a cost lower bound prunes branches that cannot beat the incumbent;
-    * the first optimal solution found under this fixed order is kept.
+    * ids map to bits in sorted-id order;
+    * the most-constrained uncovered route (fewest still-allowed options,
+      then lexically smallest) is chosen to branch on;
+    * its candidates are tried in ascending (cost, id) order, and branch
+      ``i`` *forbids* the options tried before it (a standard exclusion
+      that removes duplicate subtrees without losing any solution);
+    * a disjoint-route lower bound prunes branches that cannot beat the
+      incumbent (ties are pruned, so the first optimum found is kept).
     """
     if not routes:
-        return []
+        return [], True
+    if node_limit is None:
+        node_limit = _BNB_NODE_LIMIT
+    ids = sorted({c for r in routes for c in r})
+    bit = {c: i for i, c in enumerate(ids)}
+    cost = [costs[c] for c in ids]
+    masks = [sum(1 << bit[c] for c in r) for r in routes]
 
-    best: dict[str, object] = {"cost": float("inf"), "sel": None}
+    best_cost = [math.inf]
+    best_sel: list[Optional[int]] = [None]
+    nodes = [0]
+    aborted = [False]
 
-    def recurse(selected: "list[str]", current_cost: float, remaining: "list[frozenset[str]]") -> None:
-        if current_cost >= best["cost"]:  # type: ignore[operator]
+    def recurse(sel: int, cur: float, remaining: "list[int]", forbidden: int) -> None:
+        if aborted[0]:
+            return
+        nodes[0] += 1
+        if nodes[0] > node_limit:
+            aborted[0] = True
             return
         if not remaining:
-            best["cost"] = current_cost
-            best["sel"] = list(selected)
+            if cur < best_cost[0]:
+                best_cost[0] = cur
+                best_sel[0] = sel
             return
-        if current_cost + _lower_bound(remaining, candidates) >= best["cost"]:  # type: ignore[operator]
+        allowed = ~forbidden
+        eff = [r & allowed for r in remaining]
+        if any(e == 0 for e in eff):
+            return  # some route can no longer be hit in this subtree
+        if cur + _lower_bound(eff, cost) >= best_cost[0]:
             return
-        # Branch on the most-constrained uncovered route.
-        route = min(remaining, key=lambda r: (len(r), tuple(sorted(r))))
-        for cand in sorted(route, key=lambda c: (_cost_of(c, candidates), c)):
-            new_cost = current_cost + _cost_of(cand, candidates)
-            if new_cost >= best["cost"]:  # type: ignore[operator]
-                continue
-            new_remaining = [r for r in remaining if cand not in r]
-            selected.append(cand)
-            recurse(selected, new_cost, new_remaining)
-            selected.pop()
+        route = min(eff, key=lambda r: (bin(r).count("1"), tuple(_bits(r))))
+        options = sorted(_bits(route), key=lambda b: (cost[b], b))
+        excluded = 0
+        for b in options:
+            new_cost = cur + cost[b]
+            if new_cost >= best_cost[0]:
+                break  # options are cost-ascending: the rest cannot win
+            m = 1 << b
+            recurse(sel | m, new_cost, [r for r in remaining if not r & m], forbidden | excluded)
+            if aborted[0]:
+                return
+            excluded |= m
 
-    recurse([], 0.0, routes)
-    sel = best["sel"] or []
-    return list(sel)  # type: ignore[arg-type]
+    recurse(0, 0.0, masks, 0)
+    sel = best_sel[0]
+    chosen = None if sel is None else [ids[b] for b in _bits(sel)]
+    return chosen, not aborted[0]
 
 
 def _greedy(
     routes: "list[frozenset[str]]",
-    candidates: "dict[str, FixCandidate]",
+    costs: "dict[str, float]",
 ) -> "list[str]":
     """Classic cost-effective greedy weighted set cover.
 
     Repeatedly selects the candidate maximising (newly-covered routes / cost).
-    Deterministic tie-break: higher ratio, then lower cost, then lower id.
+    Deterministic tie-break: higher ratio, then lower cost, then lower id
+    (candidates are scanned in sorted-id order and only a strictly better key
+    replaces the incumbent, so the lowest id wins an exact tie).
     """
     uncovered = [set(r) for r in routes if r]
     selected: list[str] = []
     while uncovered:
         universe = sorted({c for r in uncovered for c in r})
-        best_id: str | None = None
-        best_key: tuple | None = None
+        best_id: Optional[str] = None
+        best_key: Optional[tuple[float, float]] = None
         for cand in universe:
             newly = sum(1 for r in uncovered if cand in r)
-            if newly == 0:
-                continue
-            c = _cost_of(cand, candidates)
-            ratio = newly / c if c > 0 else float("inf")
-            # Maximise ratio; tie-break prefers lower cost then lower id.
-            key = (ratio, -c, _neg_id(cand))
+            c = costs[cand]
+            ratio = newly / c if c > 0 else math.inf
+            key = (ratio, -c)
             if best_key is None or key > best_key:
                 best_key = key
                 best_id = cand
@@ -203,65 +283,61 @@ def _greedy(
     return selected
 
 
-def _neg_id(cand: str) -> tuple:
-    """Sort helper so that, as part of a max-key, a *lower* id wins a tie.
-
-    Returns a value that is larger for lexically smaller ids.
-    """
-    return tuple(-ord(ch) for ch in cand)
+def _solve(
+    routes: "list[frozenset[str]]",
+    candidates: "dict[str, FixCandidate]",
+) -> "tuple[list[str], bool, str]":
+    """Solve over non-empty routes. Returns ``(selected, proven, solver)``."""
+    reduced = _reduce_routes([r for r in routes if r])
+    if not reduced:
+        return [], True, "none"
+    ids = {c for r in reduced for c in r}
+    costs = _checked_costs(ids, candidates)
+    if len(ids) <= _EXACT_MAX_ELEMENTS:
+        sel, proven = _branch_and_bound(reduced, costs)
+        if proven and sel is not None:
+            return sel, True, "branch_and_bound"
+        greedy = _greedy(reduced, costs)
+        if sel is None or sum(costs[c] for c in greedy) < sum(costs[c] for c in sel):
+            sel = greedy
+        return sel, False, "branch_and_bound_incomplete"
+    return _greedy(reduced, costs), False, "greedy"
 
 
 def min_cost_fix_set(
     routes: "list[frozenset[str]]",
     candidates: "dict[str, FixCandidate]",
 ) -> FixSet:
-    """Cheapest set of candidates that breaks every open route.
+    """Cheapest set of candidates that breaks every given route.
 
     ``routes[i]`` is the set of cuttable candidate ids on open route ``i``
     (:attr:`Route.fix_elements`). The returned :class:`FixSet`:
 
     * ``selected`` — chosen candidate ids, sorted;
     * ``total_cost`` — sum of their costs;
-    * ``cuts_all`` — ``True`` iff every input route is intersected (i.e. no
-      route was empty / uncuttable);
-    * ``uncut_routes`` — sorted input indices of routes with no cuttable
-      element (an inferred hop with no modelled control); these cannot be cut;
-    * ``optimality`` — ``"exact"`` for the branch-and-bound solver on small
-      instances, ``"greedy"`` otherwise. Only ``"exact"`` results are minimal.
+    * ``cuts_all`` — ``True`` iff every input route is intersected by
+      ``selected`` (checked, not assumed);
+    * ``uncut_routes`` — sorted input indices of routes ``selected`` does not
+      intersect: those with no cuttable element (an inferred hop with no
+      modelled control) cannot be cut;
+    * ``optimality`` — ``"exact"`` only when the branch-and-bound completed;
+      ``"greedy"`` otherwise (not proven minimal).
+
+    This only speaks for the routes it is given; see :func:`verified_fix_set`
+    for a fix set checked against the model. Raises ``ValueError`` for a
+    negative or non-finite candidate cost.
     """
-    # Empty routes cannot be cut — record their input index.
-    uncut: list[int] = [i for i, r in enumerate(routes) if not r]
-    non_empty = [r for r in routes if r]
-
-    distinct_ids = {c for r in non_empty for c in r}
-
-    if not non_empty:
-        return FixSet(
-            selected=[],
-            total_cost=0.0,
-            cuts_all=(len(uncut) == 0),
-            uncut_routes=sorted(uncut),
-            optimality="exact",
-        )
-
-    reduced = _reduce_routes(non_empty)
-
-    if len(distinct_ids) <= _EXACT_MAX_ELEMENTS:
-        selected = _branch_and_bound(reduced, candidates)
-        optimality = "exact"
-    else:
-        selected = _greedy(reduced, candidates)
-        optimality = "greedy"
-
+    selected, proven, _solver = _solve(routes, candidates)
     selected_sorted = sorted(set(selected))
+    chosen = set(selected_sorted)
+    uncut = [i for i, r in enumerate(routes) if not (r & chosen)]
     total = round(sum(_cost_of(c, candidates) for c in selected_sorted), 10)
-
     return FixSet(
         selected=selected_sorted,
         total_cost=total,
-        cuts_all=(len(uncut) == 0),
-        uncut_routes=sorted(uncut),
-        optimality=optimality,
+        cuts_all=not uncut,
+        uncut_routes=uncut,
+        optimality="exact" if proven else "greedy",
     )
 
 
@@ -269,13 +345,246 @@ def fix_set_for(
     result: ReachabilityResult,
     candidates: "dict[str, FixCandidate]",
 ) -> FixSet:
-    """Convenience: minimum-cost fix set over the open routes in ``result``.
+    """Minimum-cost fix set over the *listed* open routes in ``result``.
 
     Pulls :attr:`Route.fix_elements` for every route whose (entry, jewel) pair
-    is in ``result.open_pairs`` and solves. Routes for closed/conditional pairs
-    are not included.
+    is in ``result.open_pairs`` (conditional pairs are open, so they are
+    included) and solves. Routes of closed pairs are ignored.
+
+    Honesty: the listing is bounded. If any open pair's listing is incomplete
+    (``result.incomplete_pairs``, which includes pairs with no listed route at
+    all, or ``result.budget_exhausted``), the answer is not proven to cut it:
+    ``cuts_all`` is ``False`` and ``optimality`` is ``"greedy"`` (not proven
+    minimal). Use :func:`verified_fix_set` for a fix set checked against the
+    model.
     """
     route_sets = [
         r.fix_elements for r in result.routes if r.pair in result.open_pairs
     ]
-    return min_cost_fix_set(route_sets, candidates)
+    fs = min_cost_fix_set(route_sets, candidates)
+    incomplete = (
+        bool(set(result.incomplete_pairs) & set(result.open_pairs))
+        or bool(result.budget_exhausted)
+    )
+    if incomplete:
+        fs.cuts_all = False
+        fs.optimality = "greedy"
+    return fs
+
+
+# ---------------------------------------------------------------------------
+# Verified fix set (solve → apply → re-check → add routes → re-solve)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class VerifiedFixSet(FixSet):
+    """A :class:`FixSet` checked against the model by re-running reachability
+    with the selected fixes applied.
+
+    Inherited fields keep their meaning; ``uncut_routes`` indexes
+    :attr:`routes`. ``cuts_all`` is ``True`` only when the post-fix model has
+    no open pair among :attr:`target_pairs`.
+    """
+
+    #: The post-fix model was re-checked and every *cuttable* target pair is
+    #: closed in it (uncuttable pairs are reported in ``uncut_pairs``).
+    verified: bool = False
+    #: The open pairs the fix set was asked to cut.
+    target_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: Target pairs still open in the post-fix model (uncuttable ones plus
+    #: any not closed within ``max_iters``).
+    uncut_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: Target pairs no combination of candidates can cut (still open with
+    #: every candidate applied — e.g. an uncontrolled inferred hop).
+    uncuttable_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: Solve/verify rounds run.
+    iterations: int = 0
+    #: The routes the final solve was constrained by (the listing plus the
+    #: routes added by verification), then example routes of uncuttable pairs.
+    routes: list[Route] = field(default_factory=list)
+    #: ``"branch_and_bound"`` | ``"branch_and_bound_incomplete"`` |
+    #: ``"greedy"`` | ``"none"`` — which solver produced the final selection.
+    solver: str = "none"
+
+
+def apply_fix_set(edges: "list[Edge]", selected: "Iterable[str]") -> "list[Edge]":
+    """The edges left once every edge whose ``fix_candidate_id`` is in
+    ``selected`` is cut. Pure; the input list is not modified."""
+    cut = set(selected)
+    return [e for e in edges if not (e.fix_candidate_id and e.fix_candidate_id in cut)]
+
+
+def _route_key(r: Route) -> tuple:
+    return (
+        r.entry,
+        r.jewel,
+        tuple((h.src, h.dst, tuple(sorted(h.fix_candidate_ids))) for h in r.hops),
+    )
+
+
+def verified_fix_set(
+    nodes: "dict[str, Node]",
+    edges: "list[Edge]",
+    rulesets: "dict[str, RuleSet]",
+    candidates: "dict[str, FixCandidate]",
+    *,
+    pairs: "Optional[Iterable[tuple[str, str]]]" = None,
+    max_iters: int = 25,
+    max_hops: int = 8,
+    max_routes_per_pair: int = 16,
+    result: "Optional[ReachabilityResult]" = None,
+) -> VerifiedFixSet:
+    """Cheapest fix set that **provably** closes every open target pair.
+
+    1. Run :func:`reachability.backward_reachability` on the model (or use
+       ``result`` when the caller already has it for this exact model and
+       these limits). Targets are its open pairs (restricted to ``pairs``
+       when given).
+    2. Pairs still open with *every* fix candidate on the edges applied are
+       uncuttable; they are reported, not targeted.
+    3. Solve the hitting set over the listed routes of the cuttable targets
+       (truncated pairs contribute their witness route).
+    4. Cut every edge whose ``fix_candidate_id`` was selected
+       (:func:`apply_fix_set`) and re-run exact reachability. If a target is
+       still open, add its surviving routes (or a shortest witness) as new
+       constraints — each avoids every selected fix, so it is genuinely new —
+       and re-solve. Repeat until verified or ``max_iters`` rounds.
+
+    Every fix id carried by an edge is selectable; ids missing from
+    ``candidates`` are priced at :data:`DEFAULT_UNKNOWN_COST`.
+
+    Returns a :class:`VerifiedFixSet`: ``cuts_all`` is ``True`` iff the
+    post-fix model has no open target pair; ``uncut_pairs`` lists those that
+    stay open; ``optimality`` is ``"exact"`` only when verified and every
+    final solve was a completed branch-and-bound (a relaxation optimum that
+    is feasible for the full problem is its optimum), else ``"greedy"``.
+    """
+    base = result if result is not None else reachability.backward_reachability(
+        nodes, edges, rulesets,
+        max_hops=max_hops, max_routes_per_pair=max_routes_per_pair,
+    )
+    target = set(base.open_pairs)
+    if pairs is not None:
+        target &= set(pairs)
+
+    all_ids = sorted({e.fix_candidate_id for e in edges if e.fix_candidate_id})
+    if target:
+        everything_cut = reachability.backward_reachability(
+            nodes, apply_fix_set(edges, all_ids), rulesets,
+            max_hops=max_hops, max_routes_per_pair=max_routes_per_pair,
+        )
+        uncuttable = target & everything_cut.open_pairs
+    else:
+        everything_cut = None
+        uncuttable = set()
+    cuttable = target - uncuttable
+
+    constraints: list[Route] = []
+    seen: set[tuple] = set()
+
+    def _add(rs: "Iterable[Route]") -> int:
+        n = 0
+        for r in rs:
+            if r.pair not in cuttable:
+                continue
+            k = _route_key(r)
+            if k in seen:
+                continue
+            seen.add(k)
+            constraints.append(r)
+            n += 1
+        return n
+
+    _add(base.routes)
+    _add(base.witness_routes)
+
+    def _still_open(sel: "list[str]") -> "tuple[ReachabilityResult, set[tuple[str, str]]]":
+        post = reachability.backward_reachability(
+            nodes, apply_fix_set(edges, sel), rulesets,
+            max_hops=max_hops, max_routes_per_pair=max_routes_per_pair,
+        )
+        return post, cuttable & post.open_pairs
+
+    selected: list[str] = []
+    proven = True
+    solver = "none"
+    # Once the exact solver is out of reach, re-solving the growing pool from
+    # scratch with greedy can oscillate; instead grow the selection
+    # monotonically (each round adds a fix on every newly found route, so it
+    # terminates within the number of fix ids) and prune at the end.
+    augment = False
+    pending: list[Route] = []
+    still_open: set[tuple[str, str]] = set(cuttable)
+    iterations = 0
+    verified = False
+    while iterations < max_iters:
+        iterations += 1
+        if not augment:
+            # Only the final solve's optimality matters: it is exact over a
+            # relaxation (a subset of the real routes), so if it also
+            # verifies it is the true optimum.
+            sel, proven, solver = _solve([r.fix_elements for r in constraints], candidates)
+            selected = sorted(set(sel))
+            augment = not proven
+        else:
+            new_sets = _reduce_routes([r.fix_elements for r in pending if r.fix_elements])
+            costs = _checked_costs({c for r in new_sets for c in r}, candidates)
+            selected = sorted(set(selected) | set(_greedy(new_sets, costs)))
+            solver = "greedy"
+        post, still_open = _still_open(selected)
+        if not still_open:
+            verified = True
+            break
+        before = len(constraints)
+        _add(r for r in post.routes if r.pair in still_open)
+        _add(r for r in post.witness_routes if r.pair in still_open)
+        pending = constraints[before:]
+        if not pending:
+            # Defensive: an open pair whose routes are all known yet uncut
+            # cannot happen (each listed route avoids the selection). Stop
+            # rather than loop.
+            break
+
+    if verified and augment:
+        # Reverse-delete: drop any selected fix the constraint pool does not
+        # need (most expensive first), then keep the result only if it still
+        # verifies against the model.
+        pool = [r.fix_elements for r in constraints]
+        costs = _checked_costs(selected, candidates)
+        keep = set(selected)
+        for c in sorted(selected, key=lambda c: (-costs[c], c)):
+            trial = keep - {c}
+            if all(r & trial for r in pool):
+                keep = trial
+        if keep != set(selected):
+            _, left = _still_open(sorted(keep))
+            if not left:
+                selected = sorted(keep)
+
+    # Example routes of uncuttable pairs, so ``uncut_routes`` shows why.
+    report_routes = list(constraints)
+    if uncuttable and everything_cut is not None:
+        extra = [r for r in everything_cut.routes if r.pair in uncuttable]
+        extra += [r for r in everything_cut.witness_routes if r.pair in uncuttable]
+        report_routes += extra
+
+    chosen = set(selected)
+    uncut_routes = [i for i, r in enumerate(report_routes) if not (r.fix_elements & chosen)]
+    uncut_pairs = set(uncuttable) | set(still_open if not verified else ())
+    total = round(sum(_cost_of(c, candidates) for c in selected), 10)
+    cuts_all = verified and not uncut_pairs
+    return VerifiedFixSet(
+        selected=selected,
+        total_cost=total,
+        cuts_all=cuts_all,
+        uncut_routes=uncut_routes,
+        optimality="exact" if (verified and proven) else "greedy",
+        verified=verified,
+        target_pairs=target,
+        uncut_pairs=uncut_pairs,
+        uncuttable_pairs=uncuttable,
+        iterations=iterations,
+        routes=report_routes,
+        solver=solver,
+    )
