@@ -34,3 +34,8 @@
 .md-typeset code { border-radius: 6px; }
 .md-search__form { background: rgba(236, 226, 208, 0.06); border-radius: 999px; }
 .md-footer-meta { background: #0b0a09; }
+
+.pd-banner { clear: both; margin: 0 0 1.6rem; border-radius: 16px; overflow: hidden; border: 1px solid rgba(236, 226, 208, 0.12); }
+.pd-banner img { display: block; width: 100%; height: clamp(150px, 22vw, 260px); object-fit: cover; object-position: 70% 60%; }
+.md-typeset h1 { text-wrap: balance; }
+.md-typeset ::selection { background: rgba(230, 115, 80, 0.4); }

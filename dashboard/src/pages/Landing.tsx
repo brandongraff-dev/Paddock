@@ -154,6 +154,7 @@ export default function Landing() {
         <CtaBox className="cta-strip" />
       </section>
 
+      <DitherRule className="lp-rule-dither" rows={5} />
       <section className="lp-agents" id="agents">
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Defensive agents</span>
@@ -184,12 +185,13 @@ export default function Landing() {
       <DitherRule className="lp-rule-dither" />
       <Showcase />
       <HowItWorks />
+      <DitherRule className="lp-rule-dither" rows={5} />
 
 
       <section className="lp-principles" id="principles">
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Hard rules · enforced in code</span>
-          <h2>A defender&apos;s instrument, by construction.</h2>
+          <h2>A defender&rsquo;s instrument, by construction.</h2>
         </div>
         <div className="lp-rules">
           {RULES.map(([t, d]) => (
@@ -202,14 +204,15 @@ export default function Landing() {
       </section>
 
 
+      <DitherRule className="lp-rule-dither" rows={5} />
       <Faq />
       </div>
 
       <footer className="lp-footer">
-        <FooterScene className="lp-footer-px" />
+        <FooterScene className="lp-footer-px" parallax />
         <div className="lp-footer-in">
           <div className="lp-footer-cta">
-            <h2>Close the paths before they&apos;re walked.</h2>
+            <h2>Close the paths before they&rsquo;re walked.</h2>
             <CtaBox className="cta-footer" />
           </div>
           <div className="lp-footer-grid">

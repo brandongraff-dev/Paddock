@@ -1,3 +1,5 @@
+<div class="pd-banner" markdown="0"><img src="assets/banner.jpg" alt="A rider on horseback on a cliff edge at dusk, looking out over a calm sea"></div>
+
 # Paddock
 
 **Map the real attack paths from your internet-facing surface to your crown

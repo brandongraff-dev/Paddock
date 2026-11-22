@@ -618,3 +618,40 @@
 .lp-card:hover .lp-card-art { transform: scale(1.04); }
 .lp-card-img:has(.lp-card-art)::before { content: ""; position: absolute; inset: auto 0 0 0; height: 55%; z-index: 1; background: linear-gradient(180deg, transparent, rgba(10, 8, 6, 0.75)); pointer-events: none; }
 .lp-card-body { z-index: 2; }
+
+.scene-sky, .scene-cliff { position: absolute; left: 0; top: 0; width: 100%; display: block; }
+.scene-sky { height: 100%; }
+.scene-cliff { height: calc(100% + 40px); will-change: transform; }
+
+/* ================= Typography ================= */
+.lp { font-kerning: normal; font-feature-settings: "kern", "liga", "calt"; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+.lp h1, .lp h2, .lp h3 { text-wrap: balance; font-optical-sizing: auto; }
+.lp p, .lp li { text-wrap: pretty; }
+.lp .mono, .cta-note { font-variant-numeric: tabular-nums; }
+.lp-headline { font-feature-settings: "kern", "liga", "ss01"; }
+
+/* ================= Interaction states ================= */
+.lp ::selection, .lp-404 ::selection { background: rgba(230, 115, 80, 0.4); color: #fff; }
+.lp a, .lp button, .lp summary, .lp-404 a { -webkit-tap-highlight-color: transparent; }
+.lp a:focus-visible, .lp button:focus-visible, .lp summary:focus-visible, .lp input:focus-visible, .lp-404 a:focus-visible { outline: 2px solid #9fc2d8; outline-offset: 3px; border-radius: 8px; }
+.cta-pill input:focus-visible { outline: 0; }   /* the pill shows its own focus ring */
+.lp-links a:not(.lp-cta):not(.lp-stars) { position: relative; }
+.lp-links a:not(.lp-cta):not(.lp-stars)::after { content: ""; position: absolute; left: 0; right: 0; bottom: -5px; height: 1px; background: currentColor; transform: scaleX(0); transform-origin: left; transition: transform 300ms var(--ease); }
+.lp-links a:not(.lp-cta):not(.lp-stars):hover::after { transform: scaleX(1); }
+.lp-links .lp-cta, .lp-run, .cta-pill button, .cta-cmd, .lp-stars { transition: background var(--fast) var(--ease), transform 180ms var(--ease), color var(--fast) var(--ease), border-color var(--fast) var(--ease); }
+.lp-links .lp-cta:active, .lp-run:active, .cta-cmd:active, .lp-stars:active { transform: scale(0.97); }
+.lp-footer nav a { transition: color var(--fast) var(--ease), transform 250ms var(--ease); }
+.lp-footer nav a:hover { transform: translateX(3px); }
+.lp-faq summary { transition: color var(--fast) var(--ease); }
+.lp-faq summary:hover { color: #fff; }
+.lp-faq summary:hover i::before, .lp-faq summary:hover i::after { background: var(--lp-ink); }
+.lp-card { transition: transform 500ms var(--ease), opacity 800ms var(--ease), box-shadow 400ms var(--ease), border-color 300ms var(--ease); }
+.lp-rail.in .lp-card:hover { border-color: rgba(255, 244, 226, 0.2); }
+.how-steps article { transition: opacity 700ms var(--ease), transform 700ms var(--ease); }
+html { scrollbar-color: #2b2621 #0e0c0a; scrollbar-width: thin; }
+@media (prefers-reduced-motion: reduce) { .lp-footer nav a:hover { transform: none; } .lp-links a::after { transition: none; } }
+
+.lp-404 { position: relative; isolation: isolate; overflow: hidden; }
+.lp-404-scene { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.lp-404 h1 { text-shadow: 0 2px 24px rgba(0, 0, 0, 0.7); }
+@media (min-width: 900px) { .lp-404 > div:not(.lp-404-scene) { max-width: 52%; } }

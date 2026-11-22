@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import HorseMark from "../brand/HorseMark";
 import Wordmark from "../brand/Wordmark";
+import FooterScene from "../brand/FooterScene";
 import "../styles/landing.css";
 
 export default function NotFound() {
@@ -15,11 +16,12 @@ export default function NotFound() {
   }, []);
   return (
     <main className="lp-404">
+      <FooterScene className="lp-404-scene" phoneHorizon={0.8} />
       <Link to="/welcome" className="lp-brand"><HorseMark size={30} /><Wordmark height={22} /></Link>
       <div>
         <p className="mono">404</p>
         <h1>This path leads nowhere.</h1>
-        <p className="lp-404-sub">The page you asked for doesn&apos;t exist, or has moved.</p>
+        <p className="lp-404-sub">The page you asked for doesn&rsquo;t exist, or has moved.</p>
         <Link to="/welcome" className="lp-run lp-404-btn">Back to Paddock <span aria-hidden="true">→</span></Link>
       </div>
     </main>

@@ -24,8 +24,10 @@ function vnoise(x: number, y: number): number {
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
 
-export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58 }: { className?: string; cell?: number; phoneHorizon?: number }) {
+export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58, parallax = false }: { className?: string; cell?: number; phoneHorizon?: number; parallax?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const cliffRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const riderImg = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
@@ -131,8 +133,11 @@ export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58 }
       ctx.globalCompositeOperation = "source-over";
 
       // ---- solid art: a tall generated cliff with a rider, anchored right at full height ----
+      const cc = cliffRef.current;
+      const cctx = cc ? cc.getContext("2d") : null;
+      if (cc && cctx) { cc.width = Math.round(w); cc.height = Math.round(h) + 40; cctx.clearRect(0, 0, cc.width, cc.height); }
       const ri = riderImg.current;
-      if (ri && ri.complete && ri.naturalWidth) {
+      if (cctx && ri && ri.complete && ri.naturalWidth) {
         // cropped in: the rider is large, the ruins and bottom of the cliff run off the frame
         const ih = rih, iw = riw, ix = rix, iy = riy;
         // tone the illustration down on its own layer so it sits in the scene
@@ -147,8 +152,8 @@ export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58 }
           fade.addColorStop(0, "rgba(10,7,5,0)"); fade.addColorStop(1, "rgba(8,6,5,0.5)");           // deeper toward the base
           lc.fillStyle = fade; lc.fillRect(0, 0, layer.width, layer.height);
           lc.fillStyle = "rgba(60, 30, 16, 0.10)"; lc.fillRect(0, 0, layer.width, layer.height);     // warm the shadows a touch
-          ctx.drawImage(layer, ix, iy);
-        } else ctx.drawImage(ri, ix, iy, iw, ih);
+          cctx.drawImage(layer, ix, iy);
+        } else cctx.drawImage(ri, ix, iy, iw, ih);
       }
     };
     const im = new Image();
@@ -162,5 +167,33 @@ export default function FooterScene({ className, cell = 5, phoneHorizon = 0.58 }
     return () => { window.removeEventListener("resize", on); window.clearTimeout(t); };
   }, [cell, phoneHorizon]);
 
-  return <canvas ref={ref} className={className} aria-hidden="true" />;
+  // scroll-tied depth: the cliff rises into place and the sky brightens as the footer arrives
+  useEffect(() => {
+    if (!parallax) return;
+    const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const wrap = wrapRef.current, sky = ref.current, cliff = cliffRef.current;
+    if (!wrap || !sky || !cliff || reduce) return;
+    let raf = 0;
+    const apply = () => {
+      raf = 0;
+      const r = wrap.getBoundingClientRect();
+      const vh = window.innerHeight;
+      const p = Math.min(1, Math.max(0, (vh - r.top) / (Math.min(r.height, vh) * 0.9)));
+      const e = 1 - Math.pow(1 - p, 3);
+      cliff.style.transform = `translate3d(0, ${((1 - e) * 36).toFixed(1)}px, 0)`;
+      sky.style.opacity = (0.55 + 0.45 * e).toFixed(3);
+    };
+    const on = () => { if (!raf) raf = requestAnimationFrame(apply); };
+    apply();
+    window.addEventListener("scroll", on, { passive: true });
+    window.addEventListener("resize", on);
+    return () => { window.removeEventListener("scroll", on); window.removeEventListener("resize", on); if (raf) cancelAnimationFrame(raf); };
+  }, [parallax]);
+
+  return (
+    <div ref={wrapRef} className={className} aria-hidden="true" style={{ overflow: "hidden" }}>
+      <canvas ref={ref} className="scene-sky" />
+      <canvas ref={cliffRef} className="scene-cliff" />
+    </div>
+  );
 }
