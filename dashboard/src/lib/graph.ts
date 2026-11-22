@@ -46,9 +46,17 @@ export interface GraphLayoutResult {
   edges: Edge[];
 }
 
-/** Spacing constants (in px, reactflow world units). */
-const COL_W = 240;
-const ROW_H = 72;
+/**
+ * Spacing (react-flow world units). Every node is the same size, like a
+ * workflow canvas: the eye reads columns and links, not box sizes. Blast
+ * radius lives on the card (subtitle + tooltip), not in its scale.
+ */
+export const NODE_W = 208;
+export const NODE_H = 56;
+const COL_GAP = 72;
+const ROW_GAP = 20;
+const COL_W = NODE_W + COL_GAP;
+const ROW_H = NODE_H + ROW_GAP;
 
 export function layoutGraph(input: GraphLayoutInput): GraphLayoutResult {
   const { assets, edges, hot } = input;
@@ -74,38 +82,46 @@ export function layoutGraph(input: GraphLayoutInput): GraphLayoutResult {
     return (a.canonical || a.value).localeCompare(b.canonical || b.value);
   });
 
-  // Bucket by rounded rank.
-  const byRank = new Map<number, Asset[]>();
+  // Bucket by rounded rank, then compact: empty ranks don't leave holes.
+  const byRankRaw = new Map<number, Asset[]>();
   for (const a of sorted) {
     const r = Math.round(rankOf(a));
-    const list = byRank.get(r) ?? [];
+    const list = byRankRaw.get(r) ?? [];
     list.push(a);
-    byRank.set(r, list);
+    byRankRaw.set(r, list);
   }
+  const columns = [...byRankRaw.keys()].sort((a, b) => a - b).map((r) => byRankRaw.get(r)!);
 
-  const positions = new Map<string, XYPosition>();
-  const ranks = [...byRank.keys()].sort((a, b) => a - b);
-  const maxCount = Math.max(...[...byRank.values()].map((l) => l.length), 1);
-  const totalH = maxCount * ROW_H;
-
-  for (const r of ranks) {
-    const list = byRank.get(r)!;
-    const colH = list.length * ROW_H;
-    const yOffset = (totalH - colH) / 2;
-    list.forEach((a, i) => {
-      positions.set(a.id, {
-        x: r * COL_W,
-        y: yOffset + i * ROW_H,
-      });
-    });
+  // Order each column by the average row of its neighbours in the previous
+  // column (barycenter heuristic): children sit next to their parents, which
+  // removes most crossings. Two sweeps, left->right then right->left.
+  const neighbours = new Map<string, string[]>();
+  for (const e of edges) {
+    (neighbours.get(e.src_id) ?? neighbours.set(e.src_id, []).get(e.src_id)!).push(e.dst_id);
+    (neighbours.get(e.dst_id) ?? neighbours.set(e.dst_id, []).get(e.dst_id)!).push(e.src_id);
   }
-
-  const sizeFor = (a: Asset): number => {
-    const bs = a.blast_score ?? 0;
-    // Node "weight" shows up in the custom node — we pass it via data.
-    // Clamp hard so a single huge-blast host can't blow out the layout.
-    return 0.85 + Math.min(0.5, Math.max(0, bs) / 100);
+  const rowOf = new Map<string, number>();
+  const indexColumn = (col: Asset[]) => col.forEach((a, i) => rowOf.set(a.id, i));
+  columns.forEach(indexColumn);
+  const reorder = (col: Asset[], ref: Set<string>) => {
+    const key = (a: Asset): number => {
+      const rows = (neighbours.get(a.id) ?? []).filter((n) => ref.has(n)).map((n) => rowOf.get(n)!);
+      return rows.length ? rows.reduce((x, y) => x + y, 0) / rows.length : rowOf.get(a.id)!;
+    };
+    col.sort((a, b) => key(a) - key(b));
+    indexColumn(col);
   };
+  for (let c = 1; c < columns.length; c++) reorder(columns[c], new Set(columns[c - 1].map((a) => a.id)));
+  for (let c = columns.length - 2; c >= 0; c--) reorder(columns[c], new Set(columns[c + 1].map((a) => a.id)));
+
+  // Centre each column vertically against the tallest one.
+  const positions = new Map<string, XYPosition>();
+  const maxCount = Math.max(...columns.map((l) => l.length), 1);
+  const totalH = maxCount * ROW_H;
+  columns.forEach((list, c) => {
+    const yOffset = (totalH - list.length * ROW_H) / 2;
+    list.forEach((a, i) => positions.set(a.id, { x: c * COL_W, y: yOffset + i * ROW_H }));
+  });
 
   // Undirected degree per node, used as a legibility cue for edge weight:
   // "spine" edges (a host resolving to many ports/services) read heavier.
@@ -116,10 +132,9 @@ export function layoutGraph(input: GraphLayoutInput): GraphLayoutResult {
   }
   const WEIGHTED_KINDS = new Set(["resolves_to", "hosts", "runs"]);
   const edgeWidth = (e: AssetEdge): number => {
-    if (!WEIGHTED_KINDS.has(e.kind)) return 1;
+    if (!WEIGHTED_KINDS.has(e.kind)) return 1.25;
     const combined = (degree.get(e.src_id) ?? 0) + (degree.get(e.dst_id) ?? 0);
-    // Subtle: 1px baseline, up to ~2.2px for the busiest hubs.
-    return Math.min(2.2, 1 + Math.max(0, combined - 2) * 0.12);
+    return Math.min(2.2, 1.25 + Math.max(0, combined - 2) * 0.1);
   };
 
   const nodes: Node[] = assets.map((a) => ({
@@ -129,33 +144,25 @@ export function layoutGraph(input: GraphLayoutInput): GraphLayoutResult {
     data: {
       asset: a,
       hot: hot?.has(a.id) ?? false,
-      scale: sizeFor(a),
       color: kindColor(a.kind),
     },
     draggable: true,
     selectable: true,
   }));
 
+  // No text labels on edges: the column order already says what each link
+  // is (domain -> subdomain -> ip -> port ...). The kind stays in `data` for
+  // tooltips and filters.
   const rfEdges: Edge[] = edges.map((e) => ({
     id: e.id,
     source: e.src_id,
     target: e.dst_id,
     type: "default",
     animated: false,
-    label: e.kind,
-    labelStyle: {
-      fill: "var(--text-2)",
-      fontSize: 9,
-      fontFamily: "var(--mono)",
-      letterSpacing: "0.06em",
-      textTransform: "uppercase",
-    },
-    labelBgStyle: { fill: "rgba(16,21,29,0.8)" },
-    labelBgPadding: [3, 2] as [number, number],
+    data: { kind: e.kind },
     style: {
-      stroke: "var(--border-strong)",
+      stroke: "rgba(236,226,208,0.22)",
       strokeWidth: edgeWidth(e),
-      opacity: 0.8,
     },
   }));
 

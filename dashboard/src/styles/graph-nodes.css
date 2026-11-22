@@ -1,0 +1,89 @@
+/* ------------------------------------------------------------------ *
+ * Graph canvas nodes: workflow-canvas cards (uniform size, icon tile, *
+ * title + quiet subtitle, side handles). Tokens only; no hover glow.  *
+ * ------------------------------------------------------------------ */
+.gnode {
+  --kind-color: var(--accent);
+  position: relative;
+  width: 208px;
+  height: 56px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-0);
+  font-family: var(--sans);
+  transition: border-color 120ms ease, opacity 120ms ease;
+}
+.react-flow__node.selected .gnode,
+.gnode:hover { border-color: var(--border-strong); }
+
+.gnode-icon {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--kind-color);
+  background: color-mix(in srgb, var(--kind-color) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--kind-color) 32%, transparent);
+}
+.gnode-text { min-width: 0; flex: 1 1 auto; }
+.gnode-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--text-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnode-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnode-sub .blast { font-family: var(--mono); }
+
+/* open high/critical findings: a count badge only, so a busy surface doesn't turn red */
+.gnode-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font: 600 10px/1 var(--mono);
+  color: #fff;
+  background: var(--sev-crit);
+  border: 2px solid var(--bg);
+}
+
+/* connection handles: small dots on the card edge */
+.gnode .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--panel);
+  border: 1.5px solid color-mix(in srgb, var(--kind-color) 60%, var(--border-strong));
+}
+.gnode .react-flow__handle-left { left: -5px; }
+.gnode .react-flow__handle-right { right: -5px; }
+
+.gnode.gx-dim { opacity: 0.18; }
+.gnode.gx-fade { opacity: 0.35; }
+
+/* edges: quiet by default; a hovered node lights its own links */
+.react-flow__edge.gx-edge-lit path { stroke: var(--text-1) !important; }
