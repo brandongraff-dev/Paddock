@@ -1,354 +1,247 @@
 <h1 align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/paddock-wordmark.svg">
-    <img src="docs/assets/paddock-wordmark-light.svg" alt="Paddock" height="64">
+    <img src="docs/assets/paddock-wordmark-light.svg" alt="Paddock" height="72">
   </picture>
 </h1>
 
-**Map the real attack paths from your internet-facing surface to your crown jewels — plus SCA, threat-intel, and an adaptive risk model, in one self-hosted platform.**
+<p align="center">
+  <b>Find it. Prove it. Fix it. Prove it's fixed.</b><br>
+  Open-source, self-hosted defensive security: your attack surface, the paths an attacker would take,<br>
+  and verified proof that each door is closed.
+</p>
 
-[![CI](https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml/badge.svg)](https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml)
-[![Integration](https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml/badge.svg)](https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml)
-[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](#community)
+<p align="center">
+  <a href="https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/brandongraff-dev/cybersec/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml"><img alt="Integration" src="https://github.com/brandongraff-dev/cybersec/actions/workflows/integration.yml/badge.svg"></a>
+  <a href="https://github.com/brandongraff-dev/cybersec/actions/workflows/install.yml"><img alt="Clean install" src="https://github.com/brandongraff-dev/cybersec/actions/workflows/install.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-1f6feb"></a>
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-docker%20%7C%20helm-3b3b3b">
+</p>
 
-Paddock is a **defensive** Attack Surface Management + threat-intelligence
-platform for teams defending their own infrastructure. Point it at assets you're
-authorized to assess; it discovers them from passive sources, politely probes the
-ones you've allowed, correlates what it finds against public vulnerability and
-threat feeds, and surfaces the result as a graph you can actually navigate.
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#what-you-get">Features</a> ·
+  <a href="#how-it-works">Architecture</a> ·
+  <a href="#integrations">Integrations</a> ·
+  <a href="docs/">Docs</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
 
-**It is a defender's tool.** No exploit framework, no credential attacks, no
-evasion. Every outbound request is scope-checked and audit-logged. See the
-[hard rules](#hard-rules--what-this-will-not-do).
-
-> ⚠️ **Authorized use only.** Point this only at assets you own or are
-> explicitly, documentedly authorized to assess. [Jump to the notice.](#authorized-use-only)
+<p align="center">
+  <a href="docs/media/paddock-demo.mp4">
+    <img src="docs/media/paddock-demo.gif" alt="Paddock in 20 seconds: landing, overview, attack graph, verified findings, chains, executive report, free exposure check" width="860">
+  </a>
+  <br><sub>20-second tour on the built-in demo data · <a href="docs/media/paddock-demo.mp4">full-quality MP4</a></sub>
+</p>
 
 ---
 
-## What it does
+## Why Paddock
 
-**The superpower: attack paths.** Most ASM tools hand you a list. Paddock
-builds the *graph* — assets, the edges between them, and the findings on each —
-and then walks it to show you the **paths an attacker would actually take**, from
-an internet-facing foothold to something that matters, with the hop-by-hop
-narrative and a blast-radius score. The chain detector folds noise like
-`exposed .git + outdated library + no WAF` into a single high-severity story
-instead of three disconnected rows.
-
-Around that core it also gives you:
-
-- **Discover (passive):** CT logs (crt.sh + live CertStream), DNS enumeration,
-  GitHub code search, Shodan InternetDB, Wayback, ASN range expansion.
-- **Probe (active, authorized only):** HTTP + security-header analysis,
-  exposed-file detection, port scanning (naabu), TLS inspection/grading (tlsx),
-  link crawling (katana), nuclei checks (safe tags only), Playwright screenshots.
-- **Correlate:** CPE-based CVE↔asset matching against **NVD + EPSS + CISA KEV**,
-  policies-as-code (hot-reloaded YAML), and blast-radius scoring across the graph.
-- **Supply chain (SCA):** lockfile → SBOM → OSV matching, plus first-party SAST
-  and dependency reachability (detection only).
-- **Threat-intel:** STIX 2.1 / TAXII 2.1 IOC ingest, matched defensively against
-  your own assets and findings.
-- **Inside the network (Paddock Sentry):** a listen-only sensor on a mirror
-  port identifies every IoT/OT device and flags devices that scan, cross
-  segments, phone home from OT, or start behaving unlike their model
-  ([guide](docs/SENTRY.md)).
-- **Context connectors:** read-only AWS, Defender/Intune, CrowdStrike and
-  ServiceNow CMDB feed cloud paths, device posture and ownership into the
-  graph; UniFi/Meraki quarantine a Sentry-flagged device only after a human
-  approves it ([guide](docs/INTEGRATIONS-CONTEXT.md)).
-- **Adaptive risk:** an ML risk ranker and anomaly detector (cold-start — see
-  [Status](#status-honest)), surface-change tracking, owner routing + ticketing.
-- **Integrations:** HMAC-signed webhooks, Slack, Microsoft Teams, PagerDuty and
-  email, with retries and a delivery log on one page ([guide](docs/INTEGRATIONS.md)).
-- **Governance built in:** auth (API keys + JWT), RBAC + ABAC classification
-  filtering pushed into SQL, and a **tamper-evident, hash-chained audit log** you
-  can verify.
-- **Enterprise identity:** OIDC + SAML 2.0 single sign-on (Okta, Entra ID,
-  Google Workspace, Auth0, Keycloak) with group → role mapping, an SSO-required
-  switch, and SCIM 2.0 provisioning. See [docs/SSO.md](docs/SSO.md).
-- **An analyst UI:** dark, dense, keyboard-driven — live asset graph (react-flow),
-  findings table, chain cards, attack paths, a day-by-day timeline, and a scope
-  admin page with its own audit trail.
-
-Under the hood it's ~15 small services around one authoritative FastAPI
-orchestrator (plus Postgres / Redis / Neo4j). You don't have to care about that
-to run it — but if you do, see [Architecture](#architecture).
-
-## Quickstart (5 minutes)
-
-**Requirements:** Docker + Docker Compose. That's it.
-
-```bash
-git clone https://github.com/brandongraff-dev/cybersec
-cd cybersec
-
-cp .env.example .env                 # dev defaults are fine as-is
-docker compose up -d --build         # build + start the whole stack (dev profile)
-make demo                            # seed a demo graph + print URLs & login
-
-# open the dashboard:
-open http://localhost:3000           # (or just visit it)
-```
-
-Or do all of it in one shot:
-
-```bash
-make quickstart                      # = cp .env + docker compose up + make demo
-```
-
-`make demo` seeds a representative demo surface (the fictional `acme-demo.example`),
-so the dashboard has a real-looking graph, findings, and an attack chain the
-moment you open it — **start on the Graph page** (`/graph`).
-
-**Login.** The dev profile runs `AUTH_MODE=dev`: you're a synthetic admin, so
-**no login is required** — a first-timer isn't blocked by auth. Because of that,
-the dev profile publishes its ports on `127.0.0.1` only, and the orchestrator's
-own default is `AUTH_MODE=enforce` (anything that forgets to set it fails
-closed). (The hardened profile seeds an `admin` user whose password comes from
-`ADMIN_BOOTSTRAP_PASSWORD` in `.env`; no known credential is ever shipped. See
-[SECURITY.md §4](SECURITY.md).) Note that "no login" applies to the **API**: the
-dashboard still shows a sign-in screen — use `admin` and the
-`ADMIN_BOOTSTRAP_PASSWORD` from your `.env`.
-
-### Lite mode (single node)
-
-For an evaluation or a small team, run only what's needed for discovery:
-
-```bash
-make lite          # postgres + redis + orchestrator + dashboard + passive worker
-make lite-demo     # optional: the same demo surface as `make demo`
-make lite-active   # optional: add the active (polite probing) worker
-make lite-down
-```
-
-Lite uses the **same hardening as the full profile** (`AUTH_MODE=enforce`,
-proof-of-control for scope, internal-only data tier) and generates the worker
-service key into `.env` for you. Neo4j, graph sync, the ML risk model, the LLM
-"Ask" service and the compute services are not started; their pages say
-"not enabled" instead of erroring (`GET /v1/system/services`).
-
-| | lite | full |
-|---|---|---|
-| Services | 5 (6 with active worker) | 17 + Postgres/Redis/Neo4j |
-| RAM (measured idle) | ~150 MB; 1 GB recommended | ~2 GB (Neo4j ≈ 0.7 GB); 4–8 GB recommended |
-| CPU | 1–2 vCPU | 4 vCPU |
-| Disk (images) | ~1.3 GB (+3.5 GB with the active worker's browser) | ~9 GB |
-
-### First-run wizard
-
-Sign in as an admin on a workspace with no verified scope and Paddock opens
-**`/setup`**: name the workspace → add your domain → **prove you own it** (a DNS
-`TXT` record at `_paddock-challenge.<domain>` or an HTTPS file at
-`/.well-known/paddock-verification/<token>`, with copy buttons and a live
-"check now") → run a first passive discovery → watch the first results land →
-invite a teammate / connect Slack. Progress is saved server-side; "Skip setup"
-always works. With `REQUIRE_SCOPE_PROOF=true` (hardened + lite) an unverified
-scope entry never authorises a scan; IP ranges are recorded as an *attestation*
-(authorization reference + approver) via `POST /v1/scope/{id}/verify`.
-
-When you're done:
-
-```bash
-make down      # stop (keeps data)      |   make nuke   # stop + wipe volumes
-make status    # health-check services  |   make help   # every target
-```
-
-## Screenshots
-
-Images live in [`docs/screenshots/`](docs/screenshots/) (see that folder's README
-for how they're captured against the demo graph). The hero is the **Graph** page:
+Most security tools stop at a list of *possible* problems, and every team
+already has more of those than it can fix. Paddock closes the loop:
 
 | | |
 |---|---|
-| ![Asset graph](docs/screenshots/graph.png) | ![Attack paths](docs/screenshots/attack-paths.png) |
-| **Asset graph** — the live surface, high/critical nodes highlighted | **Attack paths** — foothold → crown jewel, hop by hop |
-| ![Findings](docs/screenshots/findings.png) | ![Chains](docs/screenshots/chains.png) |
-| **Findings** — keyboard-driven, KEV/EPSS aware | **Chains** — correlated multi-finding stories |
+| **1. Find** | Discover what you actually expose: domains, hosts, services, cloud assets, code, dependencies and the devices on your network. |
+| **2. Prove it's real** | A safe, non-destructive check confirms the issue is exploitable, only against systems you've **proven you own**. Noise drops out. |
+| **3. Fix** | Get the fix as a pull request, config change or dependency bump, behind a human approval gate. |
+| **4. Prove it's fixed** | When the ticket closes or the PR merges, Paddock re-tests. If the fix didn't hold, the finding reopens. |
 
-> The repo ships the capture instructions, not binary image files — generate the
-> PNGs locally with `make quickstart` then Playwright (see
-> [`docs/screenshots/README.md`](docs/screenshots/README.md)).
+Every result lands as evidence: executive reports, compliance packs
+(PCI DSS 4.0, NIST CSF 2.0, ISO 27001, IEC 62443, EU CRA) and shareable trust
+pages for insurers and customers.
 
-## Architecture
+**It is a defender's tool.** No exploit framework, no credential attacks, no
+evasion. Every outbound request is scope-checked, pinned to vetted IPs and
+audit-logged ([hard rules](#safety-by-design)).
 
-The orchestrator owns the database and the API; everything else is a small,
-replaceable service that talks to it over HTTP. Postgres is the system of record,
-Redis is an ephemeral queue, Neo4j is a derived graph projection.
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/overview.webp" alt="Overview"><br><b>Overview</b>: exposure index, findings over time, what changed</td>
+    <td width="50%"><img src="docs/screenshots/graph.webp" alt="Asset graph"><br><b>Attack graph</b>: your surface as a graph, blast radius per node</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/findings-verified.webp" alt="Verified findings"><br><b>Verified findings</b>: SLA clocks, KEV, priority you can explain</td>
+    <td><img src="docs/screenshots/chains.webp" alt="Attack chains"><br><b>Chains</b>: three medium findings that are one critical story</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/reports.webp" alt="Executive report"><br><b>Reports</b>: executive summary, MTTR, SLA, PDF export</td>
+    <td><img src="docs/screenshots/check.webp" alt="Free exposure check"><br><b>Free exposure check</b>: passive, no packets to the target</td>
+  </tr>
+</table>
+
+## Quickstart
+
+**Run the platform** (Docker + Compose, about 5 minutes):
+
+```bash
+git clone https://github.com/brandongraff-dev/cybersec paddock && cd paddock
+make quickstart        # builds the stack, seeds a demo surface, prints the URL + login
+```
+
+Open **http://localhost:3000** and start on the **Graph** page. Prefer something
+lighter? `make lite` runs a 5-service single node (~150 MB RAM) with the same
+hardening. Production: [Helm chart and operations guide](docs/OPERATIONS.md).
+
+**Scan your own repo, no server needed** (the open-source `paddock` CLI):
+
+```bash
+pipx install "git+https://github.com/brandongraff-dev/cybersec#subdirectory=cli"
+paddock scan .         # vulnerable dependencies, secrets, code and config issues
+paddock fix .          # deterministic fixes as a diff, or --pr to open a pull request
+```
+
+**Connect anything** in a minute: point any scanner (SARIF, CycloneDX, SPDX,
+Trivy, Grype, Semgrep, Nuclei, ZAP, CSV) at `POST /v1/ingest`, or let Claude,
+Cursor or any MCP client query Paddock through the
+[MCP server](mcp/). See [Connect anything](docs/CONNECT.md).
+
+## What you get
+
+<table>
+<tr><td valign="top" width="50%">
+
+**Discover**
+- Passive recon: certificate transparency, DNS, GitHub code search, Shodan InternetDB, ASN expansion
+- Polite active probing of authorised scope: HTTP, TLS, ports, safe Nuclei tags, screenshots
+- Cloud inventory from AWS, GCP and Azure (read-only)
+- **Sentry**: a passive network sensor (a Raspberry Pi works) that identifies every IoT/OT device on a mirror port
+
+**Prioritise**
+- Attack paths from internet-facing footholds to crown jewels, with blast radius
+- Chains: correlated multi-finding stories instead of disconnected rows
+- CVE matching against NVD, EPSS and CISA KEV; SCA, SBOM and SAST
+- A priority score that always explains itself ("KEV-listed · internet-facing · 2 hops from payments")
+
+</td><td valign="top" width="50%">
+
+**Prove and fix**
+- Verified exploitability with 11 safe checks, pinned to scope-vetted IPs
+- Fix generation behind an approval gate; automatic re-test after the fix
+- Finding lifecycle: dedupe, suppressions with reasons and expiry, SLA clocks
+
+**Report and govern**
+- Executive reports (HTML/PDF), weekly digests, compliance evidence packs
+- Trust pages for insurers; passive supplier monitoring
+- Multi-tenant with Postgres row-level security across every service; MSP console
+- SSO (OIDC + SAML), SCIM 2.0, RBAC + ABAC, and a hash-chained, anchored audit log
+
+</td></tr>
+</table>
+
+## Integrations
+
+| Category | Connectors |
+|---|---|
+| Chat and alerting | Slack · Microsoft Teams · PagerDuty · Email · signed Webhooks |
+| Ticketing (two-way) | Jira · ServiceNow · Linear |
+| SIEM (OCSF) | Splunk · Microsoft Sentinel · Elastic · Google SecOps · Syslog/CEF |
+| Cloud and context | AWS · GCP · Azure · CrowdStrike · Microsoft Defender · ServiceNow CMDB |
+| Network actions | UniFi · Meraki (quarantine only after a human approves, with a reason) |
+| Developer | REST API (`/v1`, OpenAPI) · Python + TypeScript SDKs · Terraform provider · GitHub Action · CI templates for GitLab, Bitbucket, Azure DevOps, CircleCI, Jenkins · MCP server |
+| Standards | SARIF · CycloneDX · SPDX · VEX · OCSF · STIX/TAXII 2.1 |
+
+All 21 connectors share one framework: encrypted secrets, retries with backoff,
+a dead-letter queue, outbound connections pinned to validated IPs, and one
+Integrations page with health for each ([docs](docs/INTEGRATIONS.md)).
+
+## How it works
 
 ```mermaid
 flowchart LR
-    subgraph edge["edge (published)"]
-        DASH["dashboard<br/>:3000"]
-        ORCH["orchestrator :8080<br/>API · scope · authz · audit"]
-    end
-    subgraph workers["workers (egress, no inbound)"]
-        WP["worker-passive"]
-        WA["worker-active"]
-    end
-    subgraph compute["compute + intel"]
-        CORR["correlation"]:::c
-        SCA["sca"]:::c
-        CODE["codeanalysis"]:::c
-        ML["mlrisk"]:::c
-        CW["changewatch"]:::c
-        TRI["triage"]:::c
-        ONT["ontology"]:::c
-        GS["graphsync"]:::c
-        INTEL["intel"]:::c
-        TI["threatintel"]:::c
-        BRAIN["brain (LLM)"]:::c
-    end
-    subgraph data["data tier (internal only)"]
-        PG[("Postgres")]
-        REDIS[("Redis")]
-        NEO[("Neo4j")]
-    end
-    INET(["Internet: targets, CT,<br/>NVD/EPSS/KEV, TAXII"])
+    U(["People · CI · AI assistants (MCP)"])
+    D["Dashboard"]
+    O{{"Orchestrator API<br/>scope + proof of ownership<br/>RBAC + tenancy · audit chain"}}
+    DB[("Postgres<br/>row-level security")]
 
-    DASH -->|/v1/* proxy| ORCH
-    ORCH --> PG & REDIS
-    WP & WA -->|scope-checked, audited| ORCH
-    WP & WA -.->|outbound only| INET
-    CORR & SCA & CODE & ML & CW & TRI & ONT --> ORCH
-    GS --> PG & NEO
-    INTEL & TI --> ORCH
-    INTEL & TI -.-> INET
-    classDef c fill:#eef,stroke:#88a;
+    subgraph IN["Collect"]
+        direction TB
+        W["Workers<br/>passive + active, IP-pinned"]
+        S["Sentry sensors"]
+        X["Ingest + cloud connectors"]
+    end
+
+    subgraph AN["Analyse"]
+        direction TB
+        A1["Correlation + attack paths"]
+        A2["CVE · SCA · SAST · threat intel · ML risk"]
+    end
+
+    subgraph OUT["Act"]
+        direction TB
+        F["Verify + fix<br/>safe checks · PRs · re-test"]
+        I["Integrations + reports"]
+    end
+
+    U --> D --> O
+    U --> O
+    IN --> O
+    O <--> AN
+    O --> OUT
+    O --- DB
 ```
 
-Full service map, ports, networks, and the discover→probe→correlate→surface data
-flow: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**. Running it for real
-(Helm chart, versioned migrations, backups + restore drill, Prometheus/Grafana,
-retention, sizing): **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)**.
+- **One authoritative API.** The orchestrator owns the database, scope and
+  authorisation; every other component is a small, replaceable service that
+  talks to it.
+- **Nothing touches a target without permission.** Scope is checked at
+  dispatch and again on every request and redirect. Active checks require proof
+  of ownership (DNS TXT, HTTPS file or attestation), and connections are pinned
+  to the IPs that were vetted.
+- **Every tenant is isolated in the database.** Each service connects as its
+  own least-privilege role under Postgres row-level security. Tests sweep every
+  table and every API route across tenants.
 
-## Scan your own stuff
+Deep dive: [architecture](docs/ARCHITECTURE.md) ·
+[tenancy](docs/trust/TENANCY.md) · [operations](docs/OPERATIONS.md) ·
+[API](docs/API.md).
 
-Nothing reaches outside the allowlist in the `scope_entries` table. The safe
-default scope is loopback + `scanme.nmap.org` (nmap's official legal target):
+## Safety by design
 
-```bash
-make seed-scope      # loads the safe default scope
-```
+These are enforced in code, not just documented:
 
-Add your own authorized targets (with an authorization note), then scan:
+- **No exploitation.** Safe checks use GET, HEAD, TLS handshakes and TCP connects only, with size and time caps. No payloads, no PoCs.
+- **No credential attacks.** Default-credential risk is detected by fingerprinting, never by submitting passwords.
+- **No evasion.** No stealth scans, WAF bypass, decoys or spoofing; the scanner names itself.
+- **No out-of-scope anything.** Out-of-scope is a hard failure, and every decision is written to the audit log.
 
-```bash
-make scope-add KIND=subdomain_wildcard VALUE=yourdomain.example AUTH="who authorized this"
-make scan KIND=full_recon TARGET=yourdomain.example
-```
+> **Authorised use only.** Point Paddock only at assets you own or are
+> explicitly, documentedly authorised to assess. Full statement:
+> [SECURITY.md §12](SECURITY.md).
 
-Scope kinds: `domain`, `subdomain_wildcard`, `ipv4_cidr`, `ipv6_cidr`, `asn`.
-Every outbound request is checked against this list at dispatch **and** re-checked
-per-request in the worker's egress wrapper, and every decision is written to
-`scope_decisions`. An out-of-scope request is a hard failure, not a warning.
+## Project status
 
-### Authorized use only
+Paddock is young and moving fast. We'd rather tell you where the edges are.
 
-> **Paddock may be pointed only at assets you own or are explicitly,
-> documentedly authorized to assess.** Using it to scan, probe, or otherwise
-> interact with systems you are not authorized to test may be illegal and is
-> outside the supported and intended use of this project. The system enforces the
-> scope allowlist at three layers and audits every outbound request, but **you**
-> are responsible for operating it lawfully and within the bounds of your
-> authorization. Full statement: [SECURITY.md §12](SECURITY.md).
+**Solid**
+- 3,100+ automated tests across every service, the dashboard, SDKs, CLI and MCP server, plus 207 detection-quality cases gated in CI.
+- The orchestrator suite runs twice in CI, the second time as the non-superuser row-level-security role, which proves tenant isolation.
+- Clean-machine installs of the full and lite stacks and an end-to-end integration harness run in CI whenever the stack changes.
+- Adversarial reviews of the public surface, tenancy and outbound safety, with every finding fixed and pinned as a regression test.
 
-## Status (honest)
+**Still to do** ([full list](docs/READINESS.md))
+- Connectors are tested against protocol-accurate fakes, not yet against live SaaS tenants.
+- The ML risk model is cold-start until real history accumulates.
+- One shared service key between internal services (route-limited in strict mode). Per-service keys are next.
+- No SOC 2 report or third-party pen test yet.
 
-This is an **early, MVP-grade** platform. It's real and runnable, and we'd rather
-tell you exactly where the edges are than oversell it. (Full threat model and
-known gaps: [SECURITY.md §10](SECURITY.md).)
+## Editions and license
 
-**What works**
+Paddock is **[AGPL-3.0](LICENSE)**. Self-hosting is free and stays free: clone
+it, run it, modify it. Paid editions add hosting, enterprise features and
+support ([editions](docs/EDITIONS.md)). Contributions are accepted under a
+[CLA](CLA.md) so the project can also offer a commercial license.
 
-- The core pipeline end-to-end: discover → probe → correlate → surface, driven by
-  an integration harness (`make integration`) that asserts the cross-service
-  contracts.
-- A broad test suite (~900 test functions across the services and the dashboard),
-  run per-service in CI (`.github/workflows/ci.yml`).
-- Scope enforcement (3 layers), RBAC/ABAC, and the tamper-evident audit chain are
-  implemented and tested. The scope normaliser is differential-fuzzed against
-  WHATWG and RFC 3986 URL parsers (`hardening/stress_scope.py`: 10M hostile
-  targets, 0 disagreements) and refuses targets that resolve to cloud metadata
-  or to private ranges you haven't explicitly scoped.
-- One real authorized run against `scanme.nmap.org` with a crude false-positive
-  measurement (`make realrun`, see [`hardening/RUNBOOK.md`](hardening/RUNBOOK.md)).
+## Contributing and community
 
-**What doesn't / what to know**
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) covers dev setup, the test suites and the integration harness.
+- **Security issues:** please report privately; see [SECURITY.md](SECURITY.md).
+- **Trust pack:** [whitepaper, SOC 2 mapping, DPA and policies](docs/trust/), and [how to verify a signed release](docs/trust/VERIFY.md).
+- **Docs:** everything else is in [`docs/`](docs/), including the [product vision](docs/VISION.md) and the [Sentry kit guide](docs/SENTRY_KIT.md).
 
-- **Validation is synthetic + one live host.** Detectors are validated against
-  synthetic fixtures and a single live reference host (`scanme.nmap.org`). The FP
-  number is a regression tripwire over a tiny hand-labeled truth set — **not** a
-  precision/recall guarantee. No broad real-world study has been done.
-- **The ML risk model is cold-start.** No pretrained/persisted model; it bootstraps
-  from whatever's in your DB and is effectively uncalibrated until real history
-  accumulates. Treat early risk scores and anomaly flags as low-confidence.
-- **Not verified on a clean box via full compose.** The stack has not been
-  stood up end-to-end from scratch on a fresh machine as part of release QA. Expect
-  to hit rough edges on first `up`; please file them.
-- **Single-tenant in practice** (RLS tenancy covers the API only — see
-  [docs/trust/TENANCY.md](docs/trust/TENANCY.md)), no FIPS/compliance accreditation,
-  audit tamper-resistance only with `AUDIT_HMAC_KEY` + an anchor sink, and some containers resist full lock-down (notably the active
-  worker, which needs `NET_RAW` for SYN scans). Details in SECURITY.md §10.
-
-If you're evaluating this for serious use: run it in the hardened profile, read
-SECURITY.md end to end, and treat the risk scores as a starting point, not truth.
-
-## Hard rules — what this will *not* do
-
-These are built into the services, not just the docs (evasion-flavoured flags are
-refused at import/exec time, not merely ignored):
-
-- **No auto-exploitation.** No payload delivery, no PoC execution. Findings
-  describe impact; they never carry a working exploit.
-- **No credential attacks.** No brute force, spray, or stuffing. Default-credential
-  *risk* is detected by fingerprinting the product, never by submitting passwords.
-- **No evasion.** No stealth/fragmented scans, no WAF-bypass, no decoys, no source
-  spoofing. The scanner's User-Agent names itself.
-- **No out-of-scope anything.** Scope is gated at two layers and a hard failure.
-- **No dangerous nuclei tags.** `-exclude-tags intrusive,fuzz,dos` is enforced.
-
-A PR that tries to add any of the above will be rejected on sight. This posture is
-what makes the tool legal to run, safe against production you depend on, and
-employable inside an org. See [SECURITY.md §6](SECURITY.md) for why.
-
-## License
-
-**[AGPL-3.0](LICENSE)** (`SPDX-License-Identifier: AGPL-3.0-only`).
-
-Open-core rationale: self-hosting Paddock is and will stay **free** — clone
-it, run it, modify it. The AGPL's network-use clause (§13) means anyone who offers
-a *modified* version as a network service must publish their changes under the same
-license. That keeps the self-hosted project healthy and in the open while
-protecting the option of a future managed-cloud offering, without taking anything
-away from people who run it themselves.
-
-Editions & the CLA: everything in this repository is the free **Community**
-edition; paid editions add new enterprise features, hosting and support
-([docs/EDITIONS.md](docs/EDITIONS.md)). Contributions are accepted under a
-[CLA](CLA.md) so the project can offer that commercial license.
-
-## Community
-
-- **Security:** [SECURITY.md](SECURITY.md) — threat model, scope invariant, and
-  how to report a vulnerability (privately, please).
-- **Trust:** [`docs/trust/`](docs/trust/) — security whitepaper, SOC 2 mapping,
-  DPA/subprocessor templates, retention/IR/vuln-management policies, and
-  [how to verify a signed release](docs/trust/VERIFY.md).
-- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, running the
-  tests + integration harness, and the "tests never touch a live DB" rule.
-- **Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-- **Docs:** [`docs/`](docs/) — architecture, inter-service contracts, per-service
-  notes, the [product vision](docs/VISION.md), the
-  [cloud roadmap](docs/CLOUD_ROADMAP.md), [commercial readiness](docs/READINESS.md),
-  and the [Sentry sensor guide](docs/SENTRY.md).
-- **Interop:** [SIEM connectors in OCSF](docs/INTEGRATIONS-SIEM.md) (Splunk,
-  Sentinel, Elastic, syslog) and [standards exports](docs/STANDARDS.md)
-  (SARIF, CycloneDX, SPDX, VEX, plus a GitHub Action).
-- **API & tooling:** the [`/v1` API contract](docs/API.md) and
-  [Python/TypeScript SDKs, `paddockctl` and the Terraform provider](docs/SDK.md).
-- **Chat:** Discord — *link coming at launch* (badge above is a placeholder).
-
-Issues and PRs welcome. If you're here from r/netsec: the
-[Status](#status-honest) section is the honest pitch — tell us where it breaks.
+Issues and PRs welcome. If something breaks on your first `make quickstart`,
+that's a bug we want to hear about.
