@@ -6,6 +6,8 @@ import { hash, ramp } from "./PixelField";
  * calm sea at a low sun. Painted once, in pixel cells and Paddock's blue-to-ember
  * palette, as a dark silhouette against a dithered glow.
  */
+/** Where the ledge sits within cliff.png, as a fraction of its height. */
+const LEDGE_FRAC = 0.652;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const LUT = (() => {
   const t = new Uint8Array(256 * 3);
@@ -123,57 +125,35 @@ export default function FooterScene({ className, cell = 5 }: { className?: strin
       ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = "source-over";
 
-      // ---- solid art, drawn smooth over the pixel field ----
-      const ledgeY = ledge * cs, cliffPx = cliffX * cs;
-      const edgeX = (y: number) => cliffPx + (y - ledgeY) * 0.3 + (vnoise(y * 0.02, 3.7) - 0.5) * 26 * (phone ? 0.6 : 1);
-      // cliff body
-      ctx.beginPath();
-      ctx.moveTo(w + 4, ledgeY);
-      ctx.lineTo(cliffPx - 6, ledgeY);
-      for (let y = ledgeY; y <= h + 8; y += 14) ctx.lineTo(edgeX(y), y);
-      ctx.lineTo(w + 4, h + 8);
-      ctx.closePath();
-      const rock = ctx.createLinearGradient(0, ledgeY, 0, h);
-      rock.addColorStop(0, "#1a1511"); rock.addColorStop(1, "#0a0908");
-      ctx.fillStyle = rock; ctx.fill();
-      // masonry courses and a rim lit by the glow
-      ctx.save(); ctx.clip();
-      ctx.strokeStyle = "rgba(0,0,0,0.38)"; ctx.lineWidth = 1.5;
-      for (let y = ledgeY + 22, c = 0; y < h; y += 22, c++) {
-        ctx.beginPath(); ctx.moveTo(cliffPx - 40, y); ctx.lineTo(w, y); ctx.stroke();
-        for (let x = cliffPx - 30 + (c % 2) * 36; x < w; x += 72) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 22); ctx.stroke(); }
-      }
-      ctx.restore();
-      ctx.strokeStyle = "rgba(240,160,110,0.55)"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(cliffPx - 6, ledgeY); for (let y = ledgeY; y <= h; y += 14) ctx.lineTo(edgeX(y), y); ctx.stroke();
-      ctx.fillStyle = "rgba(255,200,150,0.4)"; ctx.fillRect(cliffPx - 6, ledgeY - 1, w - cliffPx + 10, 2);
-
-      // ruined columns
-      const colH = [150, 96, 124];
-      [0, 1, 2].forEach((n) => {
-        const cw = phone ? 16 : 26;
-        const cx = w * (phone ? 0.86 + n * 0.05 : 0.86 + n * 0.055);
-        const top = ledgeY - colH[n] * (phone ? 0.7 : 1);
-        const g = ctx.createLinearGradient(cx, 0, cx + cw, 0);
-        g.addColorStop(0, "#2a221c"); g.addColorStop(0.5, "#17120f"); g.addColorStop(1, "#0c0a09");
-        ctx.fillStyle = g; ctx.fillRect(cx, top, cw, ledgeY - top);
-        ctx.fillStyle = "#211a15"; ctx.fillRect(cx - 4, top - 6, cw + 8, 8); ctx.fillRect(cx - 5, ledgeY - 8, cw + 10, 8);
-        ctx.strokeStyle = "rgba(0,0,0,0.45)"; ctx.lineWidth = 1;
-        for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(cx + (cw * k) / 4, top + 2); ctx.lineTo(cx + (cw * k) / 4, ledgeY - 8); ctx.stroke(); }
-        ctx.fillStyle = "rgba(240,160,110,0.35)"; ctx.fillRect(cx, top, 2, ledgeY - top);
-      });
-
-      // rider and horse: the generated illustration, its stone slab joined to the cliff
+      // ---- solid art: a generated cliff with a rider, over the pixel field ----
       const ri = riderImg.current;
       if (ri && ri.complete && ri.naturalWidth) {
-        const iw = w * (phone ? 0.56 : 0.37);
+        const iw = w * (phone ? 1.4 : 0.74);
         const ih = (iw * ri.naturalHeight) / ri.naturalWidth;
-        ctx.drawImage(ri, cliffPx - 4, ledgeY - ih * 0.8186, iw, ih);
+        const ix = w - iw;
+        const iy = ledge * cs - ih * LEDGE_FRAC;
+        ctx.drawImage(ri, ix, iy, iw, ih);
+        // continue the rock below the image: a feathered top, a sloping lit edge, flat dark body
+        const bottom = iy + ih;
+        if (bottom < h) {
+          const ex = ix + iw * 0.516, slope = 0.06;
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(ex + 4, bottom - 70); ctx.lineTo(w + 4, bottom - 70); ctx.lineTo(w + 4, h + 4);
+          ctx.lineTo(ex + (h - bottom) * slope, h + 4); ctx.lineTo(ex, bottom - 2); ctx.closePath();
+          ctx.clip();
+          const g = ctx.createLinearGradient(0, bottom - 70, 0, h);
+          g.addColorStop(0, "rgba(13,10,8,0)"); g.addColorStop(0.12, "rgba(13,10,8,0.9)"); g.addColorStop(1, "#080706");
+          ctx.fillStyle = g; ctx.fillRect(ex - 4, bottom - 70, w - ex + 8, h - bottom + 76);
+          ctx.restore();
+          ctx.strokeStyle = "rgba(240,150,100,0.32)"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(ex, bottom - 2); ctx.lineTo(ex + (h - bottom) * slope, h); ctx.stroke();
+        }
       }
     };
     const im = new Image();
     im.onload = () => paint();
-    im.src = "/rider.png";
+    im.src = "/cliff.png";
     riderImg.current = im;
     paint();
     let t = 0;
