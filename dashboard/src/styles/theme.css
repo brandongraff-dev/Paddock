@@ -444,6 +444,15 @@ textarea:focus { border-color: var(--border-focus) !important; box-shadow: 0 0 0
 }
 .panel > :not(.panel-h) { margin-left: 6px; margin-right: 6px; }
 .panel .table thead th { background: transparent; }
+/* Edge-to-edge panels (inline `padding: 0`: list/table panels whose first
+   child is a header bar). Inset them evenly by the plate's 6px on every side
+   instead of only left/right, and round the first/last child to the plate's
+   inner radius (22px outer - 6px inset), so a header bar follows the panel's
+   curve instead of sitting square against its top edge. */
+.panel[style*="padding: 0"] { padding: 6px !important; }
+.panel[style*="padding: 0"] > :not(.panel-h) { margin-left: 0; margin-right: 0; }
+.panel[style*="padding: 0"] > :first-child { border-top-left-radius: 16px; border-top-right-radius: 16px; }
+.panel[style*="padding: 0"] > :last-child { border-bottom-left-radius: 16px; border-bottom-right-radius: 16px; }
 @supports not (backdrop-filter: blur(1px)) {
   .panel, .stat-tile { background: var(--panel); }
 }
