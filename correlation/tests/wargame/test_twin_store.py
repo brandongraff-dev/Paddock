@@ -2,7 +2,7 @@
 
 The pure round-trip tests always run. The DB-backed tests skip cleanly when
 no ``TEST_DATABASE_URL`` / ``DATABASE_URL`` is set (via the conftest ``db``
-fixture) or when the ``wargame_*`` twin tables (schema 040) are absent.
+fixture) or when the ``wargame_*`` twin tables (schema 042) are absent.
 """
 from __future__ import annotations
 
@@ -181,14 +181,14 @@ def test_edge_roundtrip_labels_and_port():
 
 
 # ---------------------------------------------------------------------------
-# DB-backed (skip cleanly without a DB or without the 040 twin tables)
+# DB-backed (skip cleanly without a DB or without the 042 twin tables)
 # ---------------------------------------------------------------------------
 
 async def _require_tables(db):
     try:
         await db.execute("SELECT 1 FROM wargame_segments LIMIT 1")
         await db.execute("SELECT 1 FROM wargame_rulesets LIMIT 1")
-    except Exception as e:  # schema 040 not applied
+    except Exception as e:  # schema 042 not applied
         pytest.skip(f"wargame twin tables unavailable: {e}")
 
 

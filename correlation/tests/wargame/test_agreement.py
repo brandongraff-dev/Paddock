@@ -101,7 +101,7 @@ def test_verdict_vocabulary_matches_store_and_schema():
 
     assert set(agreement.VERDICTS) == set(store.BOUNDARY_VERDICTS)
     assert agreement.CERTIFIABLE_VERDICTS == {"pass", "proved_config"}
-    sql = (Path(__file__).resolve().parents[3] / "schema" / "041_wargame_verdicts.sql").read_text()
+    sql = (Path(__file__).resolve().parents[3] / "schema" / "043_wargame_verdicts.sql").read_text()
     for v in agreement.VERDICTS:
         assert f"'{v}'" in sql
 

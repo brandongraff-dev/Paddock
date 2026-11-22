@@ -193,7 +193,7 @@ def test_deterministic():
 async def _require_tables(db):
     try:
         await db.execute("SELECT 1 FROM wargame_assessments LIMIT 1")
-    except Exception as e:  # schema 039 not applied
+    except Exception as e:  # schema 041 not applied
         pytest.skip(f"wargame tables unavailable: {e}")
 
 

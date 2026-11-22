@@ -2,7 +2,7 @@
 
 A wargame assessment is one backward-search-from-crown-jewels run over the
 modelled environment. Assessments are *computed* by the correlation service
-(which writes the `wargame_*` tables directly, schema 039); this router only
+(which writes the `wargame_*` tables directly, schema 041); this router only
 reads the persisted artifacts and exposes a recompute trigger.
 
 - `GET  /v1/wargame/assessments` -- paged `{items,total,limit,offset}` of
@@ -132,7 +132,7 @@ _CERT_COLS = (
     "id, boundary_src, boundary_dst, port, claim, assumptions, config_hashes, "
     "status, issued_at, expires_at, fingerprint, key_id, corroboration"
 )
-#: Key ids whose fingerprint is not a real signature (schema 041).
+#: Key ids whose fingerprint is not a real signature (schema 043).
 _UNSIGNED_KEY_IDS = ("", "unsigned-dev")
 _FIX_COLS = "id, total_cost, optimality, cuts_all, selected, metadata"
 _EVID_COLS = (

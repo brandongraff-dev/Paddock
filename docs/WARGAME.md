@@ -424,11 +424,11 @@ Python, no new deps, ~390 tests). Built so far:
   classes, L3/L4-can't-restrict-function-codes honesty) — `ot.py`.
 - **Read-only config sources** (In-Memory / File / AWS-API, describe-only)
   that feed the parsers — `connectors.py`.
-- **Persistence + product API**: schema `039_wargame.sql`, the correlation
+- **Persistence + product API**: schema `041_wargame.sql`, the correlation
   writer `store.py`, the orchestrator read API `routers/wargame.py`
   (`/v1/wargame/...`, mirroring attack-paths), and the
   `/compute-wargame` endpoint. OpenAPI + Python/TypeScript SDKs regenerated.
-- **Rule-aware twin pipeline**: schema `040_wargame_twin.sql`, the twin
+- **Rule-aware twin pipeline**: schema `042_wargame_twin.sql`, the twin
   store `twin_store.py` (persist/load rule sets + topology), config ingest
   (`/ingest-config`, `/set-topology`) and the orchestrator twin API
   (`POST /v1/wargame/twin/config`, `/twin/topology`, `GET /v1/wargame/twin`).

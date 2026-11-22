@@ -1,4 +1,4 @@
-"""The Wargame *twin* store (schema/040_wargame_twin.sql).
+"""The Wargame *twin* store (schema/042_wargame_twin.sql).
 
 The twin is the persisted, rule-aware model an assessment runs over: the
 parsed vendor-neutral rule sets plus the declared topology (segments and
@@ -10,7 +10,7 @@ by config rather than merely inferred from the asset graph.
 Two layers, mirroring :mod:`.store`:
 
 * **Pure** ser/de (``*_to_row`` / ``row_to_*``). Plain dicts/lists matching
-  the 040 columns; no I/O, deterministic, and round-trip exact — a
+  the 042 columns; no I/O, deterministic, and round-trip exact — a
   :class:`RuleSet` or :class:`EdgeSpec` serialised to rows and rebuilt is
   equal to the original.
 * **Async** persistence. Each writer runs in one transaction

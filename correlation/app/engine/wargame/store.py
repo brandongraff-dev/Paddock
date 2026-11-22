@@ -1,12 +1,12 @@
-"""Persistence for Wargame assessments (schema/039_wargame.sql, plus
-041_wargame_verdicts.sql: the ``proved_config`` verdict and certificate
+"""Persistence for Wargame assessments (schema/041_wargame.sql, plus
+043_wargame_verdicts.sql: the ``proved_config`` verdict and certificate
 ``key_id``).
 
 Two layers:
 
 * :func:`assemble_bundle` is a **pure** assembler. It turns engine objects
   (reachability result, scorecard, agreement reports, certificates, fix set,
-  evidence packs) into plain dicts/lists matching the 039 columns. No I/O,
+  evidence packs) into plain dicts/lists matching the 041 columns. No I/O,
   deterministic: the same inputs always give an equal bundle.
 * :func:`persist` is the async writer. It inserts the assessment row, then
   bulk-inserts the child rows with that ``assessment_id``, all inside one
@@ -109,7 +109,7 @@ def _route_sort_key(d: dict[str, Any]) -> tuple[Any, ...]:
     return (d["entry"], d["jewel"], d["length"], d["fingerprint"])
 
 
-#: Every boundary verdict the 041 CHECK accepts (mirrors
+#: Every boundary verdict the 043 CHECK accepts (mirrors
 #: ``agreement.VERDICTS``; a test keeps them in sync). ``pass`` = config and a
 #: real active probe agree; ``proved_config`` = config-proved closed, not yet
 #: tested by a probe.

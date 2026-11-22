@@ -264,7 +264,7 @@ if [ "$DRY_RUN" = 1 ]; then
     plan "download https://codeload.github.com/$REPO/tar.gz/$REF and unpack into $DIR"
   fi
   plan "create $DIR/.env from .env.example (mode 600) if missing"
-  for k in POSTGRES_PASSWORD PADDOCK_APP_DB_PASSWORD ADMIN_BOOTSTRAP_PASSWORD SERVICE_API_KEY JWT_SECRET PADDOCK_SECRET_KEY AUDIT_HMAC_KEY; do
+  for k in POSTGRES_PASSWORD PADDOCK_APP_DB_PASSWORD ADMIN_BOOTSTRAP_PASSWORD SERVICE_API_KEY JWT_SECRET PADDOCK_SECRET_KEY AUDIT_HMAC_KEY WARGAME_SIGNING_KEY; do
     plan "generate $k only if it is not already set"
   done
   plan "write $DIR/$OVERRIDE_FILE (passes JWT_SECRET, PADDOCK_SECRET_KEY, AUDIT_HMAC_KEY to the orchestrator)"
@@ -305,6 +305,9 @@ env_ensure SERVICE_API_KEY rand_key
 env_ensure JWT_SECRET rand_key
 env_ensure PADDOCK_SECRET_KEY rand_key
 env_ensure AUDIT_HMAC_KEY rand_key
+# Wargame certificate signing master key (per-tenant keys are derived from it).
+# Read by the correlation service from .env via docker-compose.yml.
+env_ensure WARGAME_SIGNING_KEY rand_key
 write_override
 
 if [ "$NO_START" = 1 ]; then

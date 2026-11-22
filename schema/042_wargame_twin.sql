@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS wargame_config_snapshots (
 CREATE INDEX IF NOT EXISTS idx_wg_snap_sha ON wargame_config_snapshots(sha256);
 
 -- ---------------------------------------------------------------------------
--- Tenancy + grants for the twin tables and the 039 assessment tables.
+-- Tenancy + grants for the twin tables and the 041 assessment tables.
 -- ---------------------------------------------------------------------------
 -- (029 defines paddock_enable_tenant_rls; if it has not been applied yet, 099
 -- retrofits the same policy to these tables when it runs.)
@@ -147,7 +147,7 @@ BEGIN
     patched := replace(def, needle, extra);
     EXECUTE patched;
   ELSE
-    RAISE NOTICE '040: paddock_apply_service_grants() has an unexpected shape; granting directly';
+    RAISE NOTICE '042: paddock_apply_service_grants() has an unexpected shape; granting directly';
   END IF;
   PERFORM paddock_apply_service_grants();
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'paddock_svc_correlation') THEN

@@ -636,10 +636,10 @@ checks — without ever running a payload. `ReplicaRunner` is a documented
   mirroring the existing attack-path feature.
 - `store.py` — `assemble_bundle(...)` serialises a reachability result,
   scorecard, boundary agreements, certificates, fix set and evidence packs
-  into rows (schema `039_wargame.sql`); `persist(db, bundle)` writes them in
+  into rows (schema `041_wargame.sql`); `persist(db, bundle)` writes them in
   one transaction. Stable PortRange formatting and route fingerprints.
 - `twin_store.py` — persists the rule-aware **twin** (rule sets, rules,
-  segments, edges, config snapshots; schema `040_wargame_twin.sql`) with
+  segments, edges, config snapshots; schema `042_wargame_twin.sql`) with
   exact round-trip ser/de, and `load_environment(db)` rebuilds a searchable
   `Environment` from stored config.
 - `assess.py` — `assess_environment(env, ..., signing_key, probes,
@@ -651,7 +651,7 @@ checks — without ever running a payload. `ReplicaRunner` is a documented
   `probe_tested=false`), computes the fix set and the scorecard, and returns
   a persistable bundle. `assess_unproven_environment(env)` is the legacy-graph
   ("auto") variant: no verdicts, no certificates, closure unproven.
-- Schema `041_wargame_verdicts.sql` widens the boundary verdict CHECK with
+- Schema `043_wargame_verdicts.sql` widens the boundary verdict CHECK with
   `proved_config` and adds `wargame_certificates.key_id` and
   `.corroboration` (so a stored certificate can be re-verified and shows
   whether a probe backed it). The API's `WargameCertificateOut` exposes
@@ -709,7 +709,7 @@ SDKs):
   ingest config / declare topology / read a twin summary.
 
 **Grants.** The correlation service role (`paddock_svc_correlation`) must be
-granted the wargame tables. `schema/040_wargame_twin.sql` extends 029's
+granted the wargame tables. `schema/042_wargame_twin.sql` extends 029's
 service-grant allow-list in `paddock_apply_service_grants()` with the eleven
 tables (`wargame_assessments`, `_routes`, `_boundaries`, `_certificates`,
 `_fix_sets`, `_evidence`, `_rulesets`, `_rules`, `_segments`, `_edges`,

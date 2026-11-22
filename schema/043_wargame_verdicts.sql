@@ -17,7 +17,7 @@
 --    can see whether an active probe stood behind it. '{}' on legacy rows.
 --
 -- Idempotent (DROP ... IF EXISTS / ADD COLUMN IF NOT EXISTS), like 025.
--- 039 is not edited: applied files are immutable (orchestrator/app/migrate.py).
+-- 041 is not edited: applied files are immutable (orchestrator/app/migrate.py).
 -- =====================================================================
 
 ALTER TABLE wargame_boundaries DROP CONSTRAINT IF EXISTS wargame_boundaries_verdict_check;

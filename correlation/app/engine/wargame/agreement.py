@@ -45,7 +45,7 @@ from .impossible import ClosedBoundary, flow_crosses, flow_is_real
 from .model import Flow, PortRange
 
 
-#: Every verdict :func:`assess_boundary` can return (schema 041 CHECK).
+#: Every verdict :func:`assess_boundary` can return (schema 043 CHECK).
 VERDICTS: tuple[str, ...] = (
     "pass", "proved_config", "conditional", "insufficient", "fail_open",
 )

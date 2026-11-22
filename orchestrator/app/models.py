@@ -1337,7 +1337,7 @@ class ProvenanceBackfillOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Wargame assessments (schema 039)
+# Wargame assessments (schema 041)
 #
 # Read-only summaries over persisted assessment runs computed by the
 # correlation service. Narratives/routes are impact-only (as written by the
@@ -1480,7 +1480,7 @@ class WargameRecomputeOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Wargame twin management (schema 040)
+# Wargame twin management (schema 042)
 #
 # Read-only configuration ingest into the digital twin. The orchestrator only
 # forwards the payload to the correlation service (which owns the twin
