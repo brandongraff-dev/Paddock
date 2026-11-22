@@ -5,7 +5,7 @@
 .rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid rgba(236, 226, 208, 0.14); }
 .rows li { display: grid; grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1.1fr); align-items: center; gap: 24px; padding: clamp(22px, 3.4vh, 34px) 0; border-bottom: 1px solid rgba(236, 226, 208, 0.14); opacity: 0; transform: translateY(10px); transition: opacity 700ms var(--ease), transform 700ms var(--ease); }
 .rows.in li { opacity: 1; transform: none; }
-.rows h3 .mono { display: block; margin-bottom: 8px; font: 11px var(--mono); letter-spacing: 0.12em; color: #e67350; }
+.rows h3 .mono { display: block; margin-bottom: 8px; font: 11px var(--mono); letter-spacing: 0.12em; color: #8fb8d4; }
 .rows li > svg { display: block; width: 72px; height: 72px; }
 .rows h3 { margin: 0; font: 380 clamp(32px, 4vw, 56px)/1 var(--serif); letter-spacing: -0.025em; text-transform: none; color: var(--lp-ink); }
 .rows p { margin: 0; font-size: 15.5px; line-height: 1.55; color: rgba(236, 230, 218, 0.7); max-width: 46ch; }

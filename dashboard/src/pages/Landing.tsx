@@ -7,7 +7,7 @@ import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
 import AgentArt from "./landing/AgentArt";
-import PixelArches from "../brand/PixelArches";
+import PixelConstellation from "../brand/PixelConstellation";
 import PixelSprite from "../brand/PixelSprite";
 import type { SpriteName } from "../brand/spriteData";
 import Faq from "./landing/Faq";
@@ -190,7 +190,7 @@ export default function Landing() {
 
 
       <section className="lp-principles scene" id="principles">
-        <PixelArches className="scene-bg" variant="dawn" />
+        <PixelConstellation className="scene-bg" variant="rules" />
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Hard rules · enforced in code</span>
           <h2>A defender&rsquo;s instrument, by construction.</h2>

@@ -1,4 +1,4 @@
-import PixelArches from "../../brand/PixelArches";
+import PixelConstellation from "../../brand/PixelConstellation";
 import PixelSprite from "../../brand/PixelSprite";
 import type { SpriteName } from "../../brand/spriteData";
 import { useInView } from "./hooks";
@@ -16,7 +16,7 @@ export default function HowItWorks() {
   const [ref, seen] = useInView<HTMLOListElement>(0.2);
   return (
     <section className="lp-how scene" id="how">
-      <PixelArches className="scene-bg" variant="dusk" />
+      <PixelConstellation className="scene-bg" variant="path" />
       <div className="lp-section-head">
         <span className="lp-eyebrow mono">How it works</span>
         <h2>From unknown to fixed in four steps.</h2>
