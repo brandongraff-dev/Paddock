@@ -20,7 +20,7 @@
 #   docker compose exec postgres sh /docker-entrypoint-initdb.d/101_service_roles.sh
 # (and `SELECT paddock_apply_service_grants();` after any later migration that
 # adds tables a service needs).
-_paddock_services="intel correlation mlrisk triage ontology threatintel otdiscovery changewatch brain remediation sca codeanalysis graphsync"
+_paddock_services="intel correlation mlrisk triage ontology threatintel otdiscovery changewatch brain remediation sca codeanalysis graphsync wargame"
 for _svc in $_paddock_services; do
   _up=$(printf '%s' "$_svc" | tr 'a-z' 'A-Z')
   eval "_pw=\${PADDOCK_SVC_${_up}_DB_PASSWORD:-}"

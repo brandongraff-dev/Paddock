@@ -52,6 +52,46 @@ loop. For each finding it:
   the fix PR schedules a re-check. Only the worker that ran the job can submit
   the result, so a "verified fix" can't be forged.
 
+## 1a. Reachability, choke-points & the Proving Ground
+
+The Wargame line (docs/WARGAME.md) turns the attack-path list into a remediation
+plan and a provable number.
+
+- **Choke points** (`correlation/app/engine/chokepoint.py`): a node-capacitated
+  minimum cut (Dinic) over the asset graph computes the *fewest* assets whose
+  removal cuts the most paths to crown jewels, ranked. "Cut these 3, close 86%."
+- **Crown-jewel exposure** (`reachability.py`): per jewel, how many sources can
+  reach it, over how many paths, in how few hops, and whether it is proven
+  closed (no source reaches it in the model).
+- **Path coverage** (`coverage.py`): the share of routes to crown jewels proven
+  closed / risk-accepted / tripwired vs. open, plus a proven-vs-inferred label
+  on every hop. The one board/insurer number.
+- **Proving Ground** (`wargame/` service): for the hops that matter, rebuild the
+  component as an isolated replica, run the *real* check on the copy, apply the
+  fix, re-run, and emit a hash-chained, signed before/after proof. The
+  `IsolationGuard` refuses any non-replica target and fails closed.
+
+All of the above are computed by the correlation service after each attack-path
+recompute, and by the (off-by-default) wargame service, behind the same tenant
+isolation (verified: RLS forces per-tenant rows on every new table, least-
+privilege `paddock_svc_wargame` role). Tests: choke-point/reachability/coverage
+and the full pipeline are DB-tested in `correlation`; the wargame guard,
+backends, scenarios, prover, signed proofs and persistence are tested with the
+in-memory `fake` backend.
+
+**Gaps:**
+- The `docker` sandbox backend is written to the interface but is not exercised
+  in CI (no docker-in-docker); it needs a real daemon + a soak on live images.
+- The scenario library is three high-value scenarios (CVE repro, default
+  credential, unauth endpoint); more coverage is the next step.
+- HTTP/TCP probes assume the replica (or a future probe sidecar) carries the
+  client tools; the version-identity signal does not.
+- These artefacts are exposed on the correlation/wargame service APIs but are
+  **not yet surfaced through the orchestrator `/v1` API or the dashboard** — UI
+  wiring is the follow-up (the owner's dashboard design is authoritative).
+- Proof signing uses an env-provided HMAC key; a KMS/HSM-bound key and a
+  third-party-verifiable signature format are still to do.
+
 ## 2. Integrations: connect anything
 
 - **The integrations framework**: 21 connectors behind one contract.

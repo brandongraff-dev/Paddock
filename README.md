@@ -60,9 +60,11 @@ Every result lands as evidence: executive reports, compliance packs
 (PCI DSS 4.0, NIST CSF 2.0, ISO 27001, IEC 62443, EU CRA) and shareable trust
 pages for insurers and customers.
 
-**It is a defender's tool.** No exploit framework, no credential attacks, no
-evasion. Every outbound request is scope-checked, pinned to vetted IPs and
-audit-logged ([hard rules](#safety-by-design)).
+**It is a defender's tool.** No exploitation of live systems, no credential
+attacks against them, no evasion. The one place it runs a real exploit is the
+[Proving Ground](docs/WARGAME.md) — against an isolated, throwaway *replica* of
+your own component, never a live target. Every outbound request is scope-checked,
+pinned to vetted IPs and audit-logged ([hard rules](#safety-by-design)).
 
 ## Screenshots
 
@@ -120,6 +122,8 @@ Cursor or any MCP client query Paddock through the
 
 **Prioritise**
 - Attack paths from internet-facing footholds to crown jewels, with blast radius
+- **Choke points**: the *minimum* set of fixes that cuts every path to your crown jewels, ranked ("these 3 cut 86% of paths") — a node min-cut, not another list
+- **Path coverage**: the share of routes to crown jewels proven closed, risk-accepted, or still open — the one number a board or insurer buys
 - Chains: correlated multi-finding stories instead of disconnected rows
 - CVE matching against NVD, EPSS and CISA KEV; SCA, SBOM and SAST
 - A priority score that always explains itself ("KEV-listed · internet-facing · 2 hops from payments")
@@ -128,6 +132,7 @@ Cursor or any MCP client query Paddock through the
 
 **Prove and fix**
 - Verified exploitability with 11 safe checks, pinned to scope-vetted IPs
+- **Proving Ground**: for the hops that matter, rebuild the component as an isolated replica, run the *real* exploit on the copy, apply the fix, prove it now fails — a hash-chained, signed before/after proof an insurer can verify ([docs](docs/WARGAME.md))
 - Fix generation behind an approval gate; automatic re-test after the fix
 - Finding lifecycle: dedupe, suppressions with reasons and expiry, SLA clocks
 
@@ -211,8 +216,9 @@ Deep dive: [architecture](docs/ARCHITECTURE.md) ·
 
 These are enforced in code, not just documented:
 
-- **No exploitation.** Safe checks use GET, HEAD, TLS handshakes and TCP connects only, with size and time caps. No payloads, no PoCs.
-- **No credential attacks.** Default-credential risk is detected by fingerprinting, never by submitting passwords.
+- **No exploitation of live systems.** Against any asset you operate — or a third party's — safe checks use GET, HEAD, TLS handshakes and TCP connects only, with size and time caps. No payloads, no PoCs, ever, against a live target.
+- **Real exploitation only in a sealed room.** The [Proving Ground](docs/WARGAME.md) runs the real check — but only against a throwaway *replica* of your own component, on a network with no route out, that is destroyed afterwards. The engine refuses any target that is not a freshly-built replica and fails closed. The live system is never touched.
+- **No credential attacks on live systems.** Default-credential risk on a live asset is detected by fingerprinting, never by submitting passwords. (A default credential is only ever *tried* against a replica you own, in the Proving Ground.)
 - **No evasion.** No stealth scans, WAF bypass, decoys or spoofing; the scanner names itself.
 - **No out-of-scope anything.** Out-of-scope is a hard failure, and every decision is written to the audit log.
 

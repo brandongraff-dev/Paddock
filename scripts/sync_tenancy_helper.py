@@ -14,7 +14,7 @@ SRC = ROOT / "shared" / "paddock_tenancy.py"
 TARGETS = [
     "intel", "correlation", "mlrisk", "triage", "ontology", "threatintel",
     "otdiscovery", "changewatch", "brain", "remediation", "sca", "codeanalysis",
-    "graphsync", "workers/passive", "workers/active",
+    "graphsync", "wargame", "workers/passive", "workers/active",
 ]
 
 

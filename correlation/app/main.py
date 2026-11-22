@@ -36,8 +36,11 @@ from .engine.attack_mapping import (
 from .engine.attackpath import AttackPathEngine
 from .engine.blast import BlastScorer
 from .engine.chain import ChainMatcher, PolicyEvaluator
+from .engine.chokepoint import ChokePointEngine
+from .engine.coverage import CoverageEngine
 from .engine.fusion import FusionEngine
 from .engine.graph import Graph
+from .engine.reachability import ReachabilityEngine
 from .engine.policy import RuleLoader
 from .narratives.writer import NarrativeWriter
 from .orchestrator import OrchestratorClient
@@ -67,6 +70,9 @@ class Service:
         self.blast: Optional[BlastScorer] = None
         self.graph: Optional[Graph] = None
         self.attackpaths: Optional[AttackPathEngine] = None
+        self.chokepoints: Optional[ChokePointEngine] = None
+        self.reachability: Optional[ReachabilityEngine] = None
+        self.coverage: Optional[CoverageEngine] = None
         self.fusion: Optional[FusionEngine] = None
         self.attack_loader = AttackMapLoader(
             default_rules_path(self.cfg.builtin_rules_dir)
@@ -96,6 +102,19 @@ class Service:
         self.blast = BlastScorer(self.db, self.orch)
         self.graph = Graph(self.db)
         self.attackpaths = AttackPathEngine(
+            self.db, redis=None, events_stream=self.cfg.events_stream
+        )
+        # Part 1 of the Wargame line (docs/WARGAME.md): reachability closure,
+        # the choke-point minimum cut, and the path-coverage snapshot. They run
+        # right after the attack-path recompute (which writes attack_paths), in
+        # order, since coverage reads crown_jewel_exposure + choke_points.
+        self.reachability = ReachabilityEngine(
+            self.db, redis=None, events_stream=self.cfg.events_stream
+        )
+        self.chokepoints = ChokePointEngine(
+            self.db, redis=None, events_stream=self.cfg.events_stream
+        )
+        self.coverage = CoverageEngine(
             self.db, redis=None, events_stream=self.cfg.events_stream
         )
         self.fusion = FusionEngine(
@@ -130,6 +149,9 @@ class Service:
             )
             await self._redis.ping()
             self.attackpaths.set_redis(self._redis)
+            for eng in (self.reachability, self.chokepoints, self.coverage):
+                if eng is not None:
+                    eng.set_redis(self._redis)
             if self.fusion is not None:
                 self.fusion.set_redis(self._redis)
             await self._ensure_consumer_group()
@@ -436,6 +458,21 @@ class Service:
         lock = self._pathcompute_locks.setdefault(key, asyncio.Lock())
         async with lock:
             result = await self.attackpaths.run()
+            # Part 1 derived artefacts, in dependency order. Each is isolated:
+            # one engine's failure is logged and never aborts the others or the
+            # attack-path result.
+            for name, eng in (
+                ("reachability", self.reachability),
+                ("chokepoints", self.chokepoints),
+                ("coverage", self.coverage),
+            ):
+                if eng is None:
+                    continue
+                try:
+                    sub = await eng.run()
+                    result[name] = sub
+                except Exception:
+                    log.exception("%s compute failed", name)
             self._last_pathcompute[key] = asyncio.get_running_loop().time()
         return result
 
@@ -631,6 +668,56 @@ async def compute_paths() -> ComputePathsResponse:
     return ComputePathsResponse(
         computed=res["computed"], elapsed_ms=res["elapsed_ms"]
     )
+
+
+@app.get("/choke-points")
+async def choke_points(limit: int = 100) -> dict[str, Any]:
+    """The current minimum-cut recommendation: the fewest assets to cut to
+    break the most paths to crown jewels, ranked (cut_rank 1 first)."""
+    rows = await service.db.fetch(
+        "SELECT id::text AS id, asset_id::text AS asset_id, paths_cut, in_min_cut, "
+        "cut_rank, reduction_pct, total_paths, action_hint, narrative, computed_at "
+        "FROM choke_points ORDER BY cut_rank ASC LIMIT $1",
+        max(1, min(int(limit), 500)),
+    )
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get("reduction_pct") is not None:
+            d["reduction_pct"] = float(d["reduction_pct"])
+        out.append(d)
+    return {"choke_points": out}
+
+
+@app.get("/crown-jewels")
+async def crown_jewels(exposed_only: bool = False) -> dict[str, Any]:
+    """Per crown-jewel exposure: how reachable each is, and whether proven closed."""
+    sql = (
+        "SELECT id::text AS id, asset_id::text AS asset_id, target_reason, "
+        "reachable_source_count, open_path_count, min_hops, max_exploitability, "
+        "kev_on_any_path, proven_closed, computed_at FROM crown_jewel_exposure"
+    )
+    if exposed_only:
+        sql += " WHERE proven_closed IS FALSE"
+    sql += " ORDER BY open_path_count DESC, reachable_source_count DESC"
+    rows = await service.db.fetch(sql)
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get("max_exploitability") is not None:
+            d["max_exploitability"] = float(d["max_exploitability"])
+        out.append(d)
+    return {"crown_jewels": out}
+
+
+@app.get("/coverage")
+async def coverage() -> dict[str, Any]:
+    """The latest path-coverage snapshot: the share of routes to crown jewels
+    proven closed / risk-accepted / tripwired vs. still open."""
+    if service.coverage is None:
+        raise HTTPException(status_code=503, detail="not ready")
+    latest = await service.coverage.latest()
+    return {"coverage": latest}
 
 
 class FuseResponse(BaseModel):

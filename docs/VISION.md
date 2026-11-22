@@ -19,10 +19,15 @@ plan for turning it into the defensive equivalent of the best in the field:
   action layer**, and **Paddock Edge** for factories, hospitals, ships and
   stores.
 
-Everything below stays inside the hard rules: no exploitation, no credential
-attacks, no evasion, nothing out of scope. Wireless and OT features are
-**passive**. That restraint is the product. It is what lets a hospital, a
-utility or a refrigerator maker actually deploy us.
+Everything below stays inside the hard rules: no exploitation **of live
+systems**, no credential attacks against them, no evasion, nothing out of scope.
+The one place a real exploit runs is the **Proving Ground** (docs/WARGAME.md),
+and only ever
+against an isolated, throwaway *replica* of a component you own, on a network
+with no route out — never a live target. Wireless and OT features are
+**passive**. That restraint — copy only, no egress, fail closed — is the
+product. It is what lets a hospital, a utility or a refrigerator maker actually
+deploy us.
 
 ---
 

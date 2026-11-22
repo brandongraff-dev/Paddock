@@ -20,8 +20,15 @@ subset you have explicitly authorized, **correlates** findings against public
 vulnerability feeds, and **surfaces** the result to an analyst. It is a
 detection and situational-awareness tool.
 
-It is **not** an exploit framework, a red-team C2, or a credential-attack tool.
-These are not missing features; they are deliberately excluded (see §6).
+Against **live systems** it is **not** an exploit framework, a red-team C2, or a
+credential-attack tool: it never delivers a payload, runs a PoC, or submits a
+credential to a system you operate or a third party. That posture is unchanged.
+
+The one place Paddock runs a **real** exploit is the **Proving Ground** (§6a):
+an isolated, throwaway *replica* of one of your own components, rebuilt from its
+image/SBOM on a network with no route out. The exploit proves the hop on a copy;
+the live system is never touched. This is a deliberate, bounded capability — not
+a general attack tool (see §6).
 
 ---
 
@@ -166,17 +173,18 @@ The dashboard mirrors this: mutate controls are hidden/disabled for
 and per-row classification chips are colour-coded `public → restricted`. The UI
 is a convenience; the server is the authority.
 
-## 6. "Detection, not exploitation" — and why
+## 6. "Detection, not exploitation" — against live systems
 
-The platform will not, by construction:
+Against any **live system** — one you operate, or a third party's — the
+platform will not, by construction:
 
 - **auto-exploit** — no payload delivery, no PoC execution, no attempt at code
-  execution on a target. Findings describe impact; they never carry a working
-  exploit.
+  execution on a live target. Findings describe impact; they never carry a
+  working exploit aimed at production.
 - **attack credentials** — no brute force, spray, or stuffing, and no
-  default-credential test that actually submits credentials. Default-credential
-  *risk* is detected by fingerprinting the exposed product, not by trying
-  passwords.
+  default-credential test that submits credentials to a live service.
+  Default-credential *risk* against a live asset is detected by fingerprinting
+  the exposed product, not by trying passwords.
 - **evade** — no stealth/fragmented scans, no WAF-bypass headers, no decoys, no
   source spoofing. The scanner's User-Agent names itself
   (`paddock-scanner/1.0 (+defensive-scanner)`). Evasion-flavoured config
@@ -186,12 +194,43 @@ The platform will not, by construction:
 
 **Why.** This posture is what makes the tool legal to run against assets you
 are authorized to assess, safe to run against production you depend on, and
-employable inside an org without becoming an insider-threat multiplier. A
-detector that cannot be turned into a weapon has a dramatically smaller blast
-radius if it is itself compromised, and its outputs are defensible in an audit.
-Every request it emits is polite (per-host concurrency + inter-request delay
-floor + 429/Retry-After backoff + optional robots.txt compliance), capped, and
-logged.
+employable inside an org without becoming an insider-threat multiplier. A tool
+whose *live-system* reach cannot be turned into a weapon has a dramatically
+smaller blast radius if it is itself compromised, and its outputs are defensible
+in an audit. Every request it emits against a live target is polite (per-host
+concurrency + inter-request delay floor + 429/Retry-After backoff + optional
+robots.txt compliance), capped, and logged.
+
+## 6a. "Exploitation, in a sealed room" — the Proving Ground
+
+A non-destructive safe check tells you a finding is *probably* real. For the
+hops that actually matter — the ones on a path to a crown jewel — defenders want
+certainty, and auditors and insurers want proof. The **Proving Ground**
+(`wargame/`, docs/WARGAME.md) provides it by running the **real** check, but in
+a sealed room:
+
+- **Only a replica, never a live system.** Paddock rebuilds the component from
+  its own image / SBOM / config as a throwaway *replica*. Every exploit, every
+  credential attempt, every payload lands on that copy. There is no code path
+  that points the Proving Ground at a live or third-party address; the engine
+  that drives it (`wargame/app/sandbox/guard.py`) refuses any target that is not
+  a freshly-built replica, and **fails closed** on any doubt.
+- **No route out.** The replica runs on an internal-only network (`--internal`,
+  no published ports, egress denied) with dropped capabilities, no-new-privileges,
+  and a hard TTL. The isolation that held is recorded on every run.
+- **Proof, not a weapon.** The output is a hash-chained, signed before/after
+  proof: the exploit succeeded on the unpatched replica, and failed once the fix
+  was applied. The replica is destroyed; nothing exploitable is retained or
+  shipped. Proving-ground scenarios live in one reviewable place
+  (`wargame/app/scenarios/`) and prove a hop by identity + reachability +
+  bounded, replica-local exercise — not by hoarding weaponised payloads.
+
+**Why this is still a defender's tool.** Exercising an exploit against a copy you
+own, on a network with no way out, is a lab test, not an attack: it is exactly
+what a careful engineer does in staging, automated and proven. It never
+increases risk to any live system, which is what lets a hospital, a utility or a
+factory switch it on. The restraint — *copy only, no egress, fail closed* — is
+the product.
 
 ## 7. Audit guarantees — tamper-evident hash chain
 
@@ -343,3 +382,9 @@ probe, or otherwise interact with systems you are not authorized to test may be
 illegal and is outside the supported and intended use of this project. You are
 responsible for operating it lawfully and within the bounds of your
 authorization.
+
+The **Proving Ground** (§6a) does not change the scope you may point Paddock at.
+It only ever builds and attacks *replicas* of components you own, from artefacts
+you already hold, on an isolated network — so it touches no live target, in
+scope or out. Proving-ground runs require the same proof-of-ownership as any
+other authorised action, and are off by default (`WARGAME_ENABLED=false`).

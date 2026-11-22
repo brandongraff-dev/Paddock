@@ -66,6 +66,7 @@ jobs:
           - { service: otdiscovery,     path: otdiscovery,     extra: test }
           - { service: sentry,          path: sentry,          extra: test }
           - { service: remediation,     path: remediation,     extra: test }
+          - { service: wargame,         path: wargame,         extra: test }
           - { service: agent,           path: agent,           extra: test }
           - { service: mcp,             path: mcp,             extra: test }
 

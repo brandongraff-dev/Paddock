@@ -25,7 +25,7 @@ A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 def test_every_service_copy_is_identical_to_the_canonical_helper():
     assert sync.main(["--check"]) == 0, "run: python scripts/sync_tenancy_helper.py"
-    assert len(sync.target_paths()) == 15
+    assert len(sync.target_paths()) == 16
 
 
 def test_service_dockerfiles_copy_the_app_directory_that_holds_the_helper():

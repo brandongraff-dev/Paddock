@@ -623,6 +623,42 @@ services:
       retries: 5
       start_period: 30s
 
+  # Proving Ground (docs/WARGAME.md). OFF by default: with WARGAME_ENABLED=false
+  # and the "fake" backend it builds no replicas and /prove returns 409. Real
+  # runs need WARGAME_ENABLED=true and WARGAME_SANDBOX_BACKEND=docker, which in
+  # turn needs a docker socket mounted by the operator -- deliberately NOT wired
+  # here, so the default stack can never build or run a replica unattended.
+  wargame:
+    build: ./wargame
+    <<: *hardened-py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_wargame:${PADDOCK_SVC_WARGAME_DB_PASSWORD:-${PADDOCK_SERVICES_DB_PASSWORD:-${PADDOCK_APP_DB_PASSWORD:-${POSTGRES_PASSWORD}}}}@postgres:5432/asm
+      # Least-privilege role (schema/040): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Refuse to start as a superuser.
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      REDIS_URL: redis://redis:6379/0
+      WARGAME_ENABLED: ${WARGAME_ENABLED:-false}
+      WARGAME_SANDBOX_BACKEND: ${WARGAME_SANDBOX_BACKEND:-fake}
+      # Proof-signing key id + secret. Empty secret = unsigned dev mode; set a
+      # real (ideally KMS/HSM-bound) secret to produce verifiable signatures.
+      WARGAME_SIGNING_KEY_ID: ${WARGAME_SIGNING_KEY_ID:-dev-local}
+      WARGAME_SIGNING_SECRET: ${WARGAME_SIGNING_SECRET:-}
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8103), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   otdiscovery_data:
   pg_data:
