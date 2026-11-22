@@ -546,6 +546,12 @@ async def run_startup_migrations(dsn: str | None = None) -> RunResult:
 
     con = await connect(dsn)
     try:
+        if not await con.fetchval("SELECT has_schema_privilege(current_user, 'public', 'CREATE')"):
+            # Hardened deployments connect the app as the non-owner RLS role
+            # (paddock_app), which may not run DDL; the owner applies
+            # migrations (the compose `migrate` service / Helm migrate job).
+            # Don't try -- but never serve against a schema that's behind.
+            return await _check_up_to_date(con, ops_settings.schema_dir)
         return await migrate_up(
             con,
             schema_dir=ops_settings.schema_dir,
@@ -554,6 +560,27 @@ async def run_startup_migrations(dsn: str | None = None) -> RunResult:
         )
     finally:
         await con.close()
+
+
+async def _check_up_to_date(con: asyncpg.Connection, schema_dir) -> RunResult:
+    role = await con.fetchval("SELECT current_user")
+    try:
+        applied = {r["filename"] for r in await con.fetch("SELECT filename FROM schema_migrations")}
+    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
+        logger.warning(
+            "migrate_skipped_non_owner",
+            extra={"role": role, "detail": "role can't run or read migrations; the owner must run "
+                                            "`python -m app.migrate up` before the app starts"},
+        )
+        return RunResult()
+    pending = [f.filename for f in discover(schema_dir) if f.filename not in applied]
+    if pending:
+        raise MigrationError(
+            f"{len(pending)} migration(s) pending ({', '.join(pending[:5])}) and role {role!r} may not "
+            "apply them: run `python -m app.migrate up` as the database owner first"
+        )
+    logger.info("migrate_up_to_date_non_owner", extra={"role": role})
+    return RunResult()
 
 
 # --------------------------------------------------------------------------- #

@@ -4560,10 +4560,13 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/auth/sso/logout')
 
-    def public_providers(self) -> PublicProvidersOut:
+    def public_providers(self, *, tenant: str | None = None) -> PublicProvidersOut:
         """GET /v1/auth/sso/providers -- Public Providers
+
+        Args:
+            tenant: tenant slug or id (default: the default tenant)
         """
-        return self._request('GET', '/v1/auth/sso/providers')
+        return self._request('GET', '/v1/auth/sso/providers', query={'tenant': tenant})
 
     def saml_acs(self, slug: str) -> Any:
         """POST /v1/auth/sso/{slug}/acs -- Saml Acs

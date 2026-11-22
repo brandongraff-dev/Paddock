@@ -3646,8 +3646,8 @@ export abstract class GeneratedOperations {
   /**
    * GET /v1/auth/sso/providers — Public Providers
    */
-  publicProviders(options?: RequestOptions): Promise<PublicProvidersOut> {
-    return this._request<PublicProvidersOut>("GET", "/v1/auth/sso/providers", { options });
+  publicProviders(query?: { tenant?: string | null }, options?: RequestOptions): Promise<PublicProvidersOut> {
+    return this._request<PublicProvidersOut>("GET", "/v1/auth/sso/providers", { query, options });
   }
 
   /**
