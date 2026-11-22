@@ -40,6 +40,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import UUID
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, ValidationError
@@ -47,6 +48,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import audit
 from .. import auth as auth_svc
+from .. import tenancy
 from ..auth import current_principal, require
 from ..billing import gate as billing_gate
 from ..config import settings
@@ -322,13 +324,22 @@ def _provider_out(row) -> ProviderOut:
 # --------------------------------------------------------------------------- #
 
 @router.get("/providers", response_model=PublicProvidersOut)
-async def public_providers(pool=Depends(get_pool)):
-    async with pool.acquire() as con:
-        rows = await con.fetch(
-            "SELECT slug, kind, preset, display_name FROM identity_providers "
-            "WHERE enabled ORDER BY display_name"
-        )
-        s = await store.get_settings(con)
+async def public_providers(
+    tenant: str | None = Query(None, max_length=64, description="tenant slug or id (default: the default tenant)"),
+    pool=Depends(get_pool),
+):
+    tid = tenancy.DEFAULT_TENANT_ID
+    if tenant:
+        tid = await tenancy.resolve_tenant_ref(pool, tenant)
+        if tid is None:  # unknown tenant: same empty answer as a tenant without SSO
+            return PublicProvidersOut(providers=[], sso_required=False)
+    with tenancy.tenant_context(tid):
+        async with pool.acquire() as con:
+            rows = await con.fetch(
+                "SELECT slug, kind, preset, display_name FROM identity_providers "
+                "WHERE enabled ORDER BY display_name"
+            )
+            s = await store.get_settings(con)
     return PublicProvidersOut(
         providers=[
             PublicProvider(
@@ -353,8 +364,12 @@ async def sso_start(
     spa_challenge: str | None = Query(None, max_length=64),
     pool=Depends(get_pool),
 ):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    # Resolve the provider's tenant first; the whole flow runs inside it.
+    async with store.provider_scope(pool, slug) as provider:
+        return await _sso_start(slug, request, provider, return_to, spa_challenge, pool)
+
+
+async def _sso_start(slug, request, provider, return_to, spa_challenge, pool):
     if provider is None:
         raise HTTPException(status_code=404, detail="unknown identity provider")
     # Mandatory: binds the eventual one-time code to the tab that started the
@@ -429,8 +444,11 @@ async def oidc_callback(
     error: str | None = Query(None, max_length=256),
     pool=Depends(get_pool),
 ):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    async with store.provider_scope(pool, slug) as provider:
+        return await _oidc_callback(slug, request, provider, code, state, error, pool)
+
+
+async def _oidc_callback(slug, request, provider, code, state, error, pool):
     if provider is None or provider["kind"] != "oidc":
         return await _login_failed(request, None, "unknown_provider", f"no enabled OIDC provider {slug!r}")
     if not state:
@@ -530,8 +548,11 @@ async def _resolve_overage_oidc(provider, ocfg: OIDCConfig, claims: dict[str, An
 
 @router.post("/{slug}/acs")
 async def saml_acs(slug: str, request: Request, pool=Depends(get_pool)):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    async with store.provider_scope(pool, slug) as provider:
+        return await _saml_acs(slug, request, provider, pool)
+
+
+async def _saml_acs(slug, request, provider, pool):
     if provider is None or provider["kind"] != "saml":
         return await _login_failed(request, None, "unknown_provider", f"no enabled SAML provider {slug!r}")
     if not saml.SAML_AVAILABLE:
@@ -610,8 +631,12 @@ async def _resolve_overage_saml(provider, cfg: dict[str, Any], psecrets: dict[st
 
 @router.get("/{slug}/metadata")
 async def saml_metadata(slug: str, pool=Depends(get_pool)):
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    async with store.provider_scope(pool, slug) as provider:
+        return await _saml_metadata(provider)
+
+
+async def _saml_metadata(provider):
+    slug = provider["slug"] if provider is not None else ""
     if provider is None or provider["kind"] != "saml":
         raise HTTPException(status_code=404, detail="unknown SAML provider")
     if not saml.SAML_AVAILABLE:
@@ -634,8 +659,11 @@ async def saml_sls(slug: str, request: Request, pool=Depends(get_pool)):
     """SAML SingleLogoutService (HTTP-Redirect). Handles (a) the IdP's
     LogoutResponse to a logout WE started and (b) an IdP-initiated
     LogoutRequest. Both must be signed by the pinned IdP certificate."""
-    async with pool.acquire() as con:
-        provider = await store.provider_by_slug(con, slug)
+    async with store.provider_scope(pool, slug) as provider:
+        return await _saml_sls(slug, request, provider, pool)
+
+
+async def _saml_sls(slug, request, provider, pool):
     if provider is None or provider["kind"] != "saml":
         raise HTTPException(status_code=404, detail="unknown SAML provider")
     if not saml.SAML_AVAILABLE:
@@ -776,6 +804,7 @@ async def exchange(body: ExchangeIn, request: Request, pool=Depends(get_pool)):
         raise HTTPException(status_code=400, detail="invalid, expired or already-used code")
     token, ttl = auth_svc.issue_jwt(
         user_id=str(user["id"]), username=user["username"], role=user["role"], clearance=user["clearance"],
+        tenant_id=str(user["tenant_id"]),
     )
     return ExchangeOut(
         access_token=token, role=user["role"], clearance=user["clearance"], expires_in=ttl,
@@ -876,20 +905,10 @@ async def admin_create_provider(body: ProviderIn, request: Request, pool=Depends
         exists = await con.fetchval("SELECT 1 FROM identity_providers WHERE slug = $1", body.slug)
         if exists:
             raise HTTPException(status_code=409, detail="a provider with this slug exists")
-        row = await con.fetchrow(
-            """
-            INSERT INTO identity_providers
-                (slug, kind, preset, display_name, enabled, config, secrets, allowed_domains,
-                 jit_provisioning, sync_roles, require_mapping, default_role, default_clearance,
-                 groups_claim, role_mappings, created_by)
-            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::text[],$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
-            RETURNING *
-            """,
-            body.slug, body.kind, body.preset, body.display_name, body.enabled,
-            _json(cfg), blob, body.allowed_domains, body.jit_provisioning, body.sync_roles,
-            body.require_mapping, body.default_role, body.default_clearance, body.groups_claim,
-            _json([m.model_dump() for m in body.role_mappings]), actor,
-        )
+        try:
+            row = await _insert_provider(con, body, cfg, blob, actor)
+        except asyncpg.UniqueViolationError as exc:  # slug is global; another tenant may own it
+            raise HTTPException(status_code=409, detail="a provider with this slug exists") from exc
     await _audit(
         request, action="create", actor=actor, actor_role=role, resource_type="identity_provider",
         resource_id=str(row["id"]), status_code=201,
@@ -897,6 +916,23 @@ async def admin_create_provider(body: ProviderIn, request: Request, pool=Depends
                  "client_secret_set": bool(blob), "role_mappings": len(body.role_mappings)},
     )
     return _provider_out(row)
+
+
+async def _insert_provider(con, body, cfg, blob, actor):
+    return await con.fetchrow(
+        """
+        INSERT INTO identity_providers
+            (slug, kind, preset, display_name, enabled, config, secrets, allowed_domains,
+             jit_provisioning, sync_roles, require_mapping, default_role, default_clearance,
+             groups_claim, role_mappings, created_by)
+        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::text[],$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
+        RETURNING *
+        """,
+        body.slug, body.kind, body.preset, body.display_name, body.enabled,
+        _json(cfg), blob, body.allowed_domains, body.jit_provisioning, body.sync_roles,
+        body.require_mapping, body.default_role, body.default_clearance, body.groups_claim,
+        _json([m.model_dump() for m in body.role_mappings]), actor,
+    )
 
 
 @router.patch("/admin/providers/{provider_id}", response_model=ProviderOut, dependencies=_admin)

@@ -442,13 +442,52 @@ Use the **Test** button on a provider to check discovery and the JWKS.
 
 ---
 
+## 9a. Multi-tenant deployments (hosted / MSP)
+
+Providers, users, login state, SCIM tokens and the sign-in policy
+(`identity_settings`, including **Require SSO** and the break-glass list) all
+belong to one tenant; every tenant has its own, so tenant B can run SSO exactly
+like a single-tenant install. How the unauthenticated flow finds the right
+tenant:
+
+* **Provider slugs are globally unique** (they are part of the public
+  callback / ACS URL), so the slug identifies the tenant. The flow reads the
+  slug's owning tenant in `auth_lookup` mode (schema/038, a narrow SELECT-only
+  policy on `identity_providers`, selecting only `tenant_id`), then does
+  *everything else* (state / nonce / PKCE, JIT provisioning, role mapping,
+  identity links, exchange code, audit entries) inside that tenant under
+  normal RLS. A disabled provider, or one of a suspended tenant, is
+  "unknown".
+* **State is bound to its provider and tenant.** A callback / ACS /
+  logout `state` minted for another tenant's provider and presented to your
+  slug is refused (`state_mismatch`) and is not consumed.
+* **Exchange codes name their tenant** (`<tenant uuid hex>.<random>`), so the
+  SPA's `POST /v1/auth/sso/exchange` needs no tenant parameter; the issued JWT
+  carries the provider's `tid`.
+* **No cross-tenant takeover.** Linking by verified email, SCIM `externalId`
+  or existing identity only looks inside the provider's tenant. Usernames stay
+  globally unique, so JIT provisioning of a username that exists in another
+  tenant is refused with `account_conflict` ("already exists in another
+  organization"); nothing is created or linked. Use a different IdP username
+  or email for that user.
+* **Require SSO is per tenant.** Password sign-in is gated by the policy of
+  the tenant the username belongs to (an unknown username gets the default
+  tenant's policy). `GET /v1/auth/sso/providers?tenant=<slug|id>` returns that
+  tenant's providers and `sso_required` for its sign-in page; an unknown tenant
+  gets an empty answer.
+* Creating a provider with a slug another tenant already uses returns 409.
+* SCIM tokens already resolve their tenant (schema/036); SCIM users, groups
+  and role mappings in tenant B use tenant B's `identity_settings`.
+
+---
+
 ## 10. API reference
 
 Public (no credentials):
 
 | Method | Path | |
 |---|---|---|
-| GET | `/v1/auth/sso/providers` | Enabled providers for the sign-in page + `sso_required` |
+| GET | `/v1/auth/sso/providers[?tenant=<slug>]` | Enabled providers for the sign-in page + `sso_required` (of the default tenant, or of `tenant`) |
 | GET | `/v1/auth/sso/{slug}/start?spa_challenge=…&return_to=/path` | 302 to the IdP. `spa_challenge` = base64url(SHA-256(verifier)), required |
 | GET | `/v1/auth/sso/{slug}/callback` | OIDC redirect URI |
 | POST | `/v1/auth/sso/{slug}/acs` | SAML ACS |
