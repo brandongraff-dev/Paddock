@@ -96,7 +96,22 @@ fi
 log "restoring into $where"
 opts=(--clean --if-exists --no-owner --no-privileges --single-transaction --exit-on-error)
 if [[ $RESTORE_VIA == local ]]; then
-  pg_restore "${opts[@]}" --dbname "$TARGET" "$dump"
+  # A pg_restore newer than the target server (e.g. client tools 17+ against
+  # a 16 server) replays session settings the server doesn't know
+  # (SET transaction_timeout), and the restore fails. In that case render the
+  # archive to SQL, drop only those settings, and apply it with psql in ONE
+  # transaction that stops at the first error, which keeps the all-or-nothing
+  # guarantee. RESTORE_VIA_SQL=1 forces this path.
+  client_major=$(pg_restore --version | grep -oE '[0-9]+' | head -1)
+  server_major=$(( $(run_sql "SHOW server_version_num") / 10000 ))
+  if [[ ${RESTORE_VIA_SQL:-0} == 1 || $client_major -gt $server_major ]]; then
+    log "pg_restore $client_major is newer than the server ($server_major): restoring via SQL"
+    pg_restore --clean --if-exists --no-owner --no-privileges -f - "$dump" \
+      | grep -vE '^SET (transaction_timeout) = ' \
+      | psql "$TARGET" -X -q -v ON_ERROR_STOP=1 --single-transaction -f - >/dev/null
+  else
+    pg_restore "${opts[@]}" --dbname "$TARGET" "$dump"
+  fi
 else
   $COMPOSE exec -T postgres pg_restore "${opts[@]}" -U "$PGUSER_COMPOSE" -d "$PGDB" <"$dump"
 fi

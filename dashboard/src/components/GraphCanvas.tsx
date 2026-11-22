@@ -33,7 +33,7 @@ import ReactFlow, {
 } from "reactflow";
 import type { Asset, AssetEdge, AssetKind, Finding, Severity } from "../api/types";
 import { distinctKinds, layoutGraph } from "../lib/graph";
-import { kindColor } from "../lib/color";
+import { canvasKindColor } from "../lib/color";
 import { useStore } from "../state/store";
 import NodeTooltip, { type NodeTooltipData } from "./graph/NodeTooltip";
 import KindIcon from "./graph/kindIcon";
@@ -53,6 +53,15 @@ interface Props {
   assets: Asset[];
   edges: AssetEdge[];
   findings?: Finding[];
+}
+
+const KIND_LABEL: Partial<Record<AssetKind, string>> = {
+  ipv4: "IPv4", ipv6: "IPv6", org: "Org", secret_candidate: "Secret", cloud_account: "Cloud account",
+  cloud_resource: "Cloud resource",
+};
+/** Toolbar label for a kind: "Subdomain", "IPv4", ... */
+function kindLabel(k: AssetKind): string {
+  return KIND_LABEL[k] ?? k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, " ");
 }
 
 /** A workflow-canvas card: icon tile, value, "kind · blast" subtitle. */
@@ -130,6 +139,11 @@ function InnerGraph({ assets, edges, findings }: Props) {
   }, [assets, findings, hotSet]);
 
   const allKinds = useMemo(() => distinctKinds(assets), [assets]);
+  const kindCounts = useMemo(() => {
+    const m = new Map<AssetKind, number>();
+    for (const a of assets) m.set(a.kind, (m.get(a.kind) ?? 0) + 1);
+    return m;
+  }, [assets]);
   const [enabledKinds, setEnabledKinds] = useState<Set<AssetKind>>(() => new Set(allKinds));
   const [kevOnly, setKevOnly] = useState(false);
 
@@ -275,22 +289,16 @@ function InnerGraph({ assets, edges, findings }: Props) {
   return (
     <div className="graph-wrap">
       <div className="graph-overlay filters">
-        {allKinds.map((k) => {
-          const on = enabledKinds.has(k);
-          return (
-            <label
-              key={k}
-              className={`checkchip ${on ? "on" : ""}`}
-              style={{
-                borderColor: on ? kindColor(k) : undefined,
-                color: on ? kindColor(k) : undefined,
-                background: on ? "rgba(255,255,255,0.03)" : undefined,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={on}
-                onChange={() => {
+        <div className="gfilter" role="group" aria-label="Show asset kinds">
+          {allKinds.map((k) => {
+            const on = enabledKinds.has(k);
+            return (
+              <button
+                key={k}
+                type="button"
+                className={`gchip ${on ? "on" : ""}`}
+                aria-pressed={on}
+                onClick={() => {
                   setEnabledKinds((prev) => {
                     const next = new Set(prev);
                     if (next.has(k)) next.delete(k);
@@ -298,48 +306,25 @@ function InnerGraph({ assets, edges, findings }: Props) {
                     return next;
                   });
                 }}
-              />
-              <span
-                className="dot"
-                style={{
-                  display: "inline-block",
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: kindColor(k),
-                }}
-              />
-              {k}
-            </label>
-          );
-        })}
-
-        <label
-          className={`checkchip ${kevOnly ? "on" : ""}`}
-          style={{
-            borderColor: kevOnly ? "var(--sev-crit)" : undefined,
-            color: kevOnly ? "var(--sev-crit)" : undefined,
-            background: kevOnly ? "rgba(213, 73, 60,0.1)" : undefined,
-          }}
-          title="Show only known-exploited (KEV) assets and their direct neighbours"
-        >
-          <input
-            type="checkbox"
-            checked={kevOnly}
-            onChange={() => setKevOnly((v) => !v)}
-          />
-          <span
-            className="dot"
-            style={{
-              display: "inline-block",
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "var(--sev-crit)",
-            }}
-          />
-          KEV only
-        </label>
+              >
+                <span className="sq" style={{ background: canvasKindColor(k) }} />
+                {kindLabel(k)}
+                <span className="n">{kindCounts.get(k) ?? 0}</span>
+              </button>
+            );
+          })}
+          <span className="gsep" aria-hidden="true" />
+          <button
+            type="button"
+            className={`gchip kev ${kevOnly ? "on" : ""}`}
+            aria-pressed={kevOnly}
+            onClick={() => setKevOnly((v) => !v)}
+            title="Show only known-exploited (KEV) assets and their direct neighbours"
+          >
+            <span className="sq" />
+            KEV only
+          </button>
+        </div>
       </div>
 
       <ReactFlow
@@ -371,7 +356,7 @@ function InnerGraph({ assets, edges, findings }: Props) {
         <MiniMap
           nodeColor={(n) => (n.data?.color as string) ?? "#9fc2d8"}
           nodeBorderRadius={6}
-          maskColor="rgba(10,13,18,0.75)"
+          maskColor="rgba(14,12,10,0.72)"
           nodeStrokeColor="rgba(236,226,208,0.13)"
           nodeStrokeWidth={1}
           pannable

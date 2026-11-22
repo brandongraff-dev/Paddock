@@ -15,7 +15,7 @@
 
 import type { Edge, Node, XYPosition } from "reactflow";
 import type { Asset, AssetEdge, AssetKind } from "../api/types";
-import { kindColor } from "./color";
+import { canvasKindColor } from "./color";
 
 const RANK_HINT: Record<AssetKind, number> = {
   org: 0,
@@ -144,7 +144,7 @@ export function layoutGraph(input: GraphLayoutInput): GraphLayoutResult {
     data: {
       asset: a,
       hot: hot?.has(a.id) ?? false,
-      color: kindColor(a.kind),
+      color: canvasKindColor(a.kind),
     },
     draggable: true,
     selectable: true,

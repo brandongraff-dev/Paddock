@@ -8,7 +8,7 @@
  */
 
 import type { Asset, Severity } from "../../api/types";
-import { SEV_COLOR, SEV_ORDER, kindColor, blastPct } from "../../lib/color";
+import { SEV_COLOR, SEV_ORDER, canvasKindColor, blastPct } from "../../lib/color";
 
 export interface NodeTooltipData {
   asset: Asset;
@@ -30,7 +30,7 @@ const CARD_W = 240;
 
 export default function NodeTooltip({ data, x, y }: Props) {
   const { asset, blastScore, sevCounts, kev } = data;
-  const color = kindColor(asset.kind);
+  const color = canvasKindColor(asset.kind);
 
   // Flip to the left of the cursor near the right viewport edge so the card
   // stays on-screen without any measurement pass.
