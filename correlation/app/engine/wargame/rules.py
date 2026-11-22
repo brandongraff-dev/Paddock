@@ -15,15 +15,24 @@ Scope / honesty. A rule marked ``conditional`` depends on runtime state the
 config cannot prove (App-ID, FQDN objects, dynamic groups, service mesh,
 NetworkPolicy). When such a rule decides a flow, the verdict is labelled
 ``conditional`` and can never be presented as a proved-closed boundary;
-only as "needs a probe or observation to settle".
+only as "needs a probe or observation to settle". At boundary level a
+conditional rule never *contributes* to a closed proof: traffic it may match
+is reported closed only if it is closed whether or not the rule matches
+(e.g. a conditional deny whose fall-through reaches only denies).
+
+Boundary questions (:func:`boundary_permits`) are answered *exactly*, not by
+sampling: the query (every src address × every dst address × every
+protocol/port in the port class) is a set of header-space boxes, and the
+rules are walked in first-match order subtracting what each one matches
+(see that function). The one-sided guarantee the product rests on: the
+solver never reports a boundary closed unless the configuration proves it.
 """
 from __future__ import annotations
 
 import ipaddress
-import itertools
-from typing import Optional
+from typing import Iterable, Optional
 
-from .model import Action, Decision, PortRange, Proto, RuleSet
+from .model import Action, Decision, PortRange, Proto, Rule, RuleSet
 
 
 # ---------------------------------------------------------------------------
@@ -76,32 +85,228 @@ def permits(
 
 
 # ---------------------------------------------------------------------------
-# Boundary evaluation (CIDR-to-CIDR, representative-flow approximation)
+# Boundary evaluation (CIDR-to-CIDR, exact header-space decision)
 # ---------------------------------------------------------------------------
+#
+# A *box* is a product of intervals over the flow header:
+#
+#     (src_version, dst_version, proto_class,
+#      src_lo, src_hi, dst_lo, dst_hi, port_lo, port_hi)
+#
+# Addresses are integers (``int(ipaddress)``); the address family of each
+# side is part of the box key, so an IPv4 box never intersects an IPv6 rule
+# ("0.0.0.0/0" covers IPv4 only, "::/0" IPv6 only), exactly as
+# ``model._ip_in_cidr`` behaves. ``proto_class`` is one of the four concrete
+# classes below; ``Proto.ANY`` (in a rule or a query) expands to all four.
+#
+# Ports. ``PortRange.contains`` compares the port literally for every
+# protocol, ICMP included, and ``Rule.matches`` / :func:`evaluate` (and
+# ``impossible.flow_crosses``) inherit that. The box algebra keeps the same
+# literal semantics on every protocol class so it agrees with
+# :func:`evaluate` flow-for-flow. Parsers model ICMP as ``icmp/0-65535``
+# (type/code are not ports) and ingest records an ICMP flow at port 0, so
+# every real ICMP flow inside a query's port class is covered.
 
-def _first_host(cidr: str) -> Optional[str]:
-    """A representative host address for ``cidr`` (its first usable host).
+_P_TCP, _P_UDP, _P_ICMP, _P_OTHER = 0, 1, 2, 3
+_PROTO_CLASSES: dict[Proto, tuple[int, ...]] = {
+    Proto.TCP: (_P_TCP,),
+    Proto.UDP: (_P_UDP,),
+    Proto.ICMP: (_P_ICMP,),
+    # ANY covers tcp, udp, icmp and every other IP protocol (gre, esp, ...),
+    # which only an ANY rule can match.
+    Proto.ANY: (_P_TCP, _P_UDP, _P_ICMP, _P_OTHER),
+}
 
-    Handles a plain CIDR, a bare IP (treated as a /32 or /128), a /31 or /32
-    (RFC 3021 point-to-point and single host, both usable), and IPv6. Returns
-    ``None`` for input that does not parse as a network or an address, so the
-    caller can simply skip it.
+_V4_ALL: tuple[int, int, int] = (4, 0, (1 << 32) - 1)
+_V6_ALL: tuple[int, int, int] = (6, 0, (1 << 128) - 1)
+_PORT_ALL: tuple[int, int] = (0, 65535)
+
+#: Upper bound on the number of disjoint boxes kept in the "remaining" set.
+#: Pathological rule sets (many interleaved partial overlaps) can fragment
+#: the space; past this cap the walk stops and returns the SOUND fallback
+#: (possibly open, conditional), never "closed".
+MAX_BOXES = 50_000
+#: Upper bound on box/rule-box intersection tests for one boundary question,
+#: with the same sound fallback. Keeps a single verdict bounded in time.
+MAX_WORK = 5_000_000
+
+Box = tuple[int, int, int, int, int, int, int, int, int]
+Interval = tuple[int, int, int]  # (ip version, lo, hi)
+
+
+class _BudgetExceeded(Exception):
+    """Internal: the box set grew past :data:`MAX_BOXES` / :data:`MAX_WORK`."""
+
+
+def _parse_cidr(cidr: object) -> Optional[Interval]:
+    """``cidr`` as an inclusive integer interval ``(version, lo, hi)``.
+
+    Accepts exactly what ``model._ip_in_cidr`` accepts: a network (host bits
+    ignored, ``strict=False``) or a bare address (a /32 or /128). Returns
+    ``None`` for anything that does not parse.
     """
     try:
-        net = ipaddress.ip_network(cidr, strict=False)
-    except ValueError:
-        # Not a network; maybe a bare address with no prefix after all.
-        try:
-            return str(ipaddress.ip_address(cidr))
-        except ValueError:
-            return None
-    # ``hosts()`` already special-cases /31 and /32 (both/one usable) and
-    # drops the network + broadcast address for a wider IPv4 block.
-    first = next(iter(net.hosts()), None)
-    if first is not None:
-        return str(first)
-    # Degenerate (shouldn't happen for valid nets) — fall back to the base.
-    return str(net.network_address)
+        net = ipaddress.ip_network(cidr, strict=False)  # type: ignore[arg-type]
+        return (net.version, int(net.network_address), int(net.broadcast_address))
+    except (ValueError, TypeError):
+        pass
+    try:
+        addr = ipaddress.ip_address(cidr)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return None
+    return (addr.version, int(addr), int(addr))
+
+
+def _merge(intervals: Iterable[Interval]) -> list[Interval]:
+    """Sort and coalesce overlapping/adjacent intervals per version, so the
+    result is disjoint (and the boxes built from it are too)."""
+    out: list[Interval] = []
+    for v, lo, hi in sorted(intervals):
+        if out and out[-1][0] == v and lo <= out[-1][2] + 1:
+            if hi > out[-1][2]:
+                out[-1] = (v, out[-1][1], hi)
+        else:
+            out.append((v, lo, hi))
+    return out
+
+
+def _addr_side(cidrs: Iterable[object]) -> tuple[list[Interval], bool]:
+    """Parse one side's CIDRs → (merged intervals, all_parsed)."""
+    parsed: list[Interval] = []
+    ok = True
+    for c in cidrs:
+        iv = _parse_cidr(c)
+        if iv is None:
+            ok = False
+        else:
+            parsed.append(iv)
+    return _merge(parsed), ok
+
+
+def _port_boxes(ranges: Iterable[PortRange]) -> list[tuple[int, int, int]]:
+    """Port ranges → merged, disjoint ``(proto_class, lo, hi)`` triples."""
+    triples = [
+        (p, pr.low, pr.high)
+        for pr in ranges
+        for p in _PROTO_CLASSES.get(pr.proto, _PROTO_CLASSES[Proto.ANY])
+    ]
+    # Same coalescing as addresses, with the proto class in the version slot.
+    return _merge(triples)
+
+
+def _product(
+    srcs: list[Interval], dsts: list[Interval], ports: list[tuple[int, int, int]]
+) -> list[Box]:
+    return [
+        (sv, dv, p, slo, shi, dlo, dhi, plo, phi)
+        for sv, slo, shi in srcs
+        for dv, dlo, dhi in dsts
+        for p, plo, phi in ports
+    ]
+
+
+def _index(boxes: list[Box]) -> dict[tuple[int, int, int], list[Box]]:
+    idx: dict[tuple[int, int, int], list[Box]] = {}
+    for b in boxes:
+        idx.setdefault(b[:3], []).append(b)
+    return idx
+
+
+def _compile_rule(
+    rule: Rule,
+) -> tuple[dict[tuple[int, int, int], list[Box]], dict[tuple[int, int, int], list[Box]]]:
+    """A rule's match space as (certain boxes, uncertain boxes), keyed by
+    ``(src_version, dst_version, proto_class)``.
+
+    * ``certain``: the rule definitely matches every flow in these boxes.
+    * ``uncertain``: the rule *may* match. Everything for a ``conditional``
+      rule. An unparsable CIDR on either side is widened to "any" (IPv4 and
+      IPv6) and marks that part uncertain, matching the parsers' honesty
+      rule (``parsers/base.py``: unknown → any + conditional). Under
+      :func:`evaluate` such a CIDR simply never matches, which for an ALLOW
+      would silently drop a possibly-open path.
+    """
+    src, src_ok = _addr_side(rule.src_cidrs)
+    dst, dst_ok = _addr_side(rule.dst_cidrs)
+    ports = _port_boxes(rule.ports)
+    certain: list[Box] = [] if rule.conditional else _product(src, dst, ports)
+    uncertain: list[Box] = []
+    if rule.conditional or not (src_ok and dst_ok):
+        src_u = src if src_ok else [_V4_ALL, _V6_ALL]
+        dst_u = dst if dst_ok else [_V4_ALL, _V6_ALL]
+        uncertain = _product(src_u, dst_u, ports)
+    return _index(certain), _index(uncertain)
+
+
+def _subtract(a: Box, b: Box) -> list[Box]:
+    """``a`` minus ``b`` as ≤ 6 disjoint boxes. Requires ``a`` and ``b`` to
+    intersect (same key, overlapping on every interval)."""
+    sv, dv, p, slo, shi, dlo, dhi, plo, phi = a
+    _, _, _, bslo, bshi, bdlo, bdhi, bplo, bphi = b
+    out: list[Box] = []
+    if slo < bslo:
+        out.append((sv, dv, p, slo, bslo - 1, dlo, dhi, plo, phi))
+    if shi > bshi:
+        out.append((sv, dv, p, bshi + 1, shi, dlo, dhi, plo, phi))
+    s1, s2 = max(slo, bslo), min(shi, bshi)
+    if dlo < bdlo:
+        out.append((sv, dv, p, s1, s2, dlo, bdlo - 1, plo, phi))
+    if dhi > bdhi:
+        out.append((sv, dv, p, s1, s2, bdhi + 1, dhi, plo, phi))
+    d1, d2 = max(dlo, bdlo), min(dhi, bdhi)
+    if plo < bplo:
+        out.append((sv, dv, p, s1, s2, d1, d2, plo, bplo - 1))
+    if phi > bphi:
+        out.append((sv, dv, p, s1, s2, d1, d2, bphi + 1, phi))
+    return out
+
+
+def _overlaps(a: Box, b: Box) -> bool:
+    return (
+        a[3] <= b[4] and b[3] <= a[4]
+        and a[5] <= b[6] and b[5] <= a[6]
+        and a[7] <= b[8] and b[7] <= a[8]
+    )
+
+
+class _Walk:
+    """Mutable state of one exact boundary walk (budget accounting)."""
+
+    def __init__(self) -> None:
+        self.work = 0
+
+    def split(
+        self, box: Box, rule_boxes: list[Box]
+    ) -> tuple[list[Box], list[Box]]:
+        """Split ``box`` into (matched by any of ``rule_boxes``, unmatched),
+        both as disjoint boxes."""
+        matched: list[Box] = []
+        rest = [box]
+        for rb in rule_boxes:
+            nxt: list[Box] = []
+            for piece in rest:
+                self.work += 1
+                if _overlaps(piece, rb):
+                    matched.append((
+                        piece[0], piece[1], piece[2],
+                        max(piece[3], rb[3]), min(piece[4], rb[4]),
+                        max(piece[5], rb[5]), min(piece[6], rb[6]),
+                        max(piece[7], rb[7]), min(piece[8], rb[8]),
+                    ))
+                    nxt.extend(_subtract(piece, rb))
+                else:
+                    nxt.append(piece)
+            rest = nxt
+            if not rest:
+                break
+        if self.work > MAX_WORK:
+            raise _BudgetExceeded
+        return matched, rest
+
+
+#: The sound answer when the solver cannot decide: possibly open, and
+#: labelled conditional so it can never back a closed certificate.
+_UNKNOWN = Decision(allowed=True, matched_rule=None, conditional=True)
 
 
 def boundary_permits(
@@ -111,76 +316,126 @@ def boundary_permits(
     port: Optional[PortRange],
 ) -> Decision:
     """Decide whether *any* flow from any ``src_cidr`` to any ``dst_cidr`` on
-    the given port class is permitted by ``ruleset``.
+    the given port class is permitted by ``ruleset``, **exactly**.
 
-    Approach. One representative flow is evaluated per (src_cidr, dst_cidr)
-    pair, using the first usable host of each CIDR (see :func:`_first_host`)
-    and a representative port — ``port.low`` on ``port.proto`` when a
-    :class:`PortRange` is given, else port ``0`` on :attr:`Proto.ANY`. The
-    verdict is reduced over all representative flows:
+    Query space. The union of header-space boxes ``src_cidrs × dst_cidrs ×
+    port class``: every address of every CIDR, and for the port class
+    ``port.proto`` (``Proto.ANY`` = tcp, udp, icmp and any other protocol)
+    over ``port.low..port.high``; ``port=None`` means all traffic (all four
+    protocol classes, all ports). IPv4 and IPv6 are separate dimensions.
 
-    * if any representative flow is **allowed**, return an allowed
-      :class:`Decision` (a non-conditional allow is preferred over a
-      conditional one, so a proved-open boundary is reported as such);
-    * else if some representative flow was decided by a **conditional** rule,
-      return a conditional, allowed Decision — the config cannot prove the
-      boundary closed, so it is treated as possibly-open and labelled
-      ``conditional``, never closed;
-    * else return a denied Decision.
+    Walk. Rules are taken in first-match order ``(order, id)`` while a set of
+    disjoint "remaining" boxes is maintained, each tagged *certain* (it has
+    not passed any rule that only *might* have matched it). For each rule,
+    the remaining boxes are intersected with the rule's match space and the
+    matched part is subtracted (box subtraction yields ≤ 6 pieces):
 
-    If either side carries no CIDR there are no representative flows and the
-    result is a denied Decision; model address-less adjacencies (identities,
-    third parties) as *ungoverned* edges rather than governed ones.
+    * matched by a definite ALLOW: a certain box is **proved open**, and the
+      walk returns immediately with that rule; an uncertain box is
+      *possibly open*. Either way the matched part is decided.
+    * matched by a definite DENY: that part is closed on that path.
+    * matched by a *conditional* rule (``rule.conditional``, or an unparsable
+      rule CIDR widened to "any"): the match is uncertain. A conditional
+      ALLOW makes the part *possibly open*; a conditional DENY only
+      *possibly* denies. In both cases the part also falls through to later
+      rules, now uncertain. A conditional deny whose fall-through reaches
+      only denies (or the default deny) is closed either way.
 
-    LIMITATION — representative-IP approximation. Only the first usable host
-    of each CIDR is tested, so a sub-CIDR deny carve-out (a rule that denies
-    a slice of an otherwise-allowed block, or allows a slice of an otherwise
-    denied one) can be over- or under-counted: a boundary may read as open
-    when only part of the range is, or as closed when a narrow allow exists
-    off the representative host. This is a deliberate trade for a bounded,
-    deterministic per-boundary verdict; exhaustive per-host evaluation is out
-    of scope for the solver.
+    What remains after the last rule gets ``ruleset.default_action``.
+
+    Verdict:
+
+    * some certain box reaches an allow → ``Decision(allowed=True,
+      conditional=False, matched_rule=<that rule, or None for the default>)``;
+    * else some uncertain path reaches an allow → ``allowed=True,
+      conditional=True`` (``matched_rule`` = the first allow it reached);
+    * else → ``allowed=False, conditional=False``, ``matched_rule`` = the
+      first DENY rule that matched part of the query (``None`` if it all
+      fell to the default).
+
+    Unknown inputs are never closed. If a side has no CIDRs, or a CIDR that
+    does not parse, that part of the query cannot be evaluated, so unless
+    the rest is proved open the verdict is ``allowed=True,
+    conditional=True``. The same sound fallback is returned if the box set
+    outgrows :data:`MAX_BOXES` (or the walk :data:`MAX_WORK`).
     """
-    if port is not None:
-        rep_proto = port.proto
-        rep_port = port.low
+    src, src_ok = _addr_side(src_cidrs)
+    dst, dst_ok = _addr_side(dst_cidrs)
+    # A side with no CIDR at all is as unknown as one that does not parse.
+    unknown = not (src_ok and dst_ok and src and dst)
+
+    if port is None:
+        ports = _port_boxes((PortRange.any(),))
     else:
-        rep_proto = Proto.ANY
-        rep_port = 0
+        ports = _port_boxes((port,))
 
-    src_hosts = [h for h in (_first_host(c) for c in src_cidrs) if h is not None]
-    dst_hosts = [h for h in (_first_host(c) for c in dst_cidrs) if h is not None]
+    # remaining: (box, certain)
+    remaining: list[tuple[Box, bool]] = [(b, True) for b in _product(src, dst, ports)]
+    possibly_open_rule: Optional[str] = None
+    possibly_open = False
+    first_deny: Optional[str] = None
+    walk = _Walk()
 
-    allowed_decision: Optional[Decision] = None
-    conditional_decision: Optional[Decision] = None
-    denied_decision: Optional[Decision] = None
+    if len(remaining) > MAX_BOXES:
+        return _UNKNOWN  # sound fallback: too many CIDR/port combinations
+    try:
+        for rule in sorted(ruleset.rules, key=lambda r: (r.order, r.id)):
+            if not remaining:
+                break
+            certain_idx, uncertain_idx = _compile_rule(rule)
+            if not certain_idx and not uncertain_idx:
+                continue
+            is_allow = rule.action == Action.ALLOW
+            nxt: list[tuple[Box, bool]] = []
+            for box, sure in remaining:
+                key = box[:3]
+                matched, rest = walk.split(box, certain_idx.get(key, []))
+                if matched:
+                    if is_allow:
+                        if sure:
+                            # Proved: a definite allow on a path no
+                            # conditional rule could have diverted.
+                            return Decision(
+                                allowed=True, matched_rule=rule.id, conditional=False
+                            )
+                        if not possibly_open:
+                            possibly_open, possibly_open_rule = True, rule.id
+                    elif first_deny is None:
+                        first_deny = rule.id
+                    # Definitely matched: decided, does not fall through.
+                ukeys = uncertain_idx.get(key)
+                if ukeys:
+                    for piece in rest:
+                        maybe, untouched = walk.split(piece, ukeys)
+                        if maybe and is_allow and not possibly_open:
+                            possibly_open, possibly_open_rule = True, rule.id
+                        # Uncertain match: falls through, no longer certain.
+                        nxt.extend((m, False) for m in maybe)
+                        nxt.extend((u, sure) for u in untouched)
+                else:
+                    nxt.extend((r, sure) for r in rest)
+            if possibly_open:
+                # Uncertain boxes can now only re-derive "possibly open";
+                # only a certain box can still change the verdict.
+                nxt = [(b, s) for b, s in nxt if s]
+            if len(nxt) > MAX_BOXES:
+                raise _BudgetExceeded
+            remaining = nxt
+    except _BudgetExceeded:
+        # Too fragmented to decide within budget. Sound fallback: possibly
+        # open (conditional), NEVER closed.
+        return _UNKNOWN
 
-    for s, d in itertools.product(src_hosts, dst_hosts):
-        dec = evaluate(ruleset, s, d, rep_proto, rep_port)
-        if dec.allowed:
-            if not dec.conditional:
-                # Strongest open signal — return immediately, it is proved.
-                return dec
-            if allowed_decision is None:
-                allowed_decision = dec
-        elif dec.conditional:
-            if conditional_decision is None:
-                conditional_decision = dec
-        elif denied_decision is None:
-            denied_decision = dec
+    if ruleset.default_action == Action.ALLOW and remaining:
+        if any(sure for _, sure in remaining):
+            return Decision(allowed=True, matched_rule=None, conditional=False)
+        if not possibly_open:
+            possibly_open, possibly_open_rule = True, None
 
-    if allowed_decision is not None:
-        return allowed_decision
-    if conditional_decision is not None:
-        # A conditional rule decided it (e.g. a conditional deny). Config
-        # cannot prove the boundary closed, so treat it as possibly-open and
-        # labelled conditional — never as a closed proof.
-        return Decision(
-            allowed=True,
-            matched_rule=conditional_decision.matched_rule,
-            conditional=True,
-        )
-    if denied_decision is not None:
-        return denied_decision
-    # No representative flows at all (both sides address-less, or unparsable).
-    return Decision(allowed=False, matched_rule=None, conditional=False)
+    if possibly_open:
+        return Decision(allowed=True, matched_rule=possibly_open_rule, conditional=True)
+    if unknown:
+        # Part of the query could not be evaluated (address-less node or an
+        # unparsable CIDR): we cannot prove it closed.
+        return _UNKNOWN
+    return Decision(allowed=False, matched_rule=first_deny, conditional=False)

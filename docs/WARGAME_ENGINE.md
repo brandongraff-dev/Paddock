@@ -127,12 +127,23 @@ no packets sent.
 - `permits(...) -> bool`: convenience.
 - `boundary_permits(ruleset, src_cidrs, dst_cidrs, port) -> Decision`:
   whether *any* flow from any src CIDR to any dst CIDR on the port class is
-  permitted, by testing a representative host from each CIDR. If none is
-  allowed but a conditional rule matched, the verdict is
-  `allowed=True, conditional=True` (config cannot prove it closed). The
-  representative-IP approximation is documented in the module — a sub-CIDR
-  deny carve-out can be over/under-counted, which is why probes and
-  observation corroborate config in the three-way report (§9).
+  permitted, decided **exactly** (header-space style, no sampling). The
+  query is a set of boxes — (src family + interval, dst family + interval,
+  protocol class ∈ tcp/udp/icmp/other, port interval); `port=None` is all
+  traffic and `Proto.ANY` all four classes. Rules are walked in first-match
+  order, subtracting each rule's matched part from the remaining disjoint
+  boxes (≤ 6 pieces per subtraction); what is left gets the default action.
+  A conditional rule's match is uncertain: a conditional allow makes its
+  part *possibly open*, and both conditional allows and denies also fall
+  through to later rules. Verdict: a certain path to an allow → proved
+  open; else an uncertain path to an allow → `allowed=True,
+  conditional=True`; else closed (so a conditional deny followed only by
+  denies is closed either way). IPv4 and IPv6 never intersect. An
+  unparsable rule CIDR is widened to "any" and made conditional; an
+  address-less or unparsable query side, or a box set past `MAX_BOXES` /
+  `MAX_WORK`, returns the sound `allowed=True, conditional=True` — never
+  closed. Ports compare literally on every protocol, as
+  `PortRange.contains` does (parsers model ICMP as 0-65535).
 
 ---
 
