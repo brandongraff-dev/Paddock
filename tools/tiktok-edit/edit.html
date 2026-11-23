@@ -126,7 +126,7 @@ const SCREENS_B=[
 /*30*/{extra:'wall',x:90,y:780,size:84,code:[C('while attackers:','#fff'),C('    defend()','#fff')]},
 /*31*/{extra:'mosaic',strobe:1,code:[]},
 ];
-const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B};
+const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B,a2:SCREENS_A,b2:SCREENS_B};
 const SCREENS=SCREEN_SETS[VAR]||SCREENS_MAIN;
 const HITS=VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
 async function init(){
