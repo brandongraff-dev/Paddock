@@ -7,9 +7,6 @@ import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
 import FlatArt from "./landing/FlatArt";
-import PixelConstellation from "../brand/PixelConstellation";
-import PixelSprite from "../brand/PixelSprite";
-import type { SpriteName } from "../brand/spriteData";
 import Faq from "./landing/Faq";
 import { useAuth } from "../state/auth";
 import Showcase from "./landing/Showcase";
@@ -85,10 +82,10 @@ const FOOTER_LINKS: { title: string; links: [string, string][] }[] = [
 ];
 
 const RULES = [
-  ["No exploitation", "Findings describe impact. They never carry a working payload.", "anvil"],
-  ["No credential attacks", "Default-credential risk is fingerprinted, never tried.", "key"],
-  ["No evasion", "The scanner names itself. No decoys, no spoofing, no WAF bypass.", "lantern"],
-  ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited.", "compass"],
+  ["No exploitation", "Findings describe impact. They never carry a working payload."],
+  ["No credential attacks", "Default-credential risk is fingerprinted, never tried."],
+  ["No evasion", "The scanner names itself. No decoys, no spoofing, no WAF bypass."],
+  ["No out-of-scope anything", "Checked at dispatch, per request and per redirect. Audited."],
 ];
 
 export default function Landing() {
@@ -186,16 +183,15 @@ export default function Landing() {
 
 
       <section className="lp-principles scene" id="principles">
-        <PixelConstellation className="scene-bg" variant="rules" />
+        <PixelField className="scene-bg" cell={6} animate={false} maxDpr={1} originX={0.34} />
         <div className="lp-section-head">
           <span className="lp-eyebrow mono">Hard rules · enforced in code</span>
           <h2>A defender&rsquo;s instrument, by construction.</h2>
         </div>
-        <ul className="rows rules in">
-          {RULES.map(([t, d, icon], i) => (
+        <ul className="stmts">
+          {RULES.map(([t, d]) => (
             <li key={t}>
-              <PixelSprite name={icon as SpriteName} size={72} />
-              <h3><span className="mono">0{i + 1}</span>{t}</h3>
+              <h3><span>No</span> {t.replace(/^No /, "")}</h3>
               <p>{d}</p>
             </li>
           ))}
