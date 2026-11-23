@@ -1,9 +1,9 @@
 """Original (rights-free) phonk tracks, 36 beats, drop on beat 8, denser on 16, silence + final hit on beat 32.
-usage: python3 phonk.py drift|funk out.wav   (drift = 142 BPM cowbell/808, funk = 130 BPM tamborzao-style)"""
+usage: python3 phonk.py drift|funk|hard out.wav   (drift 142 BPM, funk 130 BPM, hard 155 BPM aggressive)"""
 import numpy as np, wave, sys
 style=sys.argv[1];out=sys.argv[2]
-BPM={'drift':142,'funk':130}[style];B=60/BPM;SR=44100;NB=36;D=NB*B+.3;n=int(SR*D);t=np.arange(n)/SR
-rng=np.random.default_rng(7 if style=='drift' else 13)
+BPM={'drift':142,'funk':130,'hard':155}[style];B=60/BPM;SR=44100;NB=36;D=NB*B+.3;n=int(SR*D);t=np.arange(n)/SR
+rng=np.random.default_rng({'drift':7,'funk':13,'hard':21}[style])
 L=np.zeros(n);R=np.zeros(n);PADL=np.zeros(n);PADR=np.zeros(n);BAS=np.zeros(n)
 hz=lambda m:440*2**((m-69)/12)
 def put(arr,t0,x,g=1.0):
@@ -20,7 +20,9 @@ def cowbell(note,vel=1.0,dur=.45):
     sq=lambda f:sum(np.sin(2*np.pi*f*k*x)/k for k in (1,3,5,7))
     e=(np.exp(-x*16)*.8+np.exp(-x*5)*.3)*np.clip(x/.001,0,1)
     return dist((sq(f1)+sq(f2))*.5,2.2)*e*vel*.5
-def k808(note,dur,slide=0.0,drive=3.2):
+DRV=6.5 if style=='hard' else 3.2
+def k808(note,dur,slide=0.0,drive=None):
+    drive=DRV if drive is None else drive
     x=xs(dur);f=hz(note)*(2**(slide/12*np.exp(-x*9)))
     ph=2*np.pi*np.cumsum(f)/SR;v=np.sin(ph)*np.exp(-x*1.4)*np.clip(x/.004,0,1)*np.clip((dur-x)/.04,0,1)
     return dist(v,drive)*.8
@@ -64,9 +66,11 @@ def impact(d=2.6):
     c=rng.standard_normal(len(x));c=c-lp(c,5)
     return dist(v*1.2,2)+c*np.exp(-x*3)*.12
 # ---------- arrangement (beat index = bar math; drop at beat 8)
-ROOT=[33,29,31,28] if style=='drift' else [31,31,29,26]   # A,F,G,E  /  G,G,F,D
-SC=[0,3,5,7,10] # minor pentatonic
+ROOT={'drift':[33,29,31,28],'funk':[31,31,29,26],'hard':[31,31,29,27]}[style]   # A,F,G,E  /  G,G,F,D
+SC=[0,3,5,7,10]
+HARD=style=='hard'
 def barnote(bar):return ROOT[bar%4]
+
 # intro 0-8: pad, teaser, hats
 for b in range(0,8,4):
     put(PADL,b*B,padchord([ROOT[(b//4)%4]+24,ROOT[(b//4)%4]+31,ROOT[(b//4)%4]+36],4*B+.3),1.0);put(PADR,b*B,padchord([ROOT[(b//4)%4]+24,ROOT[(b//4)%4]+31,ROOT[(b//4)%4]+36],4*B+.3),1.0)
@@ -79,6 +83,9 @@ MOT=[(0,0),(.5,0),(1.0,3),(1.5,0),(2,5),(2.5,3),(3,0),(3.5,-2)] if style=='drift
 KICK=[0,1.5,2.5] if style=='drift' else [0,.75,1.5,2.5,3.25]
 SNR=[1,3] if style=='drift' else [1.5,3.5]
 BASSP=[(0,1.2,0),(1.5,.8,2),(2.5,1.4,-2)] if style=='drift' else [(0,.7,0),(.75,.7,0),(1.5,1.2,3),(3,.9,0)]
+if HARD:
+    MOT=[(0,0),(.5,0),(1,3),(1.5,0),(2,5),(2.5,3),(3,0),(3.5,5)];KICK=[0,.75,1.5,2.5,3,3.5];SNR=[1,3]
+    BASSP=[(0,.7,0),(.75,.7,0),(1.5,.9,3),(2.5,1,-2),(3.5,.5,0)]
 for bar in range(2,9):   # bars start at beat 4*bar: bar2=8 ... bar8=32
     b0=bar*4
     if b0>=32:break
@@ -89,7 +96,7 @@ for bar in range(2,9):   # bars start at beat 4*bar: bar2=8 ... bar8=32
     for kp in KICK:pan((b0+kp)*B,kick(1.0 if kp==0 else .85),.5)
     for sp in SNR:
         pan((b0+sp)*B,snare(1.0),.5)
-        if style=='drift':pan((b0+sp)*B,clap(.8),.5)
+        if style in('drift','hard'):pan((b0+sp)*B,clap(.8 if not HARD else 1.0),.5)
     for dur_b,(p,ln,sl) in enumerate(BASSP):put(BAS,(b0+p)*B,k808(root+(12 if p==1.5 and style=='drift' and dense else 0)+(sl if sl==0 else 0),ln*B,slide=sl),1.0)
     # cowbell motif every 2 beats
     for half in (0,2):
@@ -109,11 +116,27 @@ for bar in range(2,9):   # bars start at beat 4*bar: bar2=8 ... bar8=32
         v=.55+.3*(i%steps==0)
         if dense and (i%16)>=12:v*=1.2
         pan((b0+i/steps)*B,hat(v,o=(i%steps==steps//2 and dense)),.5+.2*rng.standard_normal()*.3,.8)
+    if HARD:
+        # reese bass: detuned saws, filter-pumped, sits under the 808
+        xr=xs(4*B+.1);fl=(0.5+0.5*np.sin(2*np.pi*xr*(1/(B*.5))))
+        rv=np.zeros(len(xr))
+        for det in (-.006,.0,.006):
+            f=hz(root+12)*(1+det);rv+=sum(np.sin(2*np.pi*f*k*xr)/k for k in range(1,12))
+        rv=dist(rv*(.25+.5*fl),2.2)*.30*np.clip((4*B+.1-xr)/.05,0,1)
+        put(BAS,b0*B,rv,1.0)
+        # siren stab on bar 2 of each pair + rim ticks
+        if bar%2==1:
+            xsn=xs(2*B);sw=np.sin(2*np.pi*np.cumsum(hz(79)*(1+.045*np.sin(2*np.pi*3.2*xsn)+.5*np.exp(-xsn*3)))/SR)*np.exp(-xsn*1.4)
+            pan((b0+2)*B,dist(sw*.5,3.0)*.45,.5,1.0)
+        for rp in (.5,2.5):pan((b0+rp)*B,snare(.45),.35,.8)
+        for i in range(8):pan((b0+i*.5+.25)*B,hat(.5,o=False),.6,.8)
     if dense:                                    # 32nd roll on last beat of every 2nd bar
         if bar%2==1:
             for i in range(16):pan((b0+3+i/16)*B,hat(.5+.5*i/16),.5,.8)
 # build bar 28-32: snare roll + riser, then drop silence + final impact at beat 32
 for i,bt in enumerate(np.arange(28,31.75,.25)):pan(bt*B,snare(.4+.7*(bt-28)/4),.5,.9)
+if HARD:
+    for bt in np.arange(30,31.9,.25):pan(bt*B,kick(.7+.4*(bt-30)/2),.5,.9)
 put(L,29*B,noise_riser(3*B-.15),.28);put(R,29*B,noise_riser(3*B-.15),.28)
 cut=int(31.9*B*SR);hush=int(32*B*SR)
 # final hit
@@ -140,6 +163,6 @@ wl=verb(L*1.0+PADL,1);wr=verb(R*1.0+PADR,2)
 Lf=(bus_l+wl)*mask;Rf=(bus_r+wr)*mask
 fade=np.clip((D-t)/.35,0,1);Lf*=fade;Rf*=fade
 pk=max(abs(Lf).max(),abs(Rf).max());Lf/=pk;Rf/=pk
-st=np.stack([Lf,Rf],1)*1.0;st=np.tanh(st*2.0)/np.tanh(2.0)*.8
+st=np.stack([Lf,Rf],1)*1.0;st=np.tanh(st*(3.0 if HARD else 2.0))/np.tanh(3.0 if HARD else 2.0)*.72
 w=wave.open(out,'wb');w.setnchannels(2);w.setsampwidth(2);w.setframerate(SR);w.writeframes((np.clip(st,-1,1)*32767).astype('<i2').tobytes());w.close()
 print(style,'bpm',BPM,'beat',round(B,4),'dur',round(D,2))
