@@ -126,22 +126,90 @@ const SCREENS_B=[
 /*30*/{extra:'wall',x:90,y:780,size:84,code:[C('while attackers:','#fff'),C('    defend()','#fff')]},
 /*31*/{extra:'mosaic',strobe:1,code:[]},
 ];
-const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B,a2:SCREENS_A,b2:SCREENS_B};
+const SCREENS_C=[
+/*0*/{hero:1,logo:'raspberrypi',title:'PADDOCK SENTRY',sub:'passive IoT / OT sensor'},
+/*1*/{words:1,lines:['LISTEN-ONLY.'],fs:130,cap:'never sends a packet to a device'},
+/*2*/{flow:1,nodes:[{id:'a',x:180,y:640,text:'SWITCH',logo:'cisco',w:220,h:240},{id:'b',x:540,y:640,text:'SENTRY',logo:'raspberrypi',w:220,h:240},{id:'c',x:900,y:640,text:'PADDOCK',logo:'PADDOCK',w:220,h:240}],edges:[{a:'a',b:'b',label:'mirror port'},{a:'b',b:'c',label:'metadata'}],cap:'It only listens.'},
+/*3*/{wall:1,title:'MIRROR / SPAN PORT ON YOUR GEAR',cols:3,cell:300,items:[{logo:'cisco',label:'Cisco IOS'},{logo:'ubiquiti',label:'UniFi'},{logo:'mikrotik',label:'MikroTik'},{logo:'vmware',label:'VMware'},{text:'Aruba',label:'HPE'},{text:'OpenWrt',label:'router'}]},
+/*4*/{hero:1,logo:'docker',title:'ONE CONTAINER',sub:'amd64 · arm64'},
+/*5*/{hero:1,logo:'debian',title:'RASPBERRY PI OS',sub:'or a mini-PC, a VM, a router'},
+/*6*/{ui:'dd_devices',rect:[.2,.08,.78],tag:'dashboard · devices',ann:[[.02,.06,.96,.3,'every device, passively']]},
+/*7*/{ui:'dd_devices',rect:[.2,.5,.78],tag:'inventory · vendor / model / role',ann:[[.02,.1,.96,.18,'exposed OT, flagged']]},
+/*8*/{words:1,lines:['IOT','OT','IT'],fs:190,cols:['#7cc8ff','#e3b265','#f2f2f2']},
+/*9*/{words:1,lines:['IOT','OT','IT'],fs:190,cols:['#7cc8ff','#e3b265','#f2f2f2']},
+/*10*/{words:1,lines:['MODBUS','S7','DNP3','BACNET','ETHERNET/IP','OPC UA'],fs:96,col:'#e3b265',gap:118},
+/*11*/{wall:1,title:'COMMON OT VENDORS',cols:2,cell:380,items:[{logo:'siemens',label:'Siemens'},{logo:'schneiderelectric',label:'Schneider Electric'},{logo:'rockwellautomation',label:'Rockwell'},{logo:'abb',label:'ABB'}]},
+/*12*/{words:1,lines:['METADATA,','NOT CONTENT.'],fs:122,gap:160},
+/*13*/{detectors:1},
+/*14*/{ui:'ui_findings',rect:[.18,.3,.78],tag:'findings · policy detectors',ann:[[.02,.04,.96,.14,'detector: device_lateral_scan']]},
+/*15*/{ui:'sentry_table',rect:[.3,.22,.68],tag:'docs · what you get'},
+/*16*/{words:1,lines:['ARM64','AMD64'],fs:200,gap:230},
+/*17*/{words:1,lines:['ARM64','AMD64'],fs:200,gap:230},
+/*18*/{flow:1,nodes:[{id:'a',x:210,y:640,text:'PLC',logo:'siemens',w:240,h:250},{id:'b',x:870,y:640,text:'PUBLIC IP',w:240,h:250,red:1,sub:'the internet'}],edges:[{a:'a',b:'b',label:'ot_internet_egress',red:1}],cap:'OT phones home.',capCol:'#ff6b5a',capSub:'severity: high'},
+/*19*/{flow:1,nodes:[{id:'a',x:210,y:640,text:'CAMERA',w:240,h:250,sub:'iot-cameras'},{id:'b',x:870,y:640,text:'OT CELL',w:240,h:250,red:1,sub:'ot-cell-1'}],edges:[{a:'a',b:'b',label:'iot_crosses_segment',red:1}],cap:'A camera reaches OT.',capSub:'severity: medium'},
+/*20*/{words:1,lines:['TELNET','FTP','TFTP','SNMP v1/v2c'],fs:110,col:'#ff6b5a',cap:'cleartext_management · medium'},
+/*21*/{drift:1},
+/*22*/{matrix:1},
+/*23*/{flow:1,nodes:[{id:'a',x:170,y:640,text:'DEVICE',w:200,h:210,red:1},{id:'b',x:540,y:640,text:'A HUMAN APPROVES',w:300,h:210,fs:26},{id:'c',x:910,y:640,text:'QUARANTINE',w:200,h:210}],edges:[{a:'a',b:'b'},{a:'b',b:'c',label:'only then'}],cap:'Nothing blocks on its own.'},
+/*24*/{hero:1,logo:'ubiquiti',title:'UNIFI',sub:'block · quarantine network · release'},
+/*25*/{hero:1,logo:'cisco',title:'MERAKI',sub:'quarantine group policy · restore'},
+/*26*/{ui:'sentry_top',rect:[.3,.2,.68],tag:'docs · what it guarantees'},
+/*27*/{wall:1,title:'',cols:4,cell:240,hl:5,items:[{logo:'cisco'},{logo:'ubiquiti'},{logo:'mikrotik'},{logo:'vmware'},{logo:'raspberrypi'},{logo:'PADDOCK'},{logo:'docker'},{logo:'debian'},{logo:'siemens'},{logo:'schneiderelectric'},{logo:'rockwellautomation'},{logo:'abb'},{logo:'mqtt'},{logo:'zigbee'},{logo:'bluetooth'},{logo:'linux'}]},
+/*28*/{ui:'dd_devices',rect:[.2,.2,.78],tag:'OT exposed to IT / internet',ann:[[.03,.08,.94,.34,'flagged: passive detection']]},
+/*29*/{words:1,lines:['LISTEN.','LEARN.','FLAG.'],fs:180,gap:215},
+/*30*/{flow:1,nodes:[{id:'a',x:230,y:640,text:'SENTRY',logo:'raspberrypi',w:250,h:260},{id:'b',x:850,y:640,text:'ATTACK PATHS',logo:'PADDOCK',w:250,h:260}],edges:[{a:'a',b:'b',label:'the inside view'}],cap:'The inside view.'},
+/*31*/{wall:1,title:'',cols:3,cell:300,hl:4,strobe:1,items:[{logo:'mqtt'},{logo:'zigbee'},{logo:'bluetooth'},{logo:'wireshark'},{logo:'PADDOCK'},{logo:'arm'},{logo:'linux'},{logo:'docker'},{logo:'raspberrypi'}]},
+];
+const SCREENS_D=[
+/*0*/{hero:1,logo:'npm',title:'YOUR DEPENDENCIES',sub:'nobody reads them all'},
+/*1*/{wall:1,title:'SIX ECOSYSTEMS',cols:3,cell:300,items:[{logo:'npm',label:'npm'},{logo:'pypi',label:'PyPI'},{logo:'go',label:'Go'},{logo:'rust',label:'Cargo'},{text:'Maven',label:'pom.xml'},{logo:'rubygems',label:'RubyGems'}]},
+/*2*/{words:1,lines:['package-lock.json','poetry.lock','go.sum','Cargo.lock','pom.xml','Gemfile.lock'],fs:84,col:'#9fc2d8',gap:120},
+/*3*/{flow:1,nodes:[{id:'a',x:150,y:640,text:'LOCKFILE',w:190,h:200,fs:24},{id:'b',x:420,y:640,text:'SBOM',w:190,h:200},{id:'c',x:690,y:640,text:'OSV.DEV',w:190,h:200,fs:28},{id:'d',x:940,y:640,text:'RISK',w:170,h:200,red:1}],edges:[{a:'a',b:'b'},{a:'b',b:'c'},{a:'c',b:'d'}],cap:'Lockfile to risk.'},
+/*4*/{ui:'osv',rect:[0,0,1],tag:'osv.dev · open source vulnerabilities',ann:[[.28,.52,.46,.1,'Search Vulnerability Database']]},
+/*5*/{ui:'osv_vuln',rect:[0,0,1],tag:'GHSA-jfh8-c2jp-5v3q · log4j',ann:[[.02,.08,.4,.1,'10.0 critical']]},
+/*6*/{ui:'ghsa',rect:[0,0,1],tag:'GitHub advisory · CVE-2021-44228'},
+/*7*/{ui:'dd_deps',rect:[.2,.45,.78],tag:'dashboard · dependencies',ann:[[.02,.22,.62,.2,'vulnerable components']]},
+/*8*/{words:1,lines:['SBOM'],fs:260},
+/*9*/{words:1,lines:['SBOM'],fs:260},
+/*10*/{words:1,lines:['DEPENDENCY CONFUSION','TYPOSQUATS','ABANDONED','YANKED','MALICIOUS VERSIONS','UNPINNED'],fs:64,col:'#e3b265',gap:100},
+/*11*/{hero:1,logo:'pypi',title:'PYPI',sub:'requirements.txt · poetry.lock · Pipfile.lock'},
+/*12*/{flow:1,nodes:[{id:'a',x:230,y:640,text:'internal-utils',w:260,h:240,sub:'private package',fs:28},{id:'b',x:850,y:640,text:'PUBLIC REGISTRY',w:260,h:240,red:1,sub:'same name?',fs:24}],edges:[{a:'a',b:'b',label:'dependency confusion',red:1}],cap:'Exposure, found early.',capCol:'#f2f2f2'},
+/*13*/{ui:'dd_deps',rect:[.5,.45,.5],tag:'supply-chain risk panel',ann:[[.02,.12,.96,.2,'typosquat · yanked · abandoned']]},
+/*14*/{wall:1,title:'WHERE IT RUNS',cols:3,cell:300,items:[{logo:'docker',label:'docker'},{logo:'debian',label:'debian'},{logo:'alpinelinux',label:'alpine'},{logo:'kubernetes',label:'kubernetes'},{logo:'linux',label:'linux'},{logo:'PADDOCK',label:'paddock'}]},
+/*15*/{words:1,lines:['DETECTION','ONLY.'],fs:150,gap:190,cap:'lockfiles are parsed as text, never run'},
+/*16*/{words:1,lines:['VULNS'],fs:260},
+/*17*/{words:1,lines:['VULNS'],fs:260},
+/*18*/{flow:1,nodes:[{id:'a',x:230,y:640,text:'PADDOCK SCA',logo:'PADDOCK',w:250,h:260,fs:22},{id:'b',x:850,y:420,text:'OSV.DEV',w:230,h:150},{id:'c',x:850,y:830,text:'REGISTRY METADATA',w:230,h:150,fs:20}],edges:[{a:'a',b:'b'},{a:'a',b:'c'}],cap:'Two outbound calls. That is it.'},
+/*19*/{hero:1,logo:'go',title:'GO',sub:'go.sum · go.mod'},
+/*20*/{hero:1,logo:'rust',title:'CARGO',sub:'Cargo.lock'},
+/*21*/{hero:1,logo:'rubygems',title:'RUBYGEMS',sub:'Gemfile.lock'},
+/*22*/{words:1,lines:['DIRECT','TRANSITIVE'],fs:150,gap:200},
+/*23*/{ui:'dd_deps',rect:[.2,.1,.78],tag:'components · vulns · risks',ann:[[.02,.1,.96,.24,'12 components, 8 vulnerable']]},
+/*24*/{words:1,lines:['REACHABLE?'],fs:140,cap:'dependency reachability · detection only'},
+/*25*/{hero:1,logo:'npm',title:'NPM',sub:'package-lock.json · yarn.lock · pnpm-lock.yaml'},
+/*26*/{ui:'osv_vuln',rect:[0,.35,1],tag:'fix versions, per advisory'},
+/*27*/{wall:1,title:'',cols:4,cell:240,hl:5,items:[{logo:'npm'},{logo:'pypi'},{logo:'go'},{logo:'rust'},{logo:'rubygems'},{logo:'PADDOCK'},{logo:'docker'},{logo:'debian'},{logo:'alpinelinux'},{logo:'kubernetes'},{logo:'linux'},{logo:'composer'},{logo:'nuget'},{logo:'git'},{logo:'github'},{logo:'opensourceinitiative'}]},
+/*28*/{words:1,lines:['FIND IT.','FIX IT.'],fs:170,gap:210},
+/*29*/{words:1,lines:['BEFORE','IT SHIPS.'],fs:150,gap:190},
+/*30*/{flow:1,nodes:[{id:'a',x:230,y:640,text:'SCA',logo:'PADDOCK',w:240,h:250},{id:'b',x:850,y:640,text:'ATTACK PATHS',logo:'PADDOCK',w:250,h:250}],edges:[{a:'a',b:'b',label:'same graph'}],cap:'Same graph.'},
+/*31*/{wall:1,title:'',cols:3,cell:300,hl:4,strobe:1,items:[{logo:'git'},{logo:'github'},{logo:'composer'},{logo:'kubernetes'},{logo:'PADDOCK'},{logo:'nuget'},{logo:'docker'},{logo:'linux'},{logo:'opensourceinitiative'}]},
+];
+const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B,a2:SCREENS_A,b2:SCREENS_B,c:SCREENS_C,d:SCREENS_D};
 const SCREENS=SCREEN_SETS[VAR]||SCREENS_MAIN;
-const HITS=VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
+const HITS=VAR==='c'?[{k:8,v:'sentry',big:1},{k:16,v:'linux',big:1.12},{k:32,v:'pd',big:1}]:VAR==='d'?[{k:8,v:'npm',big:1},{k:16,v:'pypi',big:1.12},{k:32,v:'pd',big:1}]:VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
 async function init(){
  CORPUS=(await (await fetch('build/corpus.txt')).text()).split('\n');
  const svg=await (await fetch('assets/paddock-logo.svg')).text();const re=/M(\d+) (\d+)h(\d+)v1h-\d+z/g;let m;const seen=new Set();
  while((m=re.exec(svg))){for(let i=0;i<+m[3];i++){const k=(+m[1]+i)+','+m[2];if(!seen.has(k)){seen.add(k);LOGO.push([+m[1]+i,+m[2]])}}}
  let w=await (await fetch('assets/paddock-wordmark.svg')).text();w=w.replace('<svg ','<svg width="3136" height="808" ');
  WM=new Image();WM.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(w);await WM.decode();
- for(const n of ['python','linux','kalilinux','docker','github','git','gnubash','wireshark','openssl','opensourceinitiative','claude','anthropic','burpsuite','metasploit','owasp','ubuntu']){let t=await (await fetch('assets/logos/'+n+'.svg')).text();t=t.replace('<svg ','<svg fill="#ffffff" width="512" height="512" ');const im=new Image();im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(t);await im.decode();LG[n]=im}
+ for(const n of ['python','linux','kalilinux','docker','github','git','gnubash','wireshark','openssl','opensourceinitiative','claude','anthropic','burpsuite','metasploit','owasp','ubuntu','raspberrypi','cisco','ubiquiti','mikrotik','vmware','siemens','schneiderelectric','rockwellautomation','abb','mqtt','zigbee','bluetooth','debian','alpinelinux','arm','npm','pypi','go','rust','rubygems','nuget','composer','kubernetes']){let t=await (await fetch('assets/logos/'+n+'.svg')).text();t=t.replace('<svg ','<svg fill="#ffffff" width="512" height="512" ');const im=new Image();im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(t);await im.decode();LG[n]=im}
  ONS=(await (await fetch(`build/onsets-${VAR}.json`).then(r=>r.ok?r:fetch('build/onsets.json'))).json()).on;
  try{const cf=await (await fetch(`build/config-${VAR}.json`).then(r=>r.ok?r:fetch('build/config.json'))).json();B=cf.beat;T0=cf.t0;END=cf.end;HORSE_T=T0+32*B}catch(e){}
  {const n=document.createElement('canvas');n.width=n.height=256;const nx=n.getContext('2d'),id=nx.createImageData(256,256);for(let i=0;i<65536;i++){const v=Math.random()*255;id.data[i*4]=id.data[i*4+1]=id.data[i*4+2]=v;id.data[i*4+3]=255}nx.putImageData(id,0,0);window.NOISE=n}
  window.IM={};for(const n of ['ui_graph','ui_paths','ui_findings','ui_chains']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='assets/ui/'+(n==='ui_paths'?'attack-paths':n.slice(3))+'.jpg'})}
  for(const n of ['m_knot','m_face','m_hands','m_whale']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/memes/'+n+'.png'})}
- for(const n of ['cisa','nvd','nmap','wireshark','kali','owasp','mitre','repo']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/shots/'+n+'.png'})}
+ for(const n of ['cisa','nvd','nmap','wireshark','kali','owasp','mitre','repo','dd_devices','dd_deps','sentry_top','sentry_table','osv','osv_vuln','ghsa','unifi','siemens']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/shots/'+n+'.png'})}
  await document.fonts.load('300 60px NR');await document.fonts.ready;window.READY=true}
 // ---------------- code rendering
 const KW=/^(import|from|for|in|while|def|return|True|False|None|if|else)$/;
@@ -230,10 +298,11 @@ function finale(t){
 // ---------------- badge (corner logo like the reference's channel mark)
 function badge(){const cell=3.6,ox=412,oy=1409;ctx.save();ctx.shadowColor='rgba(255,255,255,.6)';ctx.shadowBlur=14;ctx.fillStyle='rgba(236,230,218,.95)';for(const [x,y] of LOGO)ctx.fillRect(ox+x*cell,oy+y*cell,cell-.4,cell-.4);ctx.restore();ctx.font=`300 36px NR,serif`;ctx.fillStyle='#ece6da';ctx.textBaseline='middle';ctx.fillText('paddock',ox+31*cell+16,1445)}
 
+const TINTX={raspberrypi:['#ff6b8a','#C51A4A'],cisco:['#6fd0ff','#049fd9'],ubiquiti:['#6aa6ff','#0559C9'],mikrotik:['#c9d6e2','#8aa0b5'],vmware:['#c4d4dc','#9fb3bd'],siemens:['#33d1c1','#009999'],schneiderelectric:['#7bf08f','#3dcd58'],rockwellautomation:['#ff7b73','#e0443e'],abb:['#ff6a6a','#ff000f'],mqtt:['#d9b3ff','#a066f0'],zigbee:['#ffd36b','#eb7d00'],bluetooth:['#7fb8ff','#0082fc'],debian:['#ff6b8a','#d70a53'],alpinelinux:['#7fb3ff','#0d597f'],arm:['#8fd3ff','#0091bd'],npm:['#ff6b6b','#CB3837'],pypi:['#4B8BBE','#FFD43B'],go:['#7be3ff','#00ADD8'],rust:['#ffcfa3','#DEA584'],rubygems:['#ff8a73','#E9573F'],nuget:['#7fb8ff','#004880'],composer:['#c9a98a','#885630'],kubernetes:['#8fb6ff','#326CE5']};
 function tinted(img,size,c1,c2){const raw=document.createElement('canvas');raw.width=raw.height=512;const rx=raw.getContext('2d');rx.drawImage(img,0,0,512,512);const d=rx.getImageData(0,0,512,512).data;let x0=512,y0=512,x1=0,y1=0;for(let y=0;y<512;y++)for(let x=0;x<512;x++){if(d[(y*512+x)*4+3]>20){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}}
  const bw=x1-x0+1,bh=y1-y0+1,sc=size/Math.max(bw,bh);const k=document.createElement('canvas');k.width=k.height=size;const x=k.getContext('2d');x.drawImage(raw,x0,y0,bw,bh,(size-bw*sc)/2,(size-bh*sc)/2,bw*sc,bh*sc);x.globalCompositeOperation='source-in';const g=x.createLinearGradient(0,0,size,size);g.addColorStop(0,c1);g.addColorStop(1,c2);x.fillStyle=g;x.fillRect(0,0,size,size);return k}
 const TINT={};
-function logoT(n,size){const key=n+size;if(!TINT[key]){const m={python:['#4B8BBE','#FFD43B'],linux:['#ffffff','#e8e8e8'],kalilinux:['#6fb4ff','#3a7fe0'],docker:['#7cc4ff','#2496ED'],github:['#ffffff','#cfcfcf'],git:['#ff8a66','#F05032'],gnubash:['#e8e8e8','#9be28f'],wireshark:['#7cc8ff','#1679A7'],openssl:['#ffa56b','#d24a2a'],opensourceinitiative:['#a8f0a0','#3DA639'],claude:['#e8906f','#D97757'],anthropic:['#ece6da','#d8d0c0'],burpsuite:['#ff9a55','#e8590c'],metasploit:['#7cb8ff','#2a7bd8'],owasp:['#a9b8ff','#6b86ff'],ubuntu:['#ff9a6b','#E95420']}[n];TINT[key]=tinted(LG[n],size,m[0],m[1])}return TINT[key]}
+function logoT(n,size){const key=n+size;if(!TINT[key]){const m={python:['#4B8BBE','#FFD43B'],linux:['#ffffff','#e8e8e8'],kalilinux:['#6fb4ff','#3a7fe0'],docker:['#7cc4ff','#2496ED'],github:['#ffffff','#cfcfcf'],git:['#ff8a66','#F05032'],gnubash:['#e8e8e8','#9be28f'],wireshark:['#7cc8ff','#1679A7'],openssl:['#ffa56b','#d24a2a'],opensourceinitiative:['#a8f0a0','#3DA639'],claude:['#e8906f','#D97757'],anthropic:['#ece6da','#d8d0c0'],burpsuite:['#ff9a55','#e8590c'],metasploit:['#7cb8ff','#2a7bd8'],owasp:['#a9b8ff','#6b86ff'],ubuntu:['#ff9a6b','#E95420']}[n]||TINTX[n]||['#f2f2f2','#c8c8c8'];TINT[key]=tinted(LG[n],size,m[0],m[1])}return TINT[key]}
 function glowLogo(n,cx,cy,size,a,glow){ctx.save();ctx.globalAlpha=a;ctx.shadowColor=glow;ctx.shadowBlur=60*a;ctx.drawImage(logoT(n,size),cx-size/2,cy-size/2);ctx.restore()}
 function slam(S,lt){if(!S.slam)return;const k=easeOut(seg(lt,0,.16)),o=1-seg(lt,.55,1.0);if(o<=0)return;const sc=lerp(2.6,1,k),sz=Math.round(460*sc);const g={python:'#4B8BBE',linux:'#ffffff'}[S.slam];
  ctx.save();ctx.translate(540,640);ctx.scale(sc,sc);ctx.globalAlpha=Math.min(1,k*1.4)*o;ctx.shadowColor=g;ctx.shadowBlur=80;ctx.drawImage(logoT(S.slam,460),-230,-230);ctx.restore();
@@ -329,7 +398,9 @@ function memeFull(S,lt,t){const im=window.IM&&window.IM[S.meme];if(!im)return;co
 function uiFocus(S,lt,t){const im=window.IM&&window.IM[S.ui];if(!im)return;const k=easeOut(seg(lt,0,.1)),[fx,fy,fw]=S.rect,bw=1000,bh=780,drift=.025*lt/B;
  const sw=im.width*fw/(1+.04*lt/B),sh=sw*bh/bw,sx=Math.max(0,Math.min(im.width-sw,im.width*(fx+drift*.4))),sy=Math.max(0,Math.min(im.height-sh,im.height*fy));
  ctx.save();ctx.globalAlpha=Math.min(1,k*1.6);ctx.translate(540,640);ctx.scale(lerp(1.06,1,k),lerp(1.06,1,k));ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=28;ctx.shadowOffsetY=10;ctx.fillStyle='#000';ctx.fillRect(-bw/2-6,-bh/2-6,bw+12,bh+12);ctx.shadowBlur=0;ctx.shadowOffsetY=0;
- ctx.drawImage(im,sx,sy,sw,sh,-bw/2,-bh/2,bw,bh);ctx.fillStyle='rgba(0,0,0,.82)';ctx.font=`600 24px ${MONO}`;const tw=ctx.measureText(S.shotTag).width+30;ctx.fillRect(-bw/2,-bh/2-42,tw,36);ctx.fillStyle='#e8e8e8';ctx.textBaseline='middle';ctx.textAlign='left';ctx.fillText(S.shotTag,-bw/2+15,-bh/2-24);ctx.restore()}
+ ctx.drawImage(im,sx,sy,sw,sh,-bw/2,-bh/2,bw,bh);
+ (S.ann||[]).forEach(([ax,ay,aw,ah,lab],ai)=>{const ak=easeOut(seg(lt,.1+ai*.05,.2+ai*.05));ctx.globalAlpha=ak;ctx.strokeStyle='#e67350';ctx.lineWidth=5;ctx.strokeRect(-bw/2+ax*bw,-bh/2+ay*bh,aw*bw,ah*bh);if(lab){ctx.font=`700 24px ${MONO}`;const lw=ctx.measureText(lab).width+26;ctx.fillStyle='#e67350';ctx.fillRect(-bw/2+ax*bw,-bh/2+ay*bh-36,lw,36);ctx.fillStyle='#14110e';ctx.textBaseline='middle';ctx.textAlign='left';ctx.fillText(lab,-bw/2+ax*bw+13,-bh/2+ay*bh-18)}ctx.globalAlpha=1});
+ ctx.fillStyle='rgba(0,0,0,.82)';ctx.font=`600 24px ${MONO}`;const tg=S.shotTag||S.tag||'',tw=ctx.measureText(tg).width+30;ctx.fillRect(-bw/2,-bh/2-42,tw,36);ctx.fillStyle='#e8e8e8';ctx.textBaseline='middle';ctx.textAlign='left';ctx.fillText(tg,-bw/2+15,-bh/2-24);ctx.restore()}
 function versus(S,lt,t){ctx.fillStyle='rgba(70,6,6,.55)';ctx.fillRect(0,0,540,H);ctx.fillStyle='rgba(8,24,44,.55)';ctx.fillRect(540,0,540,H);ctx.fillStyle='rgba(255,255,255,.25)';ctx.fillRect(539,0,2,H);
  ctx.font=`700 26px ${MONO}`;ctx.textBaseline='alphabetic';ctx.textAlign='left';ctx.fillStyle='#ff6b5a';ctx.fillText('ATTACKER',30,180);ctx.fillStyle='#7cc8ff';ctx.fillText('DEFENDER',570,180);
  const mk=(code,x)=>({x,y:260,size:30,sel:null,lines:code.map((l,j)=>({t:l.t,at:l.done?-5:(j*.05),cps:l.done?1e6:Math.max(22,l.t.length/.3),col:l.col}))});
@@ -340,18 +411,61 @@ function hud(t){ctx.save();ctx.textBaseline='alphabetic';ctx.font=`500 22px ${MO
  ctx.strokeStyle='rgba(236,230,218,.3)';ctx.lineWidth=2;[[30,30,1,1],[1050,30,-1,1],[30,1890,1,-1],[1050,1890,-1,-1]].forEach(([x,y,a,b])=>{ctx.beginPath();ctx.moveTo(x,y+b*44);ctx.lineTo(x,y);ctx.lineTo(x+a*44,y);ctx.stroke()});
  ctx.fillStyle='rgba(236,230,218,.1)';for(let y=140;y<1360;y+=40)ctx.fillRect(10,y,y%200===140?18:9,1);
  const sec=Math.floor(t)+11,utc=`14:02:${String(sec%60).padStart(2,'0')}`;ctx.textAlign='left';ctx.font=`500 22px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.5)';ctx.fillText(`scope acme-demo.example · assets 55 · kev 3 · utc ${utc}`,60,1372);ctx.restore()}
+
+// ---------------- deep-dive primitives (logo-first, no typing)
+function lg(name,size,x,y){if(name==='PADDOCK'){const cp=size/32;ctx.fillStyle='#ece6da';for(const [px,py] of LOGO)ctx.fillRect(x-16*cp+px*cp,y-10*cp+py*cp,cp+.5,cp+.5)}else ctx.drawImage(logoT(name,Math.round(size)),x-size/2,y-size/2,size,size)}
+function heroX(S,lt,t){const k=easeOut(seg(lt,0,.12)),sz=S.size||420;ctx.save();ctx.globalAlpha=Math.min(1,k*1.6);lgScaled(S.logo,sz,540,600,lerp(1.35,1,k));
+ ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.font=`800 ${S.ts||80}px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#f2f2f2';ctx.fillText(S.title,540,1060);
+ ctx.font=`500 32px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(S.sub||'',540,1125);ctx.restore()}
+function lgScaled(name,size,x,y,sc2){ctx.save();ctx.translate(x,y);ctx.scale(sc2,sc2);lg(name,size,0,0);ctx.restore()}
+function wallG(S,lt,t){const items=S.items,cols=S.cols||3,rows=Math.ceil(items.length/cols),cell=S.cell||300,ox=(W-cols*cell)/2,oy=S.y0||(740-rows*cell/2);
+ if(S.title){ctx.font=`600 28px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillText(S.title,540,oy-36)}
+ items.forEach((it,i)=>{const at=i*B*.9/(items.length+1),k=easeOut(seg(lt,at,at+.09));if(k<=0)return;const cx=ox+(i%cols)*cell+cell/2,cy=oy+Math.floor(i/cols)*cell+cell/2,hl=S.hl===i,sc2=lerp(1.5,1,k)*(hl?1.2:1);
+  ctx.save();ctx.translate(cx,cy);ctx.scale(sc2,sc2);ctx.globalAlpha=Math.min(1,k*1.6);const ls=S.ls||Math.min(150,cell*.55);
+  if(it.logo)lg(it.logo,ls,0,0);else{ctx.font=`800 ${it.fs||46}px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle=it.col||'#cfd3da';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(it.text,0,0)}
+  if(it.label){ctx.font=`500 22px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText(it.label,0,ls/2+10)}
+  ctx.restore()})}
+function flowX(S,lt,t){const N=S.nodes,pos=id=>N.find(n=>n.id===id);
+ S.edges.forEach((e,i)=>{const A=pos(e.a),Bn=pos(e.b),k=easeOut(seg(lt,.05+i*.06,.2+i*.06));if(k<=0)return;const col=e.red?'#ff5a46':'#cfd3da';
+  ctx.strokeStyle=col;ctx.lineWidth=e.red?5:3;ctx.beginPath();ctx.moveTo(A.x,A.y);ctx.lineTo(lerp(A.x,Bn.x,k),lerp(A.y,Bn.y,k));ctx.stroke();
+  if(k>=1){for(let d=0;d<3;d++){const p=((t*1.3+d/3+i*.17)%1);ctx.fillStyle=col;ctx.beginPath();ctx.arc(lerp(A.x,Bn.x,p),lerp(A.y,Bn.y,p),8,0,6.283);ctx.fill()}
+   if(e.label){ctx.font=`600 26px ${MONO}`;ctx.fillStyle=col;ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText(e.label,(A.x+Bn.x)/2,(A.y+Bn.y)/2-26)}}});
+ N.forEach((n,i)=>{const k=easeOut(seg(lt,i*.04,.12+i*.04));if(k<=0)return;ctx.save();ctx.globalAlpha=Math.min(1,k*1.6);ctx.translate(n.x,n.y);ctx.scale(lerp(1.3,1,k),lerp(1.3,1,k));const w=n.w||230,h=n.h||230;
+  ctx.fillStyle=n.red?'rgba(70,10,10,.92)':'rgba(16,18,24,.96)';ctx.strokeStyle=n.red?'#ff5a46':'#3a3f4a';ctx.lineWidth=3;rr(-w/2,-h/2,w,h,16);ctx.fill();ctx.stroke();
+  if(n.logo)lg(n.logo,Math.min(w,h)*.46,0,-h*.12);
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=n.red?'#ffb4a8':'#e8e8e8';ctx.font=`700 ${n.logo?24:(n.fs||32)}px Inter,"DejaVu Sans",sans-serif`;ctx.fillText(n.text||'',0,n.logo?h/2-30:0);
+  if(n.sub){ctx.font=`500 22px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(n.sub,0,h/2+32)}ctx.restore()});
+ if(S.cap){ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.globalAlpha=easeOut(seg(lt,.1,.22));ctx.font=`800 64px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle=S.capCol||'#f2f2f2';ctx.fillText(S.cap,540,1160);if(S.capSub){ctx.font=`500 30px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(S.capSub,540,1215)}ctx.globalAlpha=1}}
+function wordsX(S,lt,t){ctx.textAlign='center';ctx.textBaseline='middle';const n=S.lines.length,fs=S.fs||110,gap=S.gap||fs*1.2,y0=680-(n-1)*gap/2;
+ S.lines.forEach((w,i)=>{const at=i*B*.85/(n+1),k=easeOut(seg(lt,at,at+.08));if(k<=0)return;ctx.save();ctx.translate(540,y0+i*gap);ctx.font=`800 ${fs}px Inter,"DejaVu Sans",sans-serif`;const mw=ctx.measureText(w).width,fit=Math.min(1,900/mw),sc2=lerp(1.35,1,k)*fit;ctx.scale(sc2,sc2);ctx.globalAlpha=Math.min(1,k*1.6);ctx.fillStyle=(S.cols&&S.cols[i])||S.col||'#f2f2f2';ctx.fillText(w,0,0);ctx.restore()});
+ if(S.cap){ctx.font=`500 30px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(S.cap,540,1230)}}
+function detectorsX(S,lt,t){const R=[['device_lateral_scan','HIGH','#e8503a'],['ot_internet_egress','HIGH','#e8503a'],['iot_crosses_segment','MEDIUM','#e3b265'],['cleartext_management','MEDIUM','#e3b265'],['behavior_drift','MEDIUM','#e3b265']];
+ const x=50,y=330,w=980;ctx.fillStyle='rgba(16,18,24,.97)';ctx.strokeStyle='#2e323c';ctx.lineWidth=2;rr(x,y,w,640,14);ctx.fill();ctx.stroke();ctx.textBaseline='middle';ctx.textAlign='left';ctx.font=`600 24px ${MONO}`;ctx.fillStyle='#7d8290';ctx.fillText('DETECTOR',x+36,y+44);ctx.fillText('SEVERITY',x+700,y+44);ctx.fillStyle='#2a2d36';ctx.fillRect(x+30,y+76,w-60,2);
+ R.forEach(([n,sv,col],i)=>{const k=easeOut(seg(lt,.04+i*.055,.12+i*.055));if(k<=0)return;ctx.globalAlpha=Math.min(1,k*1.6);const yy=y+140+i*100;ctx.font=`600 34px ${MONO}`;ctx.fillStyle='#e8eaee';ctx.fillText(n,x+36,yy);ctx.fillStyle=col;rr(x+690,yy-24,150,48,8);ctx.fill();ctx.fillStyle='#14110e';ctx.font=`700 24px ${MONO}`;ctx.textAlign='center';ctx.fillText(sv,x+765,yy);ctx.textAlign='left';ctx.globalAlpha=1});
+ ctx.textAlign='center';ctx.font=`800 60px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#f2f2f2';ctx.globalAlpha=easeOut(seg(lt,.25,.4));ctx.fillText('FIVE DETECTORS',540,1100);ctx.globalAlpha=1}
+function driftX(S,lt,t){const x0=90,x1=990,y0=420,y1=900;ctx.strokeStyle='#3a3f4a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x0,y1);ctx.lineTo(x1,y1);ctx.stroke();
+ const band=easeOut(seg(lt,0,.12));ctx.fillStyle='rgba(120,200,255,.16)';ctx.fillRect(x0+4,lerp(660,560,0)+0,(x1-x0-4)*band,120);
+ ctx.strokeStyle='#e8eaee';ctx.lineWidth=4;ctx.beginPath();const N=40,reveal=seg(lt,.02,.3);for(let i=0;i<=N*reveal;i++){const px=x0+(x1-x0)*i/N;let py=720+Math.sin(i*.7)*26+(hash(i,3)-.5)*34;if(i>=31)py=720-Math.min(1,(i-30)/3)*250;if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py)}ctx.stroke();
+ if(reveal>.8){const px=x0+(x1-x0)*33/N,py=470;ctx.strokeStyle='#ff5a46';ctx.lineWidth=5;ctx.beginPath();ctx.arc(px,py,24,0,6.283);ctx.stroke();ctx.font=`700 26px ${MONO}`;ctx.fillStyle='#ff6b5a';ctx.textAlign='right';ctx.textBaseline='alphabetic';ctx.fillText('behavior_drift',px-40,py-10)}
+ ctx.font=`500 26px ${MONO}`;ctx.fillStyle='#7cc8ff';ctx.textAlign='left';ctx.fillText('learned for 7 days, per device model',x0+14,y1-30-0);
+ ctx.textAlign='center';ctx.font=`800 64px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#f2f2f2';ctx.globalAlpha=easeOut(seg(lt,.2,.35));ctx.fillText('It learns normal.',540,1100);ctx.globalAlpha=1}
+function matrixX(S,lt,t){const L=['ot-cell','cameras','office','bms','guest','it-lan'],n=6,cs=130,ox=270,oy=430;ctx.font=`500 22px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.textBaseline='middle';
+ L.forEach((l,i)=>{ctx.textAlign='right';ctx.fillText(l,ox-14,oy+i*cs+cs/2);ctx.save();ctx.translate(ox+i*cs+cs/2,oy-16);ctx.rotate(-.6);ctx.textAlign='left';ctx.fillText(l,0,0);ctx.restore()});
+ for(let r=0;r<n;r++)for(let c=0;c<n;c++){const at=(r*n+c)*.006,k=easeOut(seg(lt,at,at+.06));if(k<=0)continue;const hot=(r===1&&c===0)||(r===4&&c===5)||(r===2&&c===0),ok=r===c||hash(r,c)>.62;
+  ctx.fillStyle=hot?'#ff5a46':(ok?'rgba(120,200,255,.35)':'rgba(255,255,255,.05)');ctx.globalAlpha=k;ctx.fillRect(ox+c*cs+6,oy+r*cs+6,cs-12,cs-12);ctx.globalAlpha=1}
+ ctx.textAlign='center';ctx.font=`800 60px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#f2f2f2';ctx.globalAlpha=easeOut(seg(lt,.2,.35));ctx.fillText('Who really talks to whom.',540,1290);ctx.font=`500 28px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText('observed segmentation map',540,1345);ctx.globalAlpha=1}
 // ---------------- python triangle badge (as in the reference)
-function tri(cx,cy,s,v,a){ctx.save();ctx.globalAlpha=a;ctx.translate(cx,cy);
- const P=[[0,-.52*s],[-.5*s,.38*s],[.5*s,.38*s]];ctx.strokeStyle='#fff';ctx.lineWidth=Math.max(2,.026*s);ctx.lineJoin='miter';ctx.shadowColor='rgba(255,255,255,.2)';ctx.shadowBlur=.012*s;ctx.beginPath();ctx.moveTo(P[0][0],P[0][1]);ctx.lineTo(P[1][0],P[1][1]);ctx.lineTo(P[2][0],P[2][1]);ctx.closePath();ctx.stroke();ctx.shadowBlur=0;
- const py=v==='py',ka=v==='kali';
- if(py||ka){const m=logoT(ka?'kalilinux':'python',Math.round(.40*s)+2);ctx.drawImage(m,-.2*s,-.06*s,.40*s,.40*s)}
- else{const cell=.46*s/32;ctx.fillStyle='#ece6da';for(const [x,y] of LOGO)ctx.fillRect(-.23*s+x*cell,-.02*s+y*cell,cell+.5,cell+.5)}
+const TRIS={py:{top:'PYTHON',mark:'python',sides:['pyw','pyi'],bot:'py'},kali:{top:'KALI',mark:'kalilinux',sides:['root','apt'],bot:'linux'},pd:{top:'PADDOCK',mark:'PADDOCK',sides:['map','fix'],bot:'defend'},sentry:{top:'SENTRY',mark:'raspberrypi',sides:['span','pcap'],bot:'listen-only'},linux:{top:'LINUX',mark:'linux',sides:['arm64','amd64'],bot:'docker'},npm:{top:'NPM',mark:'npm',sides:['lock','json'],bot:'sbom'},pypi:{top:'PYPI',mark:'python',sides:['whl','sdist'],bot:'osv'}};
+function tri(cx,cy,s,v,a){const T=TRIS[v]||TRIS.pd;ctx.save();ctx.globalAlpha=a;ctx.translate(cx,cy);
+ const P=[[0,-.52*s],[-.5*s,.38*s],[.5*s,.38*s]];ctx.strokeStyle='#fff';ctx.lineWidth=Math.max(2,.026*s);ctx.lineJoin='miter';ctx.beginPath();ctx.moveTo(P[0][0],P[0][1]);ctx.lineTo(P[1][0],P[1][1]);ctx.lineTo(P[2][0],P[2][1]);ctx.closePath();ctx.stroke();
+ if(T.mark==='PADDOCK'){const cell=.46*s/32;ctx.fillStyle='#ece6da';for(const [x,y] of LOGO)ctx.fillRect(-.23*s+x*cell,-.02*s+y*cell,cell+.5,cell+.5)}
+ else{const m=logoT(T.mark,Math.round(.40*s)+2);ctx.drawImage(m,-.2*s,-.06*s,.40*s,.40*s)}
  ctx.fillStyle='#fff';ctx.textAlign='center';ctx.textBaseline='middle';
- const TOP=py?'PYTHON':ka?'KALI':'PADDOCK';ctx.font=`800 ${py?.17*s:ka?.2*s:.135*s}px Inter,"DejaVu Sans",sans-serif`;ctx.lineWidth=.04*s;ctx.strokeStyle='#000';ctx.strokeText(TOP,0,-.2*s);ctx.fillText(TOP,0,-.2*s);
+ const fs=T.top.length<=5?.19:T.top.length===6?.16:.135;ctx.font=`800 ${fs*s}px Inter,"DejaVu Sans",sans-serif`;ctx.lineWidth=.04*s;ctx.strokeStyle='#000';ctx.strokeText(T.top,0,-.2*s);ctx.fillText(T.top,0,-.2*s);
  ctx.font=`500 ${.085*s}px Inter,"DejaVu Sans",sans-serif`;
- ctx.save();ctx.translate(-.25*s+.08*s,-.05*s+.02*s);ctx.rotate(-1.03);ctx.fillText(py?'pyw':ka?'root':'map',0,0);ctx.restore();
- ctx.save();ctx.translate(.25*s-.08*s,-.05*s+.02*s);ctx.rotate(1.03);ctx.fillText(py?'pyi':ka?'apt':'fix',0,0);ctx.restore();
- ctx.font=`500 ${.11*s}px Inter,"DejaVu Sans",sans-serif`;ctx.fillText(py?'py':ka?'linux':'defend',0,.48*s);
+ ctx.save();ctx.translate(-.25*s+.08*s,-.05*s+.02*s);ctx.rotate(-1.03);ctx.fillText(T.sides[0],0,0);ctx.restore();
+ ctx.save();ctx.translate(.25*s-.08*s,-.05*s+.02*s);ctx.rotate(1.03);ctx.fillText(T.sides[1],0,0);ctx.restore();
+ ctx.font=`500 ${(T.bot.length>7?.09:.11)*s}px Inter,"DejaVu Sans",sans-serif`;ctx.fillText(T.bot,0,.48*s);
  ctx.restore()}
 function triLayer(t){
  let hit=null;for(const h of HITS){const t0=sc(h.k);if(t>=t0&&t<t0+2*B)hit={...h,t0}}
@@ -363,7 +477,7 @@ function triLayer(t){
   let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}
   const sx=(hash(Math.floor(t*60),5)-.5)*14*(1-mv)*(p<.3?1:.3);ctx.save();ctx.translate(sx,0);tri(cx,cy,s*(1+.035*bp),hit.v,Math.min(1,k*1.6));ctx.restore();
   if(p<.18){ctx.fillStyle=`rgba(255,255,255,${.6*(1-p/.18)})`;ctx.fillRect(0,0,W,H)}
- }else if(t>=firstEnd){const v=t>=finEnd?'pd':(t>=sc(HITS[1].k+2)?'kali':'py');let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}tri(150,1465,190*(1+.12*bp),v,.95);ctx.save();ctx.font=`500 32px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.85)';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText('openpaddock.dev',262,1475);ctx.restore()}}
+ }else if(t>=firstEnd){let v=HITS[0].v;for(const h of HITS)if(t>=sc(h.k+2))v=h.v;let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}tri(150,1465,190*(1+.12*bp),v,.95);ctx.save();ctx.font=`500 32px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.85)';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText('openpaddock.dev',262,1475);ctx.restore()}}
 // ---------------- compositor
 function render(t){
  if(!window.READY)return;
@@ -388,6 +502,13 @@ function render(t){
   if(S0.collage)collage(S0,lt,t);
   if(S0.shot)shotFull(S0,lt,t);
   if(S0.ui)uiFocus(S0,lt,t);
+  if(S0.hero)heroX(S0,lt,t);
+  if(S0.wall)wallG(S0,lt,t);
+  if(S0.flow)flowX(S0,lt,t);
+  if(S0.words)wordsX(S0,lt,t);
+  if(S0.detectors)detectorsX(S0,lt,t);
+  if(S0.drift)driftX(S0,lt,t);
+  if(S0.matrix)matrixX(S0,lt,t);
   if(S0.versus)versus(S0,lt,t);
   if(S0.meme)memeFull(S0,lt,t);
   if(S0.rogue)rogue(S0,lt,t);
@@ -411,6 +532,7 @@ function render(t){
  }else{finale(t)}
  if(t<HORSE_T&&!HITS.some(h=>t>=sc(h.k)&&t<sc(h.k)+2*B))hud(t);
  triLayer(t);
+ if(glitch>.4&&t>.05){const ch=window.CHN||(window.CHN=[0,1,2].map(()=>{const k=document.createElement('canvas');k.width=W;k.height=H;return k}));tctx.clearRect(0,0,W,H);tctx.drawImage(c,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);ctx.save();ctx.globalCompositeOperation='lighter';const cols=['#ff0000','#00ff00','#0000ff'],am=[-1,0,1];ch.forEach((cv,i)=>{const x=cv.getContext('2d');x.globalCompositeOperation='source-over';x.clearRect(0,0,W,H);x.drawImage(tmp,0,0);x.globalCompositeOperation='multiply';x.fillStyle=cols[i];x.fillRect(0,0,W,H);ctx.drawImage(cv,am[i]*14*Math.min(1.4,glitch),0)});ctx.restore()}
  if(glitch>0&&t>.05){tctx.clearRect(0,0,W,H);tctx.drawImage(c,0,0);for(let i=0;i<9;i++){const y=Math.floor(hash(i,Math.floor(t*30))*H),h=24+hash(i,9)*90,dx=(hash(i,Math.floor(t*30)+3)-.5)*100*Math.min(1.4,glitch);ctx.fillStyle='#000';ctx.fillRect(0,y,W,h);ctx.drawImage(tmp,0,y,W,h,dx,y,W,h)}}
  // film grain: animated luma noise (lighter lifts blacks, overlay textures the brights)
  {const fr=Math.floor(t*24),gx=Math.floor(hash(fr,11)*256),gy=Math.floor(hash(fr,12)*256);
