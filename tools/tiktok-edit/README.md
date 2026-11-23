@@ -18,6 +18,12 @@ git-ignored (third-party images, kept local): see `edit.html` (`SCREENS`) for th
 - Screens live in the `SCREENS` array (index = beat). The three big song drops get a zoom hit (`HITS`): Python triangle,
   Kali triangle, then the Paddock triangle, each shrinking into a corner badge.
 
+## Variants and music
+`edit.html?v=main|a|b` selects a screen set: `main` (original), `a` (product tour: real dashboard screenshots, services, git log, tests),
+`b` (attacker vs defender split screens + memes). `render.js ... <port> <variant>` renders one; `analyze_song.py ... --variant a`
+writes its beat grid. `music/phonk.py drift|funk out.wav` makes original rights-free phonk tracks laid out on the grid the screens expect
+(drop on beat 8, denser on 16, final hit on beat 32).
+
 The style rules (and what not to do) are in `.claude/skills/paddock-tiktok-edit/SKILL.md`.
 
 ## Licensing notes

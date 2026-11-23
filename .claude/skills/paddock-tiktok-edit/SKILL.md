@@ -35,3 +35,12 @@ downloads and cap each file at 15 MB.
 - Do not put exploit code in frames; attacker lines stay fictional (`find_open()`).
 - Check frames before sending (contact sheet), then confirm frame count and audio length with `ffprobe`.
 - TikTok safe zones: keep key content out of the top ~120 px, the bottom ~400 px and the right ~120 px.
+
+## Songs
+- Downloading from YouTube is blocked in the sandbox (bot check) and must not be bypassed. TikTok video pages work with `yt-dlp`
+  (resolve the short link with `curl -I`, then download); that is how the reference sounds were analyzed.
+- For a trending commercial sound: analyze it only for the beat grid, deliver the **NO-AUDIO** edit and tell the user which sound
+  to pick and where to start it. Do not mux commercial tracks into delivered files.
+- Rights-free option: `tools/tiktok-edit/music/phonk.py drift|funk` (original tracks, mixed with sidechain, final hit on beat 32).
+- Variants: `edit.html?v=a` (product tour with real dashboard shots) and `?v=b` (attacker vs defender). Add a new variant by adding
+  a `SCREENS_x` array and a `SCREEN_SETS` entry.

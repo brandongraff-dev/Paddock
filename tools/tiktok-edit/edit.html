@@ -23,7 +23,8 @@ const sc=k=>T0+k*B;let ONS=[];const LG={};
 const RED='#ff6b5a',GRN='#6bd36b';
 const C=(t,col,done)=>({t,col,done});
 // each screen = ONE beat
-const SCREENS=[
+const VAR=new URLSearchParams(location.search).get('v')||'main';
+const SCREENS_MAIN=[
 /*0*/{extra:'kali',x:50,y:1150,size:44,code:[C('┌──(root㉿kali)-[~]','#5fa8ff')]},
 /*1*/{extra:'kali',x:50,y:1150,size:44,code:[C('┌──(root㉿kali)-[~]','#5fa8ff',1),C('└─# python3 defend.py','#fff')]},
 /*2*/{card:'linux',x:70,y:1120,size:56,code:[C('$ uname -a','#8a8a8a'),C('Linux kali x86_64','#fff')]},
@@ -57,8 +58,77 @@ const SCREENS=[
 /*30*/{extra:'wall',x:90,y:780,size:84,code:[C('while attackers:','#fff'),C('    defend()','#fff')]},
 /*31*/{extra:'mosaic',strobe:1,code:[]},
 ];
-const HITS=[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];
-// ---------------- init
+const SCREENS_A=[
+/*0*/{win:'kali@paddock: ~',x:100,y:330,size:40,code:[C('$ make quickstart','#fff'),C('✓ stack up','#6bd36b'),C('✓ demo graph seeded','#6bd36b')]},
+/*1*/{win:'docker compose ps',x:100,y:330,size:34,code:[C('✓ orchestrator    up','#6bd36b'),C('✓ correlation     up','#6bd36b'),C('✓ threatintel     up','#6bd36b'),C('✓ sentry          up','#6bd36b'),C('✓ sca             up','#6bd36b'),C('✓ dashboard       up','#6bd36b')]},
+/*2*/{card:'docker',x:70,y:1120,size:56,code:[C('$ docker compose up','#fff'),C('self-hosted','#9fc2d8')]},
+/*3*/{ui:'ui_graph',rect:[0,0,1],shotTag:'dashboard · asset graph',x:60,y:1210,size:42,code:[C('GET /v1/assets/graph','#9fc2d8')]},
+/*4*/{layers:['speed','hex'],x:60,y:250,size:60,code:[C('>>> pc.surface_graph()','#fff')]},
+/*5*/{ui:'ui_graph',rect:[.58,.22,.4],shotTag:'zoom · exposed services',x:60,y:1210,size:42,code:[C('blast_score: 99','#e67350')]},
+/*6*/{layers:['ports'],code:[]},
+/*7*/{layers:['radar'],code:[]},
+/*8*/{extra:'graph',gOff:0,x:50,y:200,size:48,code:[]},
+/*9*/{extra:'graph',gOff:.45,x:50,y:200,size:48,code:[]},
+/*10*/{ui:'ui_paths',rect:[.1,.37,.82],shotTag:'dashboard · attack paths',x:60,y:1210,size:42,code:[C('GET /v1/attack-paths?kev=true','#9fc2d8')]},
+/*11*/{alert2:'crit',tags:['KEV','EPSS 0.97'],age:'9d ago',title:['Apache Log4j2 remote','code execution'],rows:[['asset','legacy-admin.acme-demo.example'],['rule','cve_match · CVE-2021-44228'],['status','open'],['blast','99']],score:97,code:[]},
+/*12*/{win:'kali@paddock: ~/paddock',x:100,y:330,size:32,code:[C('$ git log --oneline','#fff'),C('247ead5 tools: save the Paddock TikTok','#9fc2d8'),C('72c7c28 Point site, docs and SEO metad','#9fc2d8'),C('3f1d234 docs: retake README screenshot','#9fc2d8'),C('3c79940 README: launch film poster (vi','#9fc2d8'),C('ee1b110 Add punchier launch film: stro','#9fc2d8'),C('c8f3c67 Add launch film with dark cine','#9fc2d8')]},
+/*13*/{ui:'ui_findings',rect:[.18,.3,.78],shotTag:'dashboard · findings',x:60,y:1210,size:42,code:[C('KEV · blast 99 · open','#e67350')]},
+/*14*/{extra:'shark',card:'wireshark',cardSize:150,cardPos:[540,320],code:[]},
+/*15*/{collage:['cisa','nvd','mitre'],tag:['CISA · known exploited vulns','NVD · CVE-2021-44228','MITRE ATT&CK'],code:[]},
+/*16*/{extra:'graphp',gOff:5,pOff:0,x:40,y:190,size:46,code:[]},
+/*17*/{extra:'graphp',gOff:5,pOff:.45,x:40,y:190,size:46,code:[]},
+/*18*/{win:'dashboard',x:100,y:330,size:34,code:[C('$ npm test','#fff'),C(' Test Files  13 passed (13)','#6bd36b'),C('      Tests  86 passed (86)','#6bd36b')]},
+/*19*/{ui:'ui_chains',rect:[.14,.14,.8],shotTag:'dashboard · chains',x:60,y:1210,size:42,code:[C('3 findings → 1 story','#fff')]},
+/*20*/{win:'ci: build',x:100,y:330,size:36,code:[C('$ paddockctl export sarif \\\\','#fff'),C('    --out paddock.sarif','#fff'),C('✓ wrote paddock.sarif','#6bd36b')]},
+/*21*/{card:'opensourceinitiative',x:70,y:1120,size:56,code:[C('AGPL-3.0','#fff'),C('free · self-hosted','#9be28f')]},
+/*22*/{card:'claude',cardSize:300,cardPos:[540,380],win:'claude',winY:620,winH:430,x:100,y:760,size:38,code:[C('> which assets are exposed?','#fff'),C('● checking scope…','#e8906f')]},
+/*23*/{card:'python',x:70,y:1120,size:50,code:[C('$ pip install ./sdk/python','#fff'),C('paddock_sdk ✓','#6bd36b')]},
+/*24*/{kin:['Open','source.','Free.'],kinCol:'#9be28f',layers:['codebg'],code:[]},
+/*25*/{alert2:'high',tags:['secret'],age:'2d ago',title:['AWS access key committed','to repository'],rows:[['asset','acme/ops-scripts'],['rule','secret_scan'],['status','open'],['blast','80']],score:80,code:[]},
+/*26*/{extra:'fixed',code:[],layers:['codebg'],fig:{pose:'jump',x:850,y:1330,s:1.0}},
+/*27*/{ui:'ui_paths',rect:[.1,.62,.82],shotTag:'4 paths · ranked by exploitability',x:60,y:1210,size:42,code:[C('severity: critical','#e67350')]},
+/*28*/{collage:['kali','nmap','wireshark'],tag:['kali.org','nmap.org','wireshark.org'],code:[]},
+/*29*/{win:'kali@paddock: ~',x:100,y:330,size:36,code:[C('$ paddockctl scope check \\\\','#fff'),C('    evil.example','#fff'),C('denied · out of scope (exit 1)','#ff6b5a')]},
+/*30*/{extra:'wall',x:90,y:780,size:84,code:[C('while attackers:','#fff'),C('    defend()','#fff')]},
+/*31*/{extra:'mosaic',strobe:1,code:[]},
+];
+const SCREENS_B=[
+/*0*/{extra:'kali',x:50,y:1150,size:44,code:[C('┌──(root㉿kali)-[~]','#5fa8ff')]},
+/*1*/{extra:'kali',x:50,y:1150,size:44,code:[C('┌──(root㉿kali)-[~]','#5fa8ff',1),C('└─# python3 versus.py','#fff')]},
+/*2*/{versus:1,lc:[C('$ recon target','#ff6b5a')],rc:[C('$ paddockctl scope add','#fff'),C('    domain acme-demo.example','#fff')],fl:{pose:'sit',s:1.1},fr:{pose:'sit',s:1.1}},
+/*3*/{versus:1,lc:[C('door = find_open()','#ff6b5a')],rc:[C('>>> pc.surface_graph()','#fff')],fl:{pose:'run',s:1.1},fr:{pose:'sit',s:1.1}},
+/*4*/{card:'linux',x:70,y:1120,size:56,code:[C('$ uname -a','#8a8a8a'),C('Linux kali x86_64','#fff')]},
+/*5*/{tint:1,win:'recon.py',x:100,y:330,size:34,code:[C('>>> hosts = sweep(range)','#ff6b5a'),C('>>> len(hosts)','#ff6b5a'),C('48','#ff6b5a')]},
+/*6*/{meme:'m_face',code:[]},
+/*7*/{tint:1,kin:['They','scan.'],kinCol:'#ff5a46',code:[]},
+/*8*/{extra:'graph',gOff:0,x:50,y:200,size:48,code:[]},
+/*9*/{extra:'graph',gOff:.45,x:50,y:200,size:48,code:[]},
+/*10*/{meme:'m_knot',code:[]},
+/*11*/{versus:1,alert:1,lc:[C('>>> breach = True','#ff6b5a')],rc:[C('>>> pc.list_attack_paths(','#fff'),C('...     kev=True)','#fff')],fl:{pose:'jump',s:1.1},fr:{pose:'shock',s:1.0}},
+/*12*/{alert2:'crit',tags:['KEV','EPSS 0.97'],age:'9d ago',title:['Apache Log4j2 remote','code execution'],rows:[['asset','legacy-admin.acme-demo.example'],['rule','cve_match · CVE-2021-44228'],['status','open'],['blast','99']],score:97,code:[]},
+/*13*/{meme:'m_hands',code:[]},
+/*14*/{kin:['You','see it','first.'],kinCol:'#6bd36b',code:[]},
+/*15*/{collage:['kali','nmap','wireshark'],tag:['kali.org','nmap.org','wireshark.org'],code:[]},
+/*16*/{extra:'graphp',gOff:5,pOff:0,x:40,y:190,size:46,code:[]},
+/*17*/{extra:'graphp',gOff:5,pOff:.45,x:40,y:190,size:46,code:[]},
+/*18*/{extra:'graphp',gOff:5,pOff:.9,alert:1,x:40,y:190,size:42,code:[C('>>> pc.list_attack_paths(kev=True)')]},
+/*19*/{tint:1,word:'3 attack paths',wordCol:'#ff5a46',layers:['bars'],code:[]},
+/*20*/{win:'kali@paddock: ~',x:100,y:330,size:36,code:[C('$ paddockctl findings list \\\\','#fff'),C('    --severity critical --kev','#fff'),C('CRITICAL Log4Shell RCE','#e67350'),C('CRITICAL Apache 2.4.49','#e67350'),C('CRITICAL Jenkins file read','#e67350')]},
+/*21*/{meme:'m_whale',code:[]},
+/*22*/{card:'claude',cardSize:300,cardPos:[540,380],win:'claude',winY:620,winH:430,x:100,y:760,size:38,code:[C('> which assets are exposed?','#fff'),C('● checking scope…','#e8906f')]},
+/*23*/{versus:1,lc:[C('access denied','#ff6b5a')],rc:[C('>>> patch_finding(f)','#fff'),C('status = "fixed"','#6bd36b')],fl:{pose:'throw',t0:.05,s:1.1},fr:{pose:'jump',s:1.1}},
+/*24*/{extra:'fixed',code:[],layers:['codebg']},
+/*25*/{card:'openssl',x:70,y:1120,size:50,code:[C('tls: 1.3  grade A','#fff'),C('cert expires in 12 days','#e3b265')]},
+/*26*/{win:'ci: build',x:100,y:330,size:36,code:[C('$ paddockctl export sarif \\\\','#fff'),C('    --out paddock.sarif','#fff'),C('✓ wrote paddock.sarif','#6bd36b')]},
+/*27*/{collage:['cisa','nvd','mitre'],tag:['CISA · known exploited vulns','NVD · CVE-2021-44228','MITRE ATT&CK'],code:[]},
+/*28*/{card:'git',x:70,y:1120,size:50,code:[C('$ git commit -m "fix"','#fff'),C('patched.','#6bd36b')]},
+/*29*/{win:'kali@paddock: ~',x:100,y:330,size:36,code:[C('$ paddockctl scope check \\\\','#fff'),C('    evil.example','#fff'),C('denied · out of scope (exit 1)','#ff6b5a')]},
+/*30*/{extra:'wall',x:90,y:780,size:84,code:[C('while attackers:','#fff'),C('    defend()','#fff')]},
+/*31*/{extra:'mosaic',strobe:1,code:[]},
+];
+const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B};
+const SCREENS=SCREEN_SETS[VAR]||SCREENS_MAIN;
+const HITS=VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
 async function init(){
  CORPUS=(await (await fetch('build/corpus.txt')).text()).split('\n');
  const svg=await (await fetch('assets/paddock-logo.svg')).text();const re=/M(\d+) (\d+)h(\d+)v1h-\d+z/g;let m;const seen=new Set();
@@ -66,10 +136,11 @@ async function init(){
  let w=await (await fetch('assets/paddock-wordmark.svg')).text();w=w.replace('<svg ','<svg width="3136" height="808" ');
  WM=new Image();WM.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(w);await WM.decode();
  for(const n of ['python','linux','kalilinux','docker','github','git','gnubash','wireshark','openssl','opensourceinitiative','claude','anthropic','burpsuite','metasploit','owasp','ubuntu']){let t=await (await fetch('assets/logos/'+n+'.svg')).text();t=t.replace('<svg ','<svg fill="#ffffff" width="512" height="512" ');const im=new Image();im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(t);await im.decode();LG[n]=im}
- ONS=(await (await fetch('build/onsets.json')).json()).on;
- try{const cf=await (await fetch('build/config.json')).json();B=cf.beat;T0=cf.t0;END=cf.end;HORSE_T=T0+32*B}catch(e){}
+ ONS=(await (await fetch(`build/onsets-${VAR}.json`).then(r=>r.ok?r:fetch('build/onsets.json'))).json()).on;
+ try{const cf=await (await fetch(`build/config-${VAR}.json`).then(r=>r.ok?r:fetch('build/config.json'))).json();B=cf.beat;T0=cf.t0;END=cf.end;HORSE_T=T0+32*B}catch(e){}
  {const n=document.createElement('canvas');n.width=n.height=256;const nx=n.getContext('2d'),id=nx.createImageData(256,256);for(let i=0;i<65536;i++){const v=Math.random()*255;id.data[i*4]=id.data[i*4+1]=id.data[i*4+2]=v;id.data[i*4+3]=255}nx.putImageData(id,0,0);window.NOISE=n}
- window.IM={};for(const n of ['m_knot','m_face','m_hands','m_whale']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/memes/'+n+'.png'})}
+ window.IM={};for(const n of ['ui_graph','ui_paths','ui_findings','ui_chains']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='assets/ui/'+(n==='ui_paths'?'attack-paths':n.slice(3))+'.jpg'})}
+ for(const n of ['m_knot','m_face','m_hands','m_whale']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/memes/'+n+'.png'})}
  for(const n of ['cisa','nvd','nmap','wireshark','kali','owasp','mitre','repo']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/shots/'+n+'.png'})}
  await document.fonts.load('300 60px NR');await document.fonts.ready;window.READY=true}
 // ---------------- code rendering
@@ -154,7 +225,7 @@ function finale(t){
  // opening flash + ring, and the song's last hit flash
  const f=1-seg(lt,0,.35);if(f>0){ctx.fillStyle=`rgba(255,255,255,${.85*f})`;ctx.fillRect(0,0,W,H)}
  const rr=seg(lt,0,.8);if(rr>0&&rr<1){ctx.strokeStyle=`rgba(255,235,210,${1-rr})`;ctx.lineWidth=3+30*(1-rr);ctx.beginPath();ctx.arc(W/2,820,rr*1300,0,6.283);ctx.stroke()}
- const lh=seg(t,16.5,16.62);const lo=1-seg(t,16.62,16.85);if(lh>0&&lo>0){ctx.fillStyle=`rgba(255,255,255,${.7*Math.min(lh,lo)})`;ctx.fillRect(0,0,W,H)}
+ const lh=seg(t,END-.4,END-.28);const lo=1-seg(t,END-.28,END-.05);if(lh>0&&lo>0){ctx.fillStyle=`rgba(255,255,255,${.7*Math.min(lh,lo)})`;ctx.fillRect(0,0,W,H)}
 }
 // ---------------- badge (corner logo like the reference's channel mark)
 function badge(){const cell=3.6,ox=412,oy=1409;ctx.save();ctx.shadowColor='rgba(255,255,255,.6)';ctx.shadowBlur=14;ctx.fillStyle='rgba(236,230,218,.95)';for(const [x,y] of LOGO)ctx.fillRect(ox+x*cell,oy+y*cell,cell-.4,cell-.4);ctx.restore();ctx.font=`300 36px NR,serif`;ctx.fillStyle='#ece6da';ctx.textBaseline='middle';ctx.fillText('paddock',ox+31*cell+16,1445)}
@@ -254,6 +325,17 @@ function memeFull(S,lt,t){const im=window.IM&&window.IM[S.meme];if(!im)return;co
  ctx.save();ctx.filter='blur(28px) brightness(.45)';const cs=Math.max(W/im.width,H/im.height)*1.2;ctx.drawImage(im,(W-im.width*cs)/2,(H-im.height*cs)/2,im.width*cs,im.height*cs);ctx.restore();
  const fit=im.height/im.width>1.2?Math.max(W/im.width,1500/im.height):W/im.width,w=im.width*fit*z,h=im.height*fit*z,k=easeOut(seg(lt,0,.1));
  ctx.save();ctx.globalAlpha=Math.min(1,k*1.8);ctx.translate(W/2,im.height/im.width>1.2?780:760);ctx.scale(lerp(1.12,1,k),lerp(1.12,1,k));ctx.drawImage(im,-w/2,-h/2,w,h);ctx.restore()}
+
+function uiFocus(S,lt,t){const im=window.IM&&window.IM[S.ui];if(!im)return;const k=easeOut(seg(lt,0,.1)),[fx,fy,fw]=S.rect,bw=1000,bh=780,drift=.025*lt/B;
+ const sw=im.width*fw/(1+.04*lt/B),sh=sw*bh/bw,sx=Math.max(0,Math.min(im.width-sw,im.width*(fx+drift*.4))),sy=Math.max(0,Math.min(im.height-sh,im.height*fy));
+ ctx.save();ctx.globalAlpha=Math.min(1,k*1.6);ctx.translate(540,640);ctx.scale(lerp(1.06,1,k),lerp(1.06,1,k));ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=28;ctx.shadowOffsetY=10;ctx.fillStyle='#000';ctx.fillRect(-bw/2-6,-bh/2-6,bw+12,bh+12);ctx.shadowBlur=0;ctx.shadowOffsetY=0;
+ ctx.drawImage(im,sx,sy,sw,sh,-bw/2,-bh/2,bw,bh);ctx.fillStyle='rgba(0,0,0,.82)';ctx.font=`600 24px ${MONO}`;const tw=ctx.measureText(S.shotTag).width+30;ctx.fillRect(-bw/2,-bh/2-42,tw,36);ctx.fillStyle='#e8e8e8';ctx.textBaseline='middle';ctx.textAlign='left';ctx.fillText(S.shotTag,-bw/2+15,-bh/2-24);ctx.restore()}
+function versus(S,lt,t){ctx.fillStyle='rgba(70,6,6,.55)';ctx.fillRect(0,0,540,H);ctx.fillStyle='rgba(8,24,44,.55)';ctx.fillRect(540,0,540,H);ctx.fillStyle='rgba(255,255,255,.25)';ctx.fillRect(539,0,2,H);
+ ctx.font=`700 26px ${MONO}`;ctx.textBaseline='alphabetic';ctx.textAlign='left';ctx.fillStyle='#ff6b5a';ctx.fillText('ATTACKER',30,180);ctx.fillStyle='#7cc8ff';ctx.fillText('DEFENDER',570,180);
+ const mk=(code,x)=>({x,y:260,size:30,sel:null,lines:code.map((l,j)=>({t:l.t,at:l.done?-5:(j*.05),cps:l.done?1e6:Math.max(22,l.t.length/.3),col:l.col}))});
+ drawCode(mk(S.lc,30),lt,t);drawCode(mk(S.rc,562),lt,t);
+ figure({...S.fl,col:'#ff6b5a',x:270,y:1120},lt,t);figure({...S.fr,col:TAN,x:810,y:1120},lt,t)}
+function speed(t){ctx.save();ctx.translate(540,820);ctx.strokeStyle='rgba(236,230,218,.22)';ctx.lineWidth=2;for(let i=0;i<46;i++){const a=hash(i,3)*6.283,r0=260+((t*900+hash(i,4)*1400)%1300),len=60+hash(i,5)*140;ctx.beginPath();ctx.moveTo(Math.cos(a)*r0,Math.sin(a)*r0);ctx.lineTo(Math.cos(a)*(r0+len),Math.sin(a)*(r0+len));ctx.stroke()}ctx.restore()}
 function hud(t){ctx.save();ctx.textBaseline='alphabetic';ctx.font=`500 22px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.6)';ctx.textAlign='left';ctx.fillText('PADDOCK // SURFACE MONITOR',60,92);ctx.textAlign='right';ctx.fillStyle='#6bd36b';ctx.fillText('● LIVE',1020,92);ctx.fillStyle='rgba(236,230,218,.16)';ctx.fillRect(60,108,960,1);
  ctx.strokeStyle='rgba(236,230,218,.3)';ctx.lineWidth=2;[[30,30,1,1],[1050,30,-1,1],[30,1890,1,-1],[1050,1890,-1,-1]].forEach(([x,y,a,b])=>{ctx.beginPath();ctx.moveTo(x,y+b*44);ctx.lineTo(x,y);ctx.lineTo(x+a*44,y);ctx.stroke()});
  ctx.fillStyle='rgba(236,230,218,.1)';for(let y=140;y<1360;y+=40)ctx.fillRect(10,y,y%200===140?18:9,1);
@@ -273,7 +355,7 @@ function tri(cx,cy,s,v,a){ctx.save();ctx.globalAlpha=a;ctx.translate(cx,cy);
  ctx.restore()}
 function triLayer(t){
  let hit=null;for(const h of HITS){const t0=sc(h.k);if(t>=t0&&t<t0+2*B)hit={...h,t0}}
- const firstEnd=sc(9),finEnd=sc(34);
+ const firstEnd=sc(HITS[0].k+2),finEnd=sc(HITS[2].k+2);
  if(hit){const p=t-hit.t0,k=easeOut(seg(p,0,.12)),mv=ease(seg(p,1.45*B,2*B));
   const cx=lerp(540,150,mv),cy=lerp(820,1465,mv),s=lerp(880*hit.big*lerp(1.7,1,k),190,mv);
   // dim + flash + shake
@@ -281,7 +363,7 @@ function triLayer(t){
   let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}
   const sx=(hash(Math.floor(t*60),5)-.5)*14*(1-mv)*(p<.3?1:.3);ctx.save();ctx.translate(sx,0);tri(cx,cy,s*(1+.035*bp),hit.v,Math.min(1,k*1.6));ctx.restore();
   if(p<.18){ctx.fillStyle=`rgba(255,255,255,${.6*(1-p/.18)})`;ctx.fillRect(0,0,W,H)}
- }else if(t>=firstEnd){const v=t>=finEnd?'pd':(t>=sc(18)?'kali':'py');let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}tri(150,1465,190*(1+.12*bp),v,.95);ctx.save();ctx.font=`500 32px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.85)';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText('openpaddock.dev',262,1475);ctx.restore()}}
+ }else if(t>=firstEnd){const v=t>=finEnd?'pd':(t>=sc(HITS[1].k+2)?'kali':'py');let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}tri(150,1465,190*(1+.12*bp),v,.95);ctx.save();ctx.font=`500 32px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.85)';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText('openpaddock.dev',262,1475);ctx.restore()}}
 // ---------------- compositor
 function render(t){
  if(!window.READY)return;
@@ -291,13 +373,13 @@ function render(t){
  if(t<HORSE_T){
   const k=Math.max(0,Math.min(31,Math.floor((t-T0)/B))),S0=SCREENS[k],lt=t-sc(k)+(t<T0?0:0);
   // build a code-shot object for drawCode
-  const S={x:S0.x||60,y:S0.y||250,size:S0.size||56,sel:S0.sel?{line:(S0.code.length-1),at:.3}:null,lines:S0.code.map((l,j)=>({t:l.t,at:l.done?-5:(j*.05),cps:l.done?1e6:Math.max(22,l.t.length/.3),col:l.col}))};
+  const S={x:S0.x||60,y:S0.y||250,size:S0.size||56,sel:S0.sel?{line:((S0.code||[]).length-1),at:.3}:null,lines:(S0.code||[]).map((l,j)=>({t:l.t,at:l.done?-5:(j*.05),cps:l.done?1e6:Math.max(22,l.t.length/.3),col:l.col}))};
   let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.2)bp=Math.max(bp,(1-d/.2)*Math.min(1,os/2.2))}
   const hitNow=HITS.some(h=>t>=sc(h.k)&&t<sc(h.k)+.2);
   const sh=Math.pow(1-seg(lt,0,.2),2)*(k===0?0:14),z=1+.065*Math.pow(1-seg(lt,0,.16),2)+.016*bp;
   ctx.save();ctx.translate(W/2+(hash(Math.floor(t*60),1)-.5)*sh,H/2+(hash(Math.floor(t*60),2)-.5)*sh);ctx.scale(z,z);ctx.translate(-W/2,-H/2);
   if(S0.tint)tintFx(t,lt);
-  for(const L of (S0.layers||[])){if(L==='codebg')codebg(t,.13);if(L==='packets')packets(t);if(L==='ports')ports(t,lt);if(L==='radar')radar(t);if(L==='hex')hex(t);if(L==='bars')bars(t)}
+  for(const L of (S0.layers||[])){if(L==='codebg')codebg(t,.13);if(L==='packets')packets(t);if(L==='ports')ports(t,lt);if(L==='radar')radar(t);if(L==='hex')hex(t);if(L==='bars')bars(t);if(L==='speed')speed(t)}
   if(S0.win)termWin(S0,lt);
   if(S0.extra==='shark')shark(t,lt);
   if(S0.card)cardLogo(S0,lt,t);
@@ -305,6 +387,8 @@ function render(t){
   if(S0.alert2)alertCard(S0,lt,t);
   if(S0.collage)collage(S0,lt,t);
   if(S0.shot)shotFull(S0,lt,t);
+  if(S0.ui)uiFocus(S0,lt,t);
+  if(S0.versus)versus(S0,lt,t);
   if(S0.meme)memeFull(S0,lt,t);
   if(S0.rogue)rogue(S0,lt,t);
   if(S0.extra==='mosaic')mosaic(lt,t);
