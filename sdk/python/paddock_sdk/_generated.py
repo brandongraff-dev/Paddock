@@ -4165,6 +4165,7 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_suppression': ('GET', '/v1/suppressions/{sup_id}', False),
     'patch_suppression': ('PATCH', '/v1/suppressions/{sup_id}', False),
     'delete_suppression': ('DELETE', '/v1/suppressions/{sup_id}', False),
+    'system_inventory': ('GET', '/v1/system', False),
     'services_status': ('GET', '/v1/system/services', False),
     'list_feeds': ('GET', '/v1/ti/feeds', False),
     'create_feed': ('POST', '/v1/ti/feeds', False),
@@ -5755,6 +5756,13 @@ class GeneratedOperations:
         """DELETE /v1/suppressions/{sup_id} -- Delete Suppression
         """
         return self._request('DELETE', '/v1/suppressions/{sup_id}', path_params={'sup_id': sup_id})
+
+    def system_inventory(self) -> dict[str, Any]:
+        """GET /v1/system -- System Inventory
+
+        What this install is made of, and what is healthy right now.
+        """
+        return self._request('GET', '/v1/system')
 
     def services_status(self) -> ServicesOut:
         """GET /v1/system/services -- Services Status

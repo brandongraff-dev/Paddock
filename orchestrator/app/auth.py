@@ -635,6 +635,8 @@ _rule("POST", r"/v1/sensors/ingest/(claim|done)", "write")
 # Token metadata is admin-only; the rest of GET /v1/sensors falls to `read`,
 # every write to the deny-closed `admin` default.
 _rule("GET", r"/v1/sensors/tokens", "admin")
+# System inventory (versions, component health) is operator information.
+_rule("GET", r"/v1/system", "admin")
 
 
 def required_capability(method: str, path: str) -> str | None:

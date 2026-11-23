@@ -90,6 +90,16 @@ git clone https://github.com/brandongraff-dev/paddock && cd paddock
 make quickstart        # builds the stack, seeds a demo surface, prints the URL + login
 ```
 
+**On Windows** (no `make` needed; Docker Desktop must be installed):
+
+```powershell
+irm https://raw.githubusercontent.com/brandongraff-dev/paddock/main/scripts/install.ps1 | iex
+```
+
+It starts Docker Desktop if it is off, generates secrets, runs the lite stack
+and prints the URL and admin login. Options (`-Dir`, `-Active`, `-Uninstall`)
+are listed at the top of [`scripts/install.ps1`](scripts/install.ps1).
+
 Open **http://localhost:3000** and start on the **Graph** page. Prefer something
 lighter? `make lite` runs a 5-service single node (~150 MB RAM) with the same
 hardening. Production: [Helm chart and operations guide](docs/OPERATIONS.md).

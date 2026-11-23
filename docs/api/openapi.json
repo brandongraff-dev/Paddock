@@ -29990,6 +29990,30 @@
         ]
       }
     },
+    "/v1/system": {
+      "get": {
+        "description": "What this install is made of, and what is healthy right now.",
+        "operationId": "system_inventory_v1_system_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response System Inventory V1 System Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "System Inventory",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/v1/system/services": {
       "get": {
         "operationId": "services_status_v1_system_services_get",

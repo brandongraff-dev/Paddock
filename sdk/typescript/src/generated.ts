@@ -3125,6 +3125,7 @@ export const OPERATIONS = {
   getSuppression: ["GET", "/v1/suppressions/{sup_id}", false],
   patchSuppression: ["PATCH", "/v1/suppressions/{sup_id}", false],
   deleteSuppression: ["DELETE", "/v1/suppressions/{sup_id}", false],
+  systemInventory: ["GET", "/v1/system", false],
   servicesStatus: ["GET", "/v1/system/services", false],
   listFeeds: ["GET", "/v1/ti/feeds", false],
   createFeed: ["POST", "/v1/ti/feeds", false],
@@ -5148,6 +5149,15 @@ export abstract class GeneratedOperations {
    */
   deleteSuppression(supId: string, options?: RequestOptions): Promise<void> {
     return this._request<void>("DELETE", "/v1/suppressions/{sup_id}", { pathParams: { sup_id: supId }, options });
+  }
+
+  /**
+   * GET /v1/system — System Inventory
+   *
+   * What this install is made of, and what is healthy right now.
+   */
+  systemInventory(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/system", { options });
   }
 
   /**
