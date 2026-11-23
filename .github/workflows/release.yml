@@ -12,8 +12,20 @@ name: Release
 #   5. attaches both SBOMs as signed in-toto attestations (cosign attest),
 #   6. emits SLSA build provenance (actions/attest-build-provenance), pushed
 #      to the registry and to GitHub's attestation store,
-# then creates the GitHub release with the SBOMs, a SHA256SUMS manifest of the
-# image digests, and a keyless signature bundle for that manifest.
+# then checks the lite-stack images can be pulled ANONYMOUSLY (a new GHCR
+# package can start out private; the one-click installer would then fail for
+# every user), and creates the GitHub release with the SBOMs, a SHA256SUMS
+# manifest of the image digests, a keyless signature bundle for that manifest,
+# and the install bundle for non-technical users (scripts/make_release_bundle.py):
+#   paddock-lite-X.Y.Z.zip   compose file + install.bat/.ps1/.sh + README
+#   install.ps1, install.sh  stamped with the version, so
+#                            releases/latest/download/install.ps1 always pulls
+#                            the matching prebuilt images (1-2 min, no build)
+#   BUNDLE_SHA256SUMS.txt    + keyless signature
+#
+# First publish: pushing the first vX.Y.Z tag creates public packages on GHCR.
+# Do that deliberately (docs/trust/VERIFY.md). Pre-release tags (v1.0.0-rc.1)
+# publish images but are not marked "latest", so the one-liners ignore them.
 #
 # Hardening notes: least-privilege `permissions` per job; no secrets other than
 # the ephemeral GITHUB_TOKEN / OIDC token; third-party actions are pinned to a
@@ -169,14 +181,54 @@ jobs:
             digests/
           retention-days: 7
 
+  verify-pull:
+    name: lite images are publicly pullable
+    needs: images
+    runs-on: ubuntu-latest
+    permissions: {}          # deliberately nothing: this must work without any login
+    steps:
+      - name: Anonymous manifest check
+        env:
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          bad=0
+          # the four images docker-compose.lite.yml uses (scripts/tests/test_release_bundle.py
+          # checks this list against the compose file)
+          for svc in orchestrator dashboard worker-passive worker-active; do
+            ref="ghcr.io/${owner}/paddock-${svc}:${version}"
+            if docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "ok      $ref"
+            else
+              echo "::error::cannot anonymously pull $ref. If the package is private, open github.com/users/${owner}/packages (or the org's Packages tab) -> paddock-${svc} -> Package settings -> Change visibility -> Public, then re-run this failed job."
+              bad=1
+            fi
+          done
+          exit "$bad"
+
   release:
     name: GitHub release
-    needs: images
+    needs: [images, verify-pull]
     runs-on: ubuntu-latest
     permissions:
       contents: write        # create the release
       id-token: write        # keyless-sign the manifest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the install bundle (zip + stamped installers)
+        run: python3 scripts/make_release_bundle.py --version "${GITHUB_REF_NAME#v}" --out bundle
+
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
@@ -193,12 +245,21 @@ jobs:
           (cd sbom && sha256sum *.json) > SBOM_SHA256SUMS.txt
           cosign sign-blob --yes --bundle IMAGE_DIGESTS.txt.sigstore.json IMAGE_DIGESTS.txt
           cosign sign-blob --yes --bundle SBOM_SHA256SUMS.txt.sigstore.json SBOM_SHA256SUMS.txt
+          cp ../bundle/BUNDLE_SHA256SUMS.txt .
+          cosign sign-blob --yes --bundle BUNDLE_SHA256SUMS.txt.sigstore.json BUNDLE_SHA256SUMS.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # v1.0.0-rc.1 is a pre-release: not "latest", so releases/latest/download/* skips it
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
+            bundle/paddock-lite-*.zip
+            bundle/install.ps1
+            bundle/install.sh
+            out/BUNDLE_SHA256SUMS.txt
+            out/BUNDLE_SHA256SUMS.txt.sigstore.json
             out/sbom/*.json
             out/IMAGE_DIGESTS.txt
             out/IMAGE_DIGESTS.txt.sigstore.json

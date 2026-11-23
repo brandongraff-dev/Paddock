@@ -1,0 +1,144 @@
+name: Installers (Windows PowerShell)
+
+# scripts/install.ps1 is the path non-technical Windows users take, and a Linux
+# sandbox cannot run it. This runs it on real Windows PowerShell 5.1 (what
+# Windows ships) and PowerShell 7, end to end against a FAKE docker (a .cmd
+# shim that logs its arguments): parse check, dry run, a full install, the
+# release-zip layout (install.bat), re-run, uninstall.
+#
+# Windows runners only have Windows containers, so the real stack is not
+# started here; the Linux `install` workflow covers that.
+
+on:
+  pull_request:
+    paths:
+      - "scripts/install.*"
+      - "scripts/make_release_bundle.py"
+      - "scripts/bundle/**"
+      - "scripts/tests/ok_server.py"
+      - "docker-compose.lite.yml"
+      - ".github/workflows/installers.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/install.*"
+      - "scripts/make_release_bundle.py"
+      - "docker-compose.lite.yml"
+      - ".github/workflows/installers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: install.ps1 on ${{ matrix.shell }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]      # powershell = Windows PowerShell 5.1
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Parse check (no syntax errors, ASCII only)
+        run: |
+          $errs = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\install.ps1", [ref]$null, [ref]$errs)
+          if ($errs) { $errs | ForEach-Object { Write-Host $_.ToString() }; exit 1 }
+          $bytes = [IO.File]::ReadAllBytes("$PWD\scripts\install.ps1")
+          if ($bytes | Where-Object { $_ -gt 127 }) { Write-Host 'install.ps1 contains non-ASCII bytes'; exit 1 }
+
+      - name: Dry run (nothing changes, no docker needed)
+        run: |
+          $env:USERPROFILE | Out-Null
+          .\scripts\install.ps1 -DryRun -Dir "$env:RUNNER_TEMP\p1" -Version 1.2.3 -Active
+          .\scripts\install.ps1 -DryRun -Uninstall -Purge -Dir "$env:RUNNER_TEMP\p1"
+          if (Test-Path "$env:RUNNER_TEMP\p1") { Write-Host 'dry run created files'; exit 1 }
+
+      - name: Fake docker + health stub
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP 'fakebin'
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          @'
+          @echo off
+          echo %* >> "%FAKE_DOCKER_LOG%"
+          if "%1"=="version" echo 26.1.0
+          if "%1"=="info" (echo %* | findstr /C:"OSType" >nul && echo linux)
+          exit /b 0
+          '@ | Set-Content -Encoding ASCII (Join-Path $bin 'docker.cmd')
+          "$bin" | Out-File -Append -Encoding ASCII $env:GITHUB_PATH
+          "FAKE_DOCKER_LOG=$env:RUNNER_TEMP\docker.log" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
+          "PADDOCK_API_URL=http://127.0.0.1:8099" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
+          "PADDOCK_UI_URL=http://127.0.0.1:8099" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
+          Start-Process python -ArgumentList 'scripts/tests/ok_server.py', '8099' -WindowStyle Hidden
+          Start-Sleep -Seconds 2
+
+      - name: Full install from source mode (no version)
+        run: |
+          $env:PADDOCK_SRC_DIR = "$PWD"
+          .\scripts\install.ps1 -Dir "$env:RUNNER_TEMP\src-mode" -Wait 30
+          if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { exit 1 }
+          $log = Get-Content $env:FAKE_DOCKER_LOG -Raw
+          if ($log -notmatch 'up -d --build') { Write-Host $log; throw 'expected a from-source start' }
+          if ($log -match ' pull') { Write-Host $log; throw 'source mode must not pull' }
+
+      - name: Full install in release mode (pull, then start without building)
+        run: |
+          Remove-Item $env:FAKE_DOCKER_LOG -ErrorAction SilentlyContinue
+          $env:PADDOCK_SRC_DIR = "$PWD"
+          .\scripts\install.ps1 -Dir "$env:RUNNER_TEMP\rel-mode" -Version v1.2.3 -Wait 30
+          $log = Get-Content $env:FAKE_DOCKER_LOG -Raw
+          if ($log -notmatch ' pull') { Write-Host $log; throw 'expected docker compose pull' }
+          if ($log -notmatch 'up -d --no-build') { Write-Host $log; throw 'expected up -d --no-build' }
+          $envf = Get-Content "$env:RUNNER_TEMP\rel-mode\.env" -Raw
+          if ($envf -notmatch '(?m)^PADDOCK_VERSION=1\.2\.3$') { throw 'PADDOCK_VERSION not written' }
+          if ($envf -match "`r") { throw '.env must use LF endings (Docker Compose)' }
+          foreach ($k in 'POSTGRES_PASSWORD', 'JWT_SECRET', 'PADDOCK_SECRET_KEY', 'AUDIT_HMAC_KEY', 'ADMIN_BOOTSTRAP_PASSWORD') {
+            if ($envf -notmatch "(?m)^$k=\S{20,}$") { throw "$k not generated" }
+          }
+
+      - name: Release-zip layout (stamped scripts, install.bat, no download)
+        run: |
+          python scripts/make_release_bundle.py --version 4.5.6 --out "$env:RUNNER_TEMP\dist"
+          Expand-Archive "$env:RUNNER_TEMP\dist\paddock-lite-4.5.6.zip" -DestinationPath "$env:RUNNER_TEMP\unzipped"
+          $z = Join-Path $env:RUNNER_TEMP 'unzipped\paddock-lite-4.5.6'
+          Remove-Item $env:FAKE_DOCKER_LOG -ErrorAction SilentlyContinue
+          $env:PADDOCK_SRC_DIR = ''
+          # what a double-click does
+          Push-Location $z
+          cmd /c "echo.| install.bat -Dir `"$env:RUNNER_TEMP\zip-mode`" -Wait 30"
+          if ($LASTEXITCODE -ne 0) { throw "install.bat exited $LASTEXITCODE" }
+          Pop-Location
+          $log = Get-Content $env:FAKE_DOCKER_LOG -Raw
+          if ($log -notmatch 'up -d --no-build') { Write-Host $log; throw 'zip install must start prebuilt images' }
+          foreach ($f in '.env', 'docker-compose.lite.yml', 'schema\001_scope.sql', 'scripts\install.ps1') {
+            if (-not (Test-Path (Join-Path "$env:RUNNER_TEMP\zip-mode" $f))) { throw "missing $f" }
+          }
+          if ((Get-Content "$env:RUNNER_TEMP\zip-mode\.env" -Raw) -notmatch '(?m)^PADDOCK_VERSION=4\.5\.6$') { throw 'zip version not pinned' }
+
+      - name: Re-run keeps secrets; uninstall keeps data; purge removes it
+        run: |
+          $d = "$env:RUNNER_TEMP\rel-mode"
+          $before = (Get-FileHash "$d\.env").Hash
+          $env:PADDOCK_SRC_DIR = "$PWD"
+          .\scripts\install.ps1 -Dir $d -Version 1.2.3 -Wait 30
+          if ((Get-FileHash "$d\.env").Hash -ne $before) { throw 're-run changed .env' }
+          .\scripts\install.ps1 -Uninstall -Dir $d
+          if (-not (Test-Path "$d\.env")) { throw 'uninstall must keep .env' }
+          .\scripts\install.ps1 -Uninstall -Purge -Yes -Dir $d
+          if (Test-Path $d) { throw 'purge must remove the directory' }

@@ -90,15 +90,26 @@ git clone https://github.com/brandongraff-dev/paddock && cd paddock
 make quickstart        # builds the stack, seeds a demo surface, prints the URL + login
 ```
 
-**On Windows** (no `make` needed; Docker Desktop must be installed):
+**On Windows** (no `make`, no building, no API keys; Docker Desktop must be installed):
+
+1. Download **`paddock-lite-X.Y.Z.zip`** from the
+   [latest release](https://github.com/brandongraff-dev/paddock/releases/latest),
+   unzip it and double-click **`install.bat`**.
+2. Or, in PowerShell:
+   `irm https://github.com/brandongraff-dev/paddock/releases/latest/download/install.ps1 | iex`
+
+Both pull ready-made, signed images (about 1-2 minutes), start Docker Desktop if
+it is off, generate secrets, and print the URL and admin login. Options
+(`-Dir`, `-Active`, `-Uninstall`) are listed at the top of
+[`scripts/install.ps1`](scripts/install.ps1); how to verify the download is in
+[`docs/trust/VERIFY.md`](docs/trust/VERIFY.md).
+
+No release yet, or want the latest `main`? This builds from source instead (15+
+minutes):
 
 ```powershell
 irm https://raw.githubusercontent.com/brandongraff-dev/paddock/main/scripts/install.ps1 | iex
 ```
-
-It starts Docker Desktop if it is off, generates secrets, runs the lite stack
-and prints the URL and admin login. Options (`-Dir`, `-Active`, `-Uninstall`)
-are listed at the top of [`scripts/install.ps1`](scripts/install.ps1).
 
 Open **http://localhost:3000** and start on the **Graph** page. Prefer something
 lighter? `make lite` runs a 5-service single node (~150 MB RAM) with the same

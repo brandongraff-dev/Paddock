@@ -18,6 +18,14 @@
 #       make lite                    # = the command below + .env bootstrap
 #       docker compose -f docker-compose.lite.yml up -d --build
 #
+# Images: every Paddock service has BOTH `image:` and `build:`.
+#   * From source (make lite, the default): `up --build` builds them and tags
+#     them paddock-<service>:dev locally.
+#   * From a release (scripts/install.*, the release zip): PADDOCK_VERSION=1.2.3
+#     in .env makes `docker compose pull` fetch the signed, prebuilt images
+#     from GHCR (about 1-2 minutes instead of 15+), then `up --no-build`.
+#   PADDOCK_REGISTRY points forks at their own registry.
+#
 # Resources (see README "Lite mode"): ~150 MB RAM idle (measured), 1 GB
 # recommended, 1–2 vCPU, ~1.3 GB of images (+3.5 GB with worker-active).
 # =============================================================================
@@ -73,6 +81,7 @@ services:
       retries: 20
 
   orchestrator:
+    image: ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}/paddock-orchestrator:${PADDOCK_VERSION:-dev}
     build:
       context: .
       dockerfile: orchestrator/Dockerfile
@@ -105,6 +114,7 @@ services:
       start_period: 30s
 
   dashboard:
+    image: ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}/paddock-dashboard:${PADDOCK_VERSION:-dev}
     build: ./dashboard
     security_opt: ["no-new-privileges:true"]
     read_only: true
@@ -127,6 +137,7 @@ services:
       start_period: 20s
 
   worker-passive:
+    image: ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}/paddock-worker-passive:${PADDOCK_VERSION:-dev}
     build: ./workers/passive
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -148,6 +159,7 @@ services:
 
   # Optional: polite active probing (HTTP/TLS/ports). `make lite-active`.
   worker-active:
+    image: ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}/paddock-worker-active:${PADDOCK_VERSION:-dev}
     build: ./workers/active
     profiles: ["active"]
     security_opt: ["no-new-privileges:true"]

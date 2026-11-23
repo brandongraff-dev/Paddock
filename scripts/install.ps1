@@ -14,9 +14,18 @@
 # the URL and the admin credentials. Safe to re-run: existing .env values,
 # containers and data are kept.
 #
+# Prebuilt vs from source: the copy attached to a GitHub release is stamped with
+# its version and pulls the signed, prebuilt images from GHCR (1-2 minutes).
+# A copy taken from a branch has no version and builds from source (15+
+# minutes), unless you pass -Version. Get the release copy with:
+#   irm https://github.com/brandongraff-dev/paddock/releases/latest/download/install.ps1 | iex
+# or download the release zip and double-click install.bat.
+#
 # Options:
 #   -Dir DIR        install directory            (default: %USERPROFILE%\paddock, or $env:PADDOCK_HOME)
-#   -Ref REF        git branch or tag to install (default: main, or $env:PADDOCK_REF)
+#   -Version X.Y.Z  release to install (prebuilt images; default: the version this
+#                   script was stamped with, else the one in .env, else build from source)
+#   -Ref REF        git branch or tag to install (default: v<version>, else main, or $env:PADDOCK_REF)
 #   -Repo OWNER/R   GitHub repository            (default: brandongraff-dev/paddock, or $env:PADDOCK_REPO)
 #   -Active         also start the active worker (polite HTTP/TLS/port probing)
 #   -Upgrade        re-download the sources even if the directory already has them
@@ -29,13 +38,17 @@
 #
 # Environment for testing / air-gapped use: PADDOCK_SRC_DIR (copy sources from a
 # local directory instead of downloading), PADDOCK_API_URL, PADDOCK_UI_URL,
-# PADDOCK_SHA256 (pin the downloaded archive).
+# PADDOCK_SHA256 (pin the downloaded archive), PADDOCK_VERSION (= -Version),
+# PADDOCK_REGISTRY (image registry/namespace, default ghcr.io/brandongraff-dev).
+# When this script sits next to docker-compose.lite.yml (the release zip), those
+# files are used instead of downloading anything.
 #
 # Keep this file ASCII-only: Windows PowerShell 5.1 reads BOM-less files as ANSI.
 [CmdletBinding()]
 param(
     [string]$Dir      = $(if ($env:PADDOCK_HOME) { $env:PADDOCK_HOME } else { Join-Path $env:USERPROFILE 'paddock' }),
-    [string]$Ref      = $(if ($env:PADDOCK_REF)  { $env:PADDOCK_REF }  else { 'main' }),
+    [string]$Ref      = $(if ($env:PADDOCK_REF)  { $env:PADDOCK_REF }  else { '' }),
+    [string]$Version  = $(if ($env:PADDOCK_VERSION) { $env:PADDOCK_VERSION } else { '' }),
     [string]$Repo     = $(if ($env:PADDOCK_REPO) { $env:PADDOCK_REPO } else { 'brandongraff-dev/paddock' }),
     [int]$Wait        = 300,
     [switch]$Active,
@@ -51,6 +64,11 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
+# Stamped with the release version by scripts/make_release_bundle.py. Empty in a
+# checkout: then the stack is built from source.
+$StampedVersion = ''
+
+$Registry     = if ($env:PADDOCK_REGISTRY) { $env:PADDOCK_REGISTRY } else { 'ghcr.io/brandongraff-dev' }
 $ApiUrl       = if ($env:PADDOCK_API_URL) { $env:PADDOCK_API_URL } else { 'http://127.0.0.1:8080' }
 $UiUrl        = if ($env:PADDOCK_UI_URL)  { $env:PADDOCK_UI_URL }  else { 'http://localhost:3000' }
 $ComposeFile  = 'docker-compose.lite.yml'
@@ -67,7 +85,8 @@ function Die($m)  { Write-Host "error: $m" -ForegroundColor Red; throw "paddock-
 # argument checks
 # ---------------------------------------------------------------------------
 if ($Repo -notmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$') { Die '-Repo must look like OWNER/NAME' }
-if ($Ref  -notmatch '^[A-Za-z0-9._/-]+$')                  { Die '-Ref contains unexpected characters' }
+if ($Ref  -ne '' -and $Ref -notmatch '^[A-Za-z0-9._/-]+$') { Die '-Ref contains unexpected characters' }
+if ($Version -ne '' -and $Version -notmatch '^[A-Za-z0-9._-]+$') { Die '-Version contains unexpected characters' }
 if ($Purge -and -not $Uninstall)                           { Die '-Purge only makes sense with -Uninstall' }
 
 # ---------------------------------------------------------------------------
@@ -79,7 +98,9 @@ function Native([scriptblock]$Cmd, [switch]$Quiet) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        if ($Quiet) { $script:Out = & $Cmd 2>&1 | Out-String } else { & $Cmd }
+        # Out-Host keeps the command's output on screen and OUT of this function's
+        # return value, which must be the exit code and nothing else.
+        if ($Quiet) { $script:Out = & $Cmd 2>&1 | Out-String } else { & $Cmd | Out-Host }
         return $LASTEXITCODE
     } finally { $ErrorActionPreference = $prev }
 }
@@ -141,6 +162,41 @@ function Ensure-Env($key, [scriptblock]$gen) {
     } else {
         Say "   kept existing $key"
     }
+}
+
+# Set KEY unconditionally (for non-secret settings such as the version).
+function Set-EnvValue($key, $val) {
+    $lines = @(Read-EnvLines)
+    $found = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match ('^' + [regex]::Escape($key) + '=')) { $lines[$i] = "$key=$val"; $found = $true }
+    }
+    if (-not $found) { $lines += "$key=$val" }
+    Write-EnvLines $lines
+}
+
+# Version to install: -Version / $env:PADDOCK_VERSION > stamped into this script >
+# already recorded in .env > none (build from source). A leading "v" is dropped
+# (image tags are 1.2.3, git tags are v1.2.3).
+function Resolve-Version {
+    if (-not $script:Version) { $script:Version = $StampedVersion }
+    if (-not $script:Version) { $script:Version = Get-EnvValue 'PADDOCK_VERSION' }
+    $script:Version = ([string]$script:Version).TrimStart('v')
+    if ($script:Version -eq 'dev') { $script:Version = '' }     # "dev" is the from-source tag
+    if (-not $script:Ref) { $script:Ref = if ($script:Version) { "v$($script:Version)" } else { 'main' } }
+}
+
+# Folder holding a release zip's files (compose file next to this script), or $null.
+function Get-BundleDir {
+    if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot $ComposeFile))) { return $PSScriptRoot }
+    return $null
+}
+
+# Copy a folder's contents including dotfiles (.env.example), which '*' skips on some PowerShell versions.
+function Copy-Tree($from, $to) {
+    New-Item -ItemType Directory -Force -Path $to | Out-Null
+    Copy-Item -Path (Join-Path $from '*') -Destination $to -Recurse -Force
+    Get-ChildItem -Path $from -Force -File -Filter '.*' | ForEach-Object { Copy-Item -Path $_.FullName -Destination $to -Force }
 }
 
 function Compose {
@@ -212,10 +268,19 @@ function Check-Docker {
 }
 
 function Fetch-Sources {
-    if ($env:PADDOCK_SRC_DIR) {
-        if (-not (Test-Path (Join-Path $env:PADDOCK_SRC_DIR $ComposeFile))) { Die "PADDOCK_SRC_DIR has no $ComposeFile" }
+    $src = if ($env:PADDOCK_SRC_DIR) { $env:PADDOCK_SRC_DIR } else { Get-BundleDir }
+    if ($src) {
+        if (-not (Test-Path (Join-Path $src $ComposeFile))) { Die "PADDOCK_SRC_DIR has no $ComposeFile" }
         New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-        Copy-Item -Path (Join-Path $env:PADDOCK_SRC_DIR '*') -Destination $Dir -Recurse -Force
+        if ([IO.Path]::GetFullPath($src).TrimEnd('\') -ne [IO.Path]::GetFullPath($Dir).TrimEnd('\')) { Copy-Tree $src $Dir }
+        # a release zip keeps the installers at its top level; keep them under scripts\ like a checkout
+        if (Test-Path (Join-Path $Dir 'install.ps1')) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $Dir 'scripts') | Out-Null
+            foreach ($f in 'install.ps1', 'install.sh', 'install.bat') {
+                $from = Join-Path $Dir $f
+                if (Test-Path $from) { Move-Item -Force -Path $from -Destination (Join-Path (Join-Path $Dir 'scripts') $f) }
+            }
+        }
         return
     }
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('paddock-' + [Guid]::NewGuid().ToString('N'))
@@ -235,12 +300,7 @@ function Fetch-Sources {
         if (-not $root -or -not (Test-Path (Join-Path $root.FullName $ComposeFile))) {
             Die "the download does not contain $ComposeFile (wrong -Repo/-Ref?)"
         }
-        New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-        Copy-Item -Path (Join-Path $root.FullName '*') -Destination $Dir -Recurse -Force
-        # dotfiles (.env.example, ...) are skipped by '*' on some PowerShell versions
-        Get-ChildItem -Path $root.FullName -Force -File -Filter '.*' | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination $Dir -Force
-        }
+        Copy-Tree $root.FullName $Dir
     } finally {
         Remove-Item -Recurse -Force -Path $tmp -ErrorAction SilentlyContinue
     }
@@ -249,13 +309,15 @@ function Fetch-Sources {
 function Write-Override {
     # Wires the secrets the lite compose file does not pass through by itself.
     $yaml = @'
-# Written by scripts/install.ps1. Passes the generated secrets to the orchestrator.
+# Written by scripts/install.ps1. Passes the generated secrets (and the release
+# version, shown on Settings > System) to the orchestrator.
 services:
   orchestrator:
     environment:
       JWT_SECRET: ${JWT_SECRET:?run scripts/install.sh to generate secrets}
       PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:?run scripts/install.sh to generate secrets}
       AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:?run scripts/install.sh to generate secrets}
+      PADDOCK_VERSION: ${PADDOCK_VERSION:-}
 '@
     [IO.File]::WriteAllText((Join-Path $Dir $OverrideFile), ($yaml -replace "`r`n", "`n") + "`n", $Utf8NoBom)
 }
@@ -327,12 +389,21 @@ if ($DryRun) {
     }
 }
 
+$InstalledVersion = Get-EnvValue 'PADDOCK_VERSION'
+Resolve-Version
+# New release than the one on disk: the compose file may have changed too.
+if ($Version -and $Version -ne $InstalledVersion -and (Test-Install)) { $Upgrade = $true }
+$Bundle = Get-BundleDir
+
 Step "installing into $Dir"
+if ($Version) { Say "   release $Version (prebuilt images from $Registry)" } else { Say '   no release version: images will be built from source' }
 if ($DryRun) {
     if ((Test-Path (Join-Path $Dir $ComposeFile)) -and -not $Upgrade) {
         Plan "sources already present in ${Dir}: keep them (use -Upgrade to refresh)"
     } elseif ($env:PADDOCK_SRC_DIR) {
         Plan "copy sources from $($env:PADDOCK_SRC_DIR) to $Dir"
+    } elseif ($Bundle) {
+        Plan "copy the release files from $Bundle to $Dir (no download)"
     } else {
         Plan "download https://codeload.github.com/$Repo/zip/$Ref and unpack into $Dir"
     }
@@ -340,12 +411,18 @@ if ($DryRun) {
     foreach ($k in 'POSTGRES_PASSWORD', 'PADDOCK_APP_DB_PASSWORD', 'ADMIN_BOOTSTRAP_PASSWORD', 'SERVICE_API_KEY', 'JWT_SECRET', 'PADDOCK_SECRET_KEY', 'AUDIT_HMAC_KEY') {
         Plan "generate $k only if it is not already set"
     }
-    Plan "write $Dir\$OverrideFile (passes JWT_SECRET, PADDOCK_SECRET_KEY, AUDIT_HMAC_KEY to the orchestrator)"
+    if ($Version) { Plan "set PADDOCK_VERSION=$Version in $Dir\.env" }
+    Plan "write $Dir\$OverrideFile (passes JWT_SECRET, PADDOCK_SECRET_KEY, AUDIT_HMAC_KEY, PADDOCK_VERSION to the orchestrator)"
     if ($NoStart) {
         Plan '(-NoStart) stop here'
     } else {
         $prof = if ($Active) { ' --profile active' } else { '' }
-        Plan "docker compose -p $Project -f $ComposeFile -f $OverrideFile$prof up -d --build"
+        if ($Version) {
+            Plan "docker compose -p $Project -f $ComposeFile -f $OverrideFile$prof pull"
+            Plan "docker compose -p $Project -f $ComposeFile -f $OverrideFile$prof up -d --no-build"
+        } else {
+            Plan "docker compose -p $Project -f $ComposeFile -f $OverrideFile$prof up -d --build"
+        }
         Plan "wait for $ApiUrl/healthz and $UiUrl/ (up to ${Wait}s)"
         Plan 'print the URL and the admin credentials'
     }
@@ -379,16 +456,34 @@ Ensure-Env 'SERVICE_API_KEY'          { New-Key }
 Ensure-Env 'JWT_SECRET'              { New-Key }
 Ensure-Env 'PADDOCK_SECRET_KEY'       { New-Key }
 Ensure-Env 'AUDIT_HMAC_KEY'           { New-Key }
+if ($Version) { Set-EnvValue 'PADDOCK_VERSION' $Version; Say "   PADDOCK_VERSION=$Version" }
 Write-Override
 
 if ($NoStart) {
     Say "prepared $Dir (not started). Start with:"
-    Say "   cd $Dir; docker compose -p $Project -f $ComposeFile -f $OverrideFile up -d --build"
+    if ($Version) {
+        Say "   cd $Dir; docker compose -p $Project -f $ComposeFile -f $OverrideFile pull; docker compose -p $Project -f $ComposeFile -f $OverrideFile up -d --no-build"
+    } else {
+        Say "   cd $Dir; docker compose -p $Project -f $ComposeFile -f $OverrideFile up -d --build"
+    }
     return
 }
 
-Step 'starting Paddock (first run builds the images; this can take several minutes)'
-if ((Compose up -d --build) -ne 0) { Die 'docker compose up failed (see the output above)' }
+if ($Version) {
+    Step "downloading the Paddock images (release $Version, about 1-2 minutes)"
+    if ((Compose pull) -eq 0) {
+        Step 'starting Paddock'
+        if ((Compose up -d --no-build) -ne 0) { Die 'docker compose up failed (see the output above)' }
+    } elseif (Test-Path (Join-Path $Dir 'orchestrator\Dockerfile')) {
+        Warn 'could not download the prebuilt images; building from source instead (15+ minutes)'
+        if ((Compose up -d --build) -ne 0) { Die 'docker compose up failed (see the output above)' }
+    } else {
+        Die "could not download the Paddock images for release $Version from $Registry. Check your internet connection (and any proxy or firewall), then re-run this installer. If the release is brand new, its images may still be publishing: wait a few minutes and try again."
+    }
+} else {
+    Step 'starting Paddock (first run builds the images; this can take several minutes)'
+    if ((Compose up -d --build) -ne 0) { Die 'docker compose up failed (see the output above)' }
+}
 
 $healthy = Wait-Healthy
 $adminPw = Get-EnvValue 'ADMIN_BOOTSTRAP_PASSWORD'
@@ -403,5 +498,10 @@ Say "   The password is stored in $EnvPath (ADMIN_BOOTSTRAP_PASSWORD). After you
 Say '   first-run wizard (/setup) walks you through adding a domain and a first scan.'
 Say '   Connect your tools:  Integrations > Connect anything  (docs/CONNECT.md)'
 Say "   Stop:      powershell -File `"$Dir\scripts\install.ps1`" -Uninstall -Dir `"$Dir`""
-Say "   Upgrade:   powershell -File `"$Dir\scripts\install.ps1`" -Upgrade -Dir `"$Dir`""
+if ($Version) {
+    Say '   Upgrade:   run the installer from the latest release again:'
+    Say "              irm https://github.com/$Repo/releases/latest/download/install.ps1 | iex"
+} else {
+    Say "   Upgrade:   powershell -File `"$Dir\scripts\install.ps1`" -Upgrade -Dir `"$Dir`""
+}
 if (-not $healthy) { throw 'paddock-install: not healthy' }
