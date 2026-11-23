@@ -113,8 +113,10 @@ irm https://raw.githubusercontent.com/brandongraff-dev/paddock/main/scripts/inst
 ```
 
 Open **http://localhost:3000** and start on the **Graph** page. Prefer something
-lighter? `make lite` runs a 5-service single node (~150 MB RAM) with the same
-hardening. Production: [Helm chart and operations guide](docs/OPERATIONS.md).
+lighter? `make lite` runs a 6-service single node (about 150 MB RAM for the
+original five; the AI service adds a little more) with the same hardening.
+AI triage and Ask work without any key; to turn on the AI summaries, paste an
+Anthropic key under **Settings > System > AI features**, no `.env` editing. Production: [Helm chart and operations guide](docs/OPERATIONS.md).
 
 **Scan your own repo, no server needed** (the open-source `paddock` CLI):
 

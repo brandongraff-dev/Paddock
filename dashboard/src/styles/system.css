@@ -27,3 +27,14 @@
 .sys-notice.tone-bad { border-left-color: var(--bad); }
 .sys-notice-title { color: var(--text-0); font-size: 13px; font-weight: 500; }
 .sys-notice-body { color: var(--text-1); font-size: 12.5px; margin-top: 2px; max-width: 820px; }
+
+/* AI features panel: the existing glass panel + .field; only spacing and text here. */
+.sys-ai-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.sys-ai-intro, .sys-ai-privacy, .sys-ai-help { margin: 0; color: var(--text-1); font-size: 12.5px; }
+.sys-ai-privacy, .sys-ai-help { color: var(--text-2); font-size: 12px; }
+.sys-ai-state { color: var(--text-0); font-size: 12.5px; }
+.sys-ai-state[data-configured="true"] { color: var(--ok); }
+.sys-ai-state[data-tone="warn"] { color: var(--warn); }
+.sys-ai-form { display: flex; flex-direction: column; gap: 10px; }
+.sys-ai-actions { display: flex; align-items: center; gap: 10px; }
+.sys-ai-saved { color: var(--ok); font-size: 12px; }

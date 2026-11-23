@@ -637,6 +637,12 @@ _rule("POST", r"/v1/sensors/ingest/(claim|done)", "write")
 _rule("GET", r"/v1/sensors/tokens", "admin")
 # System inventory (versions, component health) is operator information.
 _rule("GET", r"/v1/system", "admin")
+# AI settings: the status and the writes are admin-only (writes are deny-closed by
+# default). The credential read is for the brain service: it needs `write`, which
+# only an admin or the service key has, and the route itself refuses anything but
+# the service key.
+_rule("GET", r"/v1/system/ai", "admin")
+_rule("GET", r"/v1/system/ai/credential", "write")
 
 
 def required_capability(method: str, path: str) -> str | None:

@@ -197,9 +197,9 @@ jobs:
           owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
           docker logout ghcr.io >/dev/null 2>&1 || true
           bad=0
-          # the four images docker-compose.lite.yml uses (scripts/tests/test_release_bundle.py
+          # the images docker-compose.lite.yml uses (scripts/tests/test_release_bundle.py
           # checks this list against the compose file)
-          for svc in orchestrator dashboard worker-passive worker-active; do
+          for svc in orchestrator dashboard worker-passive worker-active brain; do
             ref="ghcr.io/${owner}/paddock-${svc}:${version}"
             if docker manifest inspect "$ref" >/dev/null 2>&1; then
               echo "ok      $ref"

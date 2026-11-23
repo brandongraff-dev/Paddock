@@ -331,6 +331,7 @@ services:
       REQUIRE_RLS_ROLE: "true"
       TENANCY_STRICT: ${TENANCY_STRICT:-false}
       SERVICE_API_KEY: ${SERVICE_API_KEY:-}   # verifies X-Paddock-Tenant from the orchestrator
+      ORCHESTRATOR_URL: http://orchestrator:8080   # to fetch the key saved in Settings > System
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOG_LEVEL: INFO
     tmpfs:

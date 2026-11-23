@@ -106,3 +106,13 @@ def test_lite_compose_images_match_what_release_yml_publishes():
         assert "PADDOCK_VERSION" in img and "build" in svc, name          # source builds keep working
         repo = img.split("/paddock-")[1].split(":")[0]
         assert repo in published, f"{name}: image paddock-{repo} is not built by release.yml"
+
+
+def test_release_workflow_checks_every_lite_image_is_publicly_pullable():
+    compose = yaml.safe_load((ROOT / "docker-compose.lite.yml").read_text())
+    release = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
+    step = next(s for s in release["jobs"]["verify-pull"]["steps"] if "for svc in" in s.get("run", ""))
+    listed = set(step["run"].split("for svc in ")[1].split(";")[0].split())
+    in_compose = {svc["image"].split("/paddock-")[1].split(":")[0]
+                  for svc in compose["services"].values() if "paddock-" in svc.get("image", "")}
+    assert listed == in_compose, (listed, in_compose)

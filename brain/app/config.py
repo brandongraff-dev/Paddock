@@ -1,7 +1,8 @@
 """Runtime configuration, pulled from the environment.
 
-Mirrors the intel/correlation config shape. The ANTHROPIC_API_KEY is read
-from the environment ONLY and is never logged or echoed anywhere.
+Mirrors the intel/correlation config shape. The ANTHROPIC_API_KEY comes from
+the environment or from the dashboard-saved key fetched from the orchestrator
+(see llm.py); it is never logged or echoed anywhere.
 """
 from __future__ import annotations
 
@@ -51,6 +52,13 @@ class Config:
     anthropic_model: str = field(
         default_factory=lambda: _env("ANTHROPIC_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL
     )
+    # The key an admin saved in the dashboard (Settings > System > AI features) lives,
+    # encrypted, in the orchestrator. We fetch it with the fleet service key when
+    # we need it. It wins over ANTHROPIC_API_KEY above; with neither we run the
+    # deterministic fallbacks. Both unset = never call the orchestrator.
+    orchestrator_url: str | None = field(default_factory=lambda: _env("ORCHESTRATOR_URL"))
+    service_api_key: str | None = field(default_factory=lambda: _env("SERVICE_API_KEY"))
+    ai_key_ttl_s: int = field(default_factory=lambda: _env_int("AI_KEY_TTL_S", 60))
     llm_timeout_s: int = field(default_factory=lambda: _env_int("LLM_TIMEOUT_S", 20))
     llm_max_tokens: int = field(default_factory=lambda: _env_int("LLM_MAX_TOKENS", 1024))
 

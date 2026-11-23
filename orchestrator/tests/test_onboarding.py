@@ -100,15 +100,34 @@ def lite():
         onboarding_mod._cache = None
 
 
-async def test_services_not_enabled_in_lite(client, lite):
+async def test_services_not_enabled_in_lite(client, lite, monkeypatch):
+    probed = []
+
+    async def probe(url):
+        probed.append(url)
+        return "brain" in url
+
+    monkeypatch.setattr(onboarding_mod, "_probe", probe)
     r = await client.get("/v1/system/services")
     assert r.status_code == 200
     d = r.json()
     assert d["mode"] == "lite"
     names = {s["name"]: s for s in d["services"]}
-    assert names["brain"]["status"] == "not_enabled"
+    # brain is part of the lite stack (AI triage + Ask) and is probed like in full mode ...
+    assert names["brain"]["enabled"] is True and names["brain"]["status"] == "ok"
+    assert len(probed) == 1 and "brain" in probed[0]
+    # ... everything else the lite file leaves out is "not enabled" and never probed
     assert names["graphsync"]["enabled"] is False
-    assert all(s["status"] == "not_enabled" for s in d["services"])
+    assert all(s["status"] == "not_enabled" for s in d["services"] if s["name"] != "brain")
+
+
+async def test_lite_brain_down_is_reported_not_raised(client, lite, monkeypatch):
+    async def probe(_url):
+        return False
+
+    monkeypatch.setattr(onboarding_mod, "_probe", probe)
+    names = {s["name"]: s for s in (await client.get("/v1/system/services")).json()["services"]}
+    assert names["brain"]["status"] == "down" and names["brain"]["enabled"] is True
 
 
 async def test_services_down_in_full_mode_never_errors(client, monkeypatch):

@@ -26,3 +26,21 @@ export interface SystemInfo {
 }
 
 export const getSystem = () => apiFetch<SystemInfo>("/v1/system");
+
+/** AI features (Settings → System): the optional Anthropic key. Mirrors orchestrator/app/ai_settings.py. */
+export interface AiStatus {
+  configured: boolean;
+  /** "…abcd": the last four characters. The key itself is never returned. */
+  hint: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  /** Only the platform operator may change it. */
+  editable: boolean;
+  /** Whether the Brain service (which uses the key) is running. */
+  brain: ComponentStatus;
+}
+
+export const getAiStatus = () => apiFetch<AiStatus>("/v1/system/ai");
+export const saveAiKey = (api_key: string) =>
+  apiFetch<AiStatus>("/v1/system/ai", { method: "PUT", body: { api_key } });
+export const removeAiKey = () => apiFetch<AiStatus>("/v1/system/ai", { method: "DELETE" });

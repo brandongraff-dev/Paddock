@@ -109,6 +109,35 @@ AgentOut = TypedDict(
     total=False,
 )
 
+AiCredential = TypedDict(
+    'AiCredential',
+    {
+        'api_key': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+AiKeyIn = TypedDict(
+    'AiKeyIn',
+    {
+        'api_key': Required['str'],
+    },
+    total=False,
+)
+
+AiStatus = TypedDict(
+    'AiStatus',
+    {
+        'brain': Required['str'],
+        'configured': Required['bool'],
+        'editable': Required['bool'],
+        'hint': NotRequired['str | None'],
+        'updated_at': NotRequired['str | None'],
+        'updated_by': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 AlertDeliveryOut = TypedDict(
     'AlertDeliveryOut',
     {
@@ -4166,6 +4195,10 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'patch_suppression': ('PATCH', '/v1/suppressions/{sup_id}', False),
     'delete_suppression': ('DELETE', '/v1/suppressions/{sup_id}', False),
     'system_inventory': ('GET', '/v1/system', False),
+    'get_ai': ('GET', '/v1/system/ai', False),
+    'put_ai': ('PUT', '/v1/system/ai', False),
+    'delete_ai': ('DELETE', '/v1/system/ai', False),
+    'get_credential': ('GET', '/v1/system/ai/credential', False),
     'services_status': ('GET', '/v1/system/services', False),
     'list_feeds': ('GET', '/v1/ti/feeds', False),
     'create_feed': ('POST', '/v1/ti/feeds', False),
@@ -5763,6 +5796,28 @@ class GeneratedOperations:
         What this install is made of, and what is healthy right now.
         """
         return self._request('GET', '/v1/system')
+
+    def get_ai(self) -> AiStatus:
+        """GET /v1/system/ai -- Get Ai
+        """
+        return self._request('GET', '/v1/system/ai')
+
+    def put_ai(self, body: AiKeyIn | dict[str, Any]) -> AiStatus:
+        """PUT /v1/system/ai -- Put Ai
+        """
+        return self._request('PUT', '/v1/system/ai', body=body)
+
+    def delete_ai(self) -> AiStatus:
+        """DELETE /v1/system/ai -- Delete Ai
+        """
+        return self._request('DELETE', '/v1/system/ai')
+
+    def get_credential(self) -> AiCredential:
+        """GET /v1/system/ai/credential -- Get Credential
+
+        The saved key, for the brain service. Only the fleet service key may call this.
+        """
+        return self._request('GET', '/v1/system/ai/credential')
 
     def services_status(self) -> ServicesOut:
         """GET /v1/system/services -- Services Status

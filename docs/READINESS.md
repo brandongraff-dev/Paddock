@@ -93,7 +93,22 @@ from their API docs.
 ## 3. Time to first value
 
 - **One-line install** (`scripts/install.sh`): generates secrets, starts the
-  lite stack (6 services) and prints the login.
+  lite stack (now including `brain`) and prints the login.
+- **Windows install** (`scripts/install.ps1`, or `install.bat` from the release
+  zip): the same, for people without `make`; starts Docker Desktop if it is off.
+  `-Doctor` / `--doctor` checks Docker, WSL, virtualization, memory, disk and
+  ports and prints a plain-English fix for each problem.
+  *Status:* covered by Linux tests with a fake Docker and by a Windows CI job
+  (PowerShell 5.1 and 7, fake Docker); **not yet run by a person on a real
+  Windows PC with Docker Desktop.**
+- **Prebuilt images** (release workflow -> GHCR, signed; the installers pull
+  them, 1-2 minutes instead of 15+ building). *Status:* the workflow, the zip
+  (`scripts/make_release_bundle.py`) and the version-stamped installers are in
+  place and tested without publishing; **no release has been published yet**,
+  so until the first `vX.Y.Z` tag the installers build from source.
+- **AI key in the dashboard** (Settings > System > AI features): stored
+  encrypted, fetched by `brain` with the service key. Optional; see
+  `SECURITY.md` section 11 for the trade-off.
 - **Setup wizard** and proof of ownership (DNS TXT record, HTTPS file, or
   attestation).
 - **Free exposure check** (`/check`): a passive report on any domain, using

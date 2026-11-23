@@ -23,7 +23,7 @@ Last updated: [date]
 
 | Party | Feature / module | What is sent | Personal data? | Can be disabled |
 |---|---|---|---|---|
-| Anthropic (Claude API) | `brain` LLM triage + Ask; `remediation` LLM drafting — only when `ANTHROPIC_API_KEY` is set *(software dependency)* | finding titles/descriptions/evidence summaries, asset identifiers, natural-language questions and the DB schema description | possibly (incidental, from asset metadata/evidence) | yes — unset the key; deterministic fallback is used |
+| Anthropic (Claude API) | `brain` LLM triage + Ask; `remediation` LLM drafting — only when an Anthropic key is set, either `ANTHROPIC_API_KEY` in `.env` or one an admin saved under Settings > System > AI features *(software dependency)* | finding titles/descriptions/evidence summaries, asset identifiers, natural-language questions and the DB schema description | possibly (incidental, from asset metadata/evidence) | yes — remove the key (Settings > System > AI features, and `.env`); deterministic fallback is used |
 | crt.sh / Certificate Transparency | passive discovery (`ct_logs`) | customer domain names as queries | no (domain names) | yes (module config) |
 | Internet Archive (Wayback) | passive discovery | customer domain names | no | yes |
 | RIPE stat / BGPView | ASN / IP-range expansion | ASNs, IP ranges | no | yes |

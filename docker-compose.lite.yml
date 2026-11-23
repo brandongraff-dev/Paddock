@@ -2,10 +2,14 @@
 # =============================================================================
 # The minimum useful stack for evaluations and small teams, on one box:
 #
-#     postgres · redis · orchestrator · dashboard · worker-passive
+#     postgres · redis · orchestrator · dashboard · worker-passive · brain
 #     (+ worker-active with `make lite-active` / `--profile active`)
 #
-# No neo4j / graphsync / ML / LLM / compute services. The orchestrator runs in
+# brain is AI triage + Ask. It needs no key to start: without one it runs its
+# deterministic fallbacks, and an admin can paste an Anthropic key into
+# Settings > System > AI features at any time (no restart, no .env editing).
+#
+# No neo4j / graphsync / ML / other compute services. The orchestrator runs in
 # DEPLOYMENT_MODE=lite and reports those features as "not enabled"
 # (GET /v1/system/services) instead of erroring on them.
 #
@@ -26,8 +30,9 @@
 #     from GHCR (about 1-2 minutes instead of 15+), then `up --no-build`.
 #   PADDOCK_REGISTRY points forks at their own registry.
 #
-# Resources (see README "Lite mode"): ~150 MB RAM idle (measured), 1 GB
-# recommended, 1–2 vCPU, ~1.3 GB of images (+3.5 GB with worker-active).
+# Resources (see README "Lite mode"): ~150 MB RAM idle (measured, before brain
+# was added; brain is one more small Python process, not yet measured), 1 GB
+# recommended, 1–2 vCPU, ~1.5 GB of images (+3.5 GB with worker-active).
 # =============================================================================
 
 name: paddock-lite
@@ -155,6 +160,37 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
+
+  # AI triage + natural-language Ask. Works without a key (deterministic
+  # fallbacks); the key, if any, comes from Settings > System (the orchestrator
+  # stores it encrypted and hands it to this service) or ANTHROPIC_API_KEY in .env.
+  brain:
+    image: ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}/paddock-brain:${PADDOCK_VERSION:-dev}
+    build: ./brain
+    <<: *hardened-py
+    environment:
+      # Least-privilege role (schema/029): Postgres RLS pins every statement to the
+      # tenant the service sets per transaction. Postgres gives it POSTGRES_PASSWORD
+      # (schema/101_service_roles.sh) because the lite postgres sets no other one.
+      DATABASE_URL: postgresql+asyncpg://paddock_svc_brain:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/asm
+      REQUIRE_RLS_ROLE: "true"
+      TENANCY_STRICT: ${TENANCY_STRICT:-false}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOG_LEVEL: INFO
+    tmpfs:
+      - /tmp
+    # egress: the Anthropic API, only when a key is set
+    networks: [internal, egress]
+    depends_on:
+      orchestrator: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8095), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
       start_period: 20s
 
   # Optional: polite active probing (HTTP/TLS/ports). `make lite-active`.
