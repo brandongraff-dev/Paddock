@@ -3699,6 +3699,318 @@ VerifyOut = TypedDict(
     total=False,
 )
 
+WargameAssessmentOut = TypedDict(
+    'WargameAssessmentOut',
+    {
+        'blind_spots': NotRequired['list[Any]'],
+        'board_line': Required['str'],
+        'closure_pct': Required['float'],
+        'computed_at': Required['str'],
+        'coverage_pct': NotRequired['float | None'],
+        'crownjewel_closed': Required['int'],
+        'crownjewel_conditional': Required['int'],
+        'crownjewel_open': Required['int'],
+        'crownjewel_total': Required['int'],
+        'false_closed_rate': NotRequired['float | None'],
+        'id': Required['str'],
+        'label': Required['str'],
+        'metadata': NotRequired['dict[str, Any]'],
+    },
+    total=False,
+)
+"""One assessment run's headline scorecard."""
+
+WargameAssessmentPage = TypedDict(
+    'WargameAssessmentPage',
+    {
+        'items': Required['list[WargameAssessmentOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
+WargameBoundaryOut = TypedDict(
+    'WargameBoundaryOut',
+    {
+        'boundary_dst': Required['str'],
+        'boundary_src': Required['str'],
+        'disagreements': NotRequired['list[Any]'],
+        'id': Required['str'],
+        'note': Required['str'],
+        'port': Required['str'],
+        'verdict': Required["Literal['pass', 'proved_config', 'fail_open', 'conditional', 'insufficient']"],
+    },
+    total=False,
+)
+"""A per-boundary three-way agreement verdict."""
+
+WargameCertificateOut = TypedDict(
+    'WargameCertificateOut',
+    {
+        'assumptions': NotRequired['list[Any]'],
+        'boundary_dst': Required['str'],
+        'boundary_src': Required['str'],
+        'claim': Required['str'],
+        'config_hashes': NotRequired['list[Any]'],
+        'corroboration': NotRequired['dict[str, Any]'],
+        'expires_at': NotRequired['str | None'],
+        'fingerprint': Required['str'],
+        'id': Required['str'],
+        'issued_at': NotRequired['str | None'],
+        'key_id': NotRequired['str'],
+        'port': Required['str'],
+        'signed': NotRequired['bool'],
+        'status': Required["Literal['valid', 'expired', 'contradicted']"],
+    },
+    total=False,
+)
+"""A signed closed-boundary certificate."""
+
+WargameChangeImpact = TypedDict(
+    'WargameChangeImpact',
+    {
+        'affected_boundaries': NotRequired['list[str]'],
+        'change_title': NotRequired['str'],
+        'complete': NotRequired['bool'],
+        'flows_parsed': NotRequired['int'],
+        'flows_skipped': NotRequired['int'],
+        'newly_allowed_flows': NotRequired['list[WargameFlowRef]'],
+        'newly_denied_flows': NotRequired['list[WargameFlowRef]'],
+        'routes_closed': NotRequired['list[WargameRouteRef]'],
+        'routes_opened': NotRequired['list[WargameRouteRef]'],
+        'summary': NotRequired['str'],
+        'verdict': Required['str'],
+        'warnings': NotRequired['list[str]'],
+    },
+    total=False,
+)
+"""What a proposed change does, before it is applied."""
+
+WargameChangeImpactRequest = TypedDict(
+    'WargameChangeImpactRequest',
+    {
+        'flows': NotRequired['str | None'],
+        'flows_format': NotRequired["Literal['auto', 'zeek', 'generic', 'firewall']"],
+        'plan': Required['dict[str, Any]'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/change-impact."""
+
+WargameEvidenceOut = TypedDict(
+    'WargameEvidenceOut',
+    {
+        'control_id': Required['str'],
+        'evidence': NotRequired['dict[str, Any]'],
+        'framework': Required['str'],
+        'id': Required['str'],
+        'item_hash': Required['str'],
+        'ordinal': Required['int'],
+        'statement': Required['str'],
+        'status': Required["Literal['met', 'exception', 'not_assessed']"],
+    },
+    total=False,
+)
+"""A hash-chained auditor evidence item (PCI / CIP)."""
+
+WargameFixSetOut = TypedDict(
+    'WargameFixSetOut',
+    {
+        'cuts_all': Required['bool'],
+        'id': Required['str'],
+        'metadata': NotRequired['dict[str, Any]'],
+        'optimality': Required["Literal['exact', 'greedy']"],
+        'selected': NotRequired['list[Any]'],
+        'total_cost': Required['float'],
+    },
+    total=False,
+)
+"""The minimum-cost fix set that cuts every open route."""
+
+WargameFlowRef = TypedDict(
+    'WargameFlowRef',
+    {
+        'dst_ip': Required['str'],
+        'dst_port': Required['int'],
+        'proto': Required['str'],
+        'ruleset_id': NotRequired['str'],
+        'src_ip': Required['str'],
+    },
+    total=False,
+)
+"""An observed flow whose verdict flips at an affected boundary."""
+
+WargameProbeResultIn = TypedDict(
+    'WargameProbeResultIn',
+    {
+        'dst': Required['str'],
+        'observed_at': Required['str'],
+        'port': Required['int'],
+        'proto': NotRequired["Literal['tcp', 'udp', 'icmp']"],
+        'result': Required["Literal['crossed', 'blocked', 'error']"],
+        'source': NotRequired['str'],
+        'src': Required['str'],
+    },
+    total=False,
+)
+"""One recorded probe result: a connect from segment `src` to segment"""
+
+WargameRecomputeOut = TypedDict(
+    'WargameRecomputeOut',
+    {
+        'detail': NotRequired['str | None'],
+        'status': Required["Literal['computed', 'queued', 'unavailable']"],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/recompute."""
+
+WargameRouteOut = TypedDict(
+    'WargameRouteOut',
+    {
+        'entry': Required['str'],
+        'fingerprint': Required['str'],
+        'hops': NotRequired['list[Any]'],
+        'id': Required['str'],
+        'jewel': Required['str'],
+        'length': Required['int'],
+        'weakest_label': Required['str'],
+    },
+    total=False,
+)
+"""An open route to a crown jewel. Hops are impact-only, stored as the"""
+
+WargameRoutePage = TypedDict(
+    'WargameRoutePage',
+    {
+        'items': Required['list[WargameRouteOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
+WargameRouteRef = TypedDict(
+    'WargameRouteRef',
+    {
+        'entry': Required['str'],
+        'jewel': Required['str'],
+    },
+    total=False,
+)
+"""An (entry, crown jewel) pair whose reachability the change flips."""
+
+WargameTwinConfigRequest = TypedDict(
+    'WargameTwinConfigRequest',
+    {
+        'raw': Required['str'],
+        'source': NotRequired['str'],
+        'vendor': Required["Literal['aws', 'cisco_asa', 'fortinet', 'paloalto']"],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/config: one read-only vendor config."""
+
+WargameTwinFlowsOut = TypedDict(
+    'WargameTwinFlowsOut',
+    {
+        'detail': NotRequired['str | None'],
+        'flows_parsed': NotRequired['int | None'],
+        'flows_skipped': NotRequired['int | None'],
+        'flows_stored': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+        'warnings': NotRequired['list[str]'],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/flows (same `status` semantics as"""
+
+WargameTwinFlowsRequest = TypedDict(
+    'WargameTwinFlowsRequest',
+    {
+        'format': NotRequired["Literal['auto', 'zeek', 'generic', 'firewall']"],
+        'raw': Required['str'],
+        'source': NotRequired['str'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/flows: raw flow logs (firewall allow/deny"""
+
+WargameTwinIngestOut = TypedDict(
+    'WargameTwinIngestOut',
+    {
+        'detail': NotRequired['str | None'],
+        'rulesets': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/config. `status` is `ingested` when the"""
+
+WargameTwinProbesOut = TypedDict(
+    'WargameTwinProbesOut',
+    {
+        'detail': NotRequired['str | None'],
+        'rejected': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+        'stored': NotRequired['int | None'],
+        'warnings': NotRequired['list[str]'],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/probes. `rejected` counts results naming"""
+
+WargameTwinProbesRequest = TypedDict(
+    'WargameTwinProbesRequest',
+    {
+        'results': Required['list[WargameProbeResultIn]'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/probes."""
+
+WargameTwinSummaryOut = TypedDict(
+    'WargameTwinSummaryOut',
+    {
+        'edge_count': Required['int'],
+        'flow_count': NotRequired['int'],
+        'has_twin': Required['bool'],
+        'probe_count': NotRequired['int'],
+        'probe_fresh_count': NotRequired['int'],
+        'rule_count': Required['int'],
+        'ruleset_count': Required['int'],
+        'segment_count': Required['int'],
+        'snapshot_count': Required['int'],
+    },
+    total=False,
+)
+"""Row counts of the persisted twin (GET /v1/wargame/twin)."""
+
+WargameTwinTopologyOut = TypedDict(
+    'WargameTwinTopologyOut',
+    {
+        'detail': NotRequired['str | None'],
+        'edges': NotRequired['int | None'],
+        'segments': NotRequired['int | None'],
+        'status': Required["Literal['ingested', 'queued', 'unavailable']"],
+    },
+    total=False,
+)
+"""Result of POST /v1/wargame/twin/topology (same status semantics)."""
+
+WargameTwinTopologyRequest = TypedDict(
+    'WargameTwinTopologyRequest',
+    {
+        'edges': NotRequired['list[dict[str, Any]]'],
+        'segments': NotRequired['list[dict[str, Any]]'],
+    },
+    total=False,
+)
+"""Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded"""
+
 WhyFactor = TypedDict(
     'WhyFactor',
     {
@@ -4190,6 +4502,20 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'take_snapshot': ('POST', '/v1/usage/snapshot', False),
     'list_snapshots': ('GET', '/v1/usage/snapshots', False),
     'post_result_verification': ('POST', '/v1/verifications/{verification_id}/result', False),
+    'list_assessments': ('GET', '/v1/wargame/assessments', True),
+    'get_assessment': ('GET', '/v1/wargame/assessments/{assessment_id}', False),
+    'list_boundaries': ('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', True),
+    'list_certificates': ('GET', '/v1/wargame/assessments/{assessment_id}/certificates', True),
+    'list_evidence': ('GET', '/v1/wargame/assessments/{assessment_id}/evidence', True),
+    'get_fix_set': ('GET', '/v1/wargame/assessments/{assessment_id}/fix-set', False),
+    'list_routes': ('GET', '/v1/wargame/assessments/{assessment_id}/routes', True),
+    'change_impact': ('POST', '/v1/wargame/change-impact', False),
+    'recompute_wargame': ('POST', '/v1/wargame/recompute', False),
+    'get_twin_summary': ('GET', '/v1/wargame/twin', False),
+    'ingest_twin_config': ('POST', '/v1/wargame/twin/config', False),
+    'ingest_twin_flows': ('POST', '/v1/wargame/twin/flows', False),
+    'ingest_twin_probes': ('POST', '/v1/wargame/twin/probes', False),
+    'set_twin_topology': ('POST', '/v1/wargame/twin/topology', False),
 }
 
 
@@ -5905,6 +6231,133 @@ class GeneratedOperations:
         or API key, even an admin's, can never post a verdict.
         """
         return self._request('POST', '/v1/verifications/{verification_id}/result', path_params={'verification_id': verification_id}, body=body)
+
+    def list_assessments(self, *, limit: int | None = None, offset: int | None = None) -> WargameAssessmentPage:
+        """GET /v1/wargame/assessments -- List Assessments
+        """
+        return self._request('GET', '/v1/wargame/assessments', query={'limit': limit, 'offset': offset})
+
+    def get_assessment(self, assessment_id: str) -> WargameAssessmentOut:
+        """GET /v1/wargame/assessments/{assessment_id} -- Get Assessment
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}', path_params={'assessment_id': assessment_id})
+
+    def list_boundaries(self, assessment_id: str, *, limit: int | None = None, offset: int | None = None) -> list[WargameBoundaryOut]:
+        """GET /v1/wargame/assessments/{assessment_id}/boundaries -- List Boundaries
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/boundaries', path_params={'assessment_id': assessment_id}, query={'limit': limit, 'offset': offset})
+
+    def list_certificates(self, assessment_id: str, *, limit: int | None = None, offset: int | None = None) -> list[WargameCertificateOut]:
+        """GET /v1/wargame/assessments/{assessment_id}/certificates -- List Certificates
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/certificates', path_params={'assessment_id': assessment_id}, query={'limit': limit, 'offset': offset})
+
+    def list_evidence(self, assessment_id: str, *, framework: str | None = None, limit: int | None = None, offset: int | None = None) -> list[WargameEvidenceOut]:
+        """GET /v1/wargame/assessments/{assessment_id}/evidence -- List Evidence
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/evidence', path_params={'assessment_id': assessment_id}, query={'framework': framework, 'limit': limit, 'offset': offset})
+
+    def get_fix_set(self, assessment_id: str) -> WargameFixSetOut:
+        """GET /v1/wargame/assessments/{assessment_id}/fix-set -- Get Fix Set
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/fix-set', path_params={'assessment_id': assessment_id})
+
+    def list_routes(self, assessment_id: str, *, limit: int | None = None, offset: int | None = None) -> WargameRoutePage:
+        """GET /v1/wargame/assessments/{assessment_id}/routes -- List Routes
+        """
+        return self._request('GET', '/v1/wargame/assessments/{assessment_id}/routes', path_params={'assessment_id': assessment_id}, query={'limit': limit, 'offset': offset})
+
+    def change_impact(self, body: WargameChangeImpactRequest | dict[str, Any]) -> WargameChangeImpact:
+        """POST /v1/wargame/change-impact -- Change Impact
+
+        Say what a proposed Terraform plan would do, BEFORE it is applied.
+
+        Proxies synchronously to correlation `POST /change-impact`, which loads
+        this tenant's twin, evaluates the plan before/after against it, and
+        returns routes opened/closed to crown jewels and live flows broken. Strictly
+        read-only: nothing is persisted, applied, or sent anywhere. There is no
+        queue fallback (the caller needs the answer): correlation down is a 503,
+        no twin is a 409, a bad plan is a 422, an oversize body a 413.
+        """
+        return self._request('POST', '/v1/wargame/change-impact', body=body)
+
+    def recompute_wargame(self) -> WargameRecomputeOut:
+        """POST /v1/wargame/recompute -- Recompute Wargame
+
+        Trigger a recompute of wargame assessments.
+
+        Preferred path: a synchronous POST to the correlation service's
+        `/compute-wargame` (connect fails fast, the read allows a real compute).
+        If that is unreachable or errors, fall back to publishing a
+        `correlate:recompute_wargame` job on Redis. The request never fails hard
+        when correlation is down -- the worst case is `status=unavailable`
+        (correlation unreachable *and* the enqueue failed). Failures are logged;
+        the response carries a generic note, never the exception text.
+        """
+        return self._request('POST', '/v1/wargame/recompute')
+
+    def get_twin_summary(self) -> WargameTwinSummaryOut:
+        """GET /v1/wargame/twin -- Get Twin Summary
+
+        Row counts of the persisted twin. Read-only; tenant scoping is applied
+        by the pool's RLS session, exactly like the other reads here.
+        """
+        return self._request('GET', '/v1/wargame/twin')
+
+    def ingest_twin_config(self, body: WargameTwinConfigRequest | dict[str, Any]) -> WargameTwinIngestOut:
+        """POST /v1/wargame/twin/config -- Ingest Twin Config
+
+        Ingest one read-only vendor config into the twin (compute-side).
+
+        Forwards to correlation `POST /ingest-config`; falls back to a
+        `correlate:twin_ingest_config` Redis job when correlation is down. The
+        config is parsed, never applied to any device. Vendor is an allowlist,
+        size is capped (413 / 422), and a config correlation cannot parse is a
+        422, not a queued job.
+        """
+        return self._request('POST', '/v1/wargame/twin/config', body=body)
+
+    def ingest_twin_flows(self, body: WargameTwinFlowsRequest | dict[str, Any]) -> WargameTwinFlowsOut:
+        """POST /v1/wargame/twin/flows -- Ingest Twin Flows
+
+        Store observed flows (the customer's own firewall / Zeek / generic
+        logs) as twin evidence.
+
+        Forwards to correlation `POST /ingest-flows`; falls back to a
+        `correlate:twin_ingest_flows` Redis job when correlation is down. Only rows
+        that parse are stored (rolling 30-day window, capped per tenant). On the
+        next recompute a real flow from an entry to a crown jewel the config proves
+        closed makes that pair `fail_open`, and one across a still-valid
+        certificate raises an impossible-traffic alert. Nothing is probed.
+        """
+        return self._request('POST', '/v1/wargame/twin/flows', body=body)
+
+    def ingest_twin_probes(self, body: WargameTwinProbesRequest | dict[str, Any]) -> WargameTwinProbesOut:
+        """POST /v1/wargame/twin/probes -- Ingest Twin Probes
+
+        Record probe results produced by the customer's own probe or scanner.
+
+        Paddock sends NO packets here: each result is a recorded fact (a connect
+        from segment `src` to segment `dst` on `proto`/`port` `crossed`, was
+        `blocked`, or hit an `error`). Forwards to correlation `POST /ingest-probes`;
+        falls back to a `correlate:twin_ingest_probes` Redis job. A result naming a
+        segment the twin does not hold is rejected (counted); no topology is a 409.
+        A probe counts for an (entry, crown jewel) pair only if it ran from that
+        entry segment to that jewel segment, within the certificate TTL (24 h);
+        `error` never counts. A blocked one turns a config-proved pair into `pass`.
+        """
+        return self._request('POST', '/v1/wargame/twin/probes', body=body)
+
+    def set_twin_topology(self, body: WargameTwinTopologyRequest | dict[str, Any]) -> WargameTwinTopologyOut:
+        """POST /v1/wargame/twin/topology -- Set Twin Topology
+
+        Set the twin's segments/edges (compute-side).
+
+        Forwards to correlation `POST /set-topology`; falls back to a
+        `correlate:twin_set_topology` Redis job. Malformed segments/edges are a
+        422 from correlation, passed through.
+        """
+        return self._request('POST', '/v1/wargame/twin/topology', body=body)
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError

@@ -37,12 +37,36 @@ def _roots(alias: str) -> list[Path]:
     return roots
 
 
+# Wargame lives at ``app.engine.wargame`` and reaches one level up for ``..policy`` (the
+# correlation service's narrative filter, which needs yaml/pydantic). It is loaded as a child of
+# a synthetic host package whose ``policy`` is a stdlib-only copy of just that filter.
+_HOST = "paddock_wargame_host"
+_HOSTED = {"wargame"}
+
+
+def _name(alias: str) -> str:
+    return f"{_HOST}.{alias}" if alias in _HOSTED else f"paddock_{alias}"
+
+
+def _install_host() -> None:
+    if _HOST in sys.modules:
+        return
+    host = ModuleType(_HOST)
+    host.__path__ = []  # type: ignore[attr-defined]
+    from . import _wargame_policy
+    sys.modules[f"{_HOST}.policy"] = _wargame_policy
+    host.policy = _wargame_policy  # type: ignore[attr-defined]
+    sys.modules[_HOST] = host
+
+
 @lru_cache(maxsize=None)
 def load(alias: str) -> ModuleType:
     """Return the root package of one engine (``sca``, ``codeanalysis``, ...)."""
     if alias not in ENGINES:
         raise KeyError(alias)
-    name = f"paddock_{alias}"
+    name = _name(alias)
+    if alias in _HOSTED:
+        _install_host()
     if name in sys.modules:
         return sys.modules[name]
     for root in _roots(alias):
@@ -66,7 +90,7 @@ def load(alias: str) -> ModuleType:
 def module(alias: str, dotted: str) -> ModuleType:
     """``module("sca", "parsers")`` -> the engine's ``app.parsers`` module."""
     load(alias)
-    return importlib.import_module(f"paddock_{alias}.{dotted}")
+    return importlib.import_module(f"{_name(alias)}.{dotted}")
 
 
 # Convenience accessors (lazy; each import is cheap and cached).
@@ -112,3 +136,8 @@ def injection() -> ModuleType:
 
 def standards() -> ModuleType:
     return module("orchestrator", "standards")
+
+
+def wargame() -> ModuleType:
+    """The Wargame engine package (``app.engine.wargame``)."""
+    return load("wargame")

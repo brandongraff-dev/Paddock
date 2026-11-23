@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import __version__, fixplan, initcmd, scanner, ui, upload
+from . import __version__, fixplan, initcmd, scanner, ui, upload, wargame
 from .applyfix import ApplyError, apply_plans, verify_plans
 from .gitpr import PrError, open_pr
 from .model import SEVERITIES, ScanResult, rank
@@ -419,6 +419,8 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--no-pre-commit", action="store_true")
     i.add_argument("--no-color", action="store_true")
     i.set_defaults(fn=cmd_init)
+
+    wargame.add_parser(sub)
     return ap
 
 

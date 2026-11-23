@@ -19,13 +19,15 @@ import logging
 import os
 import signal
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Optional
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Literal, Optional
 
+import asyncpg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import tenancy
+from . import jobs, tenancy
 from .config import settings
 from .db import Database
 from .engine.attack_mapping import (
@@ -39,10 +41,40 @@ from .engine.chain import ChainMatcher, PolicyEvaluator
 from .engine.fusion import FusionEngine
 from .engine.graph import Graph
 from .engine.policy import RuleLoader
+from .engine.wargame import certificate, evidence, report, store, twin_store
+from .engine.wargame.assess import assess_environment, assess_unproven_environment
+from .engine.wargame.fabric import EdgeSpec, SegmentSpec
+from .engine.wargame.graph_adapter import environment_from_graph
+from .engine.wargame.model import EvidenceLabel, NodeRole, PortRange, Proto
+from .engine.wargame.parsers import available_vendors, parse
 from .narratives.writer import NarrativeWriter
 from .orchestrator import OrchestratorClient
 
 log = logging.getLogger("correlation")
+
+_DEV_ENVS = frozenset({"dev", "development", "local", "test"})
+_warned_unsigned = False
+
+
+def _wargame_signing_key() -> Any:
+    """The CURRENT tenant's Wargame certificate signing key.
+
+    Derived per tenant from ``WARGAME_SIGNING_KEY`` (``signing.py``). With no
+    key configured the public development key is returned, flagged
+    ``unsigned``: certificates then say ``unsigned-dev`` in their key id and
+    assumptions. Outside a dev ``ENV`` that is logged (once) as a warning."""
+    global _warned_unsigned
+    cfg = settings()
+    sk = cfg.wargame_keyring().signing_key(
+        tenancy.current_tenant_id() or tenancy.DEFAULT_TENANT_ID
+    )
+    if sk.unsigned and not _warned_unsigned:
+        _warned_unsigned = True
+        (log.info if cfg.env.strip().lower() in _DEV_ENVS else log.warning)(
+            "wargame_certificates_unsigned: WARGAME_SIGNING_KEY is not set; "
+            "certificates are labelled unsigned-dev (not a signature)"
+        )
+    return sk
 
 
 # ----------------------------------------------------------------------------
@@ -135,6 +167,9 @@ class Service:
             await self._ensure_consumer_group()
             self._bg_tasks.append(
                 asyncio.create_task(self._consume_events(), name="events")
+            )
+            self._bg_tasks.append(
+                asyncio.create_task(self._consume_jobs(), name="jobs")
             )
         except Exception:
             log.exception("redis unavailable; running without event stream")
@@ -231,6 +266,17 @@ class Service:
                             log.warning(
                                 "xack failed for %s", msg_id
                             )
+
+    async def _consume_jobs(self) -> None:
+        """Consume the orchestrator's Redis fallback jobs (``queue:correlate``)."""
+        assert self._redis is not None
+        await jobs.consume(
+            self._redis,
+            stream=self.cfg.queue_correlate,
+            group=self.cfg.consumer_group,
+            consumer=self.cfg.consumer_name,
+            handlers=_job_handlers(self),
+        )
 
     async def _handle_event(self, fields: dict[str, Any]) -> None:
         # Fields may arrive as a single "json" key or as flat kv.
@@ -448,6 +494,117 @@ class Service:
         res.setdefault("elapsed_ms", 0.0)
         return res
 
+    # ------------------------------------------------------------------
+    # Wargame assessment (assemble from the asset graph, run, persist)
+    # ------------------------------------------------------------------
+
+    async def _wargame_tenant(self) -> dict[str, Any]:
+        """Run one Wargame assessment for the CURRENT tenant and persist it.
+
+        DEFENSIVE: pure model reasoning only — runs the backward-reachability
+        engine over a model, writes the scorecard + routes + certificates. No
+        exploitation, no probes.
+
+        Twin-first: when this tenant has a persisted, rule-aware twin (parsed
+        firewall/cloud config + declared topology), the assessment runs over it
+        and is proved by config, carrying signed closed-boundary certificates;
+        the result is labelled ``"twin"``.
+
+        Certificates are signed with this tenant's key, derived from
+        ``WARGAME_SIGNING_KEY`` (``signing.py``). With no key configured they
+        are labelled ``unsigned-dev`` (public development key), never passed
+        off as signed. Coverage is unmeasured.
+
+        Evidence (schema 044, ``evidence.py``): the stored observed flows
+        (rolling window) and the recorded probe results young enough to count
+        are fed into the agreement. A closed pair reads ``pass`` only when a
+        probe run from its entry segment to its jewel segment was blocked
+        within the certificate TTL; with no such probe it stays
+        ``proved_config``. A real stored flow from the entry to the jewel, or a
+        probe that crossed, makes it ``fail_open``. Real flows are also
+        classified against the certificates of the previous twin assessment
+        still valid now; the impossible-traffic alerts go into the assessment
+        ``metadata``.
+
+        Fallback: with no twin, the environment is assembled from the legacy
+        asset graph (``graph_adapter``). That graph carries no firewall rules,
+        so the environment is honestly all-INFERRED: pairs with no route in it
+        are reported as *unproven*, not closed (closure 0%, the board line
+        says closure is unproven), coverage is unmeasured, no certificates are
+        issued, and the result is labelled ``"auto"``.
+        """
+        if await twin_store.has_twin(self.db):
+            env = await twin_store.load_environment(self.db)
+            if env is None:
+                return {"assessments": 0, "routes": 0}
+            hashes = await twin_store.config_hashes(self.db)
+            now = datetime.now(timezone.utc)
+            flows, window_days, probes, standing = await self._wargame_evidence(env, now)
+            bundle = assess_environment(
+                env,
+                label="twin",
+                config_hashes=hashes,
+                issued_at=now,
+                signing_key=_wargame_signing_key(),
+                probes=probes,
+                observed_flows=flows,
+                observation_window_days=window_days,
+                standing_certificates=standing,
+            )
+            await store.persist(self.db, bundle)
+            return {"assessments": 1, "routes": len(bundle.routes)}
+
+        if self.attackpaths is None:
+            return {"assessments": 0, "routes": 0}
+        graph = await self.attackpaths._load_graph()
+        env = environment_from_graph(graph)
+        bundle = assess_unproven_environment(env, label="auto")
+        await store.persist(self.db, bundle)
+        return {"assessments": 1, "routes": len(bundle.routes)}
+
+    async def _wargame_evidence(
+        self, env: Any, now: datetime
+    ) -> tuple[list[Any], int, dict[tuple[str, str], bool], list[dict[str, Any]]]:
+        """The CURRENT tenant's stored evidence for a twin assessment: flows in
+        the rolling window (+ the days they span), probe results mapped onto
+        (entry, jewel) pairs (``evidence.pair_probes``: entry -> jewel only,
+        within the certificate TTL, ``error`` ignored), and the previous twin
+        assessment's still-valid certificates. If the 044 evidence tables are
+        missing (migration not applied yet) the assessment runs without
+        evidence, exactly as before, and says so in the log."""
+        try:
+            flows, window_days = await evidence.load_flows(self.db, now=now)
+            entries, jewels = evidence.env_entries_and_jewels(env)
+            probes = evidence.pair_probes(
+                await evidence.load_probes(self.db, now=now),
+                now=now, entries=entries, jewels=jewels,
+            )
+            standing = await evidence.standing_certificates(self.db, now=now)
+        except asyncpg.UndefinedTableError:
+            log.warning("wargame_evidence_unavailable: schema 044 not applied; "
+                        "assessing without flows or probe results")
+            return [], 0, {}, []
+        return flows, window_days, probes, standing
+
+    async def run_wargame_scoped(self) -> dict[str, Any]:
+        """The tenant named by the request, else every active tenant.
+
+        Mirrors :meth:`run_pathcompute_scoped`: ``run_for_request_or_all``
+        runs ``_wargame_tenant`` once per scope, each inside its own tenant
+        context and wrapped so one tenant's failure is logged and skipped;
+        ``merge_counts`` folds the survivors (summing ``assessments`` and
+        ``routes``)."""
+        started = asyncio.get_running_loop().time()
+        res = tenancy.merge_counts(
+            await tenancy.run_for_request_or_all(self.db.pool, self._wargame_tenant)
+        )
+        res.setdefault("assessments", 0)
+        res.setdefault("routes", 0)
+        res["elapsed_ms"] = round(
+            (asyncio.get_running_loop().time() - started) * 1000.0, 2
+        )
+        return res
+
     def _trigger_pathcompute(self) -> None:
         """Schedule a debounced attack-path recompute (≤ once per window) for
         the current tenant (the task inherits the tenant context)."""
@@ -631,6 +788,502 @@ async def compute_paths() -> ComputePathsResponse:
     return ComputePathsResponse(
         computed=res["computed"], elapsed_ms=res["elapsed_ms"]
     )
+
+
+class ComputeWargameResponse(BaseModel):
+    assessments: int
+    routes: int
+    elapsed_ms: float
+
+
+@app.post("/compute-wargame", response_model=ComputeWargameResponse)
+async def compute_wargame() -> ComputeWargameResponse:
+    if service.attackpaths is None:
+        raise HTTPException(status_code=503, detail="not ready")
+    res = await service.run_wargame_scoped()
+    return ComputeWargameResponse(
+        assessments=res["assessments"],
+        routes=res["routes"],
+        elapsed_ms=res["elapsed_ms"],
+    )
+
+
+# ----------------------------------------------------------------------------
+# Wargame twin config ingest (parsed rule sets + declared topology)
+# ----------------------------------------------------------------------------
+
+_MAX_CONFIG_CHARS = 8 * 1024 * 1024
+_MAX_TOPOLOGY_SEGMENTS = 5_000
+_MAX_TOPOLOGY_EDGES = 20_000
+_MAX_CHANGE_BODY_BYTES = 32 * 1024 * 1024
+_MAX_FLOWS_CHARS = 8 * 1024 * 1024
+
+
+class IngestConfigRequest(BaseModel):
+    vendor: str = Field(max_length=32)
+    # raw config text, or a JSON string for JSON vendors
+    raw: str = Field(min_length=1, max_length=_MAX_CONFIG_CHARS)
+    source: str = Field("", max_length=512)  # file path / connector id, for snapshot provenance
+
+
+class SetTopologyRequest(BaseModel):
+    segments: list[dict[str, Any]] = Field(default=[], max_length=_MAX_TOPOLOGY_SEGMENTS)
+    edges: list[dict[str, Any]] = Field(default=[], max_length=_MAX_TOPOLOGY_EDGES)
+
+
+def _port_range(p: Any) -> Optional[PortRange]:
+    """Tolerant port spec: ``None``, an existing ``PortRange``, or a dict
+    ``{proto, low, high}`` (proto as a string or :class:`Proto`)."""
+    if p is None or isinstance(p, PortRange):
+        return p
+    proto = p.get("proto", "any")
+    if not isinstance(proto, Proto):
+        proto = Proto(proto)
+    return PortRange(proto, int(p.get("low", 0)), int(p.get("high", 65535)))
+
+
+def _segment_spec(d: dict[str, Any]) -> SegmentSpec:
+    role = d.get("role", NodeRole.INTERMEDIATE)
+    if not isinstance(role, NodeRole):
+        role = NodeRole(role)
+    return SegmentSpec(
+        id=d["id"],
+        cidrs=tuple(d.get("cidrs", ()) or ()),
+        role=role,
+        reason=d.get("reason", "") or "",
+        jewel_kind=d.get("jewel_kind", "") or "",
+        metadata=dict(d.get("metadata", {}) or {}),
+    )
+
+
+def _edge_spec(d: dict[str, Any]) -> EdgeSpec:
+    labels = frozenset(
+        lb if isinstance(lb, EvidenceLabel) else EvidenceLabel(lb)
+        for lb in (d.get("base_labels", ()) or ())
+    )
+    return EdgeSpec(
+        src=d["src"],
+        dst=d["dst"],
+        rule_set_id=d.get("rule_set_id"),
+        port=_port_range(d.get("port")),
+        base_labels=labels,
+        fix_candidate_id=d.get("fix_candidate_id"),
+        metadata=dict(d.get("metadata", {}) or {}),
+    )
+
+
+@app.post("/ingest-config")
+async def ingest_config(req: IngestConfigRequest) -> dict[str, int]:
+    """Parse a real firewall/cloud export into vendor-neutral rule sets and
+    merge them into the CURRENT tenant's twin (RLS-scoped). Re-ingesting the
+    same ``source`` (or the same rule set ids) REPLACES those rule sets, it
+    never duplicates them. A config snapshot hash is recorded for certificate
+    provenance."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    return await do_ingest_config(req)
+
+
+async def do_ingest_config(req: IngestConfigRequest) -> dict[str, int]:
+    """Shared body of ``/ingest-config`` and the ``twin_ingest_config`` queue
+    job (runs in whatever tenant context the caller bound). 4xx
+    ``HTTPException`` means the input is bad (the job consumer treats it as a
+    poison message)."""
+    if req.vendor not in available_vendors():
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported vendor; expected one of {sorted(available_vendors())}",
+        )
+    # AWS exports are JSON; the text-config vendors (asa/fortinet/paloalto)
+    # take the raw text. Mirror what each parser expects as input.
+    raw_in: Any = req.raw
+    if req.vendor == "aws":
+        try:
+            raw_in = json.loads(req.raw)
+        except (json.JSONDecodeError, RecursionError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"invalid aws json: {type(exc).__name__}"
+            ) from None
+    try:
+        # Parsing is CPU-bound and the config can be megabytes: keep the event
+        # loop free.
+        result = await asyncio.to_thread(parse, req.vendor, raw_in)
+    except Exception:  # noqa: BLE001 - a hostile/garbled config must be a 422
+        log.warning("ingest-config: %s config could not be parsed", req.vendor, exc_info=True)
+        raise HTTPException(
+            status_code=422, detail=f"could not parse the {req.vendor} config"
+        ) from None
+    sha = certificate.hash_snapshot(req.raw)
+    await twin_store.persist_rulesets(
+        service.db,
+        result.rulesets,
+        replace=False,
+        snapshots=[{"vendor": req.vendor, "source": req.source, "sha256": sha}],
+        source=req.source,
+    )
+    return {"rulesets": len(result.rulesets), "warnings": len(result.warnings)}
+
+
+@app.post("/set-topology")
+async def set_topology(req: SetTopologyRequest) -> dict[str, int]:
+    """Replace the CURRENT tenant's declared topology (segments + edges) in
+    the twin (RLS-scoped). Dicts are converted tolerantly into the fabric
+    spec types; a malformed or duplicate segment/edge is a 422."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    return await do_set_topology(req)
+
+
+async def do_set_topology(req: SetTopologyRequest) -> dict[str, int]:
+    """Shared body of ``/set-topology`` and the ``twin_set_topology`` queue job."""
+    try:
+        segments = [_segment_spec(d) for d in req.segments]
+        edges = [_edge_spec(d) for d in req.edges]
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid topology: {type(exc).__name__}: {str(exc)[:120]}",
+        ) from None
+    ids = [sg.id for sg in segments]
+    if len(set(ids)) != len(ids):
+        dup = next(i for i in ids if ids.count(i) > 1)
+        raise HTTPException(status_code=422, detail=f"duplicate segment id {dup!r}")
+    await twin_store.persist_topology(service.db, segments, edges)
+    return {"segments": len(segments), "edges": len(edges)}
+
+
+# ----------------------------------------------------------------------------
+# Wargame twin evidence: observed flows + recorded probe results (schema 044)
+# ----------------------------------------------------------------------------
+
+_MAX_PROBE_RESULTS = 10_000
+_MAX_WARNINGS = 20
+
+
+class IngestFlowsRequest(BaseModel):
+    # raw firewall / Zeek / generic flow text (JSON array or JSONL)
+    raw: str = Field(min_length=1, max_length=_MAX_FLOWS_CHARS)
+    format: Literal["auto", "zeek", "generic", "firewall"] = "auto"
+    source: str = Field("", max_length=512)  # log file / sensor id
+
+
+class ProbeResultIn(BaseModel):
+    src: str = Field(min_length=1, max_length=256)   # twin segment it ran FROM
+    dst: str = Field(min_length=1, max_length=256)   # twin segment it tried to reach
+    proto: Literal["tcp", "udp", "icmp"] = "tcp"
+    port: int = Field(ge=0, le=65535)
+    result: Literal["crossed", "blocked", "error"]
+    observed_at: datetime
+    source: str = Field("", max_length=512)          # probe / scanner id
+
+
+class IngestProbesRequest(BaseModel):
+    results: list[ProbeResultIn] = Field(min_length=1, max_length=_MAX_PROBE_RESULTS)
+
+
+@app.post("/ingest-flows")
+async def ingest_flows(req: IngestFlowsRequest) -> dict[str, Any]:
+    """Store observed flows parsed from the customer's own logs in the CURRENT
+    tenant's twin evidence (RLS-scoped). Only rows that parse are stored; the
+    store keeps a rolling window (``evidence.FLOW_WINDOW_DAYS``) and a
+    per-tenant row cap. Nothing is sent anywhere."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    return await do_ingest_flows(req)
+
+
+async def do_ingest_flows(req: IngestFlowsRequest) -> dict[str, Any]:
+    """Shared body of ``/ingest-flows`` and the ``twin_ingest_flows`` queue job."""
+    from .engine.wargame import ingest as flow_ingest
+
+    flows, stats = await asyncio.to_thread(
+        flow_ingest.parse_flows_detailed, req.raw, req.format
+    )
+    now = datetime.now(timezone.utc)
+    rows = [
+        evidence.flow_to_row(
+            f,
+            observed_at=evidence.flow_observed_at(f.ts, ingested_at=now),
+            source=req.source,
+        )
+        for f in flows
+    ]
+    stored = 0
+    if rows:
+        stored = (await evidence.persist_flows(service.db, rows, now=now))["stored"]
+    warnings = [r[:160] for r in stats.reasons[:_MAX_WARNINGS]]
+    if len(stats.reasons) > _MAX_WARNINGS:
+        warnings.append(f"... and {len(stats.reasons) - _MAX_WARNINGS} more skipped row(s)")
+    if len(rows) > stored:
+        warnings.append(
+            f"{len(rows) - stored} flow(s) older than {evidence.FLOW_WINDOW_DAYS} days "
+            "or over the per-tenant cap were not kept"
+        )
+    if not flows:
+        warnings.append("no flows parsed")
+    return {
+        "flows_parsed": stats.parsed,
+        "flows_skipped": stats.skipped,
+        "flows_stored": stored,
+        "warnings": warnings,
+    }
+
+
+@app.post("/ingest-probes")
+async def ingest_probes(req: IngestProbesRequest) -> dict[str, Any]:
+    """Record probe results the customer's own probe / scanner produced
+    (crossed / blocked / error from a src segment to a dst segment on a
+    proto/port). Paddock sends NO packets here: these are recorded facts.
+    Each result must name segments declared in the twin; one that does not,
+    names the same segment twice, or is dated in the future is rejected
+    (counted, with a warning) and the rest are stored. 409 when the tenant has
+    no topology."""
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    return await do_ingest_probes(req)
+
+
+async def do_ingest_probes(req: IngestProbesRequest) -> dict[str, Any]:
+    """Shared body of ``/ingest-probes`` and the ``twin_ingest_probes`` queue job."""
+    segs = await evidence.segment_keys(service.db)
+    if not segs:
+        raise HTTPException(
+            status_code=409,
+            detail="no twin topology for this tenant: declare segments first "
+            "(POST /v1/wargame/twin/topology)",
+        )
+    now = datetime.now(timezone.utc)
+    keep: list[evidence.ProbeResult] = []
+    warnings: list[str] = []
+    rejected = 0
+
+    def _reject(i: int, why: str) -> None:
+        nonlocal rejected
+        rejected += 1
+        if len(warnings) < _MAX_WARNINGS:
+            warnings.append(f"result {i}: {why}"[:200])
+
+    for i, p in enumerate(req.results):
+        at = p.observed_at if p.observed_at.tzinfo else p.observed_at.replace(
+            tzinfo=timezone.utc)
+        unknown = [s for s in (p.src, p.dst) if s not in segs]
+        if unknown:
+            _reject(i, f"segment {unknown[0][:64]!r} is not in the twin")
+        elif p.src == p.dst:
+            _reject(i, "src and dst are the same segment")
+        elif at > now + evidence.CLOCK_SKEW:
+            _reject(i, "observed_at is in the future")
+        else:
+            keep.append(evidence.ProbeResult(
+                src=p.src, dst=p.dst, proto=p.proto, port=p.port,
+                result=p.result, observed_at=at, source=p.source,
+            ))
+    if rejected > _MAX_WARNINGS:
+        warnings.append(f"... and {rejected - _MAX_WARNINGS} more rejected result(s)")
+    stored = 0
+    if keep:
+        stored = (await evidence.persist_probes(service.db, keep, now=now))["stored"]
+    if len(keep) > stored:
+        warnings.append(
+            f"{len(keep) - stored} result(s) older than "
+            f"{evidence.PROBE_RETENTION_DAYS} days were not kept"
+        )
+    stale = sum(
+        1 for p in keep
+        if p.result != "error" and not evidence.probe_counts(p, now=now)
+    )
+    if stale:
+        warnings.append(
+            f"{stale} result(s) are older than {evidence.PROBE_MAX_AGE_HOURS} h "
+            "and do not count toward a verdict"
+        )
+    return {
+        "stored": stored,
+        "rejected": rejected + (len(keep) - stored),
+        "warnings": warnings,
+    }
+
+
+def _job_handlers(svc: "Service") -> dict[str, Any]:
+    """``op`` -> handler for the Redis fallback jobs. Every handler runs inside
+    the job's tenant context (bound by ``jobs.process``) and calls the SAME
+    function as the synchronous endpoint. A malformed ``payload`` is a
+    ``jobs.PoisonJob``."""
+
+    def _model(cls: Any, payload: Any) -> Any:
+        try:
+            return cls.model_validate(payload)
+        except Exception as exc:  # pydantic ValidationError / bad shape
+            raise jobs.PoisonJob(f"invalid payload: {type(exc).__name__}") from None
+
+    async def recompute_paths(_p: Any) -> Any:
+        return await svc.run_pathcompute_scoped()
+
+    async def recompute_wargame(_p: Any) -> Any:
+        return await svc.run_wargame_scoped()
+
+    async def twin_ingest_config(p: Any) -> Any:
+        return await do_ingest_config(_model(IngestConfigRequest, p))
+
+    async def twin_set_topology(p: Any) -> Any:
+        return await do_set_topology(_model(SetTopologyRequest, p))
+
+    async def twin_ingest_flows(p: Any) -> Any:
+        return await do_ingest_flows(_model(IngestFlowsRequest, p))
+
+    async def twin_ingest_probes(p: Any) -> Any:
+        return await do_ingest_probes(_model(IngestProbesRequest, p))
+
+    return {
+        "recompute_paths": recompute_paths,
+        "recompute_wargame": recompute_wargame,
+        "twin_ingest_config": twin_ingest_config,
+        "twin_set_topology": twin_set_topology,
+        "twin_ingest_flows": twin_ingest_flows,
+        "twin_ingest_probes": twin_ingest_probes,
+    }
+
+
+# ----------------------------------------------------------------------------
+# Wargame change gate (read-only: evaluate a Terraform plan against the twin)
+# ----------------------------------------------------------------------------
+
+class ChangeImpactRequest(BaseModel):
+    plan: dict[str, Any]
+    flows: Optional[str] = Field(default=None, max_length=_MAX_FLOWS_CHARS)
+    flows_format: str = Field("auto", max_length=16)
+
+
+def _flow_ref(fi: Any) -> dict[str, Any]:
+    f = fi.flow
+    return {
+        "src_ip": f.src_ip,
+        "dst_ip": f.dst_ip,
+        "proto": f.proto.value,
+        "dst_port": f.dst_port,
+        "ruleset_id": fi.ruleset_id,
+    }
+
+
+def _applicable_ops(env: Any, change: Any) -> tuple[Any, list[str]]:
+    """Split a plan's ops into those that can be applied to ``env`` and
+    warnings for those that cannot (a rule set the twin does not model, a rule
+    the twin does not hold). ``apply_change`` raises on those; one unmodelled
+    resource must not make the whole plan un-evaluable, but it must never be
+    silently dropped either, so each becomes a warning."""
+    from .engine.wargame.environment import ChangeKind, ProposedChange
+
+    live: dict[str, set[str]] = {
+        rid: {r.id for r in rs.rules} for rid, rs in env.rulesets.items()
+    }
+    keep: list[Any] = []
+    warnings: list[str] = []
+    for op in change.ops:
+        k = op.kind
+        if k in (ChangeKind.ADD_RULE, ChangeKind.REMOVE_RULE, ChangeKind.MODIFY_RULE):
+            rid = op.ruleset_id
+            rule_id = op.rule_id or (op.rule.id if op.rule else "")
+            if rid not in live:
+                warnings.append(
+                    f"not evaluated: rule set {rid!r} is not in the twin ({k.value} {rule_id!r})"
+                )
+                continue
+            if k is ChangeKind.ADD_RULE:
+                live[rid].add(rule_id)
+            elif rule_id not in live[rid]:
+                warnings.append(
+                    f"not evaluated: rule {rule_id!r} is not in twin rule set {rid!r} ({k.value})"
+                )
+                continue
+            elif k is ChangeKind.REMOVE_RULE:
+                live[rid].discard(rule_id)
+        keep.append(op)
+    return ProposedChange(ops=keep, title=change.title, source=change.source), warnings
+
+
+@app.post("/change-impact")
+async def change_impact(request: Request, req: ChangeImpactRequest) -> dict[str, Any]:
+    """Evaluate a ``terraform show -json`` plan against the CURRENT tenant's
+    twin and report what it would do: crown-jewel routes opened/closed and
+    observed flows it would break/newly allow. READ-ONLY: nothing is
+    persisted, applied, or sent anywhere. 409 when the tenant has no twin."""
+    from .engine.wargame import changegate, ingest as flow_ingest
+    from .engine.wargame.parsers.terraform import parse_plan_detailed
+
+    if not service._ready:
+        raise HTTPException(status_code=503, detail="not ready")
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > _MAX_CHANGE_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="request body too large")
+
+    env = await twin_store.load_environment(service.db)
+    if env is None:
+        raise HTTPException(
+            status_code=409,
+            detail="no twin for this tenant: ingest firewall/cloud config and set "
+            "the topology first (POST /v1/wargame/twin/config, /twin/topology)",
+        )
+    try:
+        parsed = await asyncio.to_thread(parse_plan_detailed, req.plan)
+    except (ValueError, TypeError, RecursionError):
+        raise HTTPException(status_code=422, detail="not a terraform show -json plan") from None
+
+    # A resource TYPE the gate does not model is informational (most plans
+    # carry instances, buckets, ...); a modelled type that failed to parse, or
+    # a malformed entry, means part of the change was NOT evaluated.
+    unmodelled = [(a, w) for a, w in parsed.skipped if "unhandled resource type" in w]
+    broken = [(a, w) for a, w in parsed.skipped if "unhandled resource type" not in w]
+    warnings: list[str] = [f"skipped {a}: {w}" for a, w in broken[:50]]
+    if len(broken) > 50:
+        warnings.append(f"... and {len(broken) - 50} more unparseable resource(s)")
+    if unmodelled:
+        types = sorted({w.split("'")[1] if "'" in w else "?" for _, w in unmodelled})
+        warnings.append(
+            f"{len(unmodelled)} resource change(s) of types this gate does not model "
+            f"were ignored: {', '.join(types[:10])}"
+        )
+    complete = not broken
+    change, op_warnings = _applicable_ops(env, parsed.change)
+    warnings.extend(op_warnings)
+    if op_warnings:
+        complete = False
+    if not parsed.change.ops and not broken:
+        warnings.append("the plan contains no network rule changes this gate models")
+
+    flows: list[Any] = []
+    flows_parsed = flows_skipped = 0
+    if req.flows:
+        fmt = (req.flows_format or "auto").lower()
+        flows, stats = await asyncio.to_thread(flow_ingest.parse_flows_detailed, req.flows, fmt)
+        flows_parsed, flows_skipped = stats.parsed, stats.skipped
+        if flows_skipped:
+            warnings.append(f"{flows_skipped} flow row(s) could not be parsed")
+        if fmt != "auto" and not flows and stats.reasons:
+            warnings.append(f"no flows parsed: {stats.reasons[0][:120]}")
+
+    try:
+        impact = await asyncio.to_thread(changegate.evaluate_change, env, change, flows=flows)
+    except Exception:  # noqa: BLE001
+        log.exception("change-impact evaluation failed")
+        raise HTTPException(status_code=422, detail="the change could not be evaluated") from None
+
+    summary = impact.summary()
+    if not complete:
+        summary += " NOT a full proof: part of the plan could not be evaluated (see warnings)."
+    return {
+        "verdict": impact.verdict,
+        "routes_opened": [{"entry": d.pair[0], "jewel": d.pair[1]} for d in impact.routes_opened],
+        "routes_closed": [{"entry": d.pair[0], "jewel": d.pair[1]} for d in impact.routes_closed],
+        "newly_denied_flows": [_flow_ref(fi) for fi in impact.newly_denied_flows],
+        "newly_allowed_flows": [_flow_ref(fi) for fi in impact.newly_allowed_flows],
+        "summary": summary,
+        "warnings": warnings,
+        "change_title": impact.change_title,
+        "affected_boundaries": list(impact.affected_boundaries),
+        "complete": complete,
+        "flows_parsed": flows_parsed,
+        "flows_skipped": flows_skipped,
+    }
 
 
 class FuseResponse(BaseModel):

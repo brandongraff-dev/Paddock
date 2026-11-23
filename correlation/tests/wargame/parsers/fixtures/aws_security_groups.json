@@ -1,0 +1,91 @@
+{
+  "SecurityGroups": [
+    {
+      "GroupId": "sg-0web",
+      "GroupName": "web-tier",
+      "Description": "Public web front end",
+      "VpcId": "vpc-0a1b2c3d",
+      "OwnerId": "111122223333",
+      "AttachedTo": ["eni-0web001", "eni-0web002"],
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 443,
+          "ToPort": 443,
+          "IpRanges": [
+            {"CidrIp": "0.0.0.0/0", "Description": "world https"}
+          ],
+          "Ipv6Ranges": [
+            {"CidrIpv6": "::/0", "Description": "world https v6"}
+          ],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": [
+        {
+          "IpProtocol": "-1",
+          "IpRanges": [
+            {"CidrIp": "0.0.0.0/0", "Description": "all egress"}
+          ],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": []
+        }
+      ]
+    },
+    {
+      "GroupId": "sg-0app",
+      "GroupName": "app-tier",
+      "Description": "Application tier",
+      "VpcId": "vpc-0a1b2c3d",
+      "OwnerId": "111122223333",
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 8080,
+          "ToPort": 8080,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            {"GroupId": "sg-0web", "UserId": "111122223333"}
+          ],
+          "PrefixListIds": []
+        },
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 9090,
+          "ToPort": 9090,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [],
+          "PrefixListIds": [
+            {"PrefixListId": "pl-0a1b2c3d4e5f6a7b8"}
+          ]
+        }
+      ],
+      "IpPermissionsEgress": []
+    },
+    {
+      "GroupId": "sg-0db",
+      "GroupName": "db-tier",
+      "Description": "PostgreSQL, reachable from the app tier only",
+      "VpcId": "vpc-0a1b2c3d",
+      "OwnerId": "111122223333",
+      "IpPermissions": [
+        {
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "IpRanges": [],
+          "Ipv6Ranges": [],
+          "UserIdGroupPairs": [
+            {"GroupId": "sg-0app", "UserId": "111122223333"}
+          ],
+          "PrefixListIds": []
+        }
+      ],
+      "IpPermissionsEgress": []
+    }
+  ]
+}

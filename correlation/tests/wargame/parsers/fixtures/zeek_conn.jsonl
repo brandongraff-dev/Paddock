@@ -1,0 +1,4 @@
+{"ts":1700000001.10,"uid":"C1a","id.orig_h":"10.9.0.5","id.orig_p":51514,"id.resp_h":"10.1.0.9","id.resp_p":5432,"proto":"tcp","service":"postgresql","conn_state":"SF"}
+{"ts":1700000002.20,"uid":"C2b","id.orig_h":"10.9.0.6","id.orig_p":40022,"id.resp_h":"10.1.0.9","id.resp_p":5432,"proto":"tcp","conn_state":"S0"}
+{"ts":1700000003.30,"uid":"C3c","id.orig_h":"10.9.0.7","id.orig_p":40100,"id.resp_h":"10.1.0.10","id.resp_p":3389,"proto":"tcp","conn_state":"REJ"}
+{"ts":1700000004.40,"uid":"C4d","id.orig_h":"10.9.0.5","id.orig_p":53311,"id.resp_h":"10.1.0.2","id.resp_p":53,"proto":"udp","service":"dns","conn_state":"SF"}

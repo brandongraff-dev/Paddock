@@ -1,0 +1,23 @@
+# Only the branch office is an entry, and the payments SG admits the POS segment alone: closed.
+[[segment]]
+id = "branch-office"
+role = "entry"
+cidrs = ["10.20.0.0/24"]
+
+[[segment]]
+id = "pos"
+cidrs = ["10.5.0.0/24"]
+
+[[segment]]
+id = "payments-db"
+role = "crown_jewel"
+cidrs = ["10.1.0.0/24"]
+
+[[source]]
+vendor = "aws"
+path = "sg.json"
+
+[[edge]]
+from = "branch-office"
+to = "payments-db"
+ruleset = "sg-0paymentsdb"

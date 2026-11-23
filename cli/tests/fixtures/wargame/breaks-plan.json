@@ -1,0 +1,28 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_network_acl_rule.deny_pos_db",
+      "mode": "managed",
+      "type": "aws_network_acl_rule",
+      "name": "deny_pos_db",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "network_acl_id": "acl-0pay",
+          "rule_number": 50,
+          "egress": false,
+          "protocol": "6",
+          "rule_action": "deny",
+          "cidr_block": "10.5.0.0/24",
+          "from_port": 5432,
+          "to_port": 5432
+        },
+        "after_unknown": {}
+      }
+    }
+  ]
+}

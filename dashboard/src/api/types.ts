@@ -1030,3 +1030,233 @@ export interface ProvenanceRecord {
   confidence?: number | null;
   recorded_at: string;
 }
+
+/* -------------------------------------------------------------------- *
+ *  Wargame (orchestrator /v1/wargame/*, schema 039/040)                 *
+ *  Mirrors orchestrator/app/models.py Wargame* and the JSON the         *
+ *  correlation engine writes (engine/wargame/store.py). Verdict, label  *
+ *  and status strings are typed open (`| string`) on purpose: the       *
+ *  engine adds values (e.g. boundary verdict "proved_config") and the   *
+ *  UI must render an unknown one as reported, never crash or upgrade it.*
+ * -------------------------------------------------------------------- */
+
+/** The evidence ladder, strongest first (engine `EvidenceLabel`). */
+export type WargameEvidenceLabel =
+  | "imported"
+  | "proved_replica"
+  | "proved_live_safe_check"
+  | "observed"
+  | "tested_probe"
+  | "proved_config"
+  | "conditional"
+  | "inferred"
+  | "unknown";
+
+export type WargameBoundaryVerdict =
+  | "pass"
+  | "proved_config"
+  | "fail_open"
+  | "conditional"
+  | "insufficient"
+  | (string & {});
+
+export interface WargameAssessment {
+  id: string;
+  label: string;
+  crownjewel_total: number;
+  crownjewel_open: number;
+  crownjewel_closed: number;
+  crownjewel_conditional: number;
+  /** 0–100. Never shown without `board_line` / coverage. */
+  closure_pct: number;
+  /** 0–100, or null = not yet measured (never "full"). */
+  coverage_pct: number | null;
+  false_closed_rate: number | null;
+  /** The engine's scorecard sentence; always pairs closure with coverage. */
+  board_line: string;
+  blind_spots: unknown[];
+  computed_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface WargameAssessmentPage {
+  items: WargameAssessment[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** One hop as `store._hop_dict` writes it. */
+export interface WargameHop {
+  src: string;
+  dst: string;
+  labels: (WargameEvidenceLabel | (string & {}))[];
+  /** "tcp/5432", "any", … or null for an ungoverned adjacency. */
+  port: string | null;
+  rule_ref?: string | null;
+  fix_candidate_ids?: string[];
+}
+
+export interface WargameRoute {
+  id: string;
+  entry: string;
+  jewel: string;
+  length: number;
+  weakest_label: WargameEvidenceLabel | (string & {});
+  hops: WargameHop[];
+  fingerprint: string;
+}
+
+export interface WargameRoutePage {
+  items: WargameRoute[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface WargameBoundary {
+  id: string;
+  boundary_src: string;
+  boundary_dst: string;
+  port: string;
+  verdict: WargameBoundaryVerdict;
+  disagreements: unknown[];
+  note: string;
+}
+
+export interface WargameAssumption {
+  key: string;
+  text: string;
+}
+
+export interface WargameCertificate {
+  id: string;
+  boundary_src: string;
+  boundary_dst: string;
+  port: string;
+  claim: string;
+  assumptions: (WargameAssumption | string)[];
+  config_hashes: string[];
+  status: "valid" | "expired" | "contradicted" | (string & {});
+  issued_at: string | null;
+  expires_at: string | null;
+  fingerprint: string;
+  /** Which key made the fingerprint; "unsigned-dev" = the public dev key. */
+  key_id?: string | null;
+}
+
+/** One selected fix as `store._fix_dict` writes it. */
+export interface WargameFix {
+  id: string;
+  kind: string;
+  cost_class: string;
+  description: string;
+  cost: number;
+}
+
+export interface WargameFixSet {
+  id: string;
+  total_cost: number;
+  optimality: "exact" | "greedy" | (string & {});
+  cuts_all: boolean;
+  selected: WargameFix[];
+  metadata: Record<string, unknown>;
+}
+
+export interface WargameTwinSummary {
+  ruleset_count: number;
+  rule_count: number;
+  segment_count: number;
+  edge_count: number;
+  snapshot_count: number;
+  has_twin: boolean;
+  /** Stored observed flows (rolling 30-day window). */
+  flow_count?: number;
+  /** Stored probe results (recorded facts from the customer's own probe/scanner). */
+  probe_count?: number;
+  /** Probe results young enough (24 h, not `error`) to count toward a verdict. */
+  probe_fresh_count?: number;
+}
+
+export type WargameTriggerStatus = "computed" | "ingested" | "queued" | "unavailable" | (string & {});
+
+export interface WargameRecomputeResult {
+  status: WargameTriggerStatus;
+  detail?: string | null;
+}
+
+export interface WargameTwinIngestResult {
+  status: WargameTriggerStatus;
+  detail?: string | null;
+  rulesets?: number | null;
+}
+
+/** Result of POST /v1/wargame/twin/flows. */
+export interface WargameTwinFlowsResult {
+  status: WargameTriggerStatus;
+  detail?: string | null;
+  flows_parsed?: number | null;
+  flows_skipped?: number | null;
+  flows_stored?: number | null;
+  warnings?: string[];
+}
+
+/** One recorded probe result (POST /v1/wargame/twin/probes). */
+export interface WargameProbeResultIn {
+  src: string;
+  dst: string;
+  proto?: "tcp" | "udp" | "icmp";
+  port: number;
+  result: "crossed" | "blocked" | "error";
+  observed_at: string;
+  source?: string;
+}
+
+/** Result of POST /v1/wargame/twin/probes. */
+export interface WargameTwinProbesResult {
+  status: WargameTriggerStatus;
+  detail?: string | null;
+  stored?: number | null;
+  rejected?: number | null;
+  warnings?: string[];
+}
+
+/** Body of POST /v1/wargame/change-impact. */
+export interface WargameChangeImpactRequest {
+  /** A `terraform show -json` plan object. */
+  plan: unknown;
+  flows?: string;
+  flows_format?: string;
+}
+
+export interface WargamePair {
+  entry: string;
+  jewel: string;
+}
+
+export interface WargameFlow {
+  src_ip: string;
+  dst_ip: string;
+  proto: string;
+  dst_port: number | string;
+  /** The rule set / boundary where the flip was found. */
+  ruleset_id?: string;
+}
+
+export interface WargameChangeImpact {
+  verdict: "safe" | "opens_route_to_crown_jewel" | "breaks_live_flows" | "opens_and_breaks" | (string & {});
+  routes_opened: WargamePair[];
+  routes_closed: WargamePair[];
+  newly_denied_flows: WargameFlow[];
+  newly_allowed_flows: WargameFlow[];
+  summary: string;
+  warnings: string[];
+  /* additive fields (may be absent on older servers) */
+  change_title?: string;
+  /** Rule sets / boundaries the change touches. */
+  affected_boundaries?: string[];
+  /** False when part of the plan couldn't be evaluated: a "safe" verdict is then NOT a proof. */
+  complete?: boolean;
+  flows_parsed?: number;
+  flows_skipped?: number;
+}

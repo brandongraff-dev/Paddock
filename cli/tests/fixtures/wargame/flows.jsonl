@@ -1,0 +1,2 @@
+{"ts": 1.0, "uid": "C0", "id.orig_h": "10.5.0.12", "id.orig_p": 50000, "id.resp_h": "10.1.0.9", "id.resp_p": 5432, "proto": "tcp", "conn_state": "SF"}
+{"ts": 2.0, "uid": "C1", "id.orig_h": "10.5.0.13", "id.orig_p": 50001, "id.resp_h": "10.1.0.9", "id.resp_p": 5432, "proto": "tcp", "conn_state": "SF"}

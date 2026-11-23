@@ -204,7 +204,9 @@ body,
 }
 
 @media (max-width: 860px) {
-  :root { --rail-w: 60px; }
+  /* Must out-rank tokens.css's `:root[data-theme="dark"]` (the console is
+     always dark), or the rail never collapses on phones. */
+  :root, :root:root[data-theme] { --rail-w: 60px; }
   .rail .brand-name,
   .rail-label,
   .rail-group-label,
@@ -442,6 +444,15 @@ textarea:focus { border-color: var(--border-focus) !important; box-shadow: 0 0 0
 }
 .panel > :not(.panel-h) { margin-left: 6px; margin-right: 6px; }
 .panel .table thead th { background: transparent; }
+/* Edge-to-edge panels (inline `padding: 0`: list/table panels whose first
+   child is a header bar). Inset them evenly by the plate's 6px on every side
+   instead of only left/right, and round the first/last child to the plate's
+   inner radius (22px outer - 6px inset), so a header bar follows the panel's
+   curve instead of sitting square against its top edge. */
+.panel[style*="padding: 0"] { padding: 6px !important; }
+.panel[style*="padding: 0"] > :not(.panel-h) { margin-left: 0; margin-right: 0; }
+.panel[style*="padding: 0"] > :first-child { border-top-left-radius: 16px; border-top-right-radius: 16px; }
+.panel[style*="padding: 0"] > :last-child { border-bottom-left-radius: 16px; border-bottom-right-radius: 16px; }
 @supports not (backdrop-filter: blur(1px)) {
   .panel, .stat-tile { background: var(--panel); }
 }
@@ -451,6 +462,22 @@ textarea:focus { border-color: var(--border-focus) !important; box-shadow: 0 0 0
 /* keep the header zone calm: the aurora lives mostly behind the cards */
 .canvas-pixels {
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.1) 0, rgba(0, 0, 0, 0.1) 150px, #000 340px, #000 100%);
+}
+/* Working pages (everything but Overview): the aurora becomes a quiet band in
+   the top-right corner (Shell moves its source to the right). Dimmer, fading
+   down and toward the title, gone before tables and panels start, so dense
+   content and the page header read on a calm sheet. Overview keeps the full
+   field. */
+.canvas--quiet .canvas-pixels {
+  opacity: 0.55;
+  -webkit-mask-image:
+    linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.5) 150px, rgba(0, 0, 0, 0.1) 300px, transparent 420px),
+    linear-gradient(90deg, transparent 0, transparent 35%, #000 75%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.5) 150px, rgba(0, 0, 0, 0.1) 300px, transparent 420px),
+    linear-gradient(90deg, transparent 0, transparent 35%, #000 75%);
+  mask-composite: intersect;
 }
 .canvas > .topbar {
   background: rgba(14, 12, 10, 0.5);

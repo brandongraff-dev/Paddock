@@ -6,6 +6,7 @@ import GraphPage from "./pages/Graph";
 import FindingsPage from "./pages/Findings";
 import ChainsPage from "./pages/Chains";
 import AttackPathsPage from "./pages/AttackPaths";
+import WargamePage from "./pages/Wargame";
 import ChangesPage from "./pages/Changes";
 import PosturePage from "./pages/Posture";
 import TicketsPage from "./pages/Tickets";
@@ -90,6 +91,7 @@ function AuthedApp() {
         <Route path="/findings" element={<Shell><FindingsPage /></Shell>} />
         <Route path="/chains" element={<Shell><ChainsPage /></Shell>} />
         <Route path="/attack-paths" element={<Shell><AttackPathsPage /></Shell>} />
+        <Route path="/wargame" element={<Shell><WargamePage /></Shell>} />
         <Route path="/changes" element={<Shell><ChangesPage /></Shell>} />
         <Route path="/posture" element={<Shell><PosturePage /></Shell>} />
         <Route path="/tickets" element={<Shell><TicketsPage /></Shell>} />
@@ -124,7 +126,7 @@ function AuthedApp() {
   );
 }
 
-const APP_SEGMENTS = new Set(["ask", "attack", "attack-paths", "audit", "chains", "changes", "context", "dependencies", "devices", "explore", "findings", "fleet", "graph", "integrations", "monitoring", "msp", "network-actions", "posture", "remediation", "reports", "risk-model", "scans", "scope", "sensors", "settings", "setup", "sso", "suppliers", "suppressions", "threat-intel", "tickets", "timeline"]);
+const APP_SEGMENTS = new Set(["ask", "attack", "attack-paths", "audit", "chains", "changes", "context", "dependencies", "devices", "explore", "findings", "fleet", "graph", "integrations", "monitoring", "msp", "network-actions", "posture", "remediation", "reports", "risk-model", "scans", "scope", "sensors", "settings", "setup", "sso", "suppliers", "suppressions", "threat-intel", "tickets", "timeline", "wargame"]);
 
 function SignedOutDeepLink() {
   const seg = window.location.pathname.split("/")[1] ?? "";

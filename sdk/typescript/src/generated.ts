@@ -2709,6 +2709,296 @@ export interface VerifyOut {
   scope_entry_id: number;
 }
 
+/**
+ * One assessment run's headline scorecard.
+ *
+ * Crown-Jewel Closure is always carried alongside coverage (never one
+ * alone), mirroring the schema.
+ */
+export interface WargameAssessmentOut {
+  blind_spots?: unknown[];
+  board_line: string;
+  closure_pct: number;
+  computed_at: string;
+  coverage_pct?: number | null;
+  crownjewel_closed: number;
+  crownjewel_conditional: number;
+  crownjewel_open: number;
+  crownjewel_total: number;
+  false_closed_rate?: number | null;
+  id: string;
+  label: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WargameAssessmentPage {
+  items: WargameAssessmentOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+/**
+ * A per-boundary three-way agreement verdict.
+ */
+export interface WargameBoundaryOut {
+  boundary_dst: string;
+  boundary_src: string;
+  disagreements?: unknown[];
+  id: string;
+  note: string;
+  port: string;
+  verdict: "pass" | "proved_config" | "fail_open" | "conditional" | "insufficient";
+}
+
+/**
+ * A signed closed-boundary certificate.
+ */
+export interface WargameCertificateOut {
+  assumptions?: unknown[];
+  boundary_dst: string;
+  boundary_src: string;
+  claim: string;
+  config_hashes?: unknown[];
+  corroboration?: Record<string, unknown>;
+  expires_at?: string | null;
+  fingerprint: string;
+  id: string;
+  issued_at?: string | null;
+  key_id?: string;
+  port: string;
+  signed?: boolean;
+  status: "valid" | "expired" | "contradicted";
+}
+
+/**
+ * What a proposed change does, before it is applied.
+ *
+ * ``verdict`` is the change gate's: ``safe``, ``opens_route_to_crown_jewel``,
+ * ``breaks_live_flows`` or ``opens_and_breaks`` (open string: treat an
+ * unknown value as "needs review").
+ */
+export interface WargameChangeImpact {
+  affected_boundaries?: string[];
+  change_title?: string;
+  complete?: boolean;
+  flows_parsed?: number;
+  flows_skipped?: number;
+  newly_allowed_flows?: WargameFlowRef[];
+  newly_denied_flows?: WargameFlowRef[];
+  routes_closed?: WargameRouteRef[];
+  routes_opened?: WargameRouteRef[];
+  summary?: string;
+  verdict: string;
+  warnings?: string[];
+}
+
+/**
+ * Body of POST /v1/wargame/change-impact.
+ */
+export interface WargameChangeImpactRequest {
+  flows?: string | null;
+  flows_format?: "auto" | "zeek" | "generic" | "firewall";
+  plan: Record<string, unknown>;
+}
+
+/**
+ * A hash-chained auditor evidence item (PCI / CIP).
+ */
+export interface WargameEvidenceOut {
+  control_id: string;
+  evidence?: Record<string, unknown>;
+  framework: string;
+  id: string;
+  item_hash: string;
+  ordinal: number;
+  statement: string;
+  status: "met" | "exception" | "not_assessed";
+}
+
+/**
+ * The minimum-cost fix set that cuts every open route.
+ */
+export interface WargameFixSetOut {
+  cuts_all: boolean;
+  id: string;
+  metadata?: Record<string, unknown>;
+  optimality: "exact" | "greedy";
+  selected?: unknown[];
+  total_cost: number;
+}
+
+/**
+ * An observed flow whose verdict flips at an affected boundary.
+ */
+export interface WargameFlowRef {
+  dst_ip: string;
+  dst_port: number;
+  proto: string;
+  ruleset_id?: string;
+  src_ip: string;
+}
+
+/**
+ * One recorded probe result: a connect from segment `src` to segment
+ * `dst` on `proto`/`port` crossed, was blocked, or errored. `error` is kept
+ * but never counts as a probe.
+ */
+export interface WargameProbeResultIn {
+  dst: string;
+  observed_at: string;
+  port: number;
+  proto?: "tcp" | "udp" | "icmp";
+  result: "crossed" | "blocked" | "error";
+  source?: string;
+  src: string;
+}
+
+/**
+ * Result of POST /v1/wargame/recompute.
+ *
+ * `status` is `computed` when the synchronous correlation call returned,
+ * `queued` when a recompute job was enqueued on Redis as a fallback, or
+ * `unavailable` when correlation was unreachable AND the enqueue failed
+ * (the request never fails hard). `detail` carries a short human note.
+ */
+export interface WargameRecomputeOut {
+  detail?: string | null;
+  status: "computed" | "queued" | "unavailable";
+}
+
+/**
+ * An open route to a crown jewel. Hops are impact-only, stored as the
+ * compute service wrote them (ordered nodes, not an exploitation recipe).
+ */
+export interface WargameRouteOut {
+  entry: string;
+  fingerprint: string;
+  hops?: unknown[];
+  id: string;
+  jewel: string;
+  length: number;
+  weakest_label: string;
+}
+
+export interface WargameRoutePage {
+  items: WargameRouteOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+/**
+ * An (entry, crown jewel) pair whose reachability the change flips.
+ */
+export interface WargameRouteRef {
+  entry: string;
+  jewel: string;
+}
+
+/**
+ * Body of POST /v1/wargame/twin/config: one read-only vendor config.
+ */
+export interface WargameTwinConfigRequest {
+  raw: string;
+  source?: string;
+  vendor: "aws" | "cisco_asa" | "fortinet" | "paloalto";
+}
+
+/**
+ * Result of POST /v1/wargame/twin/flows (same `status` semantics as
+ * /twin/config). Counts are present only when `status` is `ingested`.
+ */
+export interface WargameTwinFlowsOut {
+  detail?: string | null;
+  flows_parsed?: number | null;
+  flows_skipped?: number | null;
+  flows_stored?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+  warnings?: string[];
+}
+
+/**
+ * Body of POST /v1/wargame/twin/flows: raw flow logs (firewall allow/deny
+ * JSON, Zeek conn.log JSONL, or generic JSON). Only rows that parse are
+ * stored; the store keeps a rolling 30-day window.
+ */
+export interface WargameTwinFlowsRequest {
+  format?: "auto" | "zeek" | "generic" | "firewall";
+  raw: string;
+  source?: string;
+}
+
+/**
+ * Result of POST /v1/wargame/twin/config. `status` is `ingested` when the
+ * synchronous correlation call succeeded, `queued` when a Redis job was
+ * enqueued as a fallback, or `unavailable` when both failed.
+ */
+export interface WargameTwinIngestOut {
+  detail?: string | null;
+  rulesets?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+}
+
+/**
+ * Result of POST /v1/wargame/twin/probes. `rejected` counts results naming
+ * a segment the twin does not hold, the same segment twice, a future time,
+ * or older than the retention window.
+ */
+export interface WargameTwinProbesOut {
+  detail?: string | null;
+  rejected?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+  stored?: number | null;
+  warnings?: string[];
+}
+
+/**
+ * Body of POST /v1/wargame/twin/probes.
+ */
+export interface WargameTwinProbesRequest {
+  results: WargameProbeResultIn[];
+}
+
+/**
+ * Row counts of the persisted twin (GET /v1/wargame/twin).
+ *
+ * `flow_count` / `probe_count` are the stored boundary evidence (schema
+ * 044): observed flows in the rolling window and recorded probe results.
+ * `probe_fresh_count` is how many probe results are young enough (within the
+ * certificate TTL, not `error`) to count toward a verdict right now.
+ */
+export interface WargameTwinSummaryOut {
+  edge_count: number;
+  flow_count?: number;
+  has_twin: boolean;
+  probe_count?: number;
+  probe_fresh_count?: number;
+  rule_count: number;
+  ruleset_count: number;
+  segment_count: number;
+  snapshot_count: number;
+}
+
+/**
+ * Result of POST /v1/wargame/twin/topology (same status semantics).
+ */
+export interface WargameTwinTopologyOut {
+  detail?: string | null;
+  edges?: number | null;
+  segments?: number | null;
+  status: "ingested" | "queued" | "unavailable";
+}
+
+/**
+ * Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded
+ * verbatim to the correlation service which validates them.
+ */
+export interface WargameTwinTopologyRequest {
+  edges?: Record<string, unknown>[];
+  segments?: Record<string, unknown>[];
+}
+
 export interface WhyFactor {
   key: string;
   label: string;
@@ -3150,6 +3440,20 @@ export const OPERATIONS = {
   takeSnapshot: ["POST", "/v1/usage/snapshot", false],
   listSnapshots: ["GET", "/v1/usage/snapshots", false],
   postResultVerification: ["POST", "/v1/verifications/{verification_id}/result", false],
+  listAssessments: ["GET", "/v1/wargame/assessments", true],
+  getAssessment: ["GET", "/v1/wargame/assessments/{assessment_id}", false],
+  listBoundaries: ["GET", "/v1/wargame/assessments/{assessment_id}/boundaries", true],
+  listCertificates: ["GET", "/v1/wargame/assessments/{assessment_id}/certificates", true],
+  listEvidence: ["GET", "/v1/wargame/assessments/{assessment_id}/evidence", true],
+  getFixSet: ["GET", "/v1/wargame/assessments/{assessment_id}/fix-set", false],
+  listRoutes: ["GET", "/v1/wargame/assessments/{assessment_id}/routes", true],
+  changeImpact: ["POST", "/v1/wargame/change-impact", false],
+  recomputeWargame: ["POST", "/v1/wargame/recompute", false],
+  getTwinSummary: ["GET", "/v1/wargame/twin", false],
+  ingestTwinConfig: ["POST", "/v1/wargame/twin/config", false],
+  ingestTwinFlows: ["POST", "/v1/wargame/twin/flows", false],
+  ingestTwinProbes: ["POST", "/v1/wargame/twin/probes", false],
+  setTwinTopology: ["POST", "/v1/wargame/twin/topology", false],
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -5343,6 +5647,161 @@ export abstract class GeneratedOperations {
    */
   postResultVerification(verificationId: string, body: app__verification__models__ResultIn, options?: RequestOptions): Promise<VerificationOut> {
     return this._request<VerificationOut>("POST", "/v1/verifications/{verification_id}/result", { pathParams: { verification_id: verificationId }, body, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments — List Assessments
+   */
+  listAssessments(query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<WargameAssessmentPage> {
+    return this._request<WargameAssessmentPage>("GET", "/v1/wargame/assessments", { query, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id} — Get Assessment
+   */
+  getAssessment(assessmentId: string, options?: RequestOptions): Promise<WargameAssessmentOut> {
+    return this._request<WargameAssessmentOut>("GET", "/v1/wargame/assessments/{assessment_id}", { pathParams: { assessment_id: assessmentId }, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/boundaries — List Boundaries
+   */
+  listBoundaries(assessmentId: string, query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<WargameBoundaryOut[]> {
+    return this._request<WargameBoundaryOut[]>("GET", "/v1/wargame/assessments/{assessment_id}/boundaries", { pathParams: { assessment_id: assessmentId }, query, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/certificates — List Certificates
+   */
+  listCertificates(assessmentId: string, query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<WargameCertificateOut[]> {
+    return this._request<WargameCertificateOut[]>("GET", "/v1/wargame/assessments/{assessment_id}/certificates", { pathParams: { assessment_id: assessmentId }, query, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/evidence — List Evidence
+   */
+  listEvidence(assessmentId: string, query?: { framework?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<WargameEvidenceOut[]> {
+    return this._request<WargameEvidenceOut[]>("GET", "/v1/wargame/assessments/{assessment_id}/evidence", { pathParams: { assessment_id: assessmentId }, query, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/fix-set — Get Fix Set
+   */
+  getFixSet(assessmentId: string, options?: RequestOptions): Promise<WargameFixSetOut> {
+    return this._request<WargameFixSetOut>("GET", "/v1/wargame/assessments/{assessment_id}/fix-set", { pathParams: { assessment_id: assessmentId }, options });
+  }
+
+  /**
+   * GET /v1/wargame/assessments/{assessment_id}/routes — List Routes
+   */
+  listRoutes(assessmentId: string, query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<WargameRoutePage> {
+    return this._request<WargameRoutePage>("GET", "/v1/wargame/assessments/{assessment_id}/routes", { pathParams: { assessment_id: assessmentId }, query, options });
+  }
+
+  /**
+   * POST /v1/wargame/change-impact — Change Impact
+   *
+   * Say what a proposed Terraform plan would do, BEFORE it is applied.
+   *
+   * Proxies synchronously to correlation `POST /change-impact`, which loads
+   * this tenant's twin, evaluates the plan before/after against it, and
+   * returns routes opened/closed to crown jewels and live flows broken. Strictly
+   * read-only: nothing is persisted, applied, or sent anywhere. There is no
+   * queue fallback (the caller needs the answer): correlation down is a 503,
+   * no twin is a 409, a bad plan is a 422, an oversize body a 413.
+   */
+  changeImpact(body: WargameChangeImpactRequest, options?: RequestOptions): Promise<WargameChangeImpact> {
+    return this._request<WargameChangeImpact>("POST", "/v1/wargame/change-impact", { body, options });
+  }
+
+  /**
+   * POST /v1/wargame/recompute — Recompute Wargame
+   *
+   * Trigger a recompute of wargame assessments.
+   *
+   * Preferred path: a synchronous POST to the correlation service's
+   * `/compute-wargame` (connect fails fast, the read allows a real compute).
+   * If that is unreachable or errors, fall back to publishing a
+   * `correlate:recompute_wargame` job on Redis. The request never fails hard
+   * when correlation is down -- the worst case is `status=unavailable`
+   * (correlation unreachable *and* the enqueue failed). Failures are logged;
+   * the response carries a generic note, never the exception text.
+   */
+  recomputeWargame(options?: RequestOptions): Promise<WargameRecomputeOut> {
+    return this._request<WargameRecomputeOut>("POST", "/v1/wargame/recompute", { options });
+  }
+
+  /**
+   * GET /v1/wargame/twin — Get Twin Summary
+   *
+   * Row counts of the persisted twin. Read-only; tenant scoping is applied
+   * by the pool's RLS session, exactly like the other reads here.
+   */
+  getTwinSummary(options?: RequestOptions): Promise<WargameTwinSummaryOut> {
+    return this._request<WargameTwinSummaryOut>("GET", "/v1/wargame/twin", { options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/config — Ingest Twin Config
+   *
+   * Ingest one read-only vendor config into the twin (compute-side).
+   *
+   * Forwards to correlation `POST /ingest-config`; falls back to a
+   * `correlate:twin_ingest_config` Redis job when correlation is down. The
+   * config is parsed, never applied to any device. Vendor is an allowlist,
+   * size is capped (413 / 422), and a config correlation cannot parse is a
+   * 422, not a queued job.
+   */
+  ingestTwinConfig(body: WargameTwinConfigRequest, options?: RequestOptions): Promise<WargameTwinIngestOut> {
+    return this._request<WargameTwinIngestOut>("POST", "/v1/wargame/twin/config", { body, options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/flows — Ingest Twin Flows
+   *
+   * Store observed flows (the customer's own firewall / Zeek / generic
+   * logs) as twin evidence.
+   *
+   * Forwards to correlation `POST /ingest-flows`; falls back to a
+   * `correlate:twin_ingest_flows` Redis job when correlation is down. Only rows
+   * that parse are stored (rolling 30-day window, capped per tenant). On the
+   * next recompute a real flow from an entry to a crown jewel the config proves
+   * closed makes that pair `fail_open`, and one across a still-valid
+   * certificate raises an impossible-traffic alert. Nothing is probed.
+   */
+  ingestTwinFlows(body: WargameTwinFlowsRequest, options?: RequestOptions): Promise<WargameTwinFlowsOut> {
+    return this._request<WargameTwinFlowsOut>("POST", "/v1/wargame/twin/flows", { body, options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/probes — Ingest Twin Probes
+   *
+   * Record probe results produced by the customer's own probe or scanner.
+   *
+   * Paddock sends NO packets here: each result is a recorded fact (a connect
+   * from segment `src` to segment `dst` on `proto`/`port` `crossed`, was
+   * `blocked`, or hit an `error`). Forwards to correlation `POST /ingest-probes`;
+   * falls back to a `correlate:twin_ingest_probes` Redis job. A result naming a
+   * segment the twin does not hold is rejected (counted); no topology is a 409.
+   * A probe counts for an (entry, crown jewel) pair only if it ran from that
+   * entry segment to that jewel segment, within the certificate TTL (24 h);
+   * `error` never counts. A blocked one turns a config-proved pair into `pass`.
+   */
+  ingestTwinProbes(body: WargameTwinProbesRequest, options?: RequestOptions): Promise<WargameTwinProbesOut> {
+    return this._request<WargameTwinProbesOut>("POST", "/v1/wargame/twin/probes", { body, options });
+  }
+
+  /**
+   * POST /v1/wargame/twin/topology — Set Twin Topology
+   *
+   * Set the twin's segments/edges (compute-side).
+   *
+   * Forwards to correlation `POST /set-topology`; falls back to a
+   * `correlate:twin_set_topology` Redis job. Malformed segments/edges are a
+   * 422 from correlation, passed through.
+   */
+  setTwinTopology(body: WargameTwinTopologyRequest, options?: RequestOptions): Promise<WargameTwinTopologyOut> {
+    return this._request<WargameTwinTopologyOut>("POST", "/v1/wargame/twin/topology", { body, options });
   }
 
 }

@@ -12,7 +12,9 @@ any of the following unless the owner asks:
   band in the Daguerreotype palette (patina blue → cream → ember → sepia), no
   neon. It sits behind the content sheet only (`.canvas-pixels`, static,
   `animate={false}`) and also behind login and setup. The rail stays flat
-  chrome.
+  chrome. Only **Overview** shows the full field; every other console page
+  uses the quiet mode (`.canvas--quiet`, set in `Shell.tsx`), a dimmed
+  top-right corner band that fades out before the content (owner's call).
 - **Layered premium glass** on every card, panel, stat tile, overlay, login and
   setup (theme.css "Pixel aurora + liquid glass"): a clear blurred slab with
   refracted edge fringes carrying a more solid frosted plate. Panel headers are

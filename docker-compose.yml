@@ -428,6 +428,10 @@ services:
       TENANCY_STRICT: ${TENANCY_STRICT:-false}
       REDIS_URL: redis://redis:6379/0
       POLICIES_DIR: /policies
+      # Wargame certificate signing master (per-tenant keys are derived from it).
+      # Unset = certificates are labelled "unsigned-dev", never signed.
+      WARGAME_SIGNING_KEY: ${WARGAME_SIGNING_KEY:-}
+      WARGAME_SIGNING_PREVIOUS_KEYS: ${WARGAME_SIGNING_PREVIOUS_KEYS:-}
     volumes:
       - ./policies:/policies:ro
     tmpfs:

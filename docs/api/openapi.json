@@ -16269,6 +16269,1101 @@
         "title": "VerifyOut",
         "type": "object"
       },
+      "WargameAssessmentOut": {
+        "description": "One assessment run's headline scorecard.\n\nCrown-Jewel Closure is always carried alongside coverage (never one\nalone), mirroring the schema.",
+        "properties": {
+          "blind_spots": {
+            "items": {},
+            "title": "Blind Spots",
+            "type": "array"
+          },
+          "board_line": {
+            "title": "Board Line",
+            "type": "string"
+          },
+          "closure_pct": {
+            "title": "Closure Pct",
+            "type": "number"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "coverage_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Pct"
+          },
+          "crownjewel_closed": {
+            "title": "Crownjewel Closed",
+            "type": "integer"
+          },
+          "crownjewel_conditional": {
+            "title": "Crownjewel Conditional",
+            "type": "integer"
+          },
+          "crownjewel_open": {
+            "title": "Crownjewel Open",
+            "type": "integer"
+          },
+          "crownjewel_total": {
+            "title": "Crownjewel Total",
+            "type": "integer"
+          },
+          "false_closed_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Closed Rate"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "crownjewel_total",
+          "crownjewel_open",
+          "crownjewel_closed",
+          "crownjewel_conditional",
+          "closure_pct",
+          "board_line",
+          "computed_at"
+        ],
+        "title": "WargameAssessmentOut",
+        "type": "object"
+      },
+      "WargameAssessmentPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WargameAssessmentOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "WargameAssessmentPage",
+        "type": "object"
+      },
+      "WargameBoundaryOut": {
+        "description": "A per-boundary three-way agreement verdict.",
+        "properties": {
+          "boundary_dst": {
+            "title": "Boundary Dst",
+            "type": "string"
+          },
+          "boundary_src": {
+            "title": "Boundary Src",
+            "type": "string"
+          },
+          "disagreements": {
+            "items": {},
+            "title": "Disagreements",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "pass",
+              "proved_config",
+              "fail_open",
+              "conditional",
+              "insufficient"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "boundary_src",
+          "boundary_dst",
+          "port",
+          "verdict",
+          "note"
+        ],
+        "title": "WargameBoundaryOut",
+        "type": "object"
+      },
+      "WargameCertificateOut": {
+        "description": "A signed closed-boundary certificate.",
+        "properties": {
+          "assumptions": {
+            "items": {},
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "boundary_dst": {
+            "title": "Boundary Dst",
+            "type": "string"
+          },
+          "boundary_src": {
+            "title": "Boundary Src",
+            "type": "string"
+          },
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "config_hashes": {
+            "items": {},
+            "title": "Config Hashes",
+            "type": "array"
+          },
+          "corroboration": {
+            "additionalProperties": true,
+            "title": "Corroboration",
+            "type": "object"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "key_id": {
+            "default": "",
+            "title": "Key Id",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "string"
+          },
+          "signed": {
+            "default": false,
+            "title": "Signed",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "expired",
+              "contradicted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "boundary_src",
+          "boundary_dst",
+          "port",
+          "claim",
+          "status",
+          "fingerprint"
+        ],
+        "title": "WargameCertificateOut",
+        "type": "object"
+      },
+      "WargameChangeImpact": {
+        "description": "What a proposed change does, before it is applied.\n\n``verdict`` is the change gate's: ``safe``, ``opens_route_to_crown_jewel``,\n``breaks_live_flows`` or ``opens_and_breaks`` (open string: treat an\nunknown value as \"needs review\").",
+        "properties": {
+          "affected_boundaries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affected Boundaries",
+            "type": "array"
+          },
+          "change_title": {
+            "default": "",
+            "title": "Change Title",
+            "type": "string"
+          },
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "flows_parsed": {
+            "default": 0,
+            "title": "Flows Parsed",
+            "type": "integer"
+          },
+          "flows_skipped": {
+            "default": 0,
+            "title": "Flows Skipped",
+            "type": "integer"
+          },
+          "newly_allowed_flows": {
+            "items": {
+              "$ref": "#/components/schemas/WargameFlowRef"
+            },
+            "title": "Newly Allowed Flows",
+            "type": "array"
+          },
+          "newly_denied_flows": {
+            "items": {
+              "$ref": "#/components/schemas/WargameFlowRef"
+            },
+            "title": "Newly Denied Flows",
+            "type": "array"
+          },
+          "routes_closed": {
+            "items": {
+              "$ref": "#/components/schemas/WargameRouteRef"
+            },
+            "title": "Routes Closed",
+            "type": "array"
+          },
+          "routes_opened": {
+            "items": {
+              "$ref": "#/components/schemas/WargameRouteRef"
+            },
+            "title": "Routes Opened",
+            "type": "array"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "verdict"
+        ],
+        "title": "WargameChangeImpact",
+        "type": "object"
+      },
+      "WargameChangeImpactRequest": {
+        "description": "Body of POST /v1/wargame/change-impact.",
+        "properties": {
+          "flows": {
+            "anyOf": [
+              {
+                "maxLength": 8388608,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows"
+          },
+          "flows_format": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "zeek",
+              "generic",
+              "firewall"
+            ],
+            "title": "Flows Format",
+            "type": "string"
+          },
+          "plan": {
+            "additionalProperties": true,
+            "title": "Plan",
+            "type": "object"
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "title": "WargameChangeImpactRequest",
+        "type": "object"
+      },
+      "WargameEvidenceOut": {
+        "description": "A hash-chained auditor evidence item (PCI / CIP).",
+        "properties": {
+          "control_id": {
+            "title": "Control Id",
+            "type": "string"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "framework": {
+            "title": "Framework",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_hash": {
+            "title": "Item Hash",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "exception",
+              "not_assessed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "framework",
+          "control_id",
+          "status",
+          "statement",
+          "item_hash",
+          "ordinal"
+        ],
+        "title": "WargameEvidenceOut",
+        "type": "object"
+      },
+      "WargameFixSetOut": {
+        "description": "The minimum-cost fix set that cuts every open route.",
+        "properties": {
+          "cuts_all": {
+            "title": "Cuts All",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "optimality": {
+            "enum": [
+              "exact",
+              "greedy"
+            ],
+            "title": "Optimality",
+            "type": "string"
+          },
+          "selected": {
+            "items": {},
+            "title": "Selected",
+            "type": "array"
+          },
+          "total_cost": {
+            "title": "Total Cost",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "total_cost",
+          "optimality",
+          "cuts_all"
+        ],
+        "title": "WargameFixSetOut",
+        "type": "object"
+      },
+      "WargameFlowRef": {
+        "description": "An observed flow whose verdict flips at an affected boundary.",
+        "properties": {
+          "dst_ip": {
+            "title": "Dst Ip",
+            "type": "string"
+          },
+          "dst_port": {
+            "title": "Dst Port",
+            "type": "integer"
+          },
+          "proto": {
+            "title": "Proto",
+            "type": "string"
+          },
+          "ruleset_id": {
+            "default": "",
+            "title": "Ruleset Id",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          }
+        },
+        "required": [
+          "src_ip",
+          "dst_ip",
+          "proto",
+          "dst_port"
+        ],
+        "title": "WargameFlowRef",
+        "type": "object"
+      },
+      "WargameProbeResultIn": {
+        "description": "One recorded probe result: a connect from segment `src` to segment\n`dst` on `proto`/`port` crossed, was blocked, or errored. `error` is kept\nbut never counts as a probe.",
+        "properties": {
+          "dst": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Dst",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535.0,
+            "minimum": 0.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "proto": {
+            "default": "tcp",
+            "enum": [
+              "tcp",
+              "udp",
+              "icmp"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "result": {
+            "enum": [
+              "crossed",
+              "blocked",
+              "error"
+            ],
+            "title": "Result",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Source",
+            "type": "string"
+          },
+          "src": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Src",
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "dst",
+          "port",
+          "result",
+          "observed_at"
+        ],
+        "title": "WargameProbeResultIn",
+        "type": "object"
+      },
+      "WargameRecomputeOut": {
+        "description": "Result of POST /v1/wargame/recompute.\n\n`status` is `computed` when the synchronous correlation call returned,\n`queued` when a recompute job was enqueued on Redis as a fallback, or\n`unavailable` when correlation was unreachable AND the enqueue failed\n(the request never fails hard). `detail` carries a short human note.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "status": {
+            "enum": [
+              "computed",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameRecomputeOut",
+        "type": "object"
+      },
+      "WargameRouteOut": {
+        "description": "An open route to a crown jewel. Hops are impact-only, stored as the\ncompute service wrote them (ordered nodes, not an exploitation recipe).",
+        "properties": {
+          "entry": {
+            "title": "Entry",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "hops": {
+            "items": {},
+            "title": "Hops",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "jewel": {
+            "title": "Jewel",
+            "type": "string"
+          },
+          "length": {
+            "title": "Length",
+            "type": "integer"
+          },
+          "weakest_label": {
+            "title": "Weakest Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "entry",
+          "jewel",
+          "length",
+          "weakest_label",
+          "fingerprint"
+        ],
+        "title": "WargameRouteOut",
+        "type": "object"
+      },
+      "WargameRoutePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WargameRouteOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "WargameRoutePage",
+        "type": "object"
+      },
+      "WargameRouteRef": {
+        "description": "An (entry, crown jewel) pair whose reachability the change flips.",
+        "properties": {
+          "entry": {
+            "title": "Entry",
+            "type": "string"
+          },
+          "jewel": {
+            "title": "Jewel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry",
+          "jewel"
+        ],
+        "title": "WargameRouteRef",
+        "type": "object"
+      },
+      "WargameTwinConfigRequest": {
+        "description": "Body of POST /v1/wargame/twin/config: one read-only vendor config.",
+        "properties": {
+          "raw": {
+            "maxLength": 8388608,
+            "minLength": 1,
+            "title": "Raw",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Source",
+            "type": "string"
+          },
+          "vendor": {
+            "enum": [
+              "aws",
+              "cisco_asa",
+              "fortinet",
+              "paloalto"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor",
+          "raw"
+        ],
+        "title": "WargameTwinConfigRequest",
+        "type": "object"
+      },
+      "WargameTwinFlowsOut": {
+        "description": "Result of POST /v1/wargame/twin/flows (same `status` semantics as\n/twin/config). Counts are present only when `status` is `ingested`.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "flows_parsed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows Parsed"
+          },
+          "flows_skipped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows Skipped"
+          },
+          "flows_stored": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flows Stored"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinFlowsOut",
+        "type": "object"
+      },
+      "WargameTwinFlowsRequest": {
+        "description": "Body of POST /v1/wargame/twin/flows: raw flow logs (firewall allow/deny\nJSON, Zeek conn.log JSONL, or generic JSON). Only rows that parse are\nstored; the store keeps a rolling 30-day window.",
+        "properties": {
+          "format": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "zeek",
+              "generic",
+              "firewall"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "raw": {
+            "maxLength": 8388608,
+            "minLength": 1,
+            "title": "Raw",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "raw"
+        ],
+        "title": "WargameTwinFlowsRequest",
+        "type": "object"
+      },
+      "WargameTwinIngestOut": {
+        "description": "Result of POST /v1/wargame/twin/config. `status` is `ingested` when the\nsynchronous correlation call succeeded, `queued` when a Redis job was\nenqueued as a fallback, or `unavailable` when both failed.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "rulesets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rulesets"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinIngestOut",
+        "type": "object"
+      },
+      "WargameTwinProbesOut": {
+        "description": "Result of POST /v1/wargame/twin/probes. `rejected` counts results naming\na segment the twin does not hold, the same segment twice, a future time,\nor older than the retention window.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "rejected": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejected"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stored": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stored"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinProbesOut",
+        "type": "object"
+      },
+      "WargameTwinProbesRequest": {
+        "description": "Body of POST /v1/wargame/twin/probes.",
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/WargameProbeResultIn"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "WargameTwinProbesRequest",
+        "type": "object"
+      },
+      "WargameTwinSummaryOut": {
+        "description": "Row counts of the persisted twin (GET /v1/wargame/twin).\n\n`flow_count` / `probe_count` are the stored boundary evidence (schema\n044): observed flows in the rolling window and recorded probe results.\n`probe_fresh_count` is how many probe results are young enough (within the\ncertificate TTL, not `error`) to count toward a verdict right now.",
+        "properties": {
+          "edge_count": {
+            "title": "Edge Count",
+            "type": "integer"
+          },
+          "flow_count": {
+            "default": 0,
+            "title": "Flow Count",
+            "type": "integer"
+          },
+          "has_twin": {
+            "title": "Has Twin",
+            "type": "boolean"
+          },
+          "probe_count": {
+            "default": 0,
+            "title": "Probe Count",
+            "type": "integer"
+          },
+          "probe_fresh_count": {
+            "default": 0,
+            "title": "Probe Fresh Count",
+            "type": "integer"
+          },
+          "rule_count": {
+            "title": "Rule Count",
+            "type": "integer"
+          },
+          "ruleset_count": {
+            "title": "Ruleset Count",
+            "type": "integer"
+          },
+          "segment_count": {
+            "title": "Segment Count",
+            "type": "integer"
+          },
+          "snapshot_count": {
+            "title": "Snapshot Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ruleset_count",
+          "rule_count",
+          "segment_count",
+          "edge_count",
+          "snapshot_count",
+          "has_twin"
+        ],
+        "title": "WargameTwinSummaryOut",
+        "type": "object"
+      },
+      "WargameTwinTopologyOut": {
+        "description": "Result of POST /v1/wargame/twin/topology (same status semantics).",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "edges": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edges"
+          },
+          "segments": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segments"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "queued",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WargameTwinTopologyOut",
+        "type": "object"
+      },
+      "WargameTwinTopologyRequest": {
+        "description": "Body of POST /v1/wargame/twin/topology. Opaque dicts, forwarded\nverbatim to the correlation service which validates them.",
+        "properties": {
+          "edges": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 20000,
+            "title": "Edges",
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 5000,
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "title": "WargameTwinTopologyRequest",
+        "type": "object"
+      },
       "WhyFactor": {
         "properties": {
           "key": {
@@ -31133,6 +32228,695 @@
         "summary": "Post Result",
         "tags": [
           "verification"
+        ]
+      }
+    },
+    "/v1/wargame/assessments": {
+      "get": {
+        "operationId": "list_assessments_v1_wargame_assessments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameAssessmentPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Assessments",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}": {
+      "get": {
+        "operationId": "get_assessment_v1_wargame_assessments__assessment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameAssessmentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Assessment",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/boundaries": {
+      "get": {
+        "operationId": "list_boundaries_v1_wargame_assessments__assessment_id__boundaries_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WargameBoundaryOut"
+                  },
+                  "title": "Response List Boundaries V1 Wargame Assessments  Assessment Id  Boundaries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Boundaries",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/certificates": {
+      "get": {
+        "operationId": "list_certificates_v1_wargame_assessments__assessment_id__certificates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WargameCertificateOut"
+                  },
+                  "title": "Response List Certificates V1 Wargame Assessments  Assessment Id  Certificates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Certificates",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/evidence": {
+      "get": {
+        "operationId": "list_evidence_v1_wargame_assessments__assessment_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "framework",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Framework"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WargameEvidenceOut"
+                  },
+                  "title": "Response List Evidence V1 Wargame Assessments  Assessment Id  Evidence Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Evidence",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/fix-set": {
+      "get": {
+        "operationId": "get_fix_set_v1_wargame_assessments__assessment_id__fix_set_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameFixSetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Fix Set",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/assessments/{assessment_id}/routes": {
+      "get": {
+        "operationId": "list_routes_v1_wargame_assessments__assessment_id__routes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assessment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assessment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameRoutePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Routes",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/change-impact": {
+      "post": {
+        "description": "Say what a proposed Terraform plan would do, BEFORE it is applied.\n\nProxies synchronously to correlation `POST /change-impact`, which loads\nthis tenant's twin, evaluates the plan before/after against it, and\nreturns routes opened/closed to crown jewels and live flows broken. Strictly\nread-only: nothing is persisted, applied, or sent anywhere. There is no\nqueue fallback (the caller needs the answer): correlation down is a 503,\nno twin is a 409, a bad plan is a 422, an oversize body a 413.",
+        "operationId": "change_impact_v1_wargame_change_impact_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameChangeImpactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameChangeImpact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Impact",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/recompute": {
+      "post": {
+        "description": "Trigger a recompute of wargame assessments.\n\nPreferred path: a synchronous POST to the correlation service's\n`/compute-wargame` (connect fails fast, the read allows a real compute).\nIf that is unreachable or errors, fall back to publishing a\n`correlate:recompute_wargame` job on Redis. The request never fails hard\nwhen correlation is down -- the worst case is `status=unavailable`\n(correlation unreachable *and* the enqueue failed). Failures are logged;\nthe response carries a generic note, never the exception text.",
+        "operationId": "recompute_wargame_v1_wargame_recompute_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameRecomputeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Recompute Wargame",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin": {
+      "get": {
+        "description": "Row counts of the persisted twin. Read-only; tenant scoping is applied\nby the pool's RLS session, exactly like the other reads here.",
+        "operationId": "get_twin_summary_v1_wargame_twin_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinSummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Twin Summary",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/config": {
+      "post": {
+        "description": "Ingest one read-only vendor config into the twin (compute-side).\n\nForwards to correlation `POST /ingest-config`; falls back to a\n`correlate:twin_ingest_config` Redis job when correlation is down. The\nconfig is parsed, never applied to any device. Vendor is an allowlist,\nsize is capped (413 / 422), and a config correlation cannot parse is a\n422, not a queued job.",
+        "operationId": "ingest_twin_config_v1_wargame_twin_config_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinIngestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Twin Config",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/flows": {
+      "post": {
+        "description": "Store observed flows (the customer's own firewall / Zeek / generic\nlogs) as twin evidence.\n\nForwards to correlation `POST /ingest-flows`; falls back to a\n`correlate:twin_ingest_flows` Redis job when correlation is down. Only rows\nthat parse are stored (rolling 30-day window, capped per tenant). On the\nnext recompute a real flow from an entry to a crown jewel the config proves\nclosed makes that pair `fail_open`, and one across a still-valid\ncertificate raises an impossible-traffic alert. Nothing is probed.",
+        "operationId": "ingest_twin_flows_v1_wargame_twin_flows_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinFlowsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinFlowsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Twin Flows",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/probes": {
+      "post": {
+        "description": "Record probe results produced by the customer's own probe or scanner.\n\nPaddock sends NO packets here: each result is a recorded fact (a connect\nfrom segment `src` to segment `dst` on `proto`/`port` `crossed`, was\n`blocked`, or hit an `error`). Forwards to correlation `POST /ingest-probes`;\nfalls back to a `correlate:twin_ingest_probes` Redis job. A result naming a\nsegment the twin does not hold is rejected (counted); no topology is a 409.\nA probe counts for an (entry, crown jewel) pair only if it ran from that\nentry segment to that jewel segment, within the certificate TTL (24 h);\n`error` never counts. A blocked one turns a config-proved pair into `pass`.",
+        "operationId": "ingest_twin_probes_v1_wargame_twin_probes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinProbesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinProbesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Twin Probes",
+        "tags": [
+          "wargame"
+        ]
+      }
+    },
+    "/v1/wargame/twin/topology": {
+      "post": {
+        "description": "Set the twin's segments/edges (compute-side).\n\nForwards to correlation `POST /set-topology`; falls back to a\n`correlate:twin_set_topology` Redis job. Malformed segments/edges are a\n422 from correlation, passed through.",
+        "operationId": "set_twin_topology_v1_wargame_twin_topology_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WargameTwinTopologyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WargameTwinTopologyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Twin Topology",
+        "tags": [
+          "wargame"
         ]
       }
     }

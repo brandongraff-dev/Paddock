@@ -1,0 +1,28 @@
+# The payments subnet sits behind a NACL; the POS controllers are the only allowed source.
+[[segment]]
+id = "branch-office"
+role = "entry"
+cidrs = ["10.20.0.0/24"]
+
+[[segment]]
+id = "pos"
+role = "entry"
+cidrs = ["10.5.0.0/24"]
+
+[[segment]]
+id = "payments-db"
+role = "crown_jewel"
+cidrs = ["10.1.0.0/24"]
+
+[[source]]
+vendor = "aws"
+path = "nacl.json"
+
+[[edge]]
+from = "pos"
+to = "payments-db"
+ruleset = "acl-0pay:ingress"
+port = "tcp/5432"
+
+[flows]
+file = "flows.jsonl"

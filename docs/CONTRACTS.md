@@ -24,6 +24,11 @@ Key tables:
 - `findings` / `finding_chains` — issues and composites
 - `outbound_log` / `scans` / `schedules` — audit + job state. `scans.parent_scan_id` references the parent scan for sub-steps of an orchestration (e.g. `full_recon`).
 - `cves` / `cve_matches` / `intel_cursors` — threat intel
+- `wargame_*` — Wargame (schema `041`–`044`): assessments, routes, boundaries,
+  certificates, fix sets, evidence (written by **correlation**, read by the
+  orchestrator); the rule-aware twin (rule sets, rules, segments, edges, config
+  snapshots); observed flows and probe results. All tenant-scoped with forced
+  RLS; correlation's service role holds the write grants.
 
 ## Redis queues
 
@@ -46,6 +51,16 @@ Job format (JSON, in a single `job` field of the stream entry):
 ```
 
 `target` is **already normalized** by the orchestrator before enqueue (scheme / port / path stripped, lowercased, trailing dot gone).
+
+`queue:correlate` also carries the orchestrator's *fallback* jobs, enqueued
+only when the synchronous call to correlation fails (a correlation 4xx is never
+queued). Shape: `{"kind", "op", "tenant_id", "payload"?}` in the `job` field.
+`op` is one of `recompute_paths`, `recompute_wargame`, `twin_ingest_config`,
+`twin_set_topology`, `twin_ingest_flows`, `twin_ingest_probes`; `payload` is the
+same body as the matching correlation endpoint. Correlation consumes them in
+`correlation/app/jobs.py` under the job's `tenant_id` (a job without a valid
+tenant is acked and never run), acks poison messages, retries transient
+failures and dead-letters to `queue:correlate:dead` after 5 deliveries.
 
 ## Orchestrator HTTP API
 
@@ -117,6 +132,26 @@ Scope mutations (`POST`, `DELETE`) go through the `require_scope_admin` dependen
 ### Timeline
 
 - `GET /v1/timeline?from=&to=&sample=` — asset diffs + new findings per day.
+
+### Wargame
+
+Read-only views of what correlation computed, plus twin management and the
+change gate (full shapes in `docs/api/openapi.json`; behaviour in
+`docs/WARGAME_ENGINE.md` §15):
+
+- `GET /v1/wargame/assessments`, `/{id}`, `/{id}/routes`, `/{id}/boundaries`,
+  `/{id}/certificates`, `/{id}/fix-set`, `/{id}/evidence`
+- `POST /v1/wargame/recompute`
+- `POST /v1/wargame/twin/config`, `/twin/topology`, `/twin/flows`,
+  `/twin/probes`; `GET /v1/wargame/twin`
+- `POST /v1/wargame/change-impact` — read-only: what a Terraform plan would
+  open or break. Never applies anything.
+
+Each POST proxies synchronously to the matching correlation endpoint
+(`/compute-wargame`, `/ingest-config`, `/set-topology`, `/ingest-flows`,
+`/ingest-probes`, `/change-impact`) with `X-API-Key` + `X-Paddock-Tenant`.
+Probe results are *recorded* facts submitted by the customer's scanner;
+Wargame sends no packets.
 
 ### SSE event mirror
 
