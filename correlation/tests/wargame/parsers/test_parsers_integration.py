@@ -103,8 +103,8 @@ def test_parsed_firewall_gates_a_reachability_edge():
     import ipaddress
     src_net = ipaddress.ip_network(allow.src_cidrs[0], strict=False)
     dst_net = ipaddress.ip_network(allow.dst_cidrs[0], strict=False)
-    src_ip = str(next(src_net.hosts(), src_net.network_address))
-    dst_ip = str(next(dst_net.hosts(), dst_net.network_address))
+    src_ip = str(next(iter(src_net.hosts()), src_net.network_address))
+    dst_ip = str(next(iter(dst_net.hosts()), dst_net.network_address))
     port = allow.ports[0]
 
     nodes = {
