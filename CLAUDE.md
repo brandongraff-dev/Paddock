@@ -58,6 +58,6 @@ The look is "Daguerreotype": warm sepia blacks, cream ink, serif headlines, quie
 ## Names and links
 
 - Repo: `https://github.com/brandongraff-dev/Paddock` (renamed from `cybersec`).
-- Site: `https://www.openpaddock.dev`. Docs: `https://paddock-docs.vercel.app` until a DNS record for
-  `docs.openpaddock.dev` exists (a CNAME `docs` pointing to `cname.vercel-dns.com`).
+- Site: `https://www.openpaddock.dev`. Docs: `https://docs.openpaddock.dev` (a CNAME `docs` at name.com
+  pointing to Vercel; the same docs are also reachable at `paddock-docs.vercel.app`).
 - Keep the canonical URL, Open Graph tags, `robots.txt` and `sitemap.xml` in `dashboard/` in step with the site address.
