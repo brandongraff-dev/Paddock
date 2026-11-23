@@ -194,9 +194,43 @@ const SCREENS_D=[
 /*30*/{flow:1,nodes:[{id:'a',x:230,y:640,text:'SCA',logo:'PADDOCK',w:240,h:250},{id:'b',x:850,y:640,text:'ATTACK PATHS',logo:'PADDOCK',w:250,h:250}],edges:[{a:'a',b:'b',label:'same graph'}],cap:'Same graph.'},
 /*31*/{wall:1,title:'',cols:3,cell:300,hl:4,strobe:1,items:[{logo:'git'},{logo:'github'},{logo:'composer'},{logo:'kubernetes'},{logo:'PADDOCK'},{logo:'nuget'},{logo:'docker'},{logo:'linux'},{logo:'opensourceinitiative'}]},
 ];
-const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B,a2:SCREENS_A,b2:SCREENS_B,c:SCREENS_C,d:SCREENS_D};
+const SCREENS_D3=[
+/*0*/{tint:1,layers:['speed'],words:1,instant:1,lines:["YOU DIDN'T","WRITE"],fs:170,gap:200,cols:['#f2f2f2','#ff5a46']},
+/*1*/{tint:1,layers:['speed'],words:1,lines:['MOST OF','YOUR APP.'],fs:170,gap:200,cols:['#f2f2f2','#ff5a46']},
+/*2*/{ui:'osv_vuln',rect:[0,0,.62],tag:'log4j · one dependency',ann:[[.01,.12,.5,.1,'severity 10.0 critical']]},
+/*3*/{hero:1,logo:'npm',title:'ONE PACKAGE.',sub:'one line in a lockfile'},
+/*4*/{words:1,lines:['6 RISKS.'],fs:240,col:'#e67350'},
+/*5*/{wall:1,title:'SIX ECOSYSTEMS',cols:3,cell:300,items:[{logo:'npm',label:'npm'},{logo:'pypi',label:'PyPI'},{logo:'go',label:'Go'},{logo:'rust',label:'Cargo'},{text:'Maven',label:'pom.xml'},{logo:'rubygems',label:'RubyGems'}]},
+/*6*/{words:1,lines:['STAY FOR','#6'],fs:190,gap:230,cols:['#f2f2f2','#e67350']},
+/*7*/{flow:1,nodes:[{id:'a',x:150,y:640,text:'LOCKFILE',w:190,h:200,fs:24},{id:'b',x:420,y:640,text:'SBOM',w:190,h:200},{id:'c',x:690,y:640,text:'OSV.DEV',w:190,h:200,fs:28},{id:'d',x:940,y:640,text:'RISK',w:170,h:200,red:1}],edges:[{a:'a',b:'b'},{a:'b',b:'c'},{a:'c',b:'d'}],cap:'Lockfile to risk.'},
+/*8*/{words:1,lines:['SBOM'],fs:260},
+/*9*/{words:1,lines:['SBOM'],fs:260},
+/*10*/{num:1,flow:1,nodes:[{id:'a',x:230,y:640,text:'internal-utils',w:260,h:240,sub:'private package',fs:28},{id:'b',x:850,y:640,text:'PUBLIC REGISTRY',w:260,h:240,red:1,sub:'same name?',fs:24}],edges:[{a:'a',b:'b',label:'dependency confusion',red:1}],cap:'Exposure, found early.'},
+/*11*/{num:2,ui:'dd_deps',rect:[.5,.45,.5],tag:'typosquats',ann:[[.02,.3,.96,.2,'one edit from a popular name']]},
+/*12*/{num:3,words:1,lines:['ABANDONED'],fs:150,cap:'no release in years'},
+/*13*/{num:4,words:1,lines:['YANKED'],fs:200,cap:'the maintainer pulled it'},
+/*14*/{num:5,words:1,lines:['UNPINNED'],fs:170,cap:'a range, not a version'},
+/*15*/{num:6,tint:1,words:1,lines:['MALICIOUS','VERSIONS'],fs:130,gap:160,col:'#ff5a46',cap:'flagged from OSV advisories'},
+/*16*/{words:1,lines:['OSV.DEV'],fs:200},
+/*17*/{words:1,lines:['OSV.DEV'],fs:200},
+/*18*/{ui:'osv',rect:[0,0,1],tag:'osv.dev · open source vulnerabilities',ann:[[.28,.52,.46,.1,'Search Vulnerability Database']]},
+/*19*/{ui:'dd_deps',rect:[.2,.1,.78],tag:'dashboard · dependencies',ann:[[.02,.1,.96,.24,'12 components, 8 vulnerable']]},
+/*20*/{wall:1,title:'WHERE IT RUNS',cols:3,cell:300,items:[{logo:'docker',label:'docker'},{logo:'debian',label:'debian'},{logo:'alpinelinux',label:'alpine'},{logo:'kubernetes',label:'kubernetes'},{logo:'linux',label:'linux'},{logo:'PADDOCK',label:'paddock'}]},
+/*21*/{flow:1,nodes:[{id:'a',x:230,y:640,text:'PADDOCK SCA',logo:'PADDOCK',w:250,h:260,fs:22},{id:'b',x:850,y:420,text:'OSV.DEV',w:230,h:150},{id:'c',x:850,y:830,text:'REGISTRY METADATA',w:230,h:150,fs:20}],edges:[{a:'a',b:'b'},{a:'a',b:'c'}],cap:'Two outbound calls. That is it.'},
+/*22*/{words:1,lines:['DETECTION','ONLY.'],fs:150,gap:190,cap:'lockfiles are parsed as text, never run'},
+/*23*/{hero:1,logo:'go',title:'GO',sub:'go.sum · go.mod'},
+/*24*/{hero:1,logo:'rust',title:'CARGO',sub:'Cargo.lock'},
+/*25*/{hero:1,logo:'rubygems',title:'RUBYGEMS',sub:'Gemfile.lock'},
+/*26*/{ui:'dd_deps',rect:[.2,.45,.78],tag:'the SBOM',ann:[[.02,.22,.62,.2,'vulnerable components']]},
+/*27*/{words:1,lines:['DIRECT','TRANSITIVE'],fs:150,gap:200},
+/*28*/{words:1,lines:['REACHABLE?'],fs:140,cap:'dependency reachability · detection only'},
+/*29*/{wall:1,title:'',cols:4,cell:240,hl:5,items:[{logo:'npm'},{logo:'pypi'},{logo:'go'},{logo:'rust'},{logo:'rubygems'},{logo:'PADDOCK'},{logo:'docker'},{logo:'debian'},{logo:'alpinelinux'},{logo:'kubernetes'},{logo:'linux'},{logo:'composer'},{logo:'nuget'},{logo:'git'},{logo:'github'},{logo:'opensourceinitiative'}]},
+/*30*/{words:1,lines:['FREE.','OPEN SOURCE.'],fs:130,gap:170,cap:'AGPL-3.0'},
+/*31*/{wall:1,title:'',cols:3,cell:300,hl:4,strobe:1,items:[{logo:'git'},{logo:'github'},{logo:'composer'},{logo:'kubernetes'},{logo:'PADDOCK'},{logo:'nuget'},{logo:'docker'},{logo:'linux'},{logo:'opensourceinitiative'}]},
+];
+const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B,a2:SCREENS_A,b2:SCREENS_B,c:SCREENS_C,d:SCREENS_D,d3:SCREENS_D3};
 const SCREENS=SCREEN_SETS[VAR]||SCREENS_MAIN;
-const HITS=VAR==='c'?[{k:8,v:'sentry',big:1},{k:16,v:'linux',big:1.12},{k:32,v:'pd',big:1}]:VAR==='d'?[{k:8,v:'npm',big:1},{k:16,v:'pypi',big:1.12},{k:32,v:'pd',big:1}]:VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
+const HITS=VAR==='c'?[{k:8,v:'sentry',big:1},{k:16,v:'linux',big:1.12},{k:32,v:'pd',big:1}]:(VAR==='d'||VAR==='d3')?[{k:8,v:'npm',big:1},{k:16,v:'pypi',big:1.12},{k:32,v:'pd',big:1}]:VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
 async function init(){
  CORPUS=(await (await fetch('build/corpus.txt')).text()).split('\n');
  const svg=await (await fetch('assets/paddock-logo.svg')).text();const re=/M(\d+) (\d+)h(\d+)v1h-\d+z/g;let m;const seen=new Set();
@@ -437,7 +471,7 @@ function flowX(S,lt,t){const N=S.nodes,pos=id=>N.find(n=>n.id===id);
   if(n.sub){ctx.font=`500 22px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(n.sub,0,h/2+32)}ctx.restore()});
  if(S.cap){ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.globalAlpha=easeOut(seg(lt,.1,.22));ctx.font=`800 64px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle=S.capCol||'#f2f2f2';ctx.fillText(S.cap,540,1160);if(S.capSub){ctx.font=`500 30px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(S.capSub,540,1215)}ctx.globalAlpha=1}}
 function wordsX(S,lt,t){ctx.textAlign='center';ctx.textBaseline='middle';const n=S.lines.length,fs=S.fs||110,gap=S.gap||fs*1.2,y0=680-(n-1)*gap/2;
- S.lines.forEach((w,i)=>{const at=i*B*.85/(n+1),k=easeOut(seg(lt,at,at+.08));if(k<=0)return;ctx.save();ctx.translate(540,y0+i*gap);ctx.font=`800 ${fs}px Inter,"DejaVu Sans",sans-serif`;const mw=ctx.measureText(w).width,fit=Math.min(1,900/mw),sc2=lerp(1.35,1,k)*fit;ctx.scale(sc2,sc2);ctx.globalAlpha=Math.min(1,k*1.6);ctx.fillStyle=(S.cols&&S.cols[i])||S.col||'#f2f2f2';ctx.fillText(w,0,0);ctx.restore()});
+ S.lines.forEach((w,i)=>{const at=i*B*.85/(n+1),k=(S.instant&&i===0)?1:easeOut(seg(lt,at,at+.08));if(k<=0)return;ctx.save();ctx.translate(540,y0+i*gap);ctx.font=`800 ${fs}px Inter,"DejaVu Sans",sans-serif`;const mw=ctx.measureText(w).width,fit=Math.min(1,900/mw),sc2=lerp(1.35,1,k)*fit;ctx.scale(sc2,sc2);ctx.globalAlpha=Math.min(1,k*1.6);ctx.fillStyle=(S.cols&&S.cols[i])||S.col||'#f2f2f2';ctx.fillText(w,0,0);ctx.restore()});
  if(S.cap){ctx.font=`500 30px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(S.cap,540,1230)}}
 function detectorsX(S,lt,t){const R=[['device_lateral_scan','HIGH','#e8503a'],['ot_internet_egress','HIGH','#e8503a'],['iot_crosses_segment','MEDIUM','#e3b265'],['cleartext_management','MEDIUM','#e3b265'],['behavior_drift','MEDIUM','#e3b265']];
  const x=50,y=330,w=980;ctx.fillStyle='rgba(16,18,24,.97)';ctx.strokeStyle='#2e323c';ctx.lineWidth=2;rr(x,y,w,640,14);ctx.fill();ctx.stroke();ctx.textBaseline='middle';ctx.textAlign='left';ctx.font=`600 24px ${MONO}`;ctx.fillStyle='#7d8290';ctx.fillText('DETECTOR',x+36,y+44);ctx.fillText('SEVERITY',x+700,y+44);ctx.fillStyle='#2a2d36';ctx.fillRect(x+30,y+76,w-60,2);
@@ -509,6 +543,7 @@ function render(t){
   if(S0.detectors)detectorsX(S0,lt,t);
   if(S0.drift)driftX(S0,lt,t);
   if(S0.matrix)matrixX(S0,lt,t);
+  if(S0.num){const nk=easeOut(seg(lt,0,.1));ctx.save();ctx.globalAlpha=Math.min(1,nk*1.6);ctx.translate(70,200);ctx.scale(lerp(1.5,1,nk),lerp(1.5,1,nk));ctx.font=`800 190px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#e67350';ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText('#'+S0.num,0,0);ctx.restore()}
   if(S0.versus)versus(S0,lt,t);
   if(S0.meme)memeFull(S0,lt,t);
   if(S0.rogue)rogue(S0,lt,t);
@@ -540,6 +575,7 @@ function render(t){
   ctx.globalCompositeOperation='overlay';ctx.globalAlpha=.22;for(let x=-gy;x<W;x+=256)for(let y=-gx;y<H;y+=256)ctx.drawImage(window.NOISE,x,y);ctx.restore()}
  const v=ctx.createRadialGradient(W/2,H/2,H*.35,W/2,H/2,H*.75);v.addColorStop(0,'rgba(0,0,0,0)');v.addColorStop(1,'rgba(0,0,0,.4)');ctx.fillStyle=v;ctx.fillRect(0,0,W,H);
  ctx.fillStyle='rgba(0,0,0,.14)';for(let y=0;y<H;y+=4)ctx.fillRect(0,y,W,1);
+ if(VAR==='d3'){const pp=clamp(t/END);ctx.fillStyle='rgba(255,255,255,.22)';ctx.fillRect(60,134,960,7);ctx.fillStyle='#fff';ctx.fillRect(60,134,960*pp,7)}
  const fo=seg(t,END-.25,END);if(fo>0){ctx.fillStyle=`rgba(0,0,0,${fo})`;ctx.fillRect(0,0,W,H)}
 }
 window.render=render;init();
