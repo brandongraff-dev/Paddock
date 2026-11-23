@@ -38,6 +38,9 @@ UPGRADE
   passwords are kept.
 
 PROBLEMS?
-  The installer prints a plain-English fix for the common ones (Docker not
-  running, virtualization off, ports in use). Details and source code:
-  https://github.com/brandongraff-dev/paddock
+  The installer checks your PC first and prints a plain-English fix for the
+  common problems (Docker not running, virtualization off, WSL missing, low
+  memory or disk, ports 3000/8080 in use, Docker in Windows-containers mode).
+  To run just those checks without installing, open PowerShell in this folder:
+      powershell -ExecutionPolicy Bypass -File install.ps1 -Doctor
+  Details and source code: https://github.com/brandongraff-dev/paddock

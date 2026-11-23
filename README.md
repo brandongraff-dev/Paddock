@@ -100,8 +100,9 @@ make quickstart        # builds the stack, seeds a demo surface, prints the URL 
 
 Both pull ready-made, signed images (about 1-2 minutes), start Docker Desktop if
 it is off, generate secrets, and print the URL and admin login. Options
-(`-Dir`, `-Active`, `-Uninstall`) are listed at the top of
-[`scripts/install.ps1`](scripts/install.ps1); how to verify the download is in
+(`-Dir`, `-Active`, `-Uninstall`, `-Doctor`) are listed at the top of
+[`scripts/install.ps1`](scripts/install.ps1). `-Doctor` checks Docker, WSL,
+virtualization, memory, disk and ports and explains each fix; how to verify the download is in
 [`docs/trust/VERIFY.md`](docs/trust/VERIFY.md).
 
 No release yet, or want the latest `main`? This builds from source instead (15+

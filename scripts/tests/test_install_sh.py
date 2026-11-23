@@ -27,6 +27,7 @@ case "$FAKE_DOCKER_MODE" in
 esac
 case "$1" in
   version) echo "26.1.0" ;;
+  ps)      [ -n "${FAKE_DOCKER_OWN:-}" ] && echo "abc123" ;;
   volume)  [ -n "${FAKE_DOCKER_VOLUME:-}" ] && echo "$FAKE_DOCKER_VOLUME" ;;
 esac
 exit 0
@@ -94,6 +95,10 @@ def run(sb, *args, mode="", volume="", health_url=None, extra_env=None, path_ext
         "FAKE_DOCKER_MODE": mode,
         "FAKE_DOCKER_VOLUME": volume,
         "PADDOCK_SRC_DIR": str(sb["src"]),
+        # hermetic preflight: a busy port 8080 or a small CI disk must not change the result
+        "PADDOCK_CHECK_PORTS": "65501",
+        "PADDOCK_TEST_MEM_MB": "16000",
+        "PADDOCK_TEST_FREE_MB": "100000",
     }
     if health_url:
         env["PADDOCK_API_URL"] = health_url
@@ -332,3 +337,84 @@ def test_release_zip_layout_installs_from_its_own_folder(sandbox, health, tmp_pa
     assert (d / "schema" / "001.sql").exists() and (d / "scripts" / "install.sh").exists()
     assert not (d / "install.sh").exists()
     assert env_file(sandbox)["PADDOCK_VERSION"] == "3.0.0"
+
+
+# --------------------------------------------------------------------------- #
+# --doctor and the preflight inside the installer
+
+def test_doctor_all_good_changes_nothing(sandbox):
+    r = run(sandbox, "--doctor")
+    assert r.returncode == 0, r.stdout + r.stderr
+    for line in ("[ OK ] Docker", "[ OK ] Memory", "[ OK ] Disk space", "[ OK ] Port 65501"):
+        assert line in r.stdout, line
+    assert "All checks passed" in r.stdout
+    assert not (sandbox["home"] / "paddock").exists()
+    assert not [c for c in calls(sandbox) if " up " in f" {c} " or " pull" in f" {c}"]
+
+
+def test_doctor_without_docker_explains_the_fix(sandbox):
+    r = run(sandbox, "--doctor", path_extra=False)
+    assert r.returncode == 1
+    assert "[FAIL] Docker: not installed" in r.stdout and "docker.com" in r.stdout
+
+
+def test_doctor_engine_not_reachable(sandbox):
+    r = run(sandbox, "--doctor", mode="no-daemon")
+    assert r.returncode == 1 and "[FAIL] Docker engine" in r.stdout
+    assert "systemctl start docker" in r.stdout or "open -a Docker" in r.stdout
+
+
+def test_doctor_memory_and_disk_thresholds(sandbox):
+    r = run(sandbox, "--doctor", extra_env={"PADDOCK_TEST_MEM_MB": "1024"})
+    assert r.returncode == 1 and "[FAIL] Memory: 1024 MB" in r.stdout
+    r = run(sandbox, "--doctor", extra_env={"PADDOCK_TEST_MEM_MB": "3000"})
+    assert r.returncode == 0 and "[WARN] Memory" in r.stdout and "Ready, with 1 warning" in r.stdout
+    r = run(sandbox, "--doctor", extra_env={"PADDOCK_TEST_FREE_MB": "1500"})
+    assert r.returncode == 1 and "[FAIL] Disk space: 1500 MB free" in r.stdout and "docker system prune" in r.stdout
+    r = run(sandbox, "--doctor", extra_env={"PADDOCK_TEST_FREE_MB": "5000"})
+    assert r.returncode == 0 and "[WARN] Disk space" in r.stdout
+
+
+def test_doctor_busy_port_fails_unless_it_is_paddock_itself(sandbox):
+    import socket
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = str(srv.getsockname()[1])
+    try:
+        if subprocess.run(["sh", "-c", "command -v ss || command -v lsof || command -v nc"],
+                          capture_output=True).returncode != 0:
+            pytest.skip("no ss/lsof/nc to probe ports with")
+        r = run(sandbox, "--doctor", extra_env={"PADDOCK_CHECK_PORTS": port})
+        assert r.returncode == 1 and f"[FAIL] Port {port}: already in use" in r.stdout
+        r = run(sandbox, "--doctor", extra_env={"PADDOCK_CHECK_PORTS": port, "FAKE_DOCKER_OWN": "1"})
+        assert r.returncode == 0 and f"[ OK ] Port {port}: in use by Paddock itself" in r.stdout
+    finally:
+        srv.close()
+
+
+def test_doctor_registry_unreachable_is_only_a_warning(sandbox, health):
+    r = run(sandbox, "--doctor", "--version", "1.2.3", extra_env={"PADDOCK_REGISTRY_CHECK_URL": health + "/v2/"})
+    assert r.returncode == 0 and "[ OK ] Image download" in r.stdout
+    r = run(sandbox, "--doctor", "--version", "1.2.3", extra_env={"PADDOCK_REGISTRY_CHECK_URL": "http://127.0.0.1:9/"})
+    assert r.returncode == 0 and "[WARN] Image download" in r.stdout and "firewall" in r.stdout
+
+
+def test_install_stops_before_touching_anything_when_the_machine_is_not_ready(sandbox):
+    r = run(sandbox, extra_env={"PADDOCK_TEST_FREE_MB": "500"})
+    assert r.returncode != 0 and "[FAIL] Disk space" in r.stdout and "not ready yet" in r.stderr
+    assert not (sandbox["home"] / "paddock" / ".env").exists()
+    assert not [c for c in calls(sandbox) if " up " in f" {c} "]
+
+
+def test_rerun_does_not_complain_about_its_own_ports(sandbox, health):
+    import socket
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = str(srv.getsockname()[1])
+    try:
+        r = run(sandbox, health_url=health, extra_env={"PADDOCK_CHECK_PORTS": port, "FAKE_DOCKER_OWN": "1"})
+        assert r.returncode == 0, r.stdout + r.stderr
+    finally:
+        srv.close()

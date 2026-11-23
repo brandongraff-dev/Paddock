@@ -46,6 +46,11 @@ jobs:
     defaults:
       run:
         shell: ${{ matrix.shell }}
+    env:
+      # hermetic preflight: the runner's real RAM / disk / ports must not decide the result
+      PADDOCK_TEST_MEM_MB: "16000"
+      PADDOCK_TEST_FREE_MB: "100000"
+      PADDOCK_CHECK_PORTS: "65501"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,7 +83,12 @@ jobs:
           @echo off
           echo %* >> "%FAKE_DOCKER_LOG%"
           if "%1"=="version" echo 26.1.0
-          if "%1"=="info" (echo %* | findstr /C:"OSType" >nul && echo linux)
+          if "%1"=="info" (
+            echo %* | findstr /C:"OSType" >nul
+            if not errorlevel 1 (
+              if "%FAKE_DOCKER_OS%"=="" (echo linux) else (echo %FAKE_DOCKER_OS%)
+            )
+          )
           exit /b 0
           '@ | Set-Content -Encoding ASCII (Join-Path $bin 'docker.cmd')
           "$bin" | Out-File -Append -Encoding ASCII $env:GITHUB_PATH
@@ -87,6 +97,37 @@ jobs:
           "PADDOCK_UI_URL=http://127.0.0.1:8099" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
           Start-Process python -ArgumentList 'scripts/tests/ok_server.py', '8099' -WindowStyle Hidden
           Start-Sleep -Seconds 2
+
+      - name: Doctor (healthy PC passes; each problem gets a plain-English fix)
+        run: |
+          function Run-Doctor([hashtable]$extra) {
+            foreach ($k in $extra.Keys) { Set-Item "Env:$k" $extra[$k] }
+            try { $out = & .\scripts\install.ps1 -Doctor -Dir "$env:RUNNER_TEMP\doc" *>&1 | Out-String; $ok = $true }
+            catch { $out = ($_ | Out-String); $ok = $false }
+            finally { foreach ($k in $extra.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue } }
+            return [pscustomobject]@{ Ok = $ok; Out = $out }
+          }
+          $r = Run-Doctor @{}
+          Write-Host $r.Out
+          if (-not $r.Ok -or $r.Out -notmatch 'All checks passed') { throw 'healthy machine should pass the doctor' }
+
+          $r = Run-Doctor @{ FAKE_DOCKER_OS = 'windows' }
+          if ($r.Ok -or $r.Out -notmatch 'Switch to Linux containers') { Write-Host $r.Out; throw 'windows-containers mode must fail with the fix' }
+
+          $r = Run-Doctor @{ PADDOCK_TEST_MEM_MB = '1024' }
+          if ($r.Ok -or $r.Out -notmatch '\[FAIL\] Memory') { Write-Host $r.Out; throw 'low memory must fail' }
+
+          $r = Run-Doctor @{ PADDOCK_TEST_FREE_MB = '1000' }
+          if ($r.Ok -or $r.Out -notmatch '\[FAIL\] Disk space') { Write-Host $r.Out; throw 'low disk must fail' }
+
+          # a REAL listener, so Get-NetTCPConnection is exercised on Windows
+          $l = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0)
+          $l.Start()
+          $port = $l.LocalEndpoint.Port
+          try {
+            $r = Run-Doctor @{ PADDOCK_CHECK_PORTS = "$port" }
+            if ($r.Ok -or $r.Out -notmatch "\[FAIL\] Port $port") { Write-Host $r.Out; throw 'a busy port must fail' }
+          } finally { $l.Stop() }
 
       - name: Full install from source mode (no version)
         run: |

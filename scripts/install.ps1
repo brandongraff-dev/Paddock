@@ -31,6 +31,8 @@
 #   -Upgrade        re-download the sources even if the directory already has them
 #   -NoStart        prepare files and secrets, do not start containers
 #   -Wait SECONDS   how long to wait for health (default 300)
+#   -Doctor         check this PC (Docker, WSL, virtualization, memory, disk, ports,
+#                   network) and explain how to fix each problem; changes nothing
 #   -DryRun         print what would happen; change nothing, no network
 #   -Uninstall      stop and remove the containers (data volume and .env are kept)
 #   -Purge          with -Uninstall: also delete the data volume and the install directory
@@ -39,7 +41,9 @@
 # Environment for testing / air-gapped use: PADDOCK_SRC_DIR (copy sources from a
 # local directory instead of downloading), PADDOCK_API_URL, PADDOCK_UI_URL,
 # PADDOCK_SHA256 (pin the downloaded archive), PADDOCK_VERSION (= -Version),
-# PADDOCK_REGISTRY (image registry/namespace, default ghcr.io/brandongraff-dev).
+# PADDOCK_REGISTRY (image registry/namespace, default ghcr.io/brandongraff-dev),
+# PADDOCK_CHECK_PORTS (ports the checks look at, default "3000 8080"),
+# PADDOCK_TEST_MEM_MB / PADDOCK_TEST_FREE_MB (pretend RAM / free disk, for tests).
 # When this script sits next to docker-compose.lite.yml (the release zip), those
 # files are used instead of downloading anything.
 #
@@ -55,6 +59,7 @@ param(
     [switch]$Upgrade,
     [switch]$NoStart,
     [switch]$DryRun,
+    [switch]$Doctor,
     [switch]$Uninstall,
     [switch]$Purge,
     [switch]$Yes
@@ -208,13 +213,6 @@ function Compose {
 
 function Test-Install { return (Test-Path (Join-Path $Dir $ComposeFile)) }
 
-function Test-Port([int]$port) {
-    try {
-        $c = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop
-        return [bool]$c
-    } catch { return $false }
-}
-
 function Find-DockerDesktop {
     foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs")) {
         if (-not $base) { continue }
@@ -226,22 +224,134 @@ function Find-DockerDesktop {
 
 function Test-Engine { return ((Native { docker info } -Quiet) -eq 0) }
 
-function Check-Docker {
+# ---------------------------------------------------------------------------
+# preflight / doctor: one line per check, a plain-English fix for each problem
+# ---------------------------------------------------------------------------
+$script:Checks = New-Object System.Collections.ArrayList
+
+# Add-Check NAME STATUS DETAIL [FIX]   (STATUS: ok | warn | fail)
+function Add-Check([string]$Name, [string]$Status, [string]$Detail, [string]$Fix = '') {
+    [void]$script:Checks.Add([pscustomobject]@{ Name = $Name; Status = $Status; Detail = $Detail; Fix = $Fix })
+}
+
+function Get-CheckCount([string]$Status) {
+    return @($script:Checks | Where-Object { $_.Status -eq $Status }).Count
+}
+
+function Show-Checks {
+    Say ''
+    foreach ($c in $script:Checks) {
+        if     ($c.Status -eq 'ok')   { $tag = '[ OK ]'; $color = 'Green' }
+        elseif ($c.Status -eq 'warn') { $tag = '[WARN]'; $color = 'Yellow' }
+        else                          { $tag = '[FAIL]'; $color = 'Red' }
+        Write-Host ("  {0} {1}: {2}" -f $tag, $c.Name, $c.Detail) -ForegroundColor $color
+        if ($c.Status -ne 'ok' -and $c.Fix) {
+            foreach ($l in ($c.Fix -split "`n")) { Say "           $l" }
+        }
+    }
+    Say ''
+    $f = Get-CheckCount 'fail'
+    $w = Get-CheckCount 'warn'
+    if ($f -gt 0)     { Write-Host "$f problem(s) must be fixed before Paddock can run. Fix the [FAIL] lines above, then run this again." -ForegroundColor Red }
+    elseif ($w -gt 0) { Write-Host "Ready, with $w warning(s). Paddock should run; the [WARN] lines say what to watch." -ForegroundColor Yellow }
+    else              { Write-Host 'All checks passed.' -ForegroundColor Green }
+}
+
+function Test-HostSystem {
+    $build = 0
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $build = [int]$os.BuildNumber
+        if ($build -lt 19041) {
+            Add-Check 'Windows version' 'fail' "$($os.Caption) (build $build) is too old for Docker Desktop" "Update Windows: Settings > Windows Update. Docker Desktop needs Windows 10 version 2004 (build 19041) or newer, or Windows 11."
+        } else {
+            Add-Check 'Windows version' 'ok' "$($os.Caption) (build $build)"
+        }
+    } catch {
+        Add-Check 'Windows version' 'warn' 'could not be read'
+    }
+
+    $memMb = 0
+    if ($env:PADDOCK_TEST_MEM_MB) { $memMb = [int]$env:PADDOCK_TEST_MEM_MB }
+    else { try { $memMb = [int]((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory / 1MB) } catch { $memMb = 0 } }
+    if ($memMb -le 0) {
+        Add-Check 'Memory' 'warn' 'could not be read'
+    } elseif ($memMb -lt 2048) {
+        Add-Check 'Memory' 'fail' "$memMb MB. Paddock needs about 1 GB and Docker Desktop needs more on top" 'Use a PC with at least 4 GB of RAM, or close other programs and try again.'
+    } elseif ($memMb -lt 4096) {
+        Add-Check 'Memory' 'warn' "$memMb MB (4 GB or more is comfortable)" 'Close other programs while Paddock starts. If Docker keeps stopping, give it more memory in Docker Desktop > Settings > Resources.'
+    } else {
+        Add-Check 'Memory' 'ok' "$memMb MB"
+    }
+
+    # Docker keeps its images on the system drive (inside its WSL disk), not in the install folder.
+    $freeMb = 0
+    if ($env:PADDOCK_TEST_FREE_MB) { $freeMb = [int]$env:PADDOCK_TEST_FREE_MB }
+    else {
+        try {
+            $drive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
+            $freeMb = [int]((New-Object IO.DriveInfo($drive)).AvailableFreeSpace / 1MB)
+        } catch { $freeMb = 0 }
+    }
+    if ($freeMb -le 0) {
+        Add-Check 'Disk space' 'warn' 'could not be read'
+    } elseif ($freeMb -lt 3072) {
+        Add-Check 'Disk space' 'fail' "$freeMb MB free on the system drive. The images alone need about 1.5 GB (5 GB with the active worker)" "Free up space: run Disk Cleanup (search for it in the Start menu), empty the Recycle Bin, or uninstall programs you do not use."
+    } elseif ($freeMb -lt 8192) {
+        Add-Check 'Disk space' 'warn' "$freeMb MB free on the system drive (8 GB or more is comfortable)" 'Free up some space if the install runs out of room.'
+    } else {
+        Add-Check 'Disk space' 'ok' "$freeMb MB free on the system drive"
+    }
+}
+
+# Only run when the Docker engine is unreachable: they explain WHY.
+function Test-Virtualization {
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+        if ($cs.HypervisorPresent) {
+            Add-Check 'Virtualization' 'ok' 'a hypervisor is active (Hyper-V / WSL 2 can run)'
+            return
+        }
+        $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+        if ($cpu.VirtualizationFirmwareEnabled -eq $false) {
+            Add-Check 'Virtualization' 'fail' 'turned off in your PC firmware (BIOS/UEFI)' ("Restart the PC and open its BIOS/UEFI setup (usually F2, F10, Del or Esc at the logo).`n" +
+                "Turn on 'Intel Virtualization Technology' (VT-x) or 'SVM Mode' (AMD), save, and boot Windows.`n" +
+                "Check: Task Manager > Performance > CPU should say 'Virtualization: Enabled'.")
+        } else {
+            Add-Check 'Virtualization' 'ok' 'enabled in firmware'
+        }
+    } catch {
+        Add-Check 'Virtualization' 'warn' 'could not be checked' "Open Task Manager > Performance > CPU and make sure it says 'Virtualization: Enabled'."
+    }
+}
+
+function Test-Wsl {
+    if (-not (Test-Cmd 'wsl')) {
+        Add-Check 'WSL 2' 'fail' 'Windows Subsystem for Linux is not installed' "Open PowerShell as administrator (right-click Start > Terminal (Admin)) and run:  wsl --install`nThen restart Windows and run this installer again."
+        return
+    }
+    if ((Native { wsl --status } -Quiet) -ne 0) {
+        Add-Check 'WSL 2' 'warn' 'is installed but did not report a healthy status' "Open PowerShell as administrator and run:  wsl --update`nThen restart Windows and Docker Desktop. (Ignore this if you use Docker's Hyper-V backend.)"
+    } else {
+        Add-Check 'WSL 2' 'ok' 'installed'
+    }
+}
+
+function Test-DockerStack([bool]$StartIfOff) {
     if (-not (Test-Cmd 'docker')) {
-        Say ''
-        Say 'Docker is not installed. Paddock runs in Docker Desktop:'
-        Say '   1. Install it from https://www.docker.com/products/docker-desktop/ (choose the WSL 2 backend)'
-        Say '   2. Reboot if the installer asks, start Docker Desktop, wait for "Engine running"'
-        Say '   3. Run this installer again'
-        Die 'Docker is not installed.'
+        Add-Check 'Docker Desktop' 'fail' 'is not installed' ("1. Install Docker Desktop (free) from https://www.docker.com/products/docker-desktop/ and choose the WSL 2 option`n" +
+            "2. Restart Windows if it asks, start Docker Desktop, and wait until it says 'Engine running'`n" +
+            "3. Run this installer again")
+        return
     }
     if ((Native { docker compose version } -Quiet) -ne 0) {
-        Die "'docker compose' (Compose v2) is required. Update Docker Desktop: https://docs.docker.com/compose/install/"
+        Add-Check 'Docker Compose' 'fail' 'version 2 not found' 'Update Docker Desktop to the latest version: https://www.docker.com/products/docker-desktop/'
+        return
     }
     if (-not (Test-Engine)) {
         $exe = Find-DockerDesktop
-        if ($exe) {
-            Say '   Docker Desktop is installed but its engine is not running; starting it ...'
+        if ($StartIfOff -and $exe) {
+            Say '   Docker Desktop is installed but its engine is not running; starting it (this can take a few minutes) ...'
             Start-Process -FilePath $exe | Out-Null
             $deadline = (Get-Date).AddSeconds(180)
             while ((Get-Date) -lt $deadline) {
@@ -250,21 +360,68 @@ function Check-Docker {
             }
         }
         if (-not (Test-Engine)) {
-            Say ''
-            Say 'The Docker engine is not reachable. Common fixes:'
-            Say '   - Open Docker Desktop and wait for "Engine running" (first start takes a few minutes)'
-            Say '   - Run "wsl --update" in an admin PowerShell, then restart Docker Desktop'
-            Say '   - Check that virtualization is enabled (Task Manager > Performance > CPU)'
-            Say '   - If it still fails: Docker Desktop > Troubleshoot > Restart, or reboot Windows'
-            Die 'cannot talk to the Docker engine.'
+            if ($exe) {
+                Add-Check 'Docker engine' 'fail' 'Docker Desktop is installed but its engine is not running' ("Open Docker Desktop from the Start menu and wait until it says 'Engine running' (the first start takes a few minutes).`n" +
+                    "If it will not start: Docker Desktop > Troubleshoot > Restart, or restart Windows.")
+            } else {
+                Add-Check 'Docker engine' 'fail' 'cannot be reached' "Start Docker Desktop and wait until it says 'Engine running', then run this installer again."
+            }
+            Test-Virtualization
+            Test-Wsl
+            return
         }
     }
     $ver = ''
     if ((Native { docker version --format '{{.Server.Version}}' } -Quiet) -eq 0) { $ver = $script:Out.Trim() }
-    Say "   docker $ver, compose ok"
     if ((Native { docker info --format '{{.OSType}}' } -Quiet) -eq 0 -and $script:Out.Trim() -ne 'linux') {
-        Die 'Docker is in Windows-containers mode. Right-click the Docker tray icon and choose "Switch to Linux containers".'
+        Add-Check 'Docker engine' 'fail' "running in Windows-containers mode (docker $ver); Paddock needs Linux containers" "Right-click the Docker whale icon in the system tray (bottom right, maybe under the ^ arrow) and choose 'Switch to Linux containers'."
+    } else {
+        Add-Check 'Docker engine' 'ok' "running (docker $ver), Compose v2, Linux containers"
     }
+}
+
+function Test-Ports {
+    $ports = @(3000, 8080)
+    if ($env:PADDOCK_CHECK_PORTS) { $ports = @($env:PADDOCK_CHECK_PORTS -split '[ ,]+' | Where-Object { $_ } | ForEach-Object { [int]$_ }) }
+    # On a re-run the ports are held by Paddock's own containers: that is fine.
+    $own = $false
+    if ((Test-Cmd 'docker') -and ((Native { docker ps -q --filter "label=com.docker.compose.project=$Project" } -Quiet) -eq 0) -and $script:Out.Trim()) { $own = $true }
+    foreach ($port in $ports) {
+        $conn = $null
+        try { $conn = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop | Select-Object -First 1 } catch { $conn = $null }
+        if (-not $conn) { Add-Check "Port $port" 'ok' 'free'; continue }
+        if ($own) { Add-Check "Port $port" 'ok' 'in use by Paddock itself (already running)'; continue }
+        $who = 'another program'
+        try { $who = (Get-Process -Id $conn.OwningProcess -ErrorAction Stop).ProcessName } catch { }
+        Add-Check "Port $port" 'fail' "already in use by $who" ("Paddock needs this port. Close that program (or stop its container) and run this installer again.`n" +
+            "To see what holds it, run:  netstat -ano | findstr :$port   (the last number is the process ID in Task Manager > Details)")
+    }
+}
+
+function Test-Registry {
+    $hostName = ($Registry -split '/')[0]
+    $url = if ($env:PADDOCK_REGISTRY_CHECK_URL) { $env:PADDOCK_REGISTRY_CHECK_URL } else { "https://$hostName/v2/" }
+    $code = 0
+    try {
+        $r = Invoke-WebRequest -UseBasicParsing -Uri $url -Method Head -TimeoutSec 10 -ErrorAction Stop
+        $code = [int]$r.StatusCode
+    } catch {
+        # a registry answers 401 to an anonymous /v2/ call: that proves it is reachable
+        try { $code = [int]$_.Exception.Response.StatusCode } catch { $code = 0 }
+    }
+    if ($code -eq 200 -or $code -eq 401 -or $code -eq 403) {
+        Add-Check 'Image download' 'ok' "$url is reachable"
+    } else {
+        Add-Check 'Image download' 'warn' "cannot reach $url" "Check your internet connection, VPN, proxy or firewall. The images come from $Registry."
+    }
+}
+
+function Invoke-Preflight([bool]$StartDocker) {
+    $script:Checks.Clear()
+    Test-HostSystem
+    Test-DockerStack $StartDocker
+    Test-Ports
+    if ($Version) { Test-Registry }
 }
 
 function Fetch-Sources {
@@ -379,21 +536,29 @@ if ($Uninstall) {
 # ---------------------------------------------------------------------------
 # install / re-run
 # ---------------------------------------------------------------------------
-Step 'checking prerequisites'
-if ($DryRun) {
-    Plan "check: docker, 'docker compose' v2, reachable engine (starts Docker Desktop if it is off), Linux-containers mode"
-} else {
-    Check-Docker
-    foreach ($p in 3000, 8080) {
-        if (Test-Port $p) { Warn "port $p is already in use; Paddock may fail to start (stop the other program or re-run after freeing it)" }
-    }
-}
-
 $InstalledVersion = Get-EnvValue 'PADDOCK_VERSION'
 Resolve-Version
 # New release than the one on disk: the compose file may have changed too.
 if ($Version -and $Version -ne $InstalledVersion -and (Test-Install)) { $Upgrade = $true }
 $Bundle = Get-BundleDir
+
+if ($Doctor) {
+    Step "checking this PC for Paddock ($Dir)"
+    Invoke-Preflight $false      # read-only: never starts Docker Desktop
+    Show-Checks
+    if ((Get-CheckCount 'fail') -gt 0) { throw 'paddock-doctor: problems found (see the [FAIL] lines above)' }
+    return
+}
+
+Step 'checking prerequisites'
+if ($DryRun) {
+    Plan "check: Windows version, memory, free disk space, Docker Desktop (starts it if it is off), Compose v2, Linux-containers mode"
+    Plan "check: ports 3000 and 8080 are free, image registry reachable (release mode), and on a Docker failure: virtualization and WSL"
+} else {
+    Invoke-Preflight $true
+    Show-Checks
+    if ((Get-CheckCount 'fail') -gt 0) { Die "this PC is not ready yet (see the [FAIL] lines above). Fix them and run the installer again; '-Doctor' re-runs just these checks." }
+}
 
 Step "installing into $Dir"
 if ($Version) { Say "   release $Version (prebuilt images from $Registry)" } else { Say '   no release version: images will be built from source' }
