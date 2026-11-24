@@ -1,0 +1,37 @@
+/* ------------------------------------------------------------------ *
+ * Settings → About. New classes only; panels, stat tiles and tables   *
+ * are the existing glass ones (theme.css). Tokens only (tokens.css).   *
+ * ------------------------------------------------------------------ */
+
+.about-back { color: var(--accent); font-size: 12.5px; text-decoration: none; align-self: center; }
+.about-back:hover { text-decoration: underline; }
+
+.about-summary { margin: 4px 14px 10px; color: var(--text-1); font-size: 12.5px; }
+.about-summary strong { color: var(--text-0); font-weight: 500; }
+.about-table th[scope="row"] { color: var(--text-0); font-weight: 500; text-align: left; width: 26%; }
+.about-notes { color: var(--text-1); }
+
+.about-chip { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-0); white-space: nowrap; }
+.about-chip i { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-2); }
+.about-chip[data-state="working"] i { background: var(--ok); }
+.about-chip[data-state="beta"] i { background: var(--warn); }
+.about-chip[data-state="unverified"] i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-1); }
+.about-chip[data-state="not released"] i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.about-chip[data-state="not released"] { color: var(--text-1); }
+
+.about-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 18px; margin: 14px 14px 4px; padding-top: 12px; border-top: 1px solid var(--border); }
+.about-legend > div { display: flex; flex-direction: column; gap: 2px; }
+.about-legend dt { margin: 0; }
+.about-legend dd { margin: 0 0 0 16px; color: var(--text-2); font-size: 12px; }
+
+.about-releases { display: flex; flex-direction: column; gap: 22px; padding: 4px 14px 8px; }
+.about-release h3 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 4px; font-family: var(--serif); font-weight: 420; font-size: 19px; letter-spacing: -0.01em; color: var(--text-0); }
+.about-release time { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.about-note { margin: 0 0 8px; color: var(--text-2); font-size: 12px; }
+.about-kind { margin-top: 12px; }
+.about-kind h4 { margin: 0 0 4px; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.about-kind[data-kind="Security"] h4 { color: var(--warn); }
+.about-kind[data-kind="Known issues"] h4 { color: var(--bad); }
+.about-kind ul, .about-history { margin: 0; padding-left: 18px; color: var(--text-1); font-size: 13px; line-height: 1.55; max-width: 820px; }
+.about-kind li, .about-history li { margin: 3px 0; }
+.about-history { padding: 0 14px 6px 32px; }

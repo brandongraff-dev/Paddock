@@ -202,6 +202,11 @@ const Icon = {
       <rect x="3" y="4" width="18" height="6" rx="1.5" /><rect x="3" y="14" width="18" height="6" rx="1.5" /><path d="M7 7h.01M7 17h.01" />
     </svg>
   ),
+  About: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" />
+    </svg>
+  ),
   Billing: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 10h18M7 15h3" />
@@ -307,6 +312,8 @@ const identityEntry: NavEntry = { to: "/settings/identity", label: "Identity", i
 const billingEntry: NavEntry = { to: "/settings/billing", label: "Billing", icon: Icon.Billing };
 /** Settings → System (version, edition, component health) — admins only. */
 const systemEntry: NavEntry = { to: "/settings/system", label: "System", icon: Icon.System };
+/** Settings → About (changelog, state of the app) — admins only, next to System. */
+const aboutEntry: NavEntry = { to: "/settings/about", label: "About", icon: Icon.About };
 /** MSP console — appended to Govern only for MSP users (and not while inside a customer). */
 const mspEntry: NavEntry = {
   to: "/msp",
@@ -431,7 +438,7 @@ export default function Shell({ children, noScroll }: Props) {
   const acting = useMsp((s) => s.acting);
   const govExtra = [
     ...(canViewAudit(role) ? [auditEntry] : []),
-    ...(role === "admin" ? [identityEntry, billingEntry, systemEntry] : []),
+    ...(role === "admin" ? [identityEntry, billingEntry, systemEntry, aboutEntry] : []),
     ...(isMsp && !acting ? [mspEntry] : []),
   ];
   const entries = [...navEntries, ...govExtra];

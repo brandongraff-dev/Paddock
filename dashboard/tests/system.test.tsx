@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SystemPage from "../src/pages/System";
 
@@ -47,7 +48,7 @@ function renderPage(body: unknown, ai: Record<string, unknown> = aiStatus(), onA
     return json(body);
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return { calls, ...render(React.createElement(QueryClientProvider, { client: qc }, React.createElement(SystemPage))) };
+  return { calls, ...render(React.createElement(MemoryRouter, null, React.createElement(QueryClientProvider, { client: qc }, React.createElement(SystemPage)))) };
 }
 
 afterEach(() => {

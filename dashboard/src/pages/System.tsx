@@ -6,6 +6,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { ApiError } from "../api/client";
 import {
   getAiStatus,
@@ -19,6 +20,7 @@ import {
 } from "../api/system";
 import StatTile from "../components/StatTile";
 import "../styles/system.css";
+import "../styles/about.css";
 
 const EDITION_LABEL: Record<string, string> = {
   community: "Community",
@@ -186,6 +188,7 @@ export default function SystemPage() {
           <h1>System</h1>
           <div className="subtitle">What this install is made of and whether each part is running.</div>
         </div>
+        <Link to="/settings/about" className="about-back">What&rsquo;s new and what&rsquo;s proven →</Link>
       </div>
 
       {q.isLoading && <div className="empty">Loading…</div>}

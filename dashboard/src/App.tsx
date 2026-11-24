@@ -35,6 +35,7 @@ import NetworkActionsPage from "./pages/NetworkActions";
 import IdentitySettingsPage from "./pages/IdentitySettings";
 import BillingPage from "./pages/Billing";
 import SystemPage from "./pages/System";
+import AboutPage from "./pages/About";
 import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
 import Setup, { FirstRunRedirect } from "./pages/Setup";
@@ -119,6 +120,7 @@ function AuthedApp() {
         <Route path="/settings/identity" element={<Shell><RequireAdmin><IdentitySettingsPage /></RequireAdmin></Shell>} />
         <Route path="/settings/billing" element={<Shell><RequireAdmin><BillingPage /></RequireAdmin></Shell>} />
         <Route path="/settings/system" element={<Shell><RequireAdmin><SystemPage /></RequireAdmin></Shell>} />
+        <Route path="/settings/about" element={<Shell><RequireAdmin><AboutPage /></RequireAdmin></Shell>} />
         <Route path="/msp" element={<Shell><MspConsolePage /></Shell>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

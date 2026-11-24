@@ -116,6 +116,9 @@ minutes):
 irm https://raw.githubusercontent.com/brandongraff-dev/paddock/main/scripts/install.ps1 | iex
 ```
 
+What's new, and an honest list of what is and is not proven yet, is in [`CHANGELOG.md`](CHANGELOG.md)
+(also under **Settings > About** in the dashboard).
+
 Open **http://localhost:3000** and start on the **Graph** page. Prefer something
 lighter? `make lite` runs a 6-service single node (about 150 MB RAM for the
 original five; the AI service adds a little more) with the same hardening.
