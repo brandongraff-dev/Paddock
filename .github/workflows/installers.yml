@@ -142,6 +142,9 @@ jobs:
             $r = Run-Doctor @{ PADDOCK_CHECK_PORTS = "$port" }
             if ($r.Ok -or $r.Out -notmatch "\[FAIL\] Port $port") { Write-Host $r.Out; throw 'a busy port must fail' }
           } finally { $l.Stop() }
+          # Every assertion above passed. The last child (the busy-port case) correctly exited 1, and GitHub's
+          # powershell shell ends a step with `exit $LASTEXITCODE`, so clear it or the step fails for the wrong reason.
+          $global:LASTEXITCODE = 0
 
       - name: -Json mode prints only JSON events (this is what the Setup app reads)
         run: |
