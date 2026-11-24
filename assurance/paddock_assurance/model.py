@@ -202,7 +202,7 @@ class Invariant(_Strict):
     description: Optional[str] = Field(default=None, max_length=2000)
     severity: Literal["info", "low", "medium", "high", "critical"] = "high"
     subjects: Subjects = Subjects()
-    assert_: Literal["unreachable", "exposes-only"] = Field(alias="assert")
+    assert_: Literal["unreachable", "exposes-only", "covered"] = Field(alias="assert")
     via: Via = Via()
     ports: Optional[str] = None
     allow: tuple[Allow, ...] = ()
@@ -234,6 +234,15 @@ class Invariant(_Strict):
                 raise ValueError("'unreachable' needs both subjects.from and subjects.to")
             if self.ports is not None or any(a.ports for a in self.allow):
                 raise ValueError("'ports' belongs to 'exposes-only'; use via.ports to filter edges")
+        elif self.assert_ == "covered":
+            # A statement about our own evidence, not about traffic: it names the nodes that must
+            # be observable, and nothing else is meaningful (no source, ports, hops or exceptions).
+            if self.subjects.to is None:
+                raise ValueError("'covered' needs subjects.to (the nodes that must be covered)")
+            if self.subjects.from_ is not None:
+                raise ValueError("'covered' takes no subjects.from")
+            if self.ports is not None or self.allow or self.via != Via():
+                raise ValueError("'covered' takes no ports, allow or via")
         else:
             if self.subjects.from_ is None:
                 raise ValueError("'exposes-only' needs subjects.from (e.g. the internet zone)")

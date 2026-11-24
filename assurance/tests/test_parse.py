@@ -116,8 +116,8 @@ def test_stop_at_is_part_of_the_digest():
 
 def test_std_library_compiles_and_ids_match():
     ids = list_std()
-    assert ids == ["std:guest-cannot-reach-pos", "std:no-internet-to-datastore",
-                   "std:public-ports-allowlist"]
+    assert ids == ["std:coverage-complete", "std:guest-cannot-reach-pos",
+                   "std:no-internet-to-datastore", "std:public-ports-allowlist"]
     for sid in ids:
         assert load_std(sid).id == sid
 

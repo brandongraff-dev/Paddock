@@ -1,10 +1,16 @@
-"""The directed reach graph (P0: in-memory, loaded from JSON).
+"""The directed reach graph (in-memory, loaded from JSON).
 
 Edge ``A -> B`` means "A may open connections to B" on the given protocol and ports.
-**Coverage is a property of nodes**: a *covered* node is one whose incident connections we know
-completely (fresh evidence of at least the required tier). A connection needs both ends to allow
-it, so a covered endpoint is enough to rule an edge *out*. Unknown edges can therefore only exist
-between two *blind* (uncovered) nodes. The evaluator uses exactly that to stay sound.
+
+**Coverage is a property of nodes and it is directional and multi-source.** A node carries a
+list of coverage *facts*, each saying "for direction ``in`` / ``out`` / ``both`` we know every
+connection completely, as of ``observed_at``, at ``tier``". A security group's ingress rules cover
+a node *inbound* and say nothing about what the node connects out to, so a fact must never be read
+wider than its direction.
+
+A connection ``u -> v`` needs ``u`` to be allowed to open it (outbound) and ``v`` to accept it
+(inbound). So an *unknown* edge ``u -> v`` can exist only if ``u`` is **not covered outbound** and
+``v`` is **not covered inbound**. The evaluator uses exactly that rule to stay sound.
 """
 from __future__ import annotations
 
@@ -26,11 +32,25 @@ class GraphError(ValueError):
     pass
 
 
+DIRECTIONS = ("in", "out", "both")
+MAX_COVERAGE_FACTS = 32
+FUTURE_SLACK = dt.timedelta(minutes=5)
+# When no fact qualifies, report the reason closest to qualifying (a quiet sensor beats a missing
+# one). Independent of fact order, so the output is deterministic.
+_REASON_ORDER = ("stale", "future_timestamp", "tier_below_min", "no_sensor")
+
+
 @dataclass(frozen=True)
 class Coverage:
+    """One coverage fact. ``direction`` says which side of a node's connections it speaks for."""
+
     tier: Tier
     observed_at: dt.datetime
     source: str = ""
+    direction: str = "both"
+
+    def covers(self, direction: str) -> bool:
+        return self.direction == "both" or self.direction == direction
 
 
 @dataclass(frozen=True)
@@ -40,7 +60,7 @@ class Node:
     zone: Optional[str] = None
     tags: frozenset[str] = frozenset()
     cls: Optional[str] = None
-    coverage: Optional[Coverage] = None
+    coverage: tuple[Coverage, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -150,19 +170,44 @@ def _node(raw: Any, i: int) -> Node:
     tags = raw.get("tags", [])
     if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
         raise GraphError(f"node {nid!r}: 'tags' must be a list of strings")
-    cov = None
-    if raw.get("coverage") is not None:
-        c = raw["coverage"]
-        if not isinstance(c, dict):
-            raise GraphError(f"node {nid!r}: 'coverage' must be an object")
-        try:
-            tier = Tier(c.get("tier"))
-        except ValueError as exc:
-            raise GraphError(f"node {nid!r}: bad coverage tier {c.get('tier')!r}") from exc
-        cov = Coverage(tier, _ts(c.get("observed_at"), f"node {nid!r} observed_at"),
-                       str(c.get("source", "")))
+    cov = _coverage(raw.get("coverage"), nid)
     return Node(id=nid, kind=str(raw.get("kind", "host")), zone=raw.get("zone"),
                 tags=frozenset(tags), cls=raw.get("class"), coverage=cov)
+
+
+def _fact(c: Any, nid: str, *, legacy: bool) -> Coverage:
+    if not isinstance(c, dict):
+        raise GraphError(f"node {nid!r}: a coverage fact must be an object")
+    if "direction" in c:
+        direction = c["direction"]
+    elif legacy:
+        direction = "both"      # the P0 single-object form
+    else:
+        # A fact in a list must say which way it looks. Defaulting to "both" would let a builder
+        # that forgot the field claim more than it knows.
+        raise GraphError(f"node {nid!r}: coverage fact needs a 'direction' (in, out or both)")
+    if direction not in DIRECTIONS:
+        raise GraphError(f"node {nid!r}: bad coverage direction {direction!r}")
+    try:
+        tier = Tier(c.get("tier"))
+    except ValueError as exc:
+        raise GraphError(f"node {nid!r}: bad coverage tier {c.get('tier')!r}") from exc
+    return Coverage(tier, _ts(c.get("observed_at"), f"node {nid!r} observed_at"),
+                    str(c.get("source", "")), direction)
+
+
+def _coverage(raw: Any, nid: str) -> tuple[Coverage, ...]:
+    """A list of facts, the P0 single object (= both directions), or nothing."""
+    if raw is None:
+        return ()
+    if isinstance(raw, dict):
+        return (_fact(raw, nid, legacy=True),)
+    if not isinstance(raw, list):
+        raise GraphError(f"node {nid!r}: 'coverage' must be an object or a list of objects")
+    if len(raw) > MAX_COVERAGE_FACTS:
+        raise GraphError(f"node {nid!r}: too many coverage facts (max {MAX_COVERAGE_FACTS})")
+    return tuple(sorted((_fact(c, nid, legacy=False) for c in raw),
+                        key=lambda f: (f.direction, f.tier.rank, f.observed_at, f.source)))
 
 
 def _edge(raw: Any, i: int, nodes: dict[str, Node]) -> Edge:
@@ -191,18 +236,61 @@ def _edge(raw: Any, i: int, nodes: dict[str, Node]) -> Edge:
     return Edge(src, dst, proto, ports, basis, str(raw.get("source", "")), last)
 
 
-def blind_reason(node: Node, now: dt.datetime, min_tier: Tier, max_age: dt.timedelta) \
+def _fact_reason(c: Coverage, now: dt.datetime, min_tier: Tier, max_age: dt.timedelta) \
         -> Optional[str]:
-    """``None`` when the node is covered, else a machine-readable reason."""
-    c = node.coverage
-    if c is None:
-        return "no_sensor"
+    """Why this single fact does not qualify, else ``None``."""
     if c.tier.rank < min_tier.rank:
         return "tier_below_min"
-    if c.observed_at > now + dt.timedelta(minutes=5):
+    if c.observed_at > now + FUTURE_SLACK:
         return "future_timestamp"
     if now - c.observed_at > max_age:
         return "stale"
+    return None
+
+
+@dataclass(frozen=True)
+class DirState:
+    """Coverage of one node in one direction: the best qualifying fact, or why there is none."""
+
+    fact: Optional[Coverage]
+    reason: Optional[str]       # None iff covered
+
+    @property
+    def covered(self) -> bool:
+        return self.reason is None
+
+
+def direction_state(node: Node, direction: str, now: dt.datetime, min_tier: Tier,
+                    max_age: dt.timedelta) -> DirState:
+    """Is ``node`` covered in ``direction`` (``in`` or ``out``)?
+
+    Any fresh fact of at least ``min_tier`` whose direction is that one (or ``both``) qualifies.
+    The *best* qualifying fact (highest tier, then freshest) is returned so a verdict's evidence
+    tier and expiry come from a single fact that really holds, never a mix of two.
+    """
+    facts = [c for c in node.coverage if c.covers(direction)]
+    if not facts:
+        return DirState(None, "no_sensor")
+    ok = [c for c in facts if _fact_reason(c, now, min_tier, max_age) is None]
+    if ok:
+        best = max(ok, key=lambda c: (c.tier.rank, c.observed_at, c.source, c.direction))
+        return DirState(best, None)
+    reasons = {_fact_reason(c, now, min_tier, max_age) for c in facts}
+    return DirState(None, next(r for r in _REASON_ORDER if r in reasons))
+
+
+def blind_reason(node: Node, now: dt.datetime, min_tier: Tier, max_age: dt.timedelta,
+                 direction: str = "both") -> Optional[str]:
+    """``None`` when the node is covered in ``direction``, else a machine-readable reason.
+
+    ``both`` means covered only if covered in *both* directions (the in-direction reason is
+    reported first when both are lacking).
+    """
+    dirs = ("in", "out") if direction == "both" else (direction,)
+    for d in dirs:
+        r = direction_state(node, d, now, min_tier, max_age).reason
+        if r is not None:
+            return r
     return None
 
 

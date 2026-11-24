@@ -2,16 +2,21 @@
 
 Soundness rules (these are what make a HOLDS worth anything):
 
-1. **Unknown is not safe.** A *blind* node (no sensor, stale, or evidence below the required
-   tier) has unknown connections. Because a connection needs both ends to allow it, an unknown
-   edge can only exist between two blind nodes. We therefore search a second time with a clique
-   added among the blind nodes; if a target becomes reachable only that way, the verdict is
-   ``UNKNOWN``, never ``HOLDS``.
+1. **Unknown is not safe.** Coverage is directional: a node can be blind *outbound* (we do not
+   know what it connects to), blind *inbound* (we do not know what connects to it), or both. A
+   connection ``u -> v`` needs ``u`` to open it and ``v`` to accept it, so an unknown edge
+   ``u -> v`` can exist only if ``u`` is blind outbound **and** ``v`` is blind inbound. We search
+   a second time with exactly those possible edges added; if a target becomes reachable only that
+   way, the verdict is ``UNKNOWN``, never ``HOLDS``. (A security-group-style source covers
+   ``in`` only, so it can never rule out what its node connects *out* to.)
 2. **A selector that matches nothing is not a pass.** A typo in a zone name would otherwise make
    every invariant vacuously true.
 3. **Violations win.** A known witness is ``VIOLATED`` whatever the coverage.
-4. **Freshness is part of the verdict.** ``valid_until`` is the stalest evidence used plus
-   ``max_age``; after it the verdict is ``EXPIRED``.
+4. **Freshness is part of the verdict.** For every node-direction the verdict relied on, the best
+   qualifying coverage fact is taken; ``evidence_tier`` is the weakest of those and
+   ``valid_until`` the stalest plus ``max_age``; after it the verdict is ``EXPIRED``.
+5. **Coverage itself can be asserted** (``assert: covered``): every selected node must be covered
+   in both directions; each one that is not becomes a hop-less witness.
 
 Output is deterministic: sorted adjacency, sorted tie-breaks, no hidden clock.
 """
@@ -25,10 +30,11 @@ from typing import Any, Callable, Optional
 
 from . import ports as P
 from .compile import Plan, PlanKind
-from .graph import Edge, Node, ReachGraph, blind_reason, matches
+from .graph import DirState, Edge, Node, ReachGraph, direction_state, matches
 from .model import Allow, Tier
 
 MAX_WITNESSES = 5
+MAX_COVERED_WITNESSES = 50   # one per uncovered node: the list is the work queue
 
 
 class Verdict(str, Enum):
@@ -60,6 +66,7 @@ class BlindSpot:
     node: str
     reason: str
     relevant: bool      # could an unknown edge at this node change the verdict?
+    direction: str = "both"   # which side is blind: in | out | both
 
 
 @dataclass
@@ -69,6 +76,7 @@ class Result:
     severity: str
     verdict: Verdict
     evaluated_at: dt.datetime
+    assertion: str = ""      # unreachable | exposes-only | covered
     reasons: list[str] = field(default_factory=list)
     witnesses: list[Witness] = field(default_factory=list)
     violation_count: int = 0
@@ -102,6 +110,7 @@ class Result:
             "invariant": self.invariant_id,
             "digest": self.digest,
             "severity": self.severity,
+            "assertion": self.assertion,
             "verdict": self.verdict.value,
             "reasons": list(self.reasons),
             "evaluated_at": iso(self.evaluated_at),
@@ -129,11 +138,12 @@ _Parent = dict[str, Optional[tuple[str, Optional[Edge]]]]
 
 
 def _search(g: ReachGraph, sources: set[str], edge_ok: Callable[[Edge], bool], max_hops: int,
-            blind: frozenset[str] = frozenset(),
+            blind_out: frozenset[str] = frozenset(), blind_in: frozenset[str] = frozenset(),
             stop: frozenset[str] = frozenset()) -> tuple[_Parent, dict[str, int]]:
-    """Multi-source BFS. ``blind`` nodes are joined by possible (unknown) edges. Nodes in
-    ``stop`` are reached but not expanded (unless they are themselves sources)."""
-    blind_sorted = sorted(blind)
+    """Multi-source BFS. A possible (unknown) edge ``u -> v`` exists iff ``u`` is in ``blind_out``
+    and ``v`` is in ``blind_in``. Nodes in ``stop`` are reached but not expanded (unless they
+    are themselves sources)."""
+    pending = sorted(blind_in)           # blind-inbound nodes not reached yet
     parent: _Parent = {s: None for s in sorted(sources)}
     dist = {s: 0 for s in parent}
     q: deque[str] = deque(sorted(sources))
@@ -142,14 +152,18 @@ def _search(g: ReachGraph, sources: set[str], edge_ok: Callable[[Edge], bool], m
         if dist[u] >= max_hops or (u in stop and u not in sources):
             continue
         cands: list[tuple[str, Optional[Edge]]] = [(e.dst, e) for e in g.out(u) if edge_ok(e)]
-        if u in blind:
-            cands += [(v, None) for v in blind_sorted if v != u]
+        if u in blind_out:
+            # Everything still pending is first reached from here (BFS order), so the list is
+            # consumed rather than rescanned: linear overall instead of blind_out x blind_in.
+            cands += [(v, None) for v in pending if v != u]
         # known edges sort before unknown ones for the same neighbour (stable sort on dst only)
         for v, e in sorted(cands, key=lambda c: (c[0], c[1] is None)):
             if v not in dist:
                 dist[v] = dist[u] + 1
                 parent[v] = (u, e)
                 q.append(v)
+        if u in blind_out:
+            pending = [v for v in pending if v not in dist]
     return parent, dist
 
 
@@ -191,20 +205,64 @@ def _active_allows(plan: Plan, now: dt.datetime) -> tuple[list[Allow], list[Allo
     return active, expired
 
 
-def _finish(res: Result, plan: Plan, g: ReachGraph, now: dt.datetime, blind: dict[str, str],
-            relevant: set[str]) -> Result:
+@dataclass(frozen=True)
+class _NodeCov:
+    """A node's coverage in each direction at the evaluation time and policy."""
+
+    inn: DirState
+    out: DirState
+
+    def of(self, direction: str) -> DirState:
+        return self.inn if direction == "in" else self.out
+
+    @property
+    def both(self) -> bool:
+        return self.inn.covered and self.out.covered
+
+
+def _coverage_map(plan: Plan, g: ReachGraph, now: dt.datetime) -> dict[str, _NodeCov]:
+    return {n.id: _NodeCov(direction_state(n, "in", now, plan.min_tier, plan.max_age),
+                           direction_state(n, "out", now, plan.min_tier, plan.max_age))
+            for n in g.nodes.values()}
+
+
+def _blind_spots(cov: dict[str, _NodeCov], relevant: set[str]) -> list[BlindSpot]:
+    """One row per blind node-direction; ``both`` only when both directions are blind for the same
+    reason, so each row names a single thing to fix."""
+    rows: list[BlindSpot] = []
+    for n in sorted(cov):
+        c = cov[n]
+        if c.both:
+            continue
+        rel = n in relevant
+        if not c.inn.covered and not c.out.covered and c.inn.reason == c.out.reason:
+            rows.append(BlindSpot(n, str(c.inn.reason), rel, "both"))
+            continue
+        for d in ("in", "out"):
+            st = c.of(d)
+            if not st.covered:
+                rows.append(BlindSpot(n, str(st.reason), rel, d))
+    return rows
+
+
+def _finish(res: Result, plan: Plan, g: ReachGraph, cov: dict[str, _NodeCov],
+            relevant: set[str], relied: set[tuple[str, str]]) -> Result:
+    """Fill coverage counts, blind spots and (for HOLDS) the evidence the verdict rests on.
+
+    ``relied`` lists the (node, direction) pairs whose coverage the verdict depends on. For each
+    the best qualifying fact is used; the weakest tier and the earliest expiry among them bound
+    the whole verdict.
+    """
     res.coverage_universe = len(g.nodes)
-    res.coverage_covered = len(g.nodes) - len(blind)
-    res.blind_spots = [BlindSpot(n, blind[n], n in relevant) for n in sorted(blind)]
+    res.coverage_covered = sum(1 for c in cov.values() if c.both)
+    res.blind_spots = _blind_spots(cov, relevant)
     if res.verdict is Verdict.HOLDS:
-        covered_rel = [g.nodes[n] for n in sorted(relevant) if n not in blind]
-        times = [n.coverage.observed_at for n in covered_rel if n.coverage]
-        tiers = [n.coverage.tier for n in covered_rel if n.coverage]
-        if tiers:
-            res.evidence_tier = min(tiers, key=lambda t: t.rank)
-        if times:
-            res.valid_until = min(times) + plan.max_age
-        if res.coverage_ratio + 1e-12 < plan.coverage_required:
+        facts = [f for n, d in sorted(relied) if (f := cov[n].of(d).fact) is not None]
+        if facts:
+            res.evidence_tier = min((f.tier for f in facts), key=lambda t: t.rank)
+            res.valid_until = min(f.observed_at for f in facts) + plan.max_age
+        floor = plan.kind is not PlanKind.COVERED
+        if floor and res.coverage_ratio + 1e-12 < plan.coverage_required:
             res.verdict = Verdict.UNKNOWN
             res.reasons.append("coverage_below_required")
             res.evidence_tier, res.valid_until = None, None
@@ -212,7 +270,8 @@ def _finish(res: Result, plan: Plan, g: ReachGraph, now: dt.datetime, blind: dic
 
 
 def _new(plan: Plan, now: dt.datetime, verdict: Verdict, reason: str) -> Result:
-    return Result(plan.id, plan.digest, plan.invariant.severity, verdict, now, [reason],
+    return Result(plan.id, plan.digest, plan.invariant.severity, verdict, now,
+                  assertion=plan.invariant.assert_, reasons=[reason],
                   coverage_required=plan.coverage_required)
 
 
@@ -223,17 +282,43 @@ def _exc(a: Allow, target: str) -> dict[str, str]:
 # --------------------------------------------------------------------------------------------
 # REACH: assert unreachable
 
+def _reach_reliance(cov: dict[str, _NodeCov], expandable: list[str],
+                    frontier: set[str]) -> set[tuple[str, str]]:
+    """Which node-directions a REACH ``HOLDS`` stands on.
+
+    ``expandable`` are the reached nodes the search could still have left from. Every possible
+    edge ``u -> v`` from one of them was ruled out by ``u`` being covered outbound or ``v`` being
+    covered inbound. We rely on all covered outbound ``u`` and on every covered inbound ``v`` that
+    has some other expandable node to be reached from. That includes covered nodes far off the
+    found paths, because if their coverage lapsed an unknown edge into them would appear.
+    Either end alone would suffice, so this is deliberately the conservative union for nodes on
+    the frontier, and an expiry only ever comes sooner, never later.
+    """
+    exp = set(expandable)
+    blind_out = {u for u in exp if not cov[u].out.covered}
+    relied: set[tuple[str, str]] = {(u, "out") for u in exp if cov[u].out.covered}
+    for v, c in cov.items():
+        if not c.inn.covered:
+            continue
+        others = len(exp) - (v in exp)
+        if others and (v in frontier or len(blind_out) - (v in blind_out) > 0):
+            relied.add((v, "in"))
+    return relied
+
+
 def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     inv = plan.invariant
     S = {n.id for n in g.select(inv.subjects.from_)}
     T = {n.id for n in g.select(inv.subjects.to)} - S
-    blind = {n.id: r for n in g.nodes.values()
-             if (r := blind_reason(n, now, plan.min_tier, plan.max_age))}
+    cov = _coverage_map(plan, g, now)
+    blind_out = frozenset(n for n, c in cov.items() if not c.out.covered)
+    blind_in = frozenset(n for n, c in cov.items() if not c.inn.covered)
     allows, expired = _active_allows(plan, now)
 
-    def done(res: Result, relevant: set[str]) -> Result:
+    def done(res: Result, relevant: set[str],
+             relied: Optional[set[tuple[str, str]]] = None) -> Result:
         res.expired_exceptions = [_exc(a, "*") for a in expired]
-        return _finish(res, plan, g, now, blind, relevant)
+        return _finish(res, plan, g, cov, relevant, relied or set())
 
     if not S or not T:
         which = "from" if not S else "to"
@@ -265,7 +350,8 @@ def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
         res.boundaries_reached = boundaries
         return done(res, set(S) | set(T) | set(parent))
 
-    aparent, _ = _search(g, S, edge_ok, plan.max_hops, blind=frozenset(blind), stop=stop)
+    aparent, adist = _search(g, S, edge_ok, plan.max_hops, blind_out=blind_out,
+                             blind_in=blind_in, stop=stop)
     maybe = sorted(t for t in T if t in aparent and t not in exempt)
     relevant = set(S) | set(T) | set(aparent)
     if maybe:
@@ -278,7 +364,9 @@ def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     res = _new(plan, now, Verdict.HOLDS, "no_counterexample")
     res.exceptions_used = [_exc(exempt[t], t) for t in hit if t in exempt]
     res.boundaries_reached = boundaries
-    return done(res, relevant)
+    expandable = sorted(u for u in aparent
+                        if adist[u] < plan.max_hops and not (u in stop and u not in S))
+    return done(res, relevant, _reach_reliance(cov, expandable, relevant))
 
 
 # --------------------------------------------------------------------------------------------
@@ -288,13 +376,13 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     inv = plan.invariant
     S = {n.id for n in g.select(inv.subjects.from_)}
     T = {n.id for n in g.select(inv.subjects.to)} - S
-    blind = {n.id: r for n in g.nodes.values()
-             if (r := blind_reason(n, now, plan.min_tier, plan.max_age))}
+    cov = _coverage_map(plan, g, now)
     allows, expired = _active_allows(plan, now)
 
-    def done(res: Result, relevant: set[str]) -> Result:
+    def done(res: Result, relevant: set[str],
+             relied: Optional[set[tuple[str, str]]] = None) -> Result:
         res.expired_exceptions = [_exc(a, "*") for a in expired]
-        return _finish(res, plan, g, now, blind, relevant)
+        return _finish(res, plan, g, cov, relevant, relied or set())
 
     if not S or not T:
         which = "from" if not S else "to"
@@ -334,7 +422,10 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
             witnesses[:MAX_WITNESSES], violations, exc_list
         return done(res, relevant)
 
-    possible = sorted((s, t) for s in S & blind.keys() for t in T & blind.keys() if s != t)
+    # An unknown s -> t needs s blind outbound and t blind inbound (s != t: T excludes S).
+    s_blind = sorted(s for s in S if not cov[s].out.covered)
+    t_blind = sorted(t for t in T if not cov[t].inn.covered)
+    possible = [(s, t) for s in s_blind for t in t_blind]
     if possible:
         res = _new(plan, now, Verdict.UNKNOWN, "possible_via_unknown_edges")
         res.witnesses = [_witness((Hop(s, t, "unknown", "", "unknown"),))
@@ -344,7 +435,51 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
 
     res = _new(plan, now, Verdict.HOLDS, "no_counterexample")
     res.exceptions_used = exc_list
-    return done(res, relevant)
+    # Either end rules s -> t out; both are counted (conservative: the weakest evidence wins).
+    relied = {(s, "out") for s in S if cov[s].out.covered} \
+        | {(t, "in") for t in T if cov[t].inn.covered}
+    return done(res, relevant, relied)
+
+
+# --------------------------------------------------------------------------------------------
+# COVERED: assert covered
+
+_REASON_RANK = {"no_sensor": 0, "tier_below_min": 1, "future_timestamp": 2, "stale": 3}
+
+
+def _uncovered_witness(node: str, c: _NodeCov) -> Witness:
+    """A hop-less witness: the node, which direction is blind, and why."""
+    blind = [(d, c.of(d)) for d in ("in", "out") if not c.of(d).covered]
+    direction = "both" if len(blind) == 2 else blind[0][0]
+    reasons = {d: str(st.reason) for d, st in blind}
+    detail = {"node": node, "direction": direction,
+              # one machine-readable reason: the most fundamental one if the directions differ
+              "reason": min(reasons.values(), key=lambda r: _REASON_RANK[r])}
+    for d, r in sorted(reasons.items()):
+        detail[f"reason_{d}"] = r
+    return Witness((), "unknown", False, detail)
+
+
+def _eval_covered(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
+    """HOLDS iff every selected node is covered in both directions, fresh, at ``min_tier``."""
+    sel = [n.id for n in g.select(plan.invariant.subjects.to)]
+    cov = _coverage_map(plan, g, now)
+    if not sel:
+        return _finish(_new(plan, now, Verdict.UNKNOWN, "empty_selector:to"), plan, g, cov,
+                       set(), set())
+    gaps = [(n, cov[n]) for n in sel if not cov[n].both]
+    if gaps:
+        res = _new(plan, now, Verdict.VIOLATED, "witness_found")
+        ws = [_uncovered_witness(n, c) for n, c in gaps]
+        # Root causes first: nodes nobody watches at all, then weak evidence, then quiet sensors.
+        ws.sort(key=lambda w: (_REASON_RANK[w.detail["reason"]],
+                               ("both", "in", "out").index(w.detail["direction"]),
+                               w.detail["node"]))
+        res.witnesses, res.violation_count = ws[:MAX_COVERED_WITNESSES], len(gaps)
+        return _finish(res, plan, g, cov, set(sel), set())
+    res = _new(plan, now, Verdict.HOLDS, "all_covered")
+    relied = {(n, d) for n in sel for d in ("in", "out")}
+    return _finish(res, plan, g, cov, set(sel), relied)
 
 
 def evaluate(plan: Plan, graph: ReachGraph, now: dt.datetime) -> Result:
@@ -354,6 +489,8 @@ def evaluate(plan: Plan, graph: ReachGraph, now: dt.datetime) -> Result:
     now = now.astimezone(dt.timezone.utc)
     if plan.kind is PlanKind.REACH:
         return _eval_reach(plan, graph, now)
+    if plan.kind is PlanKind.COVERED:
+        return _eval_covered(plan, graph, now)
     return _eval_exposure(plan, graph, now)
 
 

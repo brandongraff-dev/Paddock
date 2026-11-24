@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .compile import Plan
+from .compile import Plan, PlanKind
 from .evaluate import Result, Verdict, Witness
 from .graph import ReachGraph
 
@@ -13,7 +13,14 @@ def _t(t: dt.datetime | None) -> str:
     return "-" if t is None else t.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
 
 
+_DIR_WORDS = {"in": "inbound", "out": "outbound", "both": "inbound and outbound"}
+
+
 def _witness_line(w: Witness) -> str:
+    if not w.hops:    # a coverage gap: no path, just a node we cannot see into
+        d = w.detail
+        return f"{d.get('node', '?')}: not covered {_DIR_WORDS.get(d.get('direction', ''), '')}, " \
+               f"{d.get('reason', 'unknown')}".replace(" ,", ",")
     parts = [w.hops[0].src]
     for h in w.hops:
         label = "?" if h.proto == "unknown" else f"{h.proto}/{h.ports or '*'} {h.basis}"
@@ -36,11 +43,13 @@ MEANING = {
 def render_result(r: Result, now: dt.datetime) -> str:
     status = r.status_at(now)
     head = f"{status:<9} {r.invariant_id}"
+    covered_kind = r.assertion == "covered"
     if r.verdict is Verdict.VIOLATED:
-        head += f"  [{r.severity}] {r.violation_count} reachable target" \
-                f"{'s' if r.violation_count != 1 else ''}"
+        what = "uncovered node" if covered_kind else "reachable target"
+        head += f"  [{r.severity}] {r.violation_count} {what}{'s' if r.violation_count != 1 else ''}"
+    need = f", need {r.coverage_required:.0%}" if r.coverage_required > 0 else ""
     lines = [head, f"  {MEANING[r.verdict]}; coverage {r.coverage_covered}/{r.coverage_universe} "
-                   f"known assets ({r.coverage_ratio:.0%}, need {r.coverage_required:.0%})"
+                   f"known assets ({r.coverage_ratio:.0%}{need})"
                    + (f"; evidence tier {r.evidence_tier.value}" if r.evidence_tier else "")
                    + (f"; valid until {_t(r.valid_until)}" if r.valid_until else "")]
     if r.reasons and r.verdict is not Verdict.HOLDS:
@@ -49,11 +58,15 @@ def render_result(r: Result, now: dt.datetime) -> str:
         lines.append(f"  {'witness' if r.verdict is Verdict.VIOLATED else 'possible'}: "
                      f"{_witness_line(w)}")
     if r.violation_count > len(r.witnesses):
-        lines.append(f"  ... {r.violation_count - len(r.witnesses)} further target(s) reachable, mostly through the paths above")
+        more = r.violation_count - len(r.witnesses)
+        lines.append(f"  ... {more} further uncovered node(s) not listed" if covered_kind else
+                     f"  ... {more} further target(s) reachable, mostly through the paths above")
     rel = [b for b in r.blind_spots if b.relevant]
-    if rel:
-        lines.append("  blind spots that matter: " + ", ".join(f"{b.node} ({b.reason})" for b in rel))
-    other = len(r.blind_spots) - len(rel)
+    if rel and not covered_kind:    # for 'covered' the witnesses already are the blind spots
+        lines.append("  blind spots that matter: " + ", ".join(
+            f"{b.node} ({b.reason}{'' if b.direction == 'both' else ', ' + b.direction})"
+            for b in rel))
+    other = len({b.node for b in r.blind_spots if not b.relevant})
     if other:
         lines.append(f"  other blind assets (not on any possible path): {other}")
     if r.boundaries_reached:
@@ -78,17 +91,20 @@ def render_explain(plan: Plan, g: ReachGraph, r: Result, now: dt.datetime) -> st
         f"  digest   {plan.digest}",
         f"  assert   {inv.assert_}"
         + (f" except ports {inv.ports}" if inv.ports else ""),
-        f"  from     {sel(inv.subjects.from_)}  -> {len(frm)} node(s): "
-        f"{', '.join(n.id for n in frm[:6])}{' ...' if len(frm) > 6 else ''}",
+        *([] if plan.kind is PlanKind.COVERED else [
+            f"  from     {sel(inv.subjects.from_)}  -> {len(frm)} node(s): "
+            f"{', '.join(n.id for n in frm[:6])}{' ...' if len(frm) > 6 else ''}"]),
         f"  to       {sel(inv.subjects.to)}  -> {len(to)} node(s): "
         f"{', '.join(n.id for n in to[:6])}{' ...' if len(to) > 6 else ''}",
-        f"  via      protocols {','.join(sorted(plan.protocols))}"
-        + (f", ports {inv.via.ports}" if inv.via.ports else "")
-        + f", up to {plan.max_hops} hop(s)"
-        + (f", not passing through {sel(inv.via.stop_at)}" if inv.via.stop_at else ""),
+        *([] if plan.kind is PlanKind.COVERED else [
+            f"  via      protocols {','.join(sorted(plan.protocols))}"
+            + (f", ports {inv.via.ports}" if inv.via.ports else "")
+            + f", up to {plan.max_hops} hop(s)"
+            + (f", not passing through {sel(inv.via.stop_at)}" if inv.via.stop_at else "")]),
         f"  evidence tier >= {plan.min_tier.value}, fresher than {inv.evidence.max_age}, "
         f"active confirmation: {inv.evidence.confirm} (not run in P0)",
-        f"  coverage >= {plan.coverage_required:.0%} of known assets",
+        *([] if plan.kind is PlanKind.COVERED else
+          [f"  coverage >= {plan.coverage_required:.0%} of known assets"]),
         f"  exceptions {len(inv.allow)} declared",
         "",
         "now evaluating against the supplied graph:",

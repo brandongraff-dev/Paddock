@@ -1,0 +1,16 @@
+apiVersion: paddock.dev/invariant/v1
+id: std:coverage-complete
+title: Every host and cloud asset is covered in both directions
+description: >
+  Every host, cloud instance, database, load balancer and device is covered for what can connect
+  to it and for what it connects out to, by fresh evidence of at least configured strength. A
+  node that is not covered is a blind spot: other invariants cannot rule out connections there,
+  so they answer UNKNOWN instead of HOLDS. This invariant names each such node and the missing
+  direction, so the gap can be closed by installing a sensor or syncing a configuration source.
+severity: medium
+subjects:
+  to: { kind: [host, cloud_instance, cloud_db, cloud_lb, device] }
+assert: covered
+evidence: { min_tier: configured, max_age: 24h }
+on_violation:
+  finding: true

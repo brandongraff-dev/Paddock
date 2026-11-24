@@ -23,6 +23,22 @@ def node(id_: str, zone: str | None = None, *, kind: str = "host", cls: str | No
     return n
 
 
+def fact(direction: str = "both", tier: str = "observed", seen: str = FRESH,
+         source: str = "test") -> dict[str, Any]:
+    return {"direction": direction, "tier": tier, "observed_at": seen, "source": source}
+
+
+def dnode(id_: str, zone: str | None = None, *facts: dict[str, Any], kind: str = "host",
+          cls: str | None = None, tags: tuple[str, ...] = ()) -> dict[str, Any]:
+    """A node whose coverage is an explicit list of directional facts (none = blind)."""
+    n: dict[str, Any] = {"id": id_, "kind": kind, "tags": list(tags), "coverage": list(facts)}
+    if zone:
+        n["zone"] = zone
+    if cls:
+        n["class"] = cls
+    return n
+
+
 def edge(src: str, dst: str, ports: str = "443", proto: str = "tcp",
          basis: str = "observed") -> dict[str, Any]:
     return {"src": src, "dst": dst, "proto": proto, "ports": ports, "basis": basis}

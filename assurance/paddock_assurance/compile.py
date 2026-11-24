@@ -17,6 +17,7 @@ class CompileError(ValueError):
 class PlanKind(str, Enum):
     REACH = "REACH"                  # assert: unreachable
     EXPOSURE_SET = "EXPOSURE_SET"    # assert: exposes-only
+    COVERED = "COVERED"              # assert: covered
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,8 @@ class Plan:
 
 
 def compile_invariant(inv: Invariant) -> Plan:
-    kind = PlanKind.REACH if inv.assert_ == "unreachable" else PlanKind.EXPOSURE_SET
+    kind = {"unreachable": PlanKind.REACH, "exposes-only": PlanKind.EXPOSURE_SET,
+            "covered": PlanKind.COVERED}[inv.assert_]
     if kind is PlanKind.EXPOSURE_SET and set(inv.via.protocols) == {"icmp"}:
         raise CompileError("'exposes-only' reasons about tcp/udp ports; via.protocols is icmp only")
     return Plan(
@@ -51,7 +53,9 @@ def compile_invariant(inv: Invariant) -> Plan:
         via_ports=P.parse_ports(inv.via.ports) if inv.via.ports else None,
         allowed_ports=P.parse_ports(inv.ports) if inv.ports else (),
         max_hops=inv.via.max_hops if kind is PlanKind.REACH else 1,
-        coverage_required=inv.coverage.require,
+        # 'covered' *is* the coverage statement; a floor on the whole graph (which always holds
+        # nodes nobody can instrument, like the internet) would only make it unsatisfiable.
+        coverage_required=0.0 if kind is PlanKind.COVERED else inv.coverage.require,
     )
 
 

@@ -86,6 +86,6 @@ def test_input_errors_exit_3(capsys, argv):
     assert code == 3 and err.startswith("error:")
 
 
-def test_std_lists_three(capsys):
+def test_std_lists_four(capsys):
     code, out, _ = run(capsys, "std")
-    assert code == 0 and out.split() == sorted(STD)
+    assert code == 0 and out.split() == sorted([*STD, "std:coverage-complete"])

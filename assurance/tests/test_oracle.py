@@ -118,3 +118,244 @@ def test_gaining_coverage_never_creates_a_violation(seed):
         assert after.verdict is Verdict.HOLDS
     if before.verdict is Verdict.VIOLATED:
         assert after.verdict is Verdict.VIOLATED
+
+
+# =============================================================================================
+# Directional, multi-source coverage. The oracle below re-derives coverage from the raw facts
+# itself (no shared code with the evaluator) and enumerates the possible unknown edges as an
+# explicit bipartite set {(u, v) : u blind outbound, v blind inbound, u != v}.
+# =============================================================================================
+
+TIER_RANK = {"declared": 0, "configured": 1, "observed": 2, "tested": 3}
+SEEN_CHOICES = ["2026-12-01T08:30:00Z", "2026-12-01T08:30:00Z", "2026-12-01T08:30:00Z",
+                "2026-11-30T09:00:00Z",      # exactly max_age old: still fresh
+                "2026-11-30T08:59:59Z",      # one second too old
+                "2026-11-28T08:30:00Z",
+                "2026-12-01T09:05:00Z",      # exactly the allowed 5 minutes ahead: fresh
+                "2026-12-01T09:05:01Z",      # a second beyond: not trusted
+                "2026-12-03T09:00:00Z"]
+MAX_AGE = dt.timedelta(hours=24)
+
+
+def _ts(s: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def qualifies(f: dict, direction: str, now: dt.datetime, min_tier: str = "observed") -> bool:
+    if f.get("direction", "both") not in (direction, "both"):
+        return False
+    seen = _ts(f["observed_at"])
+    return (TIER_RANK[f["tier"]] >= TIER_RANK[min_tier] and seen <= now + dt.timedelta(minutes=5)
+            and now - seen <= MAX_AGE)
+
+
+def facts_of(n: dict) -> list[dict]:
+    c = n.get("coverage")
+    return [] if c is None else [c] if isinstance(c, dict) else list(c)
+
+
+def covered_dir(n: dict, direction: str, now: dt.datetime = NOW) -> bool:
+    return any(qualifies(f, direction, now) for f in facts_of(n))
+
+
+def random_fact(rng: random.Random) -> dict:
+    return {"direction": rng.choice(["in", "out", "both", "both"]),
+            "tier": rng.choice(["declared", "configured", "observed", "observed", "observed", "tested"]),
+            "observed_at": rng.choice(SEEN_CHOICES), "source": rng.choice(["aws_sg", "sentry", "scan"])}
+
+
+def random_dir_doc(rng: random.Random) -> dict:
+    n = rng.randint(3, 10)
+    nodes = []
+    for i in range(n):
+        # n0 / n1 are a source and a target most of the time, so few documents are vacuous
+        zone = ("a" if i == 0 else "b" if i == 1 else rng.choice(["a", "b", "m", "m"])) \
+            if rng.random() < 0.9 else rng.choice(["a", "b", "m", "m"])
+        node: dict = {"id": f"n{i}", "zone": zone, "tags": ["app"] if rng.random() < 0.2 else []}
+        r = rng.random()
+        if r < 0.12:          # the P0 single-object form, always fresh and observed
+            node["coverage"] = {"tier": "observed", "observed_at": "2026-12-01T08:30:00Z"}
+        elif r < 0.95:
+            node["coverage"] = [random_fact(rng) for _ in range(rng.choice([0, 1, 1, 2, 2, 3]))]
+        nodes.append(node)
+    edges = []
+    for _ in range(rng.randint(0, n * 2)):
+        a, b = rng.sample(range(n), 2)
+        edges.append({"src": f"n{a}", "dst": f"n{b}", "proto": rng.choice(["tcp", "tcp", "udp"]),
+                      "ports": rng.choice(["443", "22", "80"]), "basis": "observed"})
+    return {"version": 1, "nodes": nodes, "edges": edges}
+
+
+def oracle_dir(doc: dict, hops: int, now: dt.datetime = NOW) -> Verdict | str:
+    zone = {n["id"]: n["zone"] for n in doc["nodes"]}
+    app = {n["id"] for n in doc["nodes"] if "app" in n["tags"]}
+    bo = {n["id"] for n in doc["nodes"] if not covered_dir(n, "out", now)}
+    bi = {n["id"] for n in doc["nodes"] if not covered_dir(n, "in", now)}
+    S = {i for i, z in zone.items() if z == "a"}
+    T = {i for i, z in zone.items() if z == "b"} - S
+    if not S or not T:
+        return "EMPTY"
+    known = {(e["src"], e["dst"]) for e in doc["edges"] if e["proto"] == "tcp"}
+
+    def reach(extra: set[tuple[str, str]]) -> set[str]:
+        adj = known | extra
+        seen = set(S)
+        for _ in range(hops):
+            seen |= {d for (s, d) in adj if s in seen and (s not in app or s in S)}
+        return seen
+
+    if reach(set()) & T:
+        return Verdict.VIOLATED
+    bipartite = {(u, v) for u in bo for v in bi if u != v}
+    return Verdict.UNKNOWN if reach(bipartite) & T else Verdict.HOLDS
+
+
+@pytest.mark.parametrize("seed", range(500))
+def test_directional_reach_matches_oracle(seed):
+    rng = random.Random(20000 + seed)
+    doc = random_dir_doc(rng)
+    hops = rng.randint(1, 5)
+    got = evaluate(compile_text(YAML.format(hops=hops)), ReachGraph.from_dict(doc), NOW)
+    want = oracle_dir(doc, hops)
+    if want == "EMPTY":
+        assert got.verdict is Verdict.UNKNOWN and got.reasons[0].startswith("empty_selector")
+    else:
+        assert got.verdict is want, (seed, hops, doc)
+
+
+EXPOSE_ORACLE = """
+apiVersion: paddock.dev/invariant/v1
+id: acme:oracle-expose
+title: oracle exposure check
+subjects: { from: { zone: a }, to: { zone: b } }
+assert: exposes-only
+ports: [80, 443]
+via: { protocols: [tcp] }
+evidence: { min_tier: observed, max_age: 24h }
+coverage: { require: 0 }
+"""
+
+
+def oracle_expose(doc: dict, now: dt.datetime = NOW) -> Verdict | str:
+    zone = {n["id"]: n["zone"] for n in doc["nodes"]}
+    bo = {n["id"] for n in doc["nodes"] if not covered_dir(n, "out", now)}
+    bi = {n["id"] for n in doc["nodes"] if not covered_dir(n, "in", now)}
+    S = {i for i, z in zone.items() if z == "a"}
+    T = {i for i, z in zone.items() if z == "b"} - S
+    if not S or not T:
+        return "EMPTY"
+    if any(e["src"] in S and e["dst"] in T and e["proto"] == "tcp" and e["ports"] not in ("80", "443")
+           for e in doc["edges"]):
+        return Verdict.VIOLATED
+    return Verdict.UNKNOWN if any(s != t for s in S & bo for t in T & bi) else Verdict.HOLDS
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_directional_exposure_matches_oracle(seed):
+    rng = random.Random(30000 + seed)
+    doc = random_dir_doc(rng)
+    got = evaluate(compile_text(EXPOSE_ORACLE), ReachGraph.from_dict(doc), NOW)
+    want = oracle_expose(doc)
+    if want == "EMPTY":
+        assert got.verdict is Verdict.UNKNOWN
+    else:
+        assert got.verdict is want, (seed, doc)
+
+
+COVERED_ORACLE = """
+apiVersion: paddock.dev/invariant/v1
+id: acme:oracle-covered
+title: oracle coverage check
+subjects: { to: { zone: b } }
+assert: covered
+evidence: { min_tier: observed, max_age: 24h }
+"""
+
+
+@pytest.mark.parametrize("seed", range(200))
+def test_covered_assertion_matches_oracle(seed):
+    rng = random.Random(40000 + seed)
+    doc = random_dir_doc(rng)
+    got = evaluate(compile_text(COVERED_ORACLE), ReachGraph.from_dict(doc), NOW)
+    sel = [n for n in doc["nodes"] if n["zone"] == "b"]
+    gaps = sorted(n["id"] for n in sel if not (covered_dir(n, "in") and covered_dir(n, "out")))
+    if not sel:
+        assert got.verdict is Verdict.UNKNOWN
+    elif gaps:
+        assert got.verdict is Verdict.VIOLATED and got.violation_count == len(gaps)
+        assert sorted(w.detail["node"] for w in got.witnesses) == gaps
+        for w in got.witnesses:
+            n = next(x for x in sel if x["id"] == w.detail["node"])
+            missing = [d for d in ("in", "out") if not covered_dir(n, d)]
+            assert w.detail["direction"] == ("both" if len(missing) == 2 else missing[0])
+    else:
+        assert got.verdict is Verdict.HOLDS
+
+
+def _shuffled(rng: random.Random, doc: dict) -> dict:
+    nodes = []
+    for n in doc["nodes"]:
+        n = dict(n)
+        if isinstance(n.get("coverage"), list):
+            n["coverage"] = rng.sample(n["coverage"], len(n["coverage"]))
+        nodes.append(n)
+    return {"version": 1, "nodes": rng.sample(nodes, len(nodes)),
+            "edges": rng.sample(doc["edges"], len(doc["edges"]))}
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_directional_results_do_not_depend_on_input_or_fact_order(seed):
+    rng = random.Random(50000 + seed)
+    doc = random_dir_doc(rng)
+    plans = [compile_text(YAML.format(hops=rng.randint(1, 5))), compile_text(EXPOSE_ORACLE),
+             compile_text(COVERED_ORACLE)]
+    for plan in plans:
+        base = evaluate(plan, ReachGraph.from_dict(doc), NOW).to_dict()
+        for _ in range(3):
+            got = evaluate(plan, ReachGraph.from_dict(_shuffled(rng, doc)), NOW).to_dict()
+            assert got == base
+
+
+_RANK = {Verdict.UNKNOWN: 0, Verdict.HOLDS: 1, Verdict.VIOLATED: 2}
+
+
+@pytest.mark.parametrize("seed", range(250))
+def test_more_coverage_never_makes_things_worse_and_less_never_better(seed):
+    """Adding a fact can only shrink the set of possible unknown edges: VIOLATED stays VIOLATED
+    (known edges are untouched), HOLDS stays HOLDS, UNKNOWN may become HOLDS but never VIOLATED.
+    Removing a fact is the same statement read backwards."""
+    rng = random.Random(60000 + seed)
+    doc = random_dir_doc(rng)
+    plan = compile_text(rng.choice([YAML.format(hops=rng.randint(1, 5)), EXPOSE_ORACLE]))
+    before = evaluate(plan, ReachGraph.from_dict(doc), NOW).verdict
+    target = rng.choice(doc["nodes"])
+    facts = [{"direction": "both", **f} for f in facts_of(target)]   # P0 object = both
+    target["coverage"] = facts + [{"direction": rng.choice(["in", "out", "both"]),
+                                   "tier": "observed", "observed_at": "2026-12-01T08:30:00Z"}]
+    after = evaluate(plan, ReachGraph.from_dict(doc), NOW).verdict
+    if before is Verdict.VIOLATED:
+        assert after is Verdict.VIOLATED
+    elif before is Verdict.HOLDS:
+        assert after is Verdict.HOLDS
+    else:
+        assert after is not Verdict.VIOLATED
+    assert _RANK[after] >= _RANK[before] or before is Verdict.VIOLATED
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_a_holds_stays_true_until_its_stated_expiry(seed):
+    """``valid_until`` is a promise: re-evaluating the same graph at any later moment up to and
+    including it must still say HOLDS. If a verdict leaned on a node-direction it did not count
+    (e.g. a covered node that merely *blocks* an unknown edge), this fails."""
+    rng = random.Random(70000 + seed)
+    doc = random_dir_doc(rng)
+    plan = compile_text(rng.choice([YAML.format(hops=rng.randint(1, 5)), EXPOSE_ORACLE,
+                                    COVERED_ORACLE]))
+    r = evaluate(plan, ReachGraph.from_dict(doc), NOW)
+    if r.verdict is not Verdict.HOLDS or r.valid_until is None:
+        return
+    for t in (NOW + (r.valid_until - NOW) / 3, NOW + (r.valid_until - NOW) / 2, r.valid_until):
+        if t < NOW:
+            continue
+        again = evaluate(plan, ReachGraph.from_dict(doc), t)
+        assert again.verdict is Verdict.HOLDS, (seed, t, doc)
