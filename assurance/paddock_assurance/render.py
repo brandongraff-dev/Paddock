@@ -48,8 +48,9 @@ def render_result(r: Result, now: dt.datetime) -> str:
         what = "uncovered node" if covered_kind else "reachable target"
         head += f"  [{r.severity}] {r.violation_count} {what}{'s' if r.violation_count != 1 else ''}"
     need = f", need {r.coverage_required:.0%}" if r.coverage_required > 0 else ""
-    lines = [head, f"  {MEANING[r.verdict]}; coverage {r.coverage_covered}/{r.coverage_universe} "
-                   f"known assets ({r.coverage_ratio:.0%}{need})"
+    lines = [head, f"  {MEANING[r.verdict]}; coverage {r.relevant_covered}/{r.relevant_universe} "
+                   f"relevant assets ({r.relevant_ratio:.0%}{need}; "
+                   f"{r.coverage_covered}/{r.coverage_universe} known assets covered both ways)"
                    + (f"; evidence tier {r.evidence_tier.value}" if r.evidence_tier else "")
                    + (f"; valid until {_t(r.valid_until)}" if r.valid_until else "")]
     if r.reasons and r.verdict is not Verdict.HOLDS:

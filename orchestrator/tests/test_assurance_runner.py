@@ -174,14 +174,15 @@ async def test_full_cycle_open_dedupe_fix_close_recur_reopen(db_pool, app_pool, 
     assert rep.changed
     s = await go(app_pool, redis=fake_redis, now=NOW + 2 * H)
     assert result_for(s, CUSTOM)["verdict"] == "HOLDS"
-    # the std invariant demands 95% coverage and a third of this graph is the internet: UNKNOWN,
-    # which must leave its finding exactly as it was
-    assert result_for(s, STD_REACH)["verdict"] == "UNKNOWN"
+    # the std invariant's floor is measured over the nodes it is about (the database and the web
+    # instance, both covered inbound); the internet pseudo-node is not coverable and does not count
+    assert result_for(s, STD_REACH)["verdict"] == "HOLDS"
     by = {f["rule_id"]: f for f in await findings(db_pool)}
     fixed = by[f"invariant:{CUSTOM}"]
     assert fixed["status"] == "fixed" and fixed["status_by"] == "system:assurance"
     assert fixed["fix_verified_at"] == NOW + 2 * H           # observed-tier coverage: the HOLDS is the verification
-    assert by[f"invariant:{STD_REACH}"]["status"] == "open"
+    assert by[f"invariant:{STD_REACH}"]["status"] == "fixed"
+    assert by[f"invariant:{STD_REACH}"]["fix_verified_at"] == NOW + 2 * H
     hist = await db_pool.fetch("SELECT from_status, to_status, actor FROM finding_status_history "
                                "WHERE finding_id = $1 ORDER BY at, id", fixed["id"])
     assert [(h["from_status"], h["to_status"]) for h in hist][-1] == ("open", "fixed") and hist[-1]["actor"] == "system:assurance"
@@ -198,7 +199,7 @@ async def test_full_cycle_open_dedupe_fix_close_recur_reopen(db_pool, app_pool, 
     assert again[f"invariant:{CUSTOM}"]["fix_verified_at"] is None
     assert again[f"invariant:{STD_REACH}"]["id"] == by[f"invariant:{STD_REACH}"]["id"]
     assert [r["verdict"] for r in await runs(db_pool, CUSTOM)] == ["VIOLATED", "HOLDS", "VIOLATED"]
-    assert [r["verdict"] for r in await runs(db_pool, STD_REACH)] == ["VIOLATED", "UNKNOWN", "VIOLATED"]
+    assert [r["verdict"] for r in await runs(db_pool, STD_REACH)] == ["VIOLATED", "HOLDS", "VIOLATED"]
 
 
 async def test_unknown_leaves_open_findings_open_and_opens_none(db_pool, app_pool, fake_redis):
@@ -851,3 +852,65 @@ def test_accepted_opts_pass_only_what_a_builder_takes():
     assert runner._accepted_opts(b, o) == o
     assert runner._accepted_opts(c, o) == {}
 
+
+
+# --------------------------------------------------------------------------- #
+# P1.5: configuration-only (AWS-style) evidence is enough for the std invariants
+# --------------------------------------------------------------------------- #
+
+async def _aws_style(db_pool, app_pool, *, db_covered=True, public_extra_port=None, now=NOW):
+    """internet -> lb:443 only. Every node is covered INBOUND at tier 'configured' (a security
+    group's rules say what can reach it and nothing about what it connects to), like aws_sg."""
+    lb, db = await seed_asset(db_pool, "lb-p15"), await seed_asset(db_pool, "db-p15")
+    lb_ref, db_ref = refs.asset_ref(lb), refs.asset_ref(db)
+    edges = [EdgeOut("internet", lb_ref, "tcp", 443, 443, "configured", "seed", now)]
+    if public_extra_port:
+        edges.append(EdgeOut("internet", lb_ref, "tcp", public_extra_port, public_extra_port, "configured", "seed", now))
+    cov = [CoverageOut(lb_ref, "in", "configured", now, "seed")]
+    if db_covered:
+        cov.append(CoverageOut(db_ref, "in", "configured", now, "seed"))
+    out = BuildOutput(source="seed", mode="replace", edges=edges, coverage=cov, nodes=[
+        NodeOut("internet", "internet"), NodeOut(lb_ref, "cloud_lb", asset_id=str(lb)),
+        NodeOut(db_ref, "cloud_db", asset_id=str(db))])
+    async with conn_for(app_pool) as con:
+        await store.persist_build(con, out, now)
+
+
+@pytest.mark.asyncio
+async def test_inbound_only_configuration_evidence_lets_the_std_invariants_hold(db_pool, app_pool, fake_redis):
+    await _aws_style(db_pool, app_pool)
+    await enable_std(app_pool, STD_REACH)
+    await enable_std(app_pool, "std:public-ports-allowlist")
+    s = await go(app_pool, redis=fake_redis, force=True)
+    assert s["ok"], s
+    for sid in (STD_REACH, "std:public-ports-allowlist"):
+        row = await inv(db_pool, sid)
+        res = json.loads(row["last_result"])
+        assert row["last_verdict"] == "HOLDS", (sid, res["reasons"])
+        assert res["evidence_tier"] == "configured"      # said plainly: configuration, not observation
+        assert res["coverage"]["relevant_ratio"] == 1.0
+        assert row["valid_until"] == NOW + dt.timedelta(hours=24)
+    assert await findings(db_pool) == []
+
+
+@pytest.mark.asyncio
+async def test_a_database_whose_rules_were_never_synced_stays_unknown_not_holds(db_pool, app_pool, fake_redis):
+    """No coverage for the database: the internet is blind outbound and so is the database inbound,
+    so an unknown edge between them is possible. The floor is irrelevant; the search says UNKNOWN."""
+    await _aws_style(db_pool, app_pool, db_covered=False)
+    await enable_std(app_pool, STD_REACH)
+    await go(app_pool, redis=fake_redis, force=True)
+    row = await inv(db_pool, STD_REACH)
+    assert row["last_verdict"] == "UNKNOWN"
+    assert json.loads(row["last_result"])["reasons"] == ["possible_via_unknown_edges"]
+    assert row["valid_until"] is None
+
+
+@pytest.mark.asyncio
+async def test_configuration_evidence_still_finds_the_violation(db_pool, app_pool, fake_redis):
+    await _aws_style(db_pool, app_pool, public_extra_port=22)
+    await enable_std(app_pool, "std:public-ports-allowlist")
+    await go(app_pool, redis=fake_redis, force=True)
+    row = await inv(db_pool, "std:public-ports-allowlist")
+    assert row["last_verdict"] == "VIOLATED"
+    assert len(await findings(db_pool)) == 1

@@ -137,14 +137,27 @@ def test_empty_selector_is_unknown_not_vacuously_true():
 
 
 def test_coverage_floor_turns_holds_into_unknown():
-    g = graph([node("a1", "a"), node("b1", "b"), node("x", "x", tier=None), node("y", "y", tier=None)], [])
+    """The floor is scoped to the nodes the verdict is about: a2 is a source with no evidence at
+    all. It cannot hide an edge (b1 is covered inbound) so the search says HOLDS, but only 2 of the
+    3 relevant assets have evidence, which is under the floor."""
+    g = graph([node("a1", "a"), node("a2", "a", tier=None), node("b1", "b")], [])
     strict = reach("evidence: { min_tier: observed }\ncoverage: { require: 0.9 }")
     r = V(strict, g)
     assert r.verdict is Verdict.UNKNOWN and "coverage_below_required" in r.reasons
-    assert r.coverage_covered == 2 and r.coverage_universe == 4
+    assert (r.relevant_covered, r.relevant_universe) == (2, 3)
     assert r.evidence_tier is None and r.valid_until is None
     lax = reach("evidence: { min_tier: observed }\ncoverage: { require: 0.5 }")
     assert V(lax, g).verdict is Verdict.HOLDS
+
+
+def test_blind_nodes_off_the_verdict_do_not_count_against_the_floor():
+    """x and y are in other zones and reachable from nothing: they are not what the verdict is about."""
+    g = graph([node("a1", "a"), node("b1", "b"), node("x", "x", tier=None), node("y", "y", tier=None)], [])
+    strict = reach("evidence: { min_tier: observed }\ncoverage: { require: 0.9 }")
+    r = V(strict, g)
+    assert r.verdict is Verdict.HOLDS
+    assert (r.relevant_covered, r.relevant_universe) == (2, 2)
+    assert (r.coverage_covered, r.coverage_universe) == (2, 4)   # the tenant-wide figure is still reported
 
 
 # ---- freshness ------------------------------------------------------------------------------

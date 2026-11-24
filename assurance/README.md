@@ -136,3 +136,12 @@ actively confirmed yet.
   `BlindSpot.direction`.
 - `evidence_tier` / `valid_until` now also account for covered nodes that merely keep an unknown
   edge out (0.1 ignored them, which could over-state how long a `HOLDS` lasts).
+
+## Coverage floor (P1.5)
+
+`coverage.require` is measured over the nodes the verdict is about (sources, targets and everything the
+augmented search could reach, excluding the internet and CIDR pseudo-nodes), counting a node as covered when
+it has qualifying evidence in at least one direction. Soundness does **not** depend on the floor: the
+unknown-edge rule is applied regardless, and a floor of 0 cannot let a possible unknown edge through. Results
+report both the relevant figures (`relevant_*`) and the tenant-wide both-direction figures. The std
+reach/exposure invariants use `min_tier: configured`; the tier a `HOLDS` rests on is always in the result.

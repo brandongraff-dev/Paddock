@@ -14,7 +14,7 @@ subjects:
   to: { class: data_store }
 assert: unreachable
 via: { protocols: [tcp, udp], max_hops: 6, stop_at: { tag: app-tier } }
-evidence: { min_tier: observed, max_age: 24h, confirm: all }
+evidence: { min_tier: configured, max_age: 24h, confirm: all }
 coverage: { require: 0.95 }
 on_violation:
   finding: true

@@ -11,7 +11,7 @@ subjects:
 assert: exposes-only
 ports: [80, 443]
 via: { protocols: [tcp, udp] }
-evidence: { min_tier: observed, max_age: 24h, confirm: all }
+evidence: { min_tier: configured, max_age: 24h, confirm: all }
 coverage: { require: 0.95 }
 on_violation:
   finding: true

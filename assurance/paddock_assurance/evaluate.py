@@ -86,6 +86,9 @@ class Result:
     coverage_universe: int = 0
     coverage_covered: int = 0
     coverage_required: float = 0.0
+    # The floor is measured over the nodes this verdict is about (see _finish), not the whole tenant.
+    relevant_universe: int = 0
+    relevant_covered: int = 0
     blind_spots: list[BlindSpot] = field(default_factory=list)
     exceptions_used: list[dict[str, str]] = field(default_factory=list)
     expired_exceptions: list[dict[str, str]] = field(default_factory=list)
@@ -95,6 +98,10 @@ class Result:
     @property
     def coverage_ratio(self) -> float:
         return 1.0 if self.coverage_universe == 0 else self.coverage_covered / self.coverage_universe
+
+    @property
+    def relevant_ratio(self) -> float:
+        return 1.0 if self.relevant_universe == 0 else self.relevant_covered / self.relevant_universe
 
     def status_at(self, now: dt.datetime) -> str:
         """``EXPIRED`` once a HOLDS has outlived its evidence; otherwise the verdict."""
@@ -118,7 +125,10 @@ class Result:
             "valid_until": iso(self.valid_until),
             "evidence_tier": self.evidence_tier.value if self.evidence_tier else None,
             "coverage": {"universe": self.coverage_universe, "covered": self.coverage_covered,
-                         "ratio": round(self.coverage_ratio, 4), "required": self.coverage_required},
+                         "ratio": round(self.coverage_ratio, 4), "required": self.coverage_required,
+                         "relevant_universe": self.relevant_universe,
+                         "relevant_covered": self.relevant_covered,
+                         "relevant_ratio": round(self.relevant_ratio, 4)},
             "violation_count": self.violation_count,
             "witnesses": [{
                 "hops": [h.__dict__ for h in w.hops],
@@ -278,6 +288,14 @@ def _finish(res: Result, plan: Plan, g: ReachGraph, cov: dict[str, _NodeCov],
     real = [n for n in g.nodes if g.nodes[n].kind not in PSEUDO_KINDS]
     res.coverage_universe = len(real)
     res.coverage_covered = sum(1 for n in real if cov[n].both)
+    # The FLOOR is scoped to the nodes this verdict is about. A tenant-wide, both-direction ratio
+    # made every std invariant UNKNOWN for any estate with AWS nodes: security groups can only
+    # ever cover INBOUND, so the ratio sat near zero however well the relevant nodes were covered.
+    # Soundness does not depend on the floor (unknown edges are searched regardless); the floor
+    # is a disclosed policy overlay, so "some evidence in at least one direction" is the right bar.
+    rel = [n for n in sorted(relevant) if n in g.nodes and g.nodes[n].kind not in PSEUDO_KINDS]
+    res.relevant_universe = len(rel)
+    res.relevant_covered = sum(1 for n in rel if cov[n].inn.covered or cov[n].out.covered)
     res.blind_spots = _blind_spots(cov, relevant)
     if res.verdict is Verdict.HOLDS:
         facts = [f for n, d in sorted(relied) if (f := cov[n].relied(d)) is not None]
@@ -285,7 +303,7 @@ def _finish(res: Result, plan: Plan, g: ReachGraph, cov: dict[str, _NodeCov],
             res.evidence_tier = min((f.tier for f in facts), key=lambda t: t.rank)
             res.valid_until = min(f.observed_at for f in facts) + plan.max_age
         floor = plan.kind is not PlanKind.COVERED
-        if floor and res.coverage_ratio + 1e-12 < plan.coverage_required:
+        if floor and res.relevant_ratio + 1e-12 < plan.coverage_required:
             res.verdict = Verdict.UNKNOWN
             res.reasons.append("coverage_below_required")
             res.evidence_tier, res.valid_until = None, None

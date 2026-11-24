@@ -257,3 +257,30 @@ traffic seen", not "impossible". IPv6 is not parsed by the sensor. `worker-activ
 `{"assets": ...}`/`{"findings": ...}` bodies the orchestrator rejects (422), so real active port-scan results
 do not land today; `external_exposure` therefore sees only what passive/Shodan and manual ingest provide until
 that is fixed (tracked separately).
+
+## 11. P1.5 amendments (after independent verification)
+
+The verifier fixed seven defects (three could produce a false `HOLDS`) and surfaced two design problems
+that made the std invariants unusable for AWS-only tenants. Both are resolved here; they supersede the
+wording above.
+
+* **D8 - the coverage floor is scoped to what the verdict is about.** `coverage.require` is measured over the
+  *relevant* non-pseudo nodes (sources, targets and everything the augmented search could reach), and a node
+  counts as covered when it has qualifying evidence in **at least one** direction. The old tenant-wide,
+  both-direction ratio sat near zero for any estate with AWS nodes (security groups can only ever cover
+  *inbound*), so every std invariant ended `UNKNOWN: coverage_below_required` however well the relevant nodes
+  were covered. The floor is a disclosed policy overlay, **not** the soundness mechanism: the unknown-edge rule
+  (an edge `u -> v` is possible iff `u` is not covered outbound and `v` is not covered inbound) is applied
+  regardless of the floor, and a test proves a floor of 0 cannot let a possible unknown edge through.
+  `Result.to_dict()['coverage']` keeps `universe/covered/ratio` (tenant-wide, both directions) and adds
+  `relevant_universe/relevant_covered/relevant_ratio`.
+* **D9 - the std reach/exposure invariants accept `configured` evidence.** A security group's or firewall's
+  configuration is an upper bound on reachability, so absence of an allowed path under it is real evidence.
+  `std:no-internet-to-datastore`, `std:guest-cannot-reach-pos` and `std:public-ports-allowlist` now use
+  `min_tier: configured`. The tier of the evidence a `HOLDS` rests on is recorded in every result, and a
+  consumer (an insurer's acceptance policy, P3) can still require `observed`. Findings are marked
+  `fix_verified` only when the closing `HOLDS` rests on `observed` or `tested` evidence.
+* **Still `UNKNOWN`, correctly.** A host known only from a TCP port scan cannot rule out a UDP service, and the
+  internet is blind outbound, so a std internet invariant over such a host stays `UNKNOWN:
+  possible_via_unknown_edges` until the host is covered inbound (security group, agent firewall) or the scan
+  is extended. This is the soundness rule working, not a defect.

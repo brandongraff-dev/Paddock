@@ -373,12 +373,15 @@ async def test_p1_end_to_end(db_pool, app_pool, fake_redis, monkeypatch, small_w
     v = await verdicts(db_pool)
     # configuration alone is complete enough for the configured-tier invariants ...
     assert v[DB_PRIVATE] == "HOLDS" and v[WEB_ONLY] == "HOLDS" and v[GUEST_POS] == "HOLDS"
-    # ... but never for the std ones, which require observed evidence: no false comfort
+    # ... and the std guest invariant now HOLDS too: Sentry gives observed evidence both ways for
+    # the guest and POS devices, and the coverage floor is measured over the nodes it is about
+    assert v["std:guest-cannot-reach-pos"] == "HOLDS"
+    # the std internet invariants stay UNKNOWN, correctly: the closed host is known only from a
+    # TCP port scan, which cannot rule out a UDP service, and the internet is blind outbound
     assert v["std:no-internet-to-datastore"] == "UNKNOWN"
     assert v["std:public-ports-allowlist"] == "UNKNOWN"
-    # the std guest invariant is intrinsically fine, but the estate-wide coverage floor is not met
-    assert v["std:guest-cannot-reach-pos"] == "UNKNOWN"
-    assert "coverage_below_required" in (await last_result(db_pool, "std:guest-cannot-reach-pos"))["reasons"]
+    for k in ("std:no-internet-to-datastore", "std:public-ports-allowlist"):
+        assert (await last_result(db_pool, k))["reasons"] == ["possible_via_unknown_edges"]
     assert v["std:coverage-complete"] == "VIOLATED"             # unrelated gaps remain
     # the evidence tiers say what each HOLDS rests on
     assert (await last_result(db_pool, DB_PRIVATE))["evidence_tier"] == "configured"
@@ -394,7 +397,8 @@ async def test_p1_end_to_end(db_pool, app_pool, fake_redis, monkeypatch, small_w
     # UNKNOWN closes nothing: the std findings are still open, as are the coverage gaps
     assert by_status(await inv_findings(db_pool, "std:no-internet-to-datastore")) == {"open": 2}
     assert set(by_status(await inv_findings(db_pool, "std:public-ports-allowlist"))) == {"open"}
-    assert set(by_status(await inv_findings(db_pool, "std:guest-cannot-reach-pos"))) == {"open"}
+    f_std_pos = await inv_findings(db_pool, "std:guest-cannot-reach-pos")
+    assert set(by_status(f_std_pos)) == {"fixed"} and all(r["fix_verified_at"] is not None for r in f_std_pos)
     hist = await db_pool.fetch(
         "SELECT h.actor, h.to_status, h.reason FROM finding_status_history h WHERE h.finding_id = $1", f_pos[0]["id"])
     assert any(h["actor"] == "system:assurance" and h["to_status"] == "fixed" for h in hist)

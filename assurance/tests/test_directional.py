@@ -228,11 +228,31 @@ def test_a_node_counts_as_covered_only_when_covered_both_ways():
     assert (r.coverage_covered, r.coverage_universe) == (1, 4)
 
 
-def test_coverage_floor_uses_both_direction_counts():
+def test_floor_counts_a_node_with_evidence_in_either_direction():
+    """Security groups can only ever cover INBOUND. Both nodes are covered inbound, so no unknown
+    edge is possible and every relevant node has evidence: HOLDS under a 0.95 floor, although the
+    tenant-wide both-direction figure is 0 of 2."""
     g = graph([dnode("a1", "a", fact("in")), dnode("b1", "b", fact("in"))], [])
-    strict = reach("evidence: { min_tier: observed }\ncoverage: { require: 0.5 }")
+    strict = reach("evidence: { min_tier: observed }\ncoverage: { require: 0.95 }")
+    r = V(strict, g)
+    assert r.verdict is Verdict.HOLDS
+    assert (r.relevant_covered, r.relevant_universe) == (2, 2)
+    assert (r.coverage_covered, r.coverage_universe) == (0, 2)
+
+
+def test_floor_still_bites_when_relevant_nodes_have_no_evidence_at_all():
+    g = graph([dnode("a1", "a", fact("in")), dnode("a2", "a"), dnode("b1", "b", fact("in"))], [])
+    strict = reach("evidence: { min_tier: observed }\ncoverage: { require: 0.95 }")
     r = V(strict, g)
     assert r.verdict is Verdict.UNKNOWN and "coverage_below_required" in r.reasons
+    assert (r.relevant_covered, r.relevant_universe) == (2, 3)
+
+
+def test_the_floor_never_overrides_the_unknown_edge_rule():
+    """A floor of 0 must not let a possible unknown edge through: soundness is not the floor's job."""
+    g = graph([dnode("a1", "a"), dnode("b1", "b")], [])
+    lax = reach("evidence: { min_tier: observed }\ncoverage: { require: 0 }")
+    assert V(lax, g).verdict is Verdict.UNKNOWN
 
 
 # ---- a covered node off the found paths can still carry the verdict --------------------------
