@@ -11,7 +11,9 @@ never given to the internet node.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import hashlib
 import ipaddress
 import json
 import uuid
@@ -19,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .refs import INTERNET, KINDS
-from .store import Zone, _zone, resolve_zone
+from .store import Zone, ZoneIndex, _zone
 
 #: label values that explicitly turn a tag off (e.g. un-mark a metadata-derived crown jewel).
 _FALSE_VALUES = frozenset({"false", "no", "0", "off"})
@@ -36,8 +38,11 @@ _ASSET_SQL = (
 
 
 #: Most edges the CIDR expansion may add to one document. Past it a destination keeps its CIDR
-#: edge but loses its inbound coverage (so the evaluator assumes unknown edges into it) instead of
-#: silently under-approximating who is inside the CIDR.
+#: edge but cannot list who is inside the CIDR, so the document UNDER-approximates the graph.
+#: Withdrawing the destination's inbound coverage is not enough to make that safe (an unknown
+#: edge needs the SOURCE to be blind outbound too, and a source covered outbound loses its edge
+#: outright), so the loader reports ``LoadDiagnostics.cidr_overflow`` and the runner marks every
+#: invariant UNKNOWN (``graph_incomplete:cidr_expansion_overflow``) instead of evaluating it.
 MAX_EXPANDED_EDGES = 400_000
 
 
@@ -47,6 +52,8 @@ class LoadDiagnostics:
     graph_version: int = 0
     #: destinations whose CIDR sources could not be expanded (cap hit): inbound coverage withdrawn.
     cidr_unexpanded: list[str] = field(default_factory=list)
+    #: True iff the cap was hit: the document is INCOMPLETE and must not be evaluated.
+    cidr_overflow: bool = False
     #: node id -> zone names its addresses resolved into (a multi-homed node in two zones).
     zone_conflicts: dict[str, list[str]] = field(default_factory=dict)
 
@@ -122,6 +129,36 @@ def _loads(v: Any) -> Any:
         except ValueError:
             return None
     return v
+
+
+def doc_sha(doc: dict[str, Any]) -> str:
+    """sha256 (hex) of the canonical graph document, for "did the INPUT of the evaluation change?".
+
+    ``graph_version`` only moves when builders, zones or labels change; node ``attrs`` (addresses
+    that decide a node's zone and which CIDR rules include it) and ``assets.metadata`` (the
+    crown-jewel tag, addresses) feed the document without moving it. Hashing what the evaluator
+    actually reads closes that gap.
+
+    The document's own ``now`` and the coverage ``observed_at`` stamps are left out on purpose:
+    both change on every refresh without changing what the graph says, and re-evaluating on each
+    would make the loop spin. A refreshed ``observed_at`` can only make evidence fresher; the
+    freshness limit itself is tracked by ``valid_until`` and the backstop.
+    """
+    def strip(node: Any) -> Any:
+        if not isinstance(node, dict) or "coverage" not in node:
+            return node
+        cov = node["coverage"]
+        if isinstance(cov, list):
+            cov = [{k: v for k, v in c.items() if k != "observed_at"} if isinstance(c, dict) else c for c in cov]
+        elif isinstance(cov, dict):
+            cov = {k: v for k, v in cov.items() if k != "observed_at"}
+        return {**node, "coverage": cov}
+
+    canon = {k: v for k, v in doc.items() if k != "now"}
+    if isinstance(canon.get("nodes"), list):
+        canon["nodes"] = [strip(n) for n in canon["nodes"]]
+    blob = json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
 
 
 async def _fetch(conn) -> dict[str, Any]:
@@ -265,32 +302,14 @@ def _expand_cidr_sources(nodes: list[dict[str, Any]], edges: list[dict[str, Any]
 
 
 async def load_graph_doc_with_diagnostics(conn, now: dt.datetime) -> tuple[dict[str, Any], LoadDiagnostics]:
-    """Build the graph document and the side facts a runner may want to record."""
+    """Build the graph document and the side facts a runner may want to record.
+
+    The queries run on ``conn``; everything CPU-bound (zone resolution, CIDR expansion, document
+    assembly) runs in a worker thread so a large tenant cannot stall the event loop that also
+    serves the API.
+    """
     snap = await _fetch_snapshot(conn)
-    zones: list[Zone] = [_zone(r) for r in snap["zones"]]
-    labels = _labels_by_node(snap["labels"])
-    diag = LoadDiagnostics(graph_version=int(snap["state"]["graph_version"]) if snap["state"] else 0)
-
-    kinds: dict[str, str] = {}
-    attrs: dict[str, dict[str, Any]] = {}
-    asset_ids: dict[str, str] = {}
-    for r in snap["nodes"]:
-        kinds[r["node_ref"]] = r["kind"] if r["kind"] in KINDS else _default_kind(r["node_ref"])
-        a = _loads(r["attrs"])
-        attrs[r["node_ref"]] = a if isinstance(a, dict) else {}
-        if r["asset_id"]:
-            asset_ids[r["node_ref"]] = str(r["asset_id"])
-    for e in snap["edges"]:
-        for ref in (e["src_ref"], e["dst_ref"]):
-            kinds.setdefault(ref, _default_kind(ref))
-    kinds[INTERNET] = "internet"
-    for ref in list(kinds):                       # asset:<uuid> refs carry their own id
-        if ref.startswith("asset:"):
-            try:
-                asset_ids.setdefault(ref, str(uuid.UUID(ref[len("asset:"):])))
-            except ValueError:
-                pass
-
+    asset_ids = _asset_ids(snap)
     assets: dict[str, dict[str, Any]] = {}
     if asset_ids:
         for r in await conn.fetch(_ASSET_SQL, sorted(set(asset_ids.values()))):
@@ -298,6 +317,46 @@ async def load_graph_doc_with_diagnostics(conn, now: dt.datetime) -> tuple[dict[
             if r["kind"] in ("ipv4", "ipv6"):
                 md = dict(md, ip=r["value"])
             assets[str(r["id"])] = md
+    return await asyncio.to_thread(_assemble, snap, assets, now)
+
+
+def _asset_ids(snap: dict[str, Any]) -> dict[str, str]:
+    """node ref -> asset uuid, for every node that stands for an asset."""
+    asset_ids: dict[str, str] = {}
+    refs: set[str] = set()
+    for r in snap["nodes"]:
+        refs.add(r["node_ref"])
+        if r["asset_id"]:
+            asset_ids[r["node_ref"]] = str(r["asset_id"])
+    for e in snap["edges"]:
+        refs.update((e["src_ref"], e["dst_ref"]))
+    for ref in sorted(refs):                       # asset:<uuid> refs carry their own id
+        if ref.startswith("asset:"):
+            try:
+                asset_ids.setdefault(ref, str(uuid.UUID(ref[len("asset:"):])))
+            except ValueError:
+                pass
+    return asset_ids
+
+
+def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
+              now: dt.datetime) -> tuple[dict[str, Any], LoadDiagnostics]:
+    """Pure: rows -> (document, diagnostics). No I/O, so it can run off the event loop."""
+    zone_index = ZoneIndex(_zone(r) for r in snap["zones"])    # CIDRs parsed once for the whole load
+    labels = _labels_by_node(snap["labels"])
+    diag = LoadDiagnostics(graph_version=int(snap["state"]["graph_version"]) if snap["state"] else 0)
+
+    kinds: dict[str, str] = {}
+    attrs: dict[str, dict[str, Any]] = {}
+    for r in snap["nodes"]:
+        kinds[r["node_ref"]] = r["kind"] if r["kind"] in KINDS else _default_kind(r["node_ref"])
+        a = _loads(r["attrs"])
+        attrs[r["node_ref"]] = a if isinstance(a, dict) else {}
+    for e in snap["edges"]:
+        for ref in (e["src_ref"], e["dst_ref"]):
+            kinds.setdefault(ref, _default_kind(ref))
+    kinds[INTERNET] = "internet"
+    asset_ids = _asset_ids(snap)
 
     cov_by: dict[str, list[dict[str, str]]] = {}
     for r in snap["cov"]:
@@ -323,7 +382,7 @@ async def load_graph_doc_with_diagnostics(conn, now: dt.datetime) -> tuple[dict[
                     addrs = [ref.partition(":")[2]]
                 else:
                     addrs = _ips_of(attrs.get(ref), md)
-                zone, conflict = resolve_zone(zones, addrs)
+                zone, conflict = zone_index.resolve(addrs)
                 if conflict:
                     diag.zone_conflicts[ref] = conflict
                 if zone is None:
@@ -345,6 +404,7 @@ async def load_graph_doc_with_diagnostics(conn, now: dt.datetime) -> tuple[dict[
 
     addrs = {ref: _node_addrs(ref, attrs.get(ref), assets.get(asset_ids.get(ref, ""), {})) for ref in kinds}
     diag.cidr_unexpanded = _expand_cidr_sources(nodes, edges, addrs)
+    diag.cidr_overflow = bool(diag.cidr_unexpanded)
     doc = {"version": 1, "now": _iso(now), "nodes": nodes, "edges": edges}
     return doc, diag
 

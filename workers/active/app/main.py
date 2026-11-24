@@ -176,14 +176,23 @@ class Worker:
                 raise ValueError(f"unknown job kind: {kind!r}")
             result = await asyncio.wait_for(
                 handler(self, scan_id, target, config),
-                timeout=settings.job_timeout_sec,
+                timeout=_job_timeout_sec(kind, config),
             )
+            # Raises ResultsNotPosted if ANY bulk post failed: the except below then FAILS the scan.
+            # A scan whose results never landed must not look completed to the assurance builder.
             await self._emit_results(result)
+            summary = dict(result.get("summary") or {})
+            if summary.get("tool_exit_ok") is False:
+                # The tool did not run to completion (missing, timed out, non-zero exit, unreadable
+                # output): fail visibly rather than complete with an empty-looking result.
+                raise ToolRunFailed(str(summary.get("tool_error") or "tool did not complete"))
+            # Set only here, after every post returned 2xx (the builder's coverage marker).
+            summary["results_posted"] = True
             try:
-                await self.orch.scan_complete(scan_id, result.get("summary", {}))
+                await self.orch.scan_complete(scan_id, summary)
             except Exception as e:
                 log.warning("job.complete_report_failed", error=str(e))
-            log.info("job.done", summary=result.get("summary"))
+            log.info("job.done", summary=summary)
         except ScopeDenied as e:
             log.warning("job.scope_denied", reason=e.reason, normalized=e.normalized)
             try:
@@ -221,20 +230,51 @@ class Worker:
             structlog.contextvars.clear_contextvars()
 
     async def _emit_results(self, result: dict[str, Any]) -> None:
+        """Post assets, then edges, then findings; raise ResultsNotPosted if any post failed.
+
+        Every post is attempted (so e.g. a tool-failure finding still lands when the asset post
+        failed), but one failure fails the whole emit. This used to log and continue, and the scan
+        completed with its results dropped (Provable Containment builders-1).
+        """
         assert self.orch is not None
         assets = result.get("assets") or []
         edges = result.get("edges") or []
         findings = result.get("findings") or []
-        if assets or edges:
-            try:
-                await self.orch.assets_bulk(assets, edges)
-            except Exception as e:
-                log.warning("emit.assets_failed", error=str(e), count=len(assets))
+        errors: list[str] = []
+        steps: list[tuple[str, Any, int]] = []
+        if assets:
+            steps.append(("assets", lambda: self.orch.assets_bulk(assets), len(assets)))
+        if edges:
+            steps.append(("edges", lambda: self.orch.edges_bulk(edges), len(edges)))
         if findings:
+            steps.append(("findings", lambda: self.orch.findings_bulk(findings), len(findings)))
+        for name, call, count in steps:
             try:
-                await self.orch.findings_bulk(findings)
+                await call()
             except Exception as e:
-                log.warning("emit.findings_failed", error=str(e), count=len(findings))
+                log.warning(f"emit.{name}_failed", error=str(e), count=count)
+                errors.append(f"{name}: {e}")
+        if errors:
+            raise ResultsNotPosted("results not posted: " + "; ".join(errors))
+
+
+class ResultsNotPosted(RuntimeError):
+    """A bulk post to the orchestrator failed; the scan must be failed, not completed."""
+
+
+class ToolRunFailed(RuntimeError):
+    """The scanning tool did not run to completion (see the summary's ``tool_exit_ok``)."""
+
+
+def _job_timeout_sec(kind: str | None, config: dict[str, Any]) -> float:
+    """Job budget. A full-range port scan needs ~11 min at the polite rate; the default 300 s would
+    always time it out (and a timed-out scan is a failed one), so give it what naabu needs."""
+    if kind == "port_scan":
+        from app.modules import port_scan
+
+        return max(settings.job_timeout_sec,
+                   port_scan.naabu_needed_sec(str(config.get("ports") or "top-100")) + 60)
+    return settings.job_timeout_sec
 
 
 # ----- handler dispatch ----------------------------------------------------
@@ -257,7 +297,7 @@ async def _h_port_scan(w: Worker, scan_id: str, target: str, config: dict) -> di
 
     return await port_scan.scan(
         target, scope=w.scope, politeness=w.politeness,
-        orchestrator=w.orch, ports=config.get("ports", "top-100"),
+        orchestrator=w.orch, ports=str(config.get("ports") or "top-100"),
         scan_id=scan_id,
     )
 

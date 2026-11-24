@@ -40,6 +40,8 @@ M = dt.timedelta(minutes=1)
 
 # Globally routable address, used as an inert string only (nothing is ever contacted).
 EXPOSED = "93.184.216.34"
+# the markers the active worker records for a clean full-port scan (external_exposure contract)
+WORKER_FULL_SCAN_SUMMARY = json.dumps({"ports_scanned": "1-65535", "tool_exit_ok": True, "results_posted": True})
 GUEST_LAPTOP, GUEST_AP, PRINTER, POS, POS_HUB = "10.20.0.5", "10.20.0.1", "10.10.0.9", "10.30.0.4", "10.30.0.1"
 SENSOR = "11111111-1111-4111-8111-111111111111"
 SENSOR_B = "22222222-2222-4222-8222-222222222222"
@@ -113,6 +115,11 @@ async def seed_sensor(db_pool, sid, tid, *, online, up):
             "VALUES ($1, $2, $3, 'hq', 'active', $4, 'h', $5, $6) "
             "ON CONFLICT (id) DO UPDATE SET online = EXCLUDED.online, last_upload_at = EXCLUDED.last_upload_at",
             uuid.UUID(sid), uuid.UUID(tid), f"s-{sid[:4]}", f"pst_{sid[:8]}", online, up)
+        # coverage needs a declared scope (schema 040 sensor_scopes): the lab mirrors all of 10.0.0.0/8
+        await con.execute(
+            "INSERT INTO sensor_scopes (tenant_id, sensor_id, cidrs, set_by, justification) "
+            "VALUES ($1, $2, $3::text[], 'e2e', 'test lab') ON CONFLICT (tenant_id, sensor_id) DO NOTHING",
+            uuid.UUID(tid), uuid.UUID(sid), ["10.0.0.0/8"])
 
 
 async def seed_flow(db_pool, tid, src, dst, port, sid, last):
@@ -147,8 +154,8 @@ async def seed_exposed_host(db_pool, *, at, scan_finished):
             json.dumps({"port": 5432, "protocol": "tcp"}), at)
         await con.execute(
             "INSERT INTO scans (kind, target, status, started_at, finished_at, config, result_summary) "
-            "VALUES ('port_scan', $1, 'completed', $2, $2, $3::jsonb, '{}'::jsonb)",
-            EXPOSED, scan_finished, json.dumps({"ports": "1-65535"}))
+            "VALUES ('port_scan', $1, 'completed', $2, $2, $3::jsonb, $4::jsonb)",
+            EXPOSED, scan_finished, json.dumps({"ports": "1-65535"}), WORKER_FULL_SCAN_SUMMARY)
 
 
 async def close_exposed_host(db_pool, *, scan_finished):
@@ -157,8 +164,8 @@ async def close_exposed_host(db_pool, *, scan_finished):
         await con.execute("DELETE FROM assets WHERE kind = 'port' AND canonical = $1", f"{EXPOSED}:5432")
         await con.execute(
             "INSERT INTO scans (kind, target, status, started_at, finished_at, config, result_summary) "
-            "VALUES ('port_scan', $1, 'completed', $2, $2, $3::jsonb, '{}'::jsonb)",
-            EXPOSED, scan_finished, json.dumps({"ports": "1-65535"}))
+            "VALUES ('port_scan', $1, 'completed', $2, $2, $3::jsonb, $4::jsonb)",
+            EXPOSED, scan_finished, json.dumps({"ports": "1-65535"}), WORKER_FULL_SCAN_SUMMARY)
 
 
 async def install_invariants(pool, tid, *, custom=True):
@@ -514,8 +521,8 @@ async def test_an_outside_in_scan_never_rules_out_connections_from_inside(db_poo
                           "'93.184.216.0/24', 'test', TRUE)")
         await con.execute(
             "INSERT INTO scans (kind, target, status, started_at, finished_at, config, result_summary) "
-            "VALUES ('port_scan', $1, 'completed', $2, $2, $3::jsonb, '{}'::jsonb)",
-            EXPOSED, t0 - 30 * M, json.dumps({"ports": "1-65535"}))
+            "VALUES ('port_scan', $1, 'completed', $2, $2, $3::jsonb, $4::jsonb)",
+            EXPOSED, t0 - 30 * M, json.dumps({"ports": "1-65535"}), WORKER_FULL_SCAN_SUMMARY)
     # a guest laptop is only known from a flow, and its sensor is offline: nobody watches it
     await seed_sensor(db_pool, SENSOR, A, online=False, up=t0 - M)
     await seed_flow(db_pool, A, GUEST_LAPTOP, GUEST_AP, 443, SENSOR, t0 - 5 * M)

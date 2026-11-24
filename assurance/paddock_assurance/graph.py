@@ -128,7 +128,8 @@ class ReachGraph:
     def from_dict(cls, doc: Any) -> "ReachGraph":
         if not isinstance(doc, dict):
             raise GraphError("graph document must be an object")
-        if doc.get("version", 1) != 1:
+        ver = doc.get("version", 1)
+        if type(ver) is not int or ver != 1:      # True == 1 and 1.0 == 1 must not pass
             raise GraphError("unsupported graph version")
         raw_nodes, raw_edges = doc.get("nodes", []), doc.get("edges", [])
         if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
@@ -142,7 +143,7 @@ class ReachGraph:
                 raise GraphError(f"duplicate node id {n.id!r}")
             nodes[n.id] = n
         edges = [_edge(re_, i, nodes) for i, re_ in enumerate(raw_edges)]
-        now = _ts(doc["now"], "now") if doc.get("now") else None
+        now = _ts(doc["now"], "now") if doc.get("now") is not None else None
         return cls(nodes=nodes, edges=edges, now=now)
 
     @classmethod
@@ -180,7 +181,10 @@ def _ts(value: Any, what: str) -> dt.datetime:
         raise GraphError(f"{what}: bad timestamp {value!r}") from exc
     if t.tzinfo is None:
         raise GraphError(f"{what}: timestamp needs a timezone (use Z or +00:00)")
-    return t.astimezone(dt.timezone.utc)
+    try:
+        return t.astimezone(dt.timezone.utc)
+    except (ValueError, OverflowError) as exc:      # year 0001 / 9999 at a non-UTC offset
+        raise GraphError(f"{what}: timestamp out of range {value!r}") from exc
 
 
 def _node(raw: Any, i: int) -> Node:
@@ -191,8 +195,35 @@ def _node(raw: Any, i: int) -> Node:
     if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
         raise GraphError(f"node {nid!r}: 'tags' must be a list of strings")
     cov = _coverage(raw.get("coverage"), nid)
-    return Node(id=nid, kind=str(raw.get("kind", "host")), zone=raw.get("zone"),
-                tags=frozenset(tags), cls=raw.get("class"), coverage=cov)
+    zone, cls = raw.get("zone"), raw.get("class")
+    for what, v in (("zone", zone), ("class", cls)):
+        if v is not None and not isinstance(v, str):
+            raise GraphError(f"node {nid!r}: {what!r} must be a string")
+    return Node(id=nid, kind=str(raw.get("kind", "host")), zone=zone,
+                tags=frozenset(tags), cls=cls, coverage=cov)
+
+
+def _qualifier(c: dict, key: str, nid: str) -> str:
+    """A fact's ``origin`` / ``proto``: absent (unqualified) or a non-empty string.
+
+    A qualifier that is *present* but not a usable string (0, false, [], "", null) must not be read
+    as "no qualifier": an unqualified fact speaks for every source and protocol, so dropping a
+    qualifier a builder meant to apply would widen the claim. Fail loudly instead."""
+    if key not in c:
+        return ""
+    v = c[key]
+    if not isinstance(v, str) or not v:
+        raise GraphError(f"node {nid!r}: coverage {key} must be a non-empty string when given")
+    return v
+
+
+def _tier(value: Any, message: str) -> Tier:
+    if not isinstance(value, str):
+        raise GraphError(message)
+    try:
+        return Tier(value)
+    except ValueError as exc:
+        raise GraphError(message) from exc
 
 
 def _fact(c: Any, nid: str, *, legacy: bool) -> Coverage:
@@ -206,17 +237,14 @@ def _fact(c: Any, nid: str, *, legacy: bool) -> Coverage:
         # A fact in a list must say which way it looks. Defaulting to "both" would let a builder
         # that forgot the field claim more than it knows.
         raise GraphError(f"node {nid!r}: coverage fact needs a 'direction' (in, out or both)")
-    if direction not in DIRECTIONS:
+    if not isinstance(direction, str) or direction not in DIRECTIONS:
         raise GraphError(f"node {nid!r}: bad coverage direction {direction!r}")
-    origin, proto = c.get("origin") or "", c.get("proto") or ""
+    origin, proto = _qualifier(c, "origin", nid), _qualifier(c, "proto", nid)
     if origin not in ORIGINS or proto not in FACT_PROTOS:
         raise GraphError(f"node {nid!r}: bad coverage origin/proto {origin!r}/{proto!r}")
     if origin and direction != "in":
         raise GraphError(f"node {nid!r}: a coverage fact with an origin must have direction 'in'")
-    try:
-        tier = Tier(c.get("tier"))
-    except ValueError as exc:
-        raise GraphError(f"node {nid!r}: bad coverage tier {c.get('tier')!r}") from exc
+    tier = _tier(c.get("tier"), f"node {nid!r}: bad coverage tier {c.get('tier')!r}")
     return Coverage(tier, _ts(c.get("observed_at"), f"node {nid!r} observed_at"),
                     str(c.get("source", "")), direction, origin, proto)
 
@@ -240,15 +268,12 @@ def _edge(raw: Any, i: int, nodes: dict[str, Node]) -> Edge:
     if not isinstance(raw, dict):
         raise GraphError(f"edges[{i}]: must be an object")
     src, dst = raw.get("src"), raw.get("dst")
-    if src not in nodes or dst not in nodes:
+    if not isinstance(src, str) or not isinstance(dst, str) or src not in nodes or dst not in nodes:
         raise GraphError(f"edges[{i}]: src/dst must name existing nodes ({src!r} -> {dst!r})")
     proto = raw.get("proto", "tcp")
-    if proto not in PROTOS:
+    if not isinstance(proto, str) or proto not in PROTOS:
         raise GraphError(f"edges[{i}]: proto must be one of {PROTOS}")
-    try:
-        basis = Tier(raw.get("basis", "configured"))
-    except ValueError as exc:
-        raise GraphError(f"edges[{i}]: bad basis {raw.get('basis')!r}") from exc
+    basis = _tier(raw.get("basis", "configured"), f"edges[{i}]: bad basis {raw.get('basis')!r}")
     if proto == "icmp":
         ports: P.Intervals = ()
     elif "ports" in raw:
@@ -258,7 +283,7 @@ def _edge(raw: Any, i: int, nodes: dict[str, Node]) -> Edge:
             raise GraphError(f"edges[{i}]: {exc}") from exc
     else:
         ports = P.FULL
-    last = _ts(raw["last_seen"], f"edges[{i}] last_seen") if raw.get("last_seen") else None
+    last = _ts(raw["last_seen"], f"edges[{i}] last_seen") if raw.get("last_seen") is not None else None
     return Edge(src, dst, proto, ports, basis, str(raw.get("source", "")), last)
 
 

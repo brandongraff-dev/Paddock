@@ -1548,6 +1548,7 @@ InvariantCreate = TypedDict(
     'InvariantCreate',
     {
         'enabled': NotRequired['bool'],
+        'justification': NotRequired['str | None'],
         'yaml': Required['str'],
     },
     total=False,
@@ -1569,6 +1570,7 @@ InvariantDetail = TypedDict(
         'last_result': NotRequired['dict[str, Any] | None'],
         'last_verdict': NotRequired['str | None'],
         'reasons': NotRequired['list[str]'],
+        'redacted': NotRequired['bool'],
         'severity': Required['str'],
         'source': Required["Literal['std', 'custom']"],
         'stale': NotRequired['bool'],
@@ -1629,6 +1631,7 @@ InvariantUpdate = TypedDict(
     'InvariantUpdate',
     {
         'enabled': NotRequired['bool | None'],
+        'justification': NotRequired['str | None'],
         'yaml': NotRequired['str | None'],
     },
     total=False,
@@ -2545,6 +2548,7 @@ RunOut = TypedDict(
         'id': Required['str'],
         'invariant_id': Required['str'],
         'reasons': NotRequired['list[str]'],
+        'redacted': NotRequired['bool'],
         'result': NotRequired['dict[str, Any] | None'],
         'valid_until': NotRequired['str | None'],
         'verdict': Required['str'],
@@ -3024,6 +3028,64 @@ SensorPatch = TypedDict(
         'name': NotRequired['str | None'],
         'silent_after_s': NotRequired['int | None'],
         'site': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+SensorScopeChange = TypedDict(
+    'SensorScopeChange',
+    {
+        'changed': Required['bool'],
+        'graph_version': NotRequired['int | None'],
+        'previous': NotRequired['list[str] | None'],
+        'scope': Required['SensorScopeOut'],
+    },
+    total=False,
+)
+
+SensorScopeDeleteOut = TypedDict(
+    'SensorScopeDeleteOut',
+    {
+        'deleted': NotRequired['bool'],
+        'graph_version': NotRequired['int | None'],
+        'previous': NotRequired['list[str]'],
+        'sensor_id': Required['str'],
+    },
+    total=False,
+)
+
+SensorScopeIn = TypedDict(
+    'SensorScopeIn',
+    {
+        'cidrs': Required['list[str]'],
+        'justification': Required['str'],
+    },
+    total=False,
+)
+
+SensorScopeList = TypedDict(
+    'SensorScopeList',
+    {
+        'items': Required['list[SensorScopeOut]'],
+        'total': Required['int'],
+        'unscoped_sensors': NotRequired['list[SensorScopeOut]'],
+    },
+    total=False,
+)
+
+SensorScopeOut = TypedDict(
+    'SensorScopeOut',
+    {
+        'cidrs': NotRequired['list[str]'],
+        'justification': NotRequired['str'],
+        'name': NotRequired['str | None'],
+        'online': NotRequired['bool | None'],
+        'scope_declared': NotRequired['bool'],
+        'sensor_id': Required['str'],
+        'set_at': NotRequired['str | None'],
+        'set_by': NotRequired['str | None'],
+        'site': NotRequired['str | None'],
+        'status': NotRequired['str | None'],
     },
     total=False,
 )
@@ -4309,6 +4371,9 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_asset_graph': ('GET', '/v1/assets/{asset_id}/graph', False),
     'assurance_coverage': ('GET', '/v1/assurance/coverage', True),
     'evaluate_now': ('POST', '/v1/assurance/evaluate', False),
+    'list_sensor_scopes': ('GET', '/v1/assurance/sensor-scopes', False),
+    'put_sensor_scope': ('PUT', '/v1/assurance/sensor-scopes/{sensor_uuid}', False),
+    'delete_sensor_scope': ('DELETE', '/v1/assurance/sensor-scopes/{sensor_uuid}', False),
     'assurance_state': ('GET', '/v1/assurance/state', False),
     'list_attack_paths': ('GET', '/v1/attack-paths', True),
     'recompute_attack_paths': ('POST', '/v1/attack-paths/recompute', False),
@@ -4780,7 +4845,9 @@ class GeneratedOperations:
 
         A node counts as covered only when it is covered inbound AND outbound by a fresh fact of at
         least ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody
-        can instrument it, so it is never part of the universe.
+        can instrument it, so it is never part of the universe. Qualified facts (an outside-in TCP scan
+        speaks only for internet-origin TCP) never count here: the unqualified question is the one this
+        report answers. Nodes backed by assets above the caller's clearance are not listed or counted.
 
         Args:
             min_tier: Weakest evidence that counts as coverage.
@@ -4798,10 +4865,39 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/assurance/evaluate', body=body)
 
+    def list_sensor_scopes(self) -> SensorScopeList:
+        """GET /v1/assurance/sensor-scopes -- List Sensor Scopes
+
+        Declared sensor scopes, plus the active sensors that have none (they cover nothing).
+        """
+        return self._request('GET', '/v1/assurance/sensor-scopes')
+
+    def put_sensor_scope(self, sensor_uuid: str, body: SensorScopeIn | dict[str, Any]) -> SensorScopeChange:
+        """PUT /v1/assurance/sensor-scopes/{sensor_uuid} -- Put Sensor Scope
+
+        Declare (replace) the networks a sensor can see. Admin only; justification required.
+
+        Changing the CIDR set bumps the graph version and marks the builders due at once, so coverage
+        that this change withdraws is withdrawn on the next tick, not after the rebuild interval.
+        """
+        return self._request('PUT', '/v1/assurance/sensor-scopes/{sensor_uuid}', path_params={'sensor_uuid': sensor_uuid}, body=body)
+
+    def delete_sensor_scope(self, sensor_uuid: str, *, justification: str) -> SensorScopeDeleteOut:
+        """DELETE /v1/assurance/sensor-scopes/{sensor_uuid} -- Delete Sensor Scope
+
+        Remove a sensor's declared scope: it then covers nothing. A justification is REQUIRED.
+        Never billing-gated (withdrawing coverage is always allowed).
+
+        Args:
+            justification: Why the scope is removed (>= 3 characters; audited).
+        """
+        return self._request('DELETE', '/v1/assurance/sensor-scopes/{sensor_uuid}', path_params={'sensor_uuid': sensor_uuid}, query={'justification': justification})
+
     def assurance_state(self) -> dict[str, Any]:
         """GET /v1/assurance/state -- Assurance State
 
-        Graph version, last build/evaluation, counts, and what the builders last did.
+        Graph version, last build/evaluation, counts, and what the builders last did. Counts and
+        notes cover only what the caller's clearance lets them see.
         """
         return self._request('GET', '/v1/assurance/state')
 
@@ -5577,12 +5673,15 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/invariants/std')
 
-    def enable_std_invariant(self, std_id: str) -> InvariantChange:
+    def enable_std_invariant(self, std_id: str, *, justification: str | None = None) -> InvariantChange:
         """POST /v1/invariants/std/{std_id}/enable -- Enable Std Invariant
 
         Copy a shipped invariant into the tenant and enable it (idempotent; refreshes a stale copy).
+
+        Args:
+            justification: Optional: why (audited).
         """
-        return self._request('POST', '/v1/invariants/std/{std_id}/enable', path_params={'std_id': std_id})
+        return self._request('POST', '/v1/invariants/std/{std_id}/enable', path_params={'std_id': std_id}, query={'justification': justification})
 
     def get_invariant(self, invariant_id: str) -> InvariantDetail:
         """GET /v1/invariants/{invariant_id} -- Get Invariant
@@ -5595,23 +5694,28 @@ class GeneratedOperations:
         Change the definition (new digest => new version row) and/or toggle ``enabled``.
 
         A std invariant's text is owned by the shipped library (it would be overwritten), so only
-        ``enabled`` can change there.
+        ``enabled`` can change there. An optional ``justification`` is recorded in the audit log, and
+        every ``allow`` exception (reason, expiry) of a new definition is written to it.
         """
         return self._request('PUT', '/v1/invariants/{invariant_id}', path_params={'invariant_id': invariant_id}, body=body)
 
-    def delete_invariant(self, invariant_id: str) -> InvariantChange:
+    def delete_invariant(self, invariant_id: str, *, justification: str | None = None) -> InvariantChange:
         """DELETE /v1/invariants/{invariant_id} -- Delete Invariant
 
         Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay
         (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
         Never gated: a downgraded tenant can always switch containment checks off cleanly.
+
+        Args:
+            justification: Optional: why (audited).
         """
-        return self._request('DELETE', '/v1/invariants/{invariant_id}', path_params={'invariant_id': invariant_id})
+        return self._request('DELETE', '/v1/invariants/{invariant_id}', path_params={'invariant_id': invariant_id}, query={'justification': justification})
 
     def list_invariant_runs(self, invariant_id: str, *, verdict: Literal['HOLDS', 'VIOLATED', 'UNKNOWN'] | None = None, include_result: bool | None = None, limit: int | None = None, offset: int | None = None) -> RunPage:
         """GET /v1/invariants/{invariant_id}/runs -- List Invariant Runs
 
-        The verdict-transition ledger of one invariant, newest first.
+        The verdict-transition ledger of one invariant, newest first. Below full clearance the
+        stored results have everything naming a hidden asset replaced by ``[redacted]``.
 
         Args:
             include_result: Include the stored result (witnesses, blind spots).
@@ -5621,7 +5725,8 @@ class GeneratedOperations:
     def list_labels(self, *, node_ref: str | None = None, tag: str | None = None, source: Literal['declared', 'metadata', 'connector'] | None = None, limit: int | None = None, offset: int | None = None) -> LabelPage:
         """GET /v1/labels -- List Labels
 
-        Labels with their provenance (who set them, why, when).
+        Labels with their provenance (who set them, why, when). Labels on nodes above the caller's
+        clearance are not listed.
         """
         return self._request('GET', '/v1/labels', query={'node_ref': node_ref, 'tag': tag, 'source': source, 'limit': limit, 'offset': offset})
 
@@ -5629,14 +5734,19 @@ class GeneratedOperations:
         """PUT /v1/labels -- Set Label
 
         Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.
-        Changing one changes verdicts, so it bumps the graph version and is audited.
+        Changing one changes verdicts, so it bumps the graph version and is audited. At most
+        ``MAX_LABELS`` declared labels per tenant (409).
         """
         return self._request('PUT', '/v1/labels', body=body)
 
-    def delete_label(self, label_id: str, *, justification: str | None = None) -> LabelDeleteOut:
+    def delete_label(self, label_id: str, *, justification: str) -> LabelDeleteOut:
         """DELETE /v1/labels/{label_id} -- Delete Label
 
-        Remove a label (bumps the graph version). Never gated (clean-up).
+        Remove a label (bumps the graph version). A justification is REQUIRED: dropping an
+        ``app-tier``/``crown-jewel``/``zone`` label changes verdicts. Never billing-gated (clean-up).
+
+        Args:
+            justification: Why the label is removed (>= 3 characters; audited).
         """
         return self._request('DELETE', '/v1/labels/{label_id}', path_params={'label_id': label_id}, query={'justification': justification})
 
@@ -6434,6 +6544,7 @@ class GeneratedOperations:
         """POST /v1/zones -- Create Zone
 
         Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.
+        At most ``MAX_ZONES`` zones and ``MAX_TOTAL_ZONE_CIDRS`` CIDRs over all zones (409).
         """
         return self._request('POST', '/v1/zones', body=body)
 
@@ -6449,11 +6560,15 @@ class GeneratedOperations:
         """
         return self._request('PUT', '/v1/zones/{zone_id}', path_params={'zone_id': zone_id}, body=body)
 
-    def delete_zone(self, zone_id: str, *, justification: str | None = None) -> ZoneDeleteOut:
+    def delete_zone(self, zone_id: str, *, justification: str) -> ZoneDeleteOut:
         """DELETE /v1/zones/{zone_id} -- Delete Zone
 
         Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it
-        then select nothing and answer UNKNOWN, never HOLDS. Never gated (clean-up).
+        then select nothing and answer UNKNOWN, never HOLDS. A justification is REQUIRED: removing the
+        zone that defines a boundary changes verdicts. Never billing-gated (clean-up).
+
+        Args:
+            justification: Why the zone is removed (>= 3 characters; audited).
         """
         return self._request('DELETE', '/v1/zones/{zone_id}', path_params={'zone_id': zone_id}, query={'justification': justification})
 

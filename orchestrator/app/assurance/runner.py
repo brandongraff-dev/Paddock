@@ -12,11 +12,31 @@ replicas never build or evaluate the same tenant twice:
 3. **Record**: ``invariants.last_*``, a ``invariant_runs`` row on a verdict or digest change (or
    when the last row is a day old), then the findings (``findings_sync``).
 
-Soundness notes: a stored definition is **re-compiled every time**; one that no longer compiles is
-recorded as ``UNKNOWN`` / ``invalid_definition`` (never skipped, never a stale HOLDS). A library
-bug while evaluating is ``UNKNOWN`` / ``evaluation_error``. Neither opens or closes a finding.
-Nothing here ever raises out of the loop, and nothing here reads or writes another tenant: all
-SQL runs on connections acquired inside ``tenancy.tenant_context(tid)``.
+Soundness notes: a stored definition is compiled from its YAML (plans are cached by
+``(invariant_id, digest, yaml hash)`` so an unchanged one is never recompiled, and a compile that
+is needed runs off the event loop); one that does not compile is recorded as ``UNKNOWN`` /
+``invalid_definition`` (never skipped, never a stale HOLDS). A library bug while evaluating is
+``UNKNOWN`` / ``evaluation_error``. Neither opens or closes a finding. Nothing here ever raises
+out of the loop, and nothing here reads or writes another tenant: all SQL runs on connections
+acquired inside ``tenancy.tenant_context(tid)``.
+
+Fencing (a stale evaluator must never overwrite a newer verdict or close its finding): the
+evaluation lease is claimed and extended on the DATABASE clock, and ``_record`` and
+``findings_sync`` prove inside their own transaction that this process still owns a live lease
+and that the graph version they evaluated is not older than what is stored. Otherwise the result
+is discarded (``skipped='lease_lost'`` / ``'stale_result'``) and the invariant stays due.
+
+Due-ness is per invariant: never evaluated, a ``last_graph_version`` that is not the current one,
+older than the backstop, ``valid_until`` passed, a changed digest, or (when the hash of the graph
+DOCUMENT differs from the one it was evaluated on) a different ``doc_sha``. The document hash
+catches inputs that do not move ``graph_version`` (node attrs, asset metadata). A graph the CIDR
+expansion could not complete makes every invariant UNKNOWN (``graph_incomplete:...``).
+
+Known policy gap (not changed here, needs a product decision): disabling or deleting an invariant
+leaves its open findings open. The runner only visits enabled invariants, so nothing re-evaluates
+them and no HOLDS can close them; closing them as "fixed" would be a false verification, so they
+stay open (a person can close them) until a lifecycle policy such as an "invariant disabled"
+annotation exists.
 
 ``paddock_assurance`` is imported lazily inside functions so ``scripts/export_openapi.py`` and the
 SDK checks (which install only the orchestrator) can import this module.
@@ -24,6 +44,8 @@ SDK checks (which install only the orchestrator) can import this module.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import inspect
 import json
 import logging
@@ -31,6 +53,7 @@ import os
 import socket
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -45,8 +68,9 @@ logger = logging.getLogger(__name__)
 
 ACTOR = findings_sync.ACTOR
 LEASE_S = 300
-#: Soft per-tenant budget per tick: no new invariant is started after it (the rest stay due and
-#: run next tick), so one huge tenant cannot starve the others. Forced runs ignore it.
+#: Soft per-tenant budget per tick, measured from AFTER the graph is loaded and parsed: no new
+#: invariant is started after it (the rest stay due and go FIRST next tick), so one huge tenant
+#: cannot starve the others and none of its invariants starves. Forced runs ignore it.
 TENANT_BUDGET_S = 30.0
 #: Hard cap on one tenant's whole pass (cancels it; the lease is released in a ``finally``).
 TENANT_HARD_TIMEOUT_S = 900.0
@@ -58,6 +82,13 @@ PROCESS_ID = f"{socket.gethostname()}:{os.getpid()}"
 _app_redis: Any = None
 #: tenant id -> source -> what the last build of that source did (process-local; see last_build).
 _LAST_BUILD: dict[str, dict[str, dict[str, Any]]] = {}
+#: tenant id -> diagnostics of the last evaluation pass (process-local; see last_evaluation).
+_LAST_EVAL: dict[str, dict[str, Any]] = {}
+#: (invariant_id, digest, sha256(yaml)) -> (plan, error). LRU, shared by tenants: a plan is a pure
+#: function of the YAML text, and the key contains a hash of that text.
+_PLAN_CACHE: "OrderedDict[tuple[str, str, str], tuple[Any, Optional[str]]]" = OrderedDict()
+_PLAN_CACHE_MAX = 2048
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _now() -> datetime:
@@ -68,6 +99,13 @@ def last_build(tenant_id: str) -> dict[str, dict[str, Any]]:
     """What this process's last build did per source (ok, changed, counts, notes, at). Empty
     before the first build here; other replicas keep their own."""
     return {k: dict(v) for k, v in _LAST_BUILD.get(str(tenant_id), {}).items()}
+
+
+def last_evaluation(tenant_id: str) -> dict[str, Any]:
+    """Diagnostics of this process's last evaluation pass for the tenant (graph version, document
+    hash, ``cidr_unexpanded`` destinations when the CIDR cap was hit, zone conflicts, how many
+    invariants were deferred, ...). Empty before the first pass here."""
+    return dict(_LAST_EVAL.get(str(tenant_id), {}))
 
 
 # --------------------------------------------------------------------------------------------
@@ -181,18 +219,46 @@ class _Def:
         return self.plan.digest if self.plan is not None else str(self.row["digest"])
 
 
-def _compile(row: Any) -> _Def:
-    """Re-compile the stored YAML. Anything that goes wrong is ``invalid_definition``, including a
-    definition whose own id disagrees with the row it is stored under (it would write its verdict,
-    and its findings, under another invariant's name)."""
+def _compile_row(row: Any) -> tuple[Any, Optional[str]]:
+    """Compile the stored YAML -> ``(plan, None)`` or ``(None, why)``. Anything that goes wrong is
+    ``invalid_definition``, including a definition whose own id disagrees with the row it is
+    stored under (it would write its verdict, and its findings, under another invariant's name).
+    Synchronous and CPU-bound (a 60 KB definition takes ~0.4 s): call it via ``_compile_defs``."""
     lib = _lib()
     try:
         plan = lib.compile_text(row["yaml"])
     except Exception as exc:  # noqa: BLE001 -- ParseError, CompileError, pydantic, anything
-        return _Def(row, error=f"{type(exc).__name__}: {exc}"[:500])
+        return None, f"{type(exc).__name__}: {exc}"[:500]
     if plan.id != row["invariant_id"]:
-        return _Def(row, error=f"definition id {plan.id!r} does not match {row['invariant_id']!r}")
-    return _Def(row, plan=plan)
+        return None, f"definition id {plan.id!r} does not match {row['invariant_id']!r}"
+    return plan, None
+
+
+def _plan_key(row: Any) -> tuple[str, str, str]:
+    return (str(row["invariant_id"]), str(row["digest"]),
+            hashlib.sha256(str(row["yaml"]).encode()).hexdigest())
+
+
+async def _compile_defs(rows: list[Any]) -> list[_Def]:
+    """One ``_Def`` per row. A plan is compiled once per ``(invariant_id, digest, yaml hash)`` and
+    cached (the loop used to recompile every enabled invariant of every tenant on every tick,
+    twice, on the event loop); a miss is compiled in a worker thread. The YAML hash is in the key
+    so an edit that kept the stored digest still recompiles, and a failed compile is cached too (an
+    invalid definition must not cost a compile per tick either)."""
+    out: list[_Def] = []
+    for r in rows:
+        key = _plan_key(r)
+        hit = _PLAN_CACHE.get(key)
+        if hit is None:
+            hit = await asyncio.to_thread(_compile_row, r)
+            _PLAN_CACHE[key] = hit
+            while len(_PLAN_CACHE) > _PLAN_CACHE_MAX:
+                _PLAN_CACHE.popitem(last=False)
+        else:
+            _PLAN_CACHE.move_to_end(key)
+        plan, err = hit
+        out.append(_Def(r, plan=plan, error=err))
+    return out
 
 
 # --------------------------------------------------------------------------------------------
@@ -218,9 +284,10 @@ def synthetic_result(d: _Def, reason: str, now: datetime, error: Optional[str] =
     return out
 
 
-def compact_result(rd: dict[str, Any], graph_version: int) -> dict[str, Any]:
+def compact_result(rd: dict[str, Any], graph_version: int, doc_sha: Optional[str] = None) -> dict[str, Any]:
     """What is stored: the library's dict, with the blind-spot list capped (a 20k-node estate would
-    otherwise store 40k rows per evaluation) but summarised, relevant spots first."""
+    otherwise store 40k rows per evaluation) but summarised, relevant spots first. ``doc_sha`` is
+    the hash of the graph document the verdict was computed on (see ``_is_due``)."""
     out = dict(rd)
     spots = list(rd.get("blind_spots") or [])
     by_reason: dict[str, int] = {}
@@ -230,25 +297,46 @@ def compact_result(rd: dict[str, Any], graph_version: int) -> dict[str, Any]:
     out["blind_spots"] = spots[:MAX_STORED_BLIND_SPOTS]
     out["blind_spot_summary"] = {"total": len(spots), "stored": len(out["blind_spots"]), "by_reason": by_reason}
     out["graph_version"] = graph_version
+    if doc_sha is not None:
+        out["doc_sha"] = doc_sha
     return out
 
 
-async def _record(pool: Any, d: _Def, rd: dict[str, Any], valid_until: Optional[datetime],
-                  graph_version: int, now: datetime) -> Optional[bool]:
+class _Discarded(Exception):
+    """A computed result that must not be written (its evaluator is stale). ``reason`` is reported."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+async def _record(pool: Any, owner: str, d: _Def, rd: dict[str, Any], valid_until: Optional[datetime],
+                  graph_version: int, now: datetime, doc_sha: Optional[str] = None) -> Optional[bool]:
     """Write ``invariants.last_*`` and (on a transition / heartbeat) an ``invariant_runs`` row.
+
+    Fenced: in the SAME transaction that writes, the tenant's evaluation lease must still be ours
+    and live (database clock) and our graph version must not be older than the stored
+    ``last_graph_version``; otherwise ``_Discarded`` is raised and nothing is written. Without that
+    a replica whose lease lapsed mid-evaluation (a stall, a clock error) could overwrite a newer
+    VIOLATED with its older HOLDS.
 
     ``None``: the definition changed while we evaluated, so this result describes the old one and
     is dropped (the invariant stays due). Otherwise True iff the verdict changed.
     """
-    stored = compact_result(rd, graph_version)
+    stored = compact_result(rd, graph_version, doc_sha)
     verdict = rd["verdict"]
     cov = rd.get("coverage") or {}
     async with pool.acquire() as conn:
         async with conn.transaction():
+            if await store.fence_lease(conn, owner) is None:
+                raise _Discarded("lease_lost")
             cur = await conn.fetchrow(
-                "SELECT yaml, digest, last_verdict FROM invariants WHERE id = $1 FOR UPDATE", d.row["id"])
+                "SELECT yaml, digest, last_verdict, last_graph_version FROM invariants WHERE id = $1 FOR UPDATE",
+                d.row["id"])
             if cur is None or cur["yaml"] != d.row["yaml"] or cur["digest"] != d.row["digest"]:
                 return None
+            if cur["last_graph_version"] is not None and graph_version < int(cur["last_graph_version"]):
+                raise _Discarded("stale_result")      # never overwrite a newer world's verdict
             await conn.execute(
                 "UPDATE invariants SET last_verdict = $2, last_result = $3::jsonb, last_graph_version = $4, "
                 "last_evaluated_at = $5, valid_until = $6 WHERE id = $1",
@@ -269,7 +357,9 @@ async def _record(pool: Any, d: _Def, rd: dict[str, Any], valid_until: Optional[
 
 
 async def _mark_retry(pool: Any, d: _Def) -> None:
-    """A findings sync failed after the verdict was recorded: make the invariant due again next tick."""
+    """A findings sync failed (or was cancelled) after the verdict was recorded: make the invariant
+    due again next tick. Over-marking is harmless (one extra evaluation); under-marking strands the
+    sync until the backstop."""
     try:
         async with pool.acquire() as conn:
             await conn.execute("UPDATE invariants SET last_graph_version = NULL WHERE id = $1", d.row["id"])
@@ -277,24 +367,43 @@ async def _mark_retry(pool: Any, d: _Def) -> None:
         logger.exception("assurance_mark_retry_failed", extra={"invariant": d.invariant_id})
 
 
-def _is_due(d: _Def, state: store.AssuranceState, now: datetime, *, tenant_due: bool) -> bool:
-    """Should this enabled invariant be evaluated now (non-forced)?"""
+def _is_due(d: _Def, now: datetime, *, version: int, doc_sha: Optional[str]) -> bool:
+    """Should this enabled invariant be evaluated now (non-forced)?
+
+    Per invariant, not per tenant, so a pass that evaluated only some (budget, failure) does not
+    make the finished ones run again before the rest: due when it was never evaluated, was
+    evaluated at another graph version, is older than the backstop, outlived its evidence
+    (``valid_until``), changed definition, or it was evaluated on a different document than
+    ``doc_sha`` (``None`` skips that check: the cheap pre-load decision). The hash is compared per
+    invariant, against the one stored in its own result, rather than against the tenant-level
+    ``last_eval_doc_sha``: that one only advances when a whole pass completes, and an incomplete
+    pass can leave invariants evaluated on a document it does not describe.
+    """
     row = d.row
-    if tenant_due or row["last_evaluated_at"] is None or row["last_graph_version"] is None:
+    if row["last_evaluated_at"] is None or row["last_graph_version"] is None:
+        return True
+    if row["last_graph_version"] != version:
+        return True
+    if now - row["last_evaluated_at"] >= timedelta(minutes=settings.assurance_backstop_min):
         return True
     if row["valid_until"] is not None and row["valid_until"] <= now:
         return True
     last = _loads(row["last_result"]) or {}
     if last.get("digest") != d.digest:
         return True                      # the definition changed since the last verdict
+    if doc_sha is not None and last.get("doc_sha") != doc_sha:
+        return True                      # the graph's inputs changed without moving graph_version
     was_invalid = last.get("reasons") == ["invalid_definition"]
     return was_invalid != (d.plan is None)   # it stopped (or started) compiling under an unchanged digest
 
 
-def _tenant_due(state: store.AssuranceState, now: datetime) -> bool:
-    backstop = timedelta(minutes=settings.assurance_backstop_min)
-    return (state.graph_version != state.last_eval_version
-            or state.last_eval_at is None or now - state.last_eval_at >= backstop)
+def _rotation_key(d: _Def, version: int) -> tuple[bool, datetime, str]:
+    """Order for evaluation: invariants not yet evaluated at this graph version first, then the
+    longest-unevaluated first (never-evaluated = oldest). A pass cut short by the budget therefore
+    resumes with exactly the ones it skipped."""
+    row = d.row
+    done = row["last_evaluated_at"] is not None and row["last_graph_version"] == version
+    return (done, row["last_evaluated_at"] or _EPOCH, d.invariant_id)
 
 
 # --------------------------------------------------------------------------------------------
@@ -374,20 +483,78 @@ def _select(defs: list[_Def], only: Optional[Any]) -> list[_Def]:
     return [d for d in defs if d.invariant_id in wanted or str(d.row["id"]) in wanted]
 
 
-async def _evaluate_one(pool: Any, redis: Any, d: _Def, graph: Any, graph_version: int, now: datetime,
-                        graph_error: Optional[str]) -> dict[str, Any]:
+@dataclass
+class _Snapshot:
+    """One load of the tenant's graph document and what was derived from it."""
+
+    doc: dict[str, Any]
+    diag: Any
+    version: int
+    doc_sha: str
+    graph: Any = None
+    error: Optional[str] = None           # why there is no usable graph
+    reason: Optional[str] = None          # the UNKNOWN reason every invariant then gets
+    parsed: bool = False
+
+
+async def _load_snapshot(pool: Any, now: datetime) -> _Snapshot:
+    """Load the graph document and hash it (no parse yet; see ``_parse_graph``)."""
+    async with pool.acquire() as conn:
+        doc, diag = await graph_loader.load_graph_doc_with_diagnostics(conn, now)
+    sha = await asyncio.to_thread(graph_loader.doc_sha, doc)
+    return _Snapshot(doc=doc, diag=diag, version=int(diag.graph_version), doc_sha=sha)
+
+
+async def _parse_graph(snap: _Snapshot, summary: dict[str, Any]) -> None:
+    """Parse ``snap.doc`` into a graph, or record why there is none. A document the loader itself
+    flags as incomplete is NOT parsed: evaluating it would under-approximate the estate."""
+    if snap.parsed:
+        return
+    snap.parsed = True
+    unexpanded = list(getattr(snap.diag, "cidr_unexpanded", None) or [])
+    if unexpanded or getattr(snap.diag, "cidr_overflow", False):
+        snap.reason = "graph_incomplete:cidr_expansion_overflow"
+        snap.error = (f"CIDR expansion hit its cap for {len(unexpanded)} destination(s), e.g. "
+                      f"{', '.join(unexpanded[:3])}; the graph would miss configured edges")
+        logger.error("assurance_graph_incomplete", extra={"reason": snap.reason, "destinations": len(unexpanded)})
+        summary["errors"].append(f"graph incomplete: cidr_expansion_overflow ({len(unexpanded)} destinations)")
+        return
+    try:
+        snap.graph = await asyncio.to_thread(_lib().ReachGraph.from_dict, snap.doc)
+    except Exception as exc:  # noqa: BLE001 -- GraphError: bad data must not become a verdict
+        snap.error = f"{type(exc).__name__}: {exc}"[:300]
+        snap.reason = "graph_unavailable"
+        logger.error("assurance_graph_invalid", extra={"error": snap.error})
+        summary["errors"].append(f"graph: {snap.error}")
+
+
+def _diagnostics(snap: _Snapshot, summary: dict[str, Any]) -> dict[str, Any]:
+    diag = snap.diag
+    unexpanded = list(getattr(diag, "cidr_unexpanded", None) or [])
+    return {
+        "at": summary.get("_at"), "graph_version": snap.version, "doc_sha": snap.doc_sha,
+        "graph_ok": snap.graph is not None, "graph_reason": snap.reason,
+        "cidr_unexpanded": unexpanded[:50], "cidr_unexpanded_count": len(unexpanded),
+        "zone_conflicts": dict(list((getattr(diag, "zone_conflicts", None) or {}).items())[:50]),
+    }
+
+
+async def _evaluate_one(pool: Any, redis: Any, owner: str, d: _Def, snap: _Snapshot, now: datetime
+                        ) -> dict[str, Any]:
     """Evaluate, record and sync one invariant. Never raises (except cancellation)."""
     item: dict[str, Any] = {"invariant_id": d.invariant_id}
     valid_until: Optional[datetime] = None
-    result_obj = None
     if d.plan is None:
         rd = synthetic_result(d, "invalid_definition", now, d.error)
-    elif graph is None:
-        rd = synthetic_result(d, "graph_unavailable", now, graph_error)
+    elif snap.graph is None:
+        rd = synthetic_result(d, snap.reason or "graph_unavailable", now, snap.error)
         rd["assertion"] = d.plan.invariant.assert_
+        if snap.diag is not None and getattr(snap.diag, "cidr_unexpanded", None):
+            rd["diagnostics"] = {"cidr_unexpanded": list(snap.diag.cidr_unexpanded)[:50],
+                                 "cidr_unexpanded_count": len(snap.diag.cidr_unexpanded)}
     else:
         try:
-            result_obj = await asyncio.to_thread(_lib().evaluate, d.plan, graph, now)
+            result_obj = await asyncio.to_thread(_lib().evaluate, d.plan, snap.graph, now)
             rd = result_obj.to_dict()
             valid_until = result_obj.valid_until
         except Exception as exc:  # noqa: BLE001 -- a library bug is UNKNOWN, never a crash or a HOLDS
@@ -395,62 +562,84 @@ async def _evaluate_one(pool: Any, redis: Any, d: _Def, graph: Any, graph_versio
             rd = synthetic_result(d, "evaluation_error", now, f"{type(exc).__name__}: {exc}"[:300])
             rd["assertion"] = d.plan.invariant.assert_
     item.update(verdict=rd["verdict"], reasons=rd["reasons"], violation_count=rd.get("violation_count", 0))
-    changed = await _record(pool, d, rd, valid_until, graph_version, now)
-    if changed is None:
-        item.update(skipped="definition_changed")
-        return item
-    item["changed"] = changed
-    on_violation = d.plan.invariant.on_violation if d.plan is not None else None
     try:
-        rep = await findings_sync.sync_findings(
-            pool, redis, invariant_id=d.invariant_id, title=d.row["title"] or d.invariant_id,
-            finding_enabled=True if on_violation is None else on_violation.finding,
-            proposed_fixes=tuple(on_violation.propose) if on_violation is not None else (),
-            result=rd, graph_version=graph_version, now=now)
-        item["findings"] = rep.as_dict()
+        changed = await _record(pool, owner, d, rd, valid_until, snap.version, now, snap.doc_sha)
+        if changed is None:
+            item.update(skipped="definition_changed")
+            return item
+        item["changed"] = changed
+        on_violation = d.plan.invariant.on_violation if d.plan is not None else None
+        try:
+            rep = await findings_sync.sync_findings(
+                pool, redis, invariant_id=d.invariant_id, title=d.row["title"] or d.invariant_id,
+                finding_enabled=True if on_violation is None else on_violation.finding,
+                proposed_fixes=tuple(on_violation.propose) if on_violation is not None else (),
+                result=rd, graph_version=snap.version, now=now, lease_owner=owner)
+            item["findings"] = rep.as_dict()
+            if rep.skipped in ("lease_lost", "graph_moved"):
+                # the verdict is recorded but the findings were fenced out: make it due again
+                item["skipped"] = rep.skipped
+                await _mark_retry(pool, d)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("assurance_findings_sync_failed", extra={"invariant": d.invariant_id})
+            item["findings"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
+            await _mark_retry(pool, d)
+    except _Discarded as gone:
+        logger.warning("assurance_result_discarded",
+                       extra={"invariant": d.invariant_id, "reason": gone.reason})
+        item.update(skipped=gone.reason, discarded=True)
     except asyncio.CancelledError:
+        # Cancelled (hard timeout, shutdown) after the verdict may already be committed and before
+        # the findings sync finished: without this the row looks up to date and the sync is lost
+        # until the backstop. Shielded, so a second cancel cannot cut the retry mark short.
+        with contextlib.suppress(BaseException):
+            await asyncio.shield(asyncio.ensure_future(_mark_retry(pool, d)))
         raise
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("assurance_findings_sync_failed", extra={"invariant": d.invariant_id})
-        item["findings"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
-        await _mark_retry(pool, d)
     return item
 
 
 async def _evaluate_pass(pool: Any, redis: Any, owner: str, defs: list[_Def], now: datetime,
-                         summary: dict[str, Any], *, budgeted: bool) -> tuple[int, bool]:
-    """Evaluate ``defs`` against one graph snapshot. Returns ``(graph_version, completed)``;
-    ``completed`` is False if the lease was lost, the budget ran out or the graph is unusable."""
+                         summary: dict[str, Any], snap: _Snapshot, *, budgeted: bool) -> bool:
+    """Evaluate ``defs`` against the one graph snapshot ``snap``. Returns ``complete``: False if the
+    lease was lost, the budget ran out, the graph is unusable or a record/sync did not finish."""
+    summary["graph_version"] = snap.version
+    await _parse_graph(snap, summary)
+    complete = snap.graph is not None
+    # The budget clock starts HERE, after load + parse: a graph that takes longer than the budget
+    # to load must not defer every invariant forever.
     t0 = time.monotonic()
-    graph, graph_error = None, None
-    async with pool.acquire() as conn:
-        doc, diag = await graph_loader.load_graph_doc_with_diagnostics(conn, now)
-    version = int(diag.graph_version)
-    summary["graph_version"] = version
-    try:
-        graph = await asyncio.to_thread(_lib().ReachGraph.from_dict, doc)
-    except Exception as exc:  # noqa: BLE001 -- GraphError: bad data must not become a verdict
-        graph_error = f"{type(exc).__name__}: {exc}"[:300]
-        logger.error("assurance_graph_invalid", extra={"error": graph_error})
-        summary["errors"].append(f"graph: {graph_error}")
-    complete = graph is not None
-    for d in defs:
+    deferred: list[str] = []
+    for d in sorted(defs, key=lambda x: _rotation_key(x, snap.version)):
         if budgeted and time.monotonic() - t0 > TENANT_BUDGET_S:
-            summary["deferred"] = summary.get("deferred", 0) + 1
+            deferred.append(d.invariant_id)
             complete = False
             continue
         async with pool.acquire() as conn:
-            if not await store.extend_eval(conn, owner, _now(), LEASE_S):
+            if not await store.extend_eval(conn, owner, None, LEASE_S):
                 summary["errors"].append("lease lost mid-evaluation")
-                return version, False
-        item = await _evaluate_one(pool, redis, d, graph, version, now, graph_error)
+                return False
+        item = await _evaluate_one(pool, redis, owner, d, snap, now)
+        if item.get("skipped") == "lease_lost":
+            summary["errors"].append("lease lost mid-evaluation")
+            summary["results"].append(item)
+            return False
         summary["results"].append(item)
         if item.get("skipped"):
             complete = False
+        if item.get("discarded"):
+            summary["errors"].append(f"result discarded for {item['invariant_id']}: {item['skipped']}")
         if (item.get("findings") or {}).get("error"):
             complete = False
             summary["errors"].append(f"findings {item['invariant_id']}: {item['findings']['error']}")
-    return version, complete
+    if deferred:
+        summary["deferred"] = len(deferred)
+        summary["deferred_ids"] = deferred[:50]
+        logger.warning("assurance_deferred", extra={
+            "tenant": summary.get("tenant_id"), "deferred": len(deferred), "evaluated": len(summary["results"]),
+            "budget_s": TENANT_BUDGET_S, "ids": deferred[:10]})
+    return complete
 
 
 async def run_tenant(
@@ -483,7 +672,7 @@ async def run_tenant(
     owner = f"{PROCESS_ID}:{uuid.uuid4().hex[:8]}"
     try:
         with tenancy.tenant_context(tid):
-            state, enabled, due = await _plan_due(pool, now, force=force, only=only)
+            state, enabled, due, _snap = await _plan_due(pool, now, force=force, only=only)
             build_due = rebuild or state.last_build_at is None or \
                 now - state.last_build_at >= timedelta(minutes=settings.assurance_rebuild_min)
             if not build_due and not due:
@@ -491,8 +680,9 @@ async def run_tenant(
                 summary["graph_version"] = state.graph_version
                 return summary
             async with pool.acquire() as conn:
-                # Lease times are wall-clock (they must really expire); ``now`` is the data clock.
-                claimed = await store.claim_eval(conn, owner, _now(), LEASE_S)
+                # The lease is judged on the DATABASE clock (``now=None``): replicas' own clocks
+                # can disagree, and ``now`` below is the data clock (freshness), not a lease clock.
+                claimed = await store.claim_eval(conn, owner, None, LEASE_S)
             if claimed is None:
                 return {**summary, "ok": False, "skipped": "lease_held"}
             try:
@@ -515,39 +705,82 @@ async def run_tenant(
     return summary
 
 
-async def _plan_due(pool: Any, now: datetime, *, force: bool, only: Optional[Any]
-                    ) -> tuple[store.AssuranceState, list[_Def], list[_Def]]:
-    """``(state, enabled invariants, the ones to evaluate now)``; tenant-bound by the caller."""
+async def _plan_due(pool: Any, now: datetime, *, force: bool, only: Optional[Any], full: bool = False
+                    ) -> tuple[store.AssuranceState, list[_Def], list[_Def], Optional[_Snapshot]]:
+    """``(state, enabled invariants, the ones to evaluate now, snapshot used)``; tenant-bound by
+    the caller.
+
+    ``full=False`` (the cheap pre-lease check): the stored columns decide first; only if nothing is
+    due by them is the graph document loaded and hashed (one load per tick) to see whether its
+    INPUTS changed without moving ``graph_version`` (node attrs, asset metadata). A failed probe
+    means "cannot tell": everything is due (fail closed), never "up to date".
+
+    ``full=True`` (inside the lease, about to evaluate): always load the snapshot the pass will
+    evaluate (when anything is selected) and decide on it; a load failure propagates.
+    """
     async with pool.acquire() as conn:
         state = await store.get_state(conn)
         rows = await conn.fetch(f"SELECT {_INV_COLS} FROM invariants WHERE enabled ORDER BY invariant_id")
-    enabled = [_compile(r) for r in rows]
+    enabled = await _compile_defs(list(rows))
     wanted = _select(enabled, only)
+    if not wanted:
+        return state, enabled, [], None
+    if force and not full:
+        return state, enabled, wanted, None
+    if not full:
+        cheap = [d for d in wanted if _is_due(d, now, version=state.graph_version, doc_sha=None)]
+        if cheap:
+            return state, enabled, cheap, None
+    try:
+        snap = await _load_snapshot(pool, now)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        if full:
+            raise
+        logger.exception("assurance_doc_probe_failed")
+        return state, enabled, wanted, None
     if force:
-        return state, enabled, wanted
-    tenant_due = _tenant_due(state, now)
-    return state, enabled, [d for d in wanted if _is_due(d, state, now, tenant_due=tenant_due)]
+        return state, enabled, wanted, snap
+    return state, enabled, [d for d in wanted if _is_due(
+        d, now, version=snap.version, doc_sha=snap.doc_sha)], snap
 
 
 async def _evaluate_tenant_locked(pool: Any, redis: Any, owner: str, now: datetime,
                                   summary: dict[str, Any], *, force: bool, only: Optional[Any]) -> None:
-    state, enabled, due = await _plan_due(pool, now, force=force, only=only)
-    summary["graph_version"] = state.graph_version
-    if not due:
+    summary["_at"] = _iso(now)
+    state, enabled, due, snap = await _plan_due(pool, now, force=force, only=only, full=True)
+    summary["graph_version"] = snap.version if snap is not None else state.graph_version
+    if not due or snap is None:
         summary["skipped"] = "up_to_date" if enabled else "no_invariants"
         return
-    version, complete = await _evaluate_pass(pool, redis, owner, due, now, summary, budgeted=not force)
-    # The watermark only advances when every enabled invariant was evaluated at this version:
-    # a partial run (forced subset, budget, failed sync) must leave the rest due.
-    summary["_watermark"] = version if (complete and len(due) == len(enabled)) else None
+    complete = await _evaluate_pass(pool, redis, owner, due, now, summary, snap, budgeted=not force)
+    _LAST_EVAL[summary["tenant_id"]] = _diagnostics(snap, summary) | {
+        "deferred": summary.get("deferred", 0), "evaluated": len(summary["results"])}
+    summary["diagnostics"] = dict(_LAST_EVAL[summary["tenant_id"]])
+    # The watermark (and the document hash that goes with it) only advances when EVERY enabled
+    # invariant is now current at this graph version and document: the ones evaluated in this pass
+    # (and recorded) plus the ones that were already current. A partial run (forced subset,
+    # budget, failed sync, fenced-out result) must leave the rest due.
+    ids = {d.invariant_id for d in due}
+    others_current = all(
+        not _is_due(d, now, version=snap.version, doc_sha=snap.doc_sha)
+        for d in enabled if d.invariant_id not in ids)
+    if complete and others_current:
+        summary["_watermark"] = snap.version
+        summary["_doc_sha"] = snap.doc_sha
+    else:
+        summary["_watermark"] = None
 
 
 async def _release(pool: Any, tid: str, owner: str, now: datetime, summary: dict[str, Any]) -> None:
     mark = summary.pop("_watermark", None)
+    sha = summary.pop("_doc_sha", None)
+    summary.pop("_at", None)
     try:
         with tenancy.tenant_context(tid):
             async with pool.acquire() as conn:
-                await store.release_eval(conn, owner, now, evaluated_version=mark)
+                await store.release_eval(conn, owner, now, evaluated_version=mark, doc_sha=sha)
     except Exception:  # noqa: BLE001 -- the lease also expires on its own
         logger.exception("assurance_release_failed", extra={"tenant": tid})
 
@@ -569,12 +802,45 @@ async def evaluate_tenant(pool: Any, tenant_id: str, *, force: bool = False, onl
 # The loop
 # --------------------------------------------------------------------------------------------
 
+async def _entitled(pool: Any, tid: str) -> bool:
+    """May the background loop do paid assurance work for this tenant?
+
+    Same gate as the API (``billing.gate``): with no enforcement (a plain self-hosted install)
+    everyone is entitled and nothing changes. With billing or ``PADDOCK_ENFORCE_EDITIONS`` on, a
+    tenant whose plan lacks ``assurance`` (trial lapsed, downgraded) is neither built nor
+    evaluated: the API refuses to serve it, and the loop must not quietly do the paid work and
+    open findings. Reads of existing data stay open (the API never gates reads). A failure to
+    LOOK UP the entitlement fails open, like ``billing.gate.scans_allowed``: a billing blip must
+    not switch assurance off for paying tenants (a stale verdict is flagged stale, never HOLDS).
+    """
+    try:
+        from .. import licensing  # noqa: PLC0415
+        from ..billing import gate as billing_gate  # noqa: PLC0415
+        from ..billing import service as billing_service  # noqa: PLC0415
+        if not billing_gate.enforcement_active():
+            return True
+        with tenancy.tenant_context(tid):
+            lic = await licensing.load_active_license(pool)
+            ent = await billing_service.resolve(pool, lic)
+        return bool(ent.has("assurance"))
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception("assurance_entitlement_check_failed", extra={"tenant": tid})
+        return True
+
+
 async def tick_once(pool: Any, *, redis: Any = None, now: Optional[datetime] = None) -> dict[str, dict[str, Any]]:
     """One pass over every tenant. Each tenant is independent: a failure, a timeout or a held lease
-    for one never delays the budgeted work of the next beyond its own hard cap."""
+    for one never delays the budgeted work of the next beyond its own hard cap. Tenants that are
+    not entitled to ``assurance`` (when editions are enforced) are skipped (``not_entitled``)."""
     out: dict[str, dict[str, Any]] = {}
     for tid in await tenancy.list_tenant_ids(pool):
         try:
+            if not await _entitled(pool, tid):
+                out[tid] = {"ok": True, "tenant_id": tid, "skipped": "not_entitled", "built": False,
+                            "builders": {}, "graph_version": None, "evaluated": 0, "results": [], "errors": []}
+                continue
             out[tid] = await asyncio.wait_for(
                 run_tenant(pool, tid, redis=redis, now=now), TENANT_HARD_TIMEOUT_S)
         except asyncio.CancelledError:

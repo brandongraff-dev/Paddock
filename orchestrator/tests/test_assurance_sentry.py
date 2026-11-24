@@ -53,8 +53,17 @@ def device(ips, aid=None, kind="iot_device"):
             "metadata": {"ips": list(ips)}}
 
 
-def rows(flows=(), sensors=(sensor(),), assets=(), truncated=False):
-    return {"flows": list(flows), "sensors": list(sensors), "assets": list(assets), "truncated": truncated}
+# Coverage needs a declared sensor scope (review finding builders-3, schema 040 ``sensor_scopes``):
+# these tests are about everything *except* scoping, so by default every test sensor mirrors the
+# private ranges the fixtures use. tests/test_assurance_sensor_scope.py covers scoping itself.
+DEFAULT_SCOPE = ("10.0.0.0/8", "2001:db8::/32")
+
+
+def rows(flows=(), sensors=(sensor(),), assets=(), truncated=False, scopes=None):
+    if scopes is None:
+        scopes = [{"sensor_id": s["id"], "cidrs": list(DEFAULT_SCOPE)} for s in sensors]
+    return {"flows": list(flows), "sensors": list(sensors), "assets": list(assets), "truncated": truncated,
+            "scopes": scopes}
 
 
 def covered(out):
@@ -532,6 +541,14 @@ async def _seed_sensor(db_pool, sid, tenant=tenancy.DEFAULT_TENANT_ID, *, online
             uuid.UUID(sid), uuid.UUID(tenant), f"s-{sid[-1]}", status, f"pst_{sid[-8:]}{tenant[-2:]}", online, up)
 
 
+async def _seed_scope(db_pool, sid, tenant=tenancy.DEFAULT_TENANT_ID, cidrs=("10.0.0.0/8", "2001:db8::/32")):
+    """Coverage needs a declared scope (schema 040 sensor_scopes); these tests are not about scoping."""
+    async with db_pool.acquire() as con:
+        await con.execute(
+            "INSERT INTO sensor_scopes (tenant_id, sensor_id, cidrs, set_by, justification) VALUES ($1,$2,$3,'t','test')",
+            uuid.UUID(tenant), uuid.UUID(sid), list(cidrs))
+
+
 async def _seed_flow(db_pool, tenant, src, dst, port, sid, last):
     async with db_pool.acquire() as con:
         await con.execute(
@@ -548,6 +565,8 @@ async def test_loader_reads_the_tenants_flows_sensors_and_identity_then_builds(a
             dev_id, json.dumps({"ips": [CAM]}))
     await _seed_sensor(db_pool, S1, up=now - dt.timedelta(minutes=1))
     await _seed_sensor(db_pool, S2, online=False, up=now - dt.timedelta(minutes=1))
+    await _seed_scope(db_pool, S1)
+    await _seed_scope(db_pool, S2)
     await _seed_flow(db_pool, tenancy.DEFAULT_TENANT_ID, CAM, NVR, 554, S1, now - dt.timedelta(minutes=3))
     await _seed_flow(db_pool, tenancy.DEFAULT_TENANT_ID, POS, NVR, 80, S2, now - dt.timedelta(minutes=3))
     await _seed_flow(db_pool, tenancy.DEFAULT_TENANT_ID, CAM, POS, 22, S1, now - dt.timedelta(hours=30))  # aged out
@@ -578,6 +597,7 @@ async def test_route_to_builder_round_trip(env, app_pool, db_pool):
     """What the route stores is exactly what the builder understands (spelling, types, proto)."""
     now = dt.datetime.now(UTC)
     await _seed_sensor(db_pool, S1, up=now)
+    await _seed_scope(db_pool, S1)
     assert (await _post(env, [rec("2001:DB8::1", NVR, 443), rec(NVR, POS, 0, proto="any", oriented="heuristic")])
             ).status_code == 200
     with tenancy.tenant_context(tenancy.DEFAULT_TENANT_ID):

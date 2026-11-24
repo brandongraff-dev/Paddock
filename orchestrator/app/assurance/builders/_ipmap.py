@@ -38,19 +38,31 @@ IDENTITY_SQL = (
     "ORDER BY first_seen, id"
 )
 
+#: Longest textual address we look at (a v6 literal with a v4 tail is 45 chars); the rest is junk.
+_MAX_IP_TEXT = 64
 _MAX_IPS_PER_ASSET = 256   # a hostile/buggy asset must not make the map unbounded
 
 
 def norm_ip(value: Any) -> Optional[str]:
     """Canonical (compressed, lowercase, v4-mapped unwrapped) address text, or ``None``.
 
-    Tolerates ``[v6]`` brackets and surrounding spaces; rejects everything else (CIDRs, hostnames,
-    ``ip:port``) so a malformed metadata value never becomes a node.
+    Tolerates one ``[v6]`` bracket pair and surrounding spaces; rejects everything else (CIDRs,
+    hostnames, ``ip:port``) so a malformed metadata value never becomes a node. An IPv6 *scope id*
+    (``fe80::1%eth0``) is rejected too, never stripped: ``ipaddress`` keeps it in ``.compressed``,
+    so ``2001:db8::1%9`` would become a second, phantom node for the machine ``2001:db8::1`` whose
+    edges and coverage never meet the real one (review finding security-8). Rejecting is the
+    sound choice: an input we cannot canonicalise is dropped (and counted by the caller), it is
+    not invented into an identity.
     """
-    if not isinstance(value, str):
+    if not isinstance(value, str) or len(value) > _MAX_IP_TEXT:
+        return None
+    text = value.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if "%" in text:
         return None
     try:
-        ip = ipaddress.ip_address(value.strip().strip("[]"))
+        ip = ipaddress.ip_address(text)
     except ValueError:
         return None
     if ip.version == 6 and ip.ipv4_mapped is not None:

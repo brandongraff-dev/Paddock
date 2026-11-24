@@ -457,7 +457,9 @@ async def test_zone_crud_validation_and_graph_version(client, db_pool):
     r = await client.delete(f"/v1/zones/{zid}?justification=decommissioned")
     assert r.status_code == 200 and r.json()["graph_version"] == v1 + 2
     assert (await client.get(f"/v1/zones/{zid}")).status_code == 404
-    assert (await client.delete(f"/v1/zones/{zid}")).status_code == 404
+    # (DELETE now REQUIRES a justification, so the second delete must carry one to reach the 404;
+    # without it the answer is the 422 pinned in tests/test_assurance_acl.py.)
+    assert (await client.delete(f"/v1/zones/{zid}?justification=again")).status_code == 404
 
     # every mutation left a semantic audit row naming the zone and the reason
     created = await _audit_rows(db_pool, "assurance_zone_create")
@@ -514,7 +516,7 @@ async def test_zone_delete_reports_labels_still_naming_it(client, db_pool):
     asset = await _seed_asset(db_pool)
     assert (await client.put("/v1/labels", json={"node_ref": f"asset:{asset}", "tag": "zone", "value": "guest",
                                                  "justification": "j"})).status_code == 200
-    r = await client.delete(f"/v1/zones/{z['id']}")
+    r = await client.delete(f"/v1/zones/{z['id']}?justification=cleanup")   # justification is required
     assert r.json()["labels_still_naming_it"] == 1
 
 
@@ -620,14 +622,19 @@ async def test_label_list_filters_paging_and_delete(client, db_pool):
     r = await client.delete(f"/v1/labels/{lid}?justification=no%20longer%20true")
     assert r.status_code == 200 and r.json()["graph_version"] == v + 1 and r.json()["deleted"]
     assert (await client.get("/v1/labels")).json()["total"] == 3
-    assert (await client.delete(f"/v1/labels/{lid}")).status_code == 404
+    assert (await client.delete(f"/v1/labels/{lid}?justification=again")).status_code == 404
     assert await _graph_version(client) == v + 1            # a second delete is not a change
     aud = await _audit_rows(db_pool, "assurance_label_delete")
     assert len(aud) == 1 and aud[0]["justification"] == "no longer true"
-    # a delete without a justification is still attributed (and says so)
+    # A delete WITHOUT a justification used to be accepted and recorded as "(no justification
+    # given)" (review finding security-7). Removing a label moves verdicts, so it is now refused
+    # (nothing changes) and succeeds only with a real reason.
     lid2 = (await client.get("/v1/labels")).json()["items"][0]["id"]
-    assert (await client.delete(f"/v1/labels/{lid2}")).status_code == 200
-    assert "no justification" in (await _audit_rows(db_pool, "assurance_label_delete"))[-1]["justification"]
+    assert (await client.delete(f"/v1/labels/{lid2}")).status_code == 422
+    assert (await client.delete(f"/v1/labels/{lid2}?justification=ab")).status_code == 422   # < 3 chars
+    assert await _graph_version(client) == v + 1
+    assert (await client.delete(f"/v1/labels/{lid2}?justification=superseded")).status_code == 200
+    assert (await _audit_rows(db_pool, "assurance_label_delete"))[-1]["justification"] == "superseded"
 
 
 # ============================================================================================
@@ -928,9 +935,9 @@ async def test_rbac_reads_need_read_and_every_mutation_needs_admin(enforce, clie
             ("POST", "/v1/assurance/evaluate", {}),
             ("POST", "/v1/zones", {"name": "pos", "cidrs": ["10.1.0.0/16"], "justification": "j"}),
             ("PUT", f"/v1/zones/{zone['id']}", {"cidrs": ["10.2.0.0/16"], "justification": "j"}),
-            ("DELETE", f"/v1/zones/{zone['id']}", None),
+            ("DELETE", f"/v1/zones/{zone['id']}?justification=cleanup", None),
             ("PUT", "/v1/labels", {"node_ref": "ip:10.0.0.6", "tag": "class", "value": "x", "justification": "j"}),
-            ("DELETE", f"/v1/labels/{lab['id']}", None)]
+            ("DELETE", f"/v1/labels/{lab['id']}?justification=cleanup", None)]
 
     for path in reads:
         assert (await client.get(path)).status_code == 401, path                          # anonymous
@@ -1020,8 +1027,8 @@ async def test_billing_gate_refuses_paid_mutations_but_never_reads_or_cleanup(cl
                  "/v1/reach/nodes", "/v1/reach/edges", "/v1/zones", "/v1/labels"):
         assert (await client.get(path)).status_code == 200, path
     # clean-up is never a paid action: a downgraded tenant can switch things off and remove them
-    assert (await client.delete(f"/v1/labels/{lab['id']}")).status_code == 200
-    assert (await client.delete(f"/v1/zones/{zone['id']}")).status_code == 200
+    assert (await client.delete(f"/v1/labels/{lab['id']}?justification=cleanup")).status_code == 200
+    assert (await client.delete(f"/v1/zones/{zone['id']}?justification=cleanup")).status_code == 200
     assert (await client.delete(f"/v1/invariants/{inv['id']}")).status_code == 200
 
 
@@ -1104,8 +1111,10 @@ async def test_foreign_ids_answer_exactly_like_unknown_ids_on_every_id_route(two
         ("GET", "/v1/invariants/{}/runs", "invariant", None),
         ("GET", "/v1/zones/{}", "zone", None),
         ("PUT", "/v1/zones/{}", "zone", {"cidrs": ["192.168.0.0/16"], "justification": "pwned"}),
-        ("DELETE", "/v1/zones/{}", "zone", None),
-        ("DELETE", "/v1/labels/{}", "label", None),
+        # the justification is required (422 otherwise, before any lookup), so it is supplied here to
+        # reach the lookup whose answer must be identical for a foreign and an unknown id
+        ("DELETE", "/v1/zones/{}?justification=cleanup", "zone", None),
+        ("DELETE", "/v1/labels/{}?justification=cleanup", "label", None),
     ]
     for method, tmpl, kind, body in routes:
         for vid in victim[kind]:

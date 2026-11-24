@@ -17,6 +17,15 @@ Soundness rules (these are what make a HOLDS worth anything):
    ``valid_until`` the stalest plus ``max_age``; after it the verdict is ``EXPIRED``.
 5. **Coverage itself can be asserted** (``assert: covered``): every selected node must be covered
    in both directions; each one that is not becomes a hop-less witness.
+6. **Overlapping selectors keep their overlap.** A node selected by both ``subjects.from`` and
+   ``subjects.to`` is a target for anything that starts at a *different* source node (a pos-tagged
+   device that sits in the guest zone is exactly the mis-segmentation the invariant exists to
+   catch); only the trivial self-path is excluded. The search therefore runs once for the targets
+   outside the overlap and once per overlapping node (from every source but that node). The
+   overlap is capped (``MAX_OVERLAP``): past it the answer is UNKNOWN, never a guess.
+7. **A HOLDS is valid only as long as everything it rests on.** That is the stalest coverage fact
+   *and* the earliest active ``allow`` exception (end of its last day, UTC): once an exception
+   lapses a re-evaluation can flip the verdict.
 
 Output is deterministic: sorted adjacency, sorted tie-breaks, no hidden clock.
 """
@@ -24,9 +33,10 @@ from __future__ import annotations
 
 import datetime as dt
 from collections import deque
+from itertools import islice
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from . import ports as P
 from .compile import Plan, PlanKind
@@ -36,6 +46,9 @@ from .model import Allow, Tier
 MAX_WITNESSES = 5
 PSEUDO_KINDS = frozenset({"internet", "cidr"})   # not coverable: outside the coverage universe
 MAX_COVERED_WITNESSES = 50   # one per uncovered node: the list is the work queue
+MAX_VIOLATING_TARGETS = 5000   # cap on Result.violating_targets (the flag says when it bites)
+MAX_OVERLAP = 64             # |from-selection AND to-selection| beyond which we answer UNKNOWN
+MAX_EXCEPTION_HORIZON = dt.timedelta(days=400)   # an exception may not outlive the evidence by years
 
 
 class Verdict(str, Enum):
@@ -81,6 +94,16 @@ class Result:
     reasons: list[str] = field(default_factory=list)
     witnesses: list[Witness] = field(default_factory=list)
     violation_count: int = 0
+    # Node refs of EVERY violating target found (sorted; for ``covered`` the uncovered nodes),
+    # capped at MAX_VIOLATING_TARGETS. ``witnesses`` is the readable sample, this is the full list a
+    # consumer (findings, tickets) needs: one target per finding.
+    violating_targets: list[str] = field(default_factory=list)
+    violating_truncated: bool = False
+    # Targets that are NOT known violators but that a path through an unknown (blind) edge could
+    # still reach: "possibly violating", reported next to a VIOLATED verdict so a consumer never
+    # reads "absent from violating_targets" as "proven safe". Capped like violating_targets (past the
+    # cap ``violating_truncated`` is set, so a consumer that needs the whole picture stops trusting it).
+    unproven_targets: list[str] = field(default_factory=list)
     evidence_tier: Optional[Tier] = None
     valid_until: Optional[dt.datetime] = None
     coverage_universe: int = 0
@@ -130,6 +153,9 @@ class Result:
                          "relevant_covered": self.relevant_covered,
                          "relevant_ratio": round(self.relevant_ratio, 4)},
             "violation_count": self.violation_count,
+            "violating_targets": list(self.violating_targets),
+            "violating_truncated": self.violating_truncated,
+            "unproven_targets": list(self.unproven_targets),
             "witnesses": [{
                 "hops": [h.__dict__ for h in w.hops],
                 "weakest_basis": w.weakest_basis, "confirmed": w.confirmed, "detail": w.detail,
@@ -215,11 +241,31 @@ def _edge_filter(plan: Plan) -> Callable[[Edge], bool]:
     return ok
 
 
-def _active_allows(plan: Plan, now: dt.datetime) -> tuple[list[Allow], list[Allow]]:
+def _active_allows(plan: Plan, now: dt.datetime) -> tuple[list[Allow], list[tuple[Allow, str]]]:
+    """Exceptions in force now, and the ones ignored with the reason: ``expired``, or
+    ``expiry_too_far`` (more than 400 days out: an exception that outlives any evidence the verdict
+    could rest on is a standing hole, not a window, so it is not honoured)."""
     today = now.astimezone(dt.timezone.utc).date()
-    active = [a for a in plan.invariant.allow if a.expires >= today]
-    expired = [a for a in plan.invariant.allow if a.expires < today]
-    return active, expired
+    limit = today + MAX_EXCEPTION_HORIZON
+    active: list[Allow] = []
+    invalid: list[tuple[Allow, str]] = []
+    for a in plan.invariant.allow:
+        if a.expires < today:
+            invalid.append((a, "expired"))
+        elif a.expires > limit:
+            invalid.append((a, "expiry_too_far"))
+        else:
+            active.append(a)
+    return active, invalid
+
+
+def _exception_deadline(allows: list[Allow]) -> Optional[dt.datetime]:
+    """The last second an active exception is honoured: 23:59:59 UTC of the earliest expiry day.
+    (``expires`` is inclusive; a re-evaluation at or before this instant still sees the exception.)"""
+    if not allows:
+        return None
+    return dt.datetime.combine(min(a.expires for a in allows), dt.time(23, 59, 59),
+                               tzinfo=dt.timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -275,12 +321,14 @@ def _blind_spots(cov: dict[str, _NodeCov], relevant: set[str]) -> list[BlindSpot
 
 
 def _finish(res: Result, plan: Plan, g: ReachGraph, cov: dict[str, _NodeCov],
-            relevant: set[str], relied: set[tuple[str, str]]) -> Result:
+            relevant: set[str], relied: set[tuple[str, str]],
+            allows: Optional[list[Allow]] = None) -> Result:
     """Fill coverage counts, blind spots and (for HOLDS) the evidence the verdict rests on.
 
     ``relied`` lists the (node, direction) pairs whose coverage the verdict depends on. For each
     the best qualifying fact is used; the weakest tier and the earliest expiry among them bound
-    the whole verdict.
+    the whole verdict. So does the earliest active exception (``allows``): when it lapses a
+    re-evaluation can turn the HOLDS into a VIOLATED, so the HOLDS must not outlive it.
     """
     # The internet and CIDR blocks are not things a sensor can be installed on: counting them as
     # blind would cap a small estate below any coverage floor (5 covered hosts + the internet is
@@ -299,9 +347,18 @@ def _finish(res: Result, plan: Plan, g: ReachGraph, cov: dict[str, _NodeCov],
     res.blind_spots = _blind_spots(cov, relevant)
     if res.verdict is Verdict.HOLDS:
         facts = [f for n, d in sorted(relied) if (f := cov[n].relied(d)) is not None]
+        horizon: list[dt.datetime] = []
         if facts:
             res.evidence_tier = min((f.tier for f in facts), key=lambda t: t.rank)
-            res.valid_until = min(f.observed_at for f in facts) + plan.max_age
+            horizon.append(min(f.observed_at for f in facts) + plan.max_age)
+        else:
+            # A HOLDS that relied on no coverage fact still is not good forever: it is good for
+            # one evidence window from the evaluation, so it can never sit at valid_until=None.
+            horizon.append(res.evaluated_at + plan.max_age)
+        deadline = _exception_deadline(allows or [])
+        if deadline is not None:
+            horizon.append(deadline)
+        res.valid_until = min(horizon)
         floor = plan.kind is not PlanKind.COVERED
         if floor and res.relevant_ratio + 1e-12 < plan.coverage_required:
             res.verdict = Verdict.UNKNOWN
@@ -318,6 +375,18 @@ def _new(plan: Plan, now: dt.datetime, verdict: Verdict, reason: str) -> Result:
 
 def _exc(a: Allow, target: str) -> dict[str, str]:
     return {"target": target, "reason": a.reason, "expires": a.expires.isoformat()}
+
+
+def _invalid_exc(invalid: list[tuple[Allow, str]]) -> list[dict[str, str]]:
+    """Ignored exceptions. ``reason`` stays the author's text; ``invalid_reason`` says why we
+    ignored it (``expired`` | ``expiry_too_far``)."""
+    return [_exc(a, "*") | {"invalid_reason": why} for a, why in invalid]
+
+
+def _cap_targets(res: Result, targets: list[str]) -> None:
+    """Record every violating target (sorted), up to MAX_VIOLATING_TARGETS."""
+    res.violating_targets = sorted(targets)[:MAX_VIOLATING_TARGETS]
+    res.violating_truncated = len(targets) > MAX_VIOLATING_TARGETS
 
 
 # --------------------------------------------------------------------------------------------
@@ -347,24 +416,67 @@ def _reach_reliance(cov: dict[str, _NodeCov], expandable: list[str],
     return relied
 
 
+def _selection_problem(plan: Plan, now: dt.datetime, S: set[str], T: set[str],
+                       *, cap_overlap: bool) -> Optional[Result]:
+    """The answers that need no search: an empty selection, no source/target pair at all, or (reach
+    only, ``cap_overlap``) an overlap too wide to examine target by target. ``None`` = evaluate.
+
+    Exposure does not cap the overlap: it is one pass over the edges whatever the overlap, and a
+    ``to``-less exposes-only (every node is a target, so the overlap is all of ``from``) is a
+    normal invariant that must keep being evaluated."""
+    if not S or not T:
+        which = "from" if not S else "to"
+        return _new(plan, now, Verdict.UNKNOWN, f"empty_selector:{which}")
+    if len(S) == 1 and T == S:
+        # The one source is the one target: only the trivial self-path exists, which is no
+        # counterexample but also no evidence. Same as a typo'd selector: not a pass.
+        return _new(plan, now, Verdict.UNKNOWN, "empty_selector:no_distinct_pair")
+    if cap_overlap and len(S & T) > MAX_OVERLAP:
+        return _new(plan, now, Verdict.UNKNOWN, "overlapping_selectors_too_large")
+    return None
+
+
+def _selection_unknown(res: Result, done: Callable[..., Result], S: set[str], T: set[str]) -> Result:
+    out = done(res, set(S) | set(T))
+    if res.reasons[0] == "overlapping_selectors_too_large":
+        out.blind_spots.extend(BlindSpot(n, "overlapping_selectors_too_large", True, "both")
+                               for n in sorted(S & T))
+    return out
+
+
+def _search_groups(S: set[str], T: set[str]) -> list[tuple[set[str], list[str]]]:
+    """(sources, targets) pairs that together cover every (source, target) pair with source !=
+    target. Targets outside ``S`` are searched once from all of ``S``; each target that is also a
+    source is searched from every *other* source (a path that starts at the target itself is the
+    trivial self-path)."""
+    groups: list[tuple[set[str], list[str]]] = []
+    outside = sorted(T - S)
+    if outside:
+        groups.append((S, outside))
+    for t in sorted(S & T):
+        if len(S) > 1:
+            groups.append((S - {t}, [t]))
+    return groups
+
+
 def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     inv = plan.invariant
     S = {n.id for n in g.select(inv.subjects.from_)}
-    T = {n.id for n in g.select(inv.subjects.to)} - S
+    T = {n.id for n in g.select(inv.subjects.to)}
     cov = _coverage_map(plan, g, now)
     blind_out = frozenset(n for n, c in cov.items() if not c.out.covered)
     blind_in = frozenset(n for n, c in cov.items() if not c.inn.covered)
     blind_in_net = frozenset(n for n, c in cov.items() if not c.inn_net.covered)
-    allows, expired = _active_allows(plan, now)
+    allows, invalid = _active_allows(plan, now)
 
     def done(res: Result, relevant: set[str],
              relied: Optional[set[tuple[str, str]]] = None) -> Result:
-        res.expired_exceptions = [_exc(a, "*") for a in expired]
-        return _finish(res, plan, g, cov, relevant, relied or set())
+        res.expired_exceptions = _invalid_exc(invalid)
+        return _finish(res, plan, g, cov, relevant, relied or set(), allows)
 
-    if not S or not T:
-        which = "from" if not S else "to"
-        return done(_new(plan, now, Verdict.UNKNOWN, f"empty_selector:{which}"), set(S) | set(T))
+    early = _selection_problem(plan, now, S, T, cap_overlap=True)
+    if early is not None:
+        return _selection_unknown(early, done, S, T)
 
     exempt: dict[str, Allow] = {}
     for t in sorted(T):
@@ -374,31 +486,73 @@ def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
                 break
     edge_ok = _edge_filter(plan)
     stop = frozenset(n.id for n in g.select(inv.via.stop_at)) if inv.via.stop_at else frozenset()
-    parent, _ = _search(g, S, edge_ok, plan.max_hops, stop=stop)
-    hit = sorted(t for t in T if t in parent)
-    bad = [t for t in hit if t not in exempt]
-    boundaries = sorted(n for n in stop if n in parent and n not in S)
+    groups = _search_groups(S, T)
+
+    # Known edges only. Paths are kept per violating target (not the BFS trees: one tree per
+    # overlapping target would be a lot of memory).
+    hit: list[str] = []
+    paths: dict[str, tuple[Hop, ...]] = {}
+    reached: set[str] = set()          # application boundaries the search ran into
+    known_reach: set[str] = set()      # every node a known path reaches
+    for sources, targets in groups:
+        parent, _ = _search(g, sources, edge_ok, plan.max_hops, stop=stop)
+        known_reach |= set(parent)
+        reached |= {n for n in stop if n in parent and n not in S}
+        for t in targets:
+            if t in parent:
+                hit.append(t)
+                if t not in exempt:
+                    paths[t] = _path(parent, t)
+    hit.sort()
+    boundaries = sorted(reached)
+    bad = sorted(paths)
+
+    def augmented() -> tuple[list[str], dict[str, tuple[Hop, ...]], set[str], set[str]]:
+        """Search again with every possible (unknown) edge, u blind outbound and v blind inbound.
+        Returns (non-exempt targets reached that way, paths for the first few, relevant nodes,
+        nodes whose coverage the verdict would rest on)."""
+        maybe_paths: dict[str, tuple[Hop, ...]] = {}
+        maybe: list[str] = []
+        expandable: set[str] = set()
+        relevant = set(S) | set(T)
+        for sources, targets in groups:
+            aparent, adist = _search(g, sources, edge_ok, plan.max_hops, blind_out=blind_out,
+                                     blind_in=blind_in, stop=stop, blind_in_net=blind_in_net)
+            relevant |= set(aparent)
+            expandable |= {u for u in aparent
+                           if adist[u] < plan.max_hops and not (u in stop and u not in sources)}
+            found = [t for t in targets if t in aparent and t not in exempt]
+            maybe += found
+            for t in found[:MAX_WITNESSES]:       # the global first five come from these
+                maybe_paths[t] = _path(aparent, t)
+        maybe.sort()
+        return maybe, maybe_paths, relevant, expandable
 
     if bad:
         res = _new(plan, now, Verdict.VIOLATED, "witness_found")
-        # Report root causes: drop a target whose path already runs through another violator.
-        paths = {t: _path(parent, t) for t in bad}
-        roots = [t for t in bad
-                 if not ({h.src for h in paths[t]} & set(bad))]
-        ws = sorted((_witness(paths[t]) for t in roots),
-                    key=lambda w: (len(w.hops), w.hops[-1].dst, w.hops[0].src))
-        res.witnesses, res.violation_count = ws[:MAX_WITNESSES], len(bad)
+        # Report root causes: drop a target whose path already runs through another violator
+        # (judged on the nodes *after* the origin: the origin is a source, and a source that is
+        # itself a violator still reaches its own targets directly).
+        bad_set = set(bad)
+        roots = [t for t in bad if not ({h.src for h in paths[t][1:]} & bad_set)]
+        roots.sort(key=lambda t: (len(paths[t]), t, paths[t][0].src))
+        res.witnesses = [_witness(paths[t]) for t in roots[:MAX_WITNESSES]]
+        res.violation_count = len(bad)
+        _cap_targets(res, bad)
+        # Targets no known path reaches but an unknown edge could: not violators, not proven safe.
+        # (One more linear search; the price of never letting "absent from the list" read as "fixed".)
+        possible = [t for t in augmented()[0] if t not in bad_set]
+        res.unproven_targets = possible[:MAX_VIOLATING_TARGETS]
+        res.violating_truncated = res.violating_truncated or len(possible) > MAX_VIOLATING_TARGETS
         res.exceptions_used = [_exc(exempt[t], t) for t in hit if t in exempt]
         res.boundaries_reached = boundaries
-        return done(res, set(S) | set(T) | set(parent))
+        return done(res, set(S) | set(T) | known_reach)
 
-    aparent, adist = _search(g, S, edge_ok, plan.max_hops, blind_out=blind_out,
-                             blind_in=blind_in, stop=stop, blind_in_net=blind_in_net)
-    maybe = sorted(t for t in T if t in aparent and t not in exempt)
-    relevant = set(S) | set(T) | set(aparent)
+    maybe, maybe_paths, relevant, expandable = augmented()
+
     if maybe:
         res = _new(plan, now, Verdict.UNKNOWN, "possible_via_unknown_edges")
-        res.witnesses = [_witness(_path(aparent, t)) for t in maybe[:MAX_WITNESSES]]
+        res.witnesses = [_witness(maybe_paths[t]) for t in maybe[:MAX_WITNESSES]]
         res.exceptions_used = [_exc(exempt[t], t) for t in hit if t in exempt]
         res.boundaries_reached = boundaries
         return done(res, relevant)
@@ -406,36 +560,57 @@ def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     res = _new(plan, now, Verdict.HOLDS, "no_counterexample")
     res.exceptions_used = [_exc(exempt[t], t) for t in hit if t in exempt]
     res.boundaries_reached = boundaries
-    expandable = sorted(u for u in aparent
-                        if adist[u] < plan.max_hops and not (u in stop and u not in S))
-    return done(res, relevant, _reach_reliance(cov, expandable, relevant))
+    return done(res, relevant, _reach_reliance(cov, sorted(expandable), relevant))
 
 
 # --------------------------------------------------------------------------------------------
 # EXPOSURE_SET: assert exposes-only
 
+def _first_blind_pairs(S: set[str], T: set[str], cov: dict[str, _NodeCov],
+                       limit: int) -> list[tuple[str, str]]:
+    """The first ``limit`` possible unknown ``s -> t`` pairs (s blind outbound, t blind inbound,
+    s != t) in (source, target) order, without ever building S x T. An internet source is only
+    ruled out by an origin-qualified fact, anything else needs an unqualified one."""
+    t_in = sorted(t for t in T if not cov[t].inn.covered)
+    t_net = sorted(t for t in T if not cov[t].inn_net.covered)
+
+    def pairs() -> Iterator[tuple[str, str]]:
+        for s in sorted(S):
+            if cov[s].out.covered:
+                continue
+            for t in (t_net if s == INTERNET else t_in):
+                if t != s:
+                    yield s, t
+
+    return list(islice(pairs(), limit))
+
+
 def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     inv = plan.invariant
     S = {n.id for n in g.select(inv.subjects.from_)}
-    T = {n.id for n in g.select(inv.subjects.to)} - S
+    T = {n.id for n in g.select(inv.subjects.to)}
     cov = _coverage_map(plan, g, now)
-    allows, expired = _active_allows(plan, now)
+    allows, invalid = _active_allows(plan, now)
 
     def done(res: Result, relevant: set[str],
              relied: Optional[set[tuple[str, str]]] = None) -> Result:
-        res.expired_exceptions = [_exc(a, "*") for a in expired]
-        return _finish(res, plan, g, cov, relevant, relied or set())
+        res.expired_exceptions = _invalid_exc(invalid)
+        return _finish(res, plan, g, cov, relevant, relied or set(), allows)
 
-    if not S or not T:
-        which = "from" if not S else "to"
-        return done(_new(plan, now, Verdict.UNKNOWN, f"empty_selector:{which}"), set(S) | set(T))
+    early = _selection_problem(plan, now, S, T, cap_overlap=False)
+    if early is not None:
+        return _selection_unknown(early, done, S, T)
 
     edge_ok = _edge_filter(plan)
     witnesses: list[Witness] = []
     used: dict[tuple[str, str], dict[str, str]] = {}
+    violating: set[str] = set()
     violations = 0
     for e in g.edges:
-        if e.src not in S or e.dst not in T or e.proto == "icmp" or not edge_ok(e):
+        # src == dst is the trivial self-path; a node in both selections is still a target for
+        # every edge that starts at another source.
+        if e.src not in S or e.dst not in T or e.src == e.dst or e.proto == "icmp" \
+                or not edge_ok(e):
             continue
         exposed = e.ports if plan.via_ports is None else P.intersect(e.ports, plan.via_ports)
         permitted = plan.allowed_ports
@@ -449,6 +624,7 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
         disallowed = P.subtract(exposed, permitted)
         if disallowed:
             violations += 1
+            violating.add(e.dst)
             hop = Hop(e.src, e.dst, e.proto, P.format_ports(exposed), e.basis.value, e.source)
             witnesses.append(Witness((hop,), e.basis.value, e.basis.rank >= 2, {
                 "disallowed_ports": P.format_ports(disallowed),
@@ -462,18 +638,14 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
         witnesses.sort(key=lambda w: (w.hops[0].dst, w.hops[0].src, w.hops[0].proto))
         res.witnesses, res.violation_count, res.exceptions_used = \
             witnesses[:MAX_WITNESSES], violations, exc_list
+        _cap_targets(res, list(violating))
         return done(res, relevant)
 
-    # An unknown s -> t needs s blind outbound and t blind inbound (s != t: T excludes S).
-    s_blind = sorted(s for s in S if not cov[s].out.covered)
-    # (an internet source is only ruled out by an origin-qualified fact, anything else needs an
-    # unqualified one)
-    possible = [(s, t) for s in s_blind for t in sorted(T)
-                if not (cov[t].inn_net if s == INTERNET else cov[t].inn).covered]
+    # An unknown s -> t needs s blind outbound and t blind inbound, s != t.
+    possible = _first_blind_pairs(S, T, cov, MAX_WITNESSES)
     if possible:
         res = _new(plan, now, Verdict.UNKNOWN, "possible_via_unknown_edges")
-        res.witnesses = [_witness((Hop(s, t, "unknown", "", "unknown"),))
-                         for s, t in possible[:MAX_WITNESSES]]
+        res.witnesses = [_witness((Hop(s, t, "unknown", "", "unknown"),)) for s, t in possible]
         res.exceptions_used = exc_list
         return done(res, relevant)
 
@@ -520,6 +692,7 @@ def _eval_covered(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
                                ("both", "in", "out").index(w.detail["direction"]),
                                w.detail["node"]))
         res.witnesses, res.violation_count = ws[:MAX_COVERED_WITNESSES], len(gaps)
+        _cap_targets(res, [n for n, _ in gaps])
         return _finish(res, plan, g, cov, set(sel), set())
     res = _new(plan, now, Verdict.HOLDS, "all_covered")
     relied = {(n, d) for n in sel for d in ("in", "out")}

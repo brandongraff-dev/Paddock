@@ -88,6 +88,9 @@ class AssuranceState:
     last_eval_version: int = -1
     lease_until: Optional[dt.datetime] = None
     lease_owner: Optional[str] = None
+    #: sha256 of the graph document the last COMPLETE evaluation ran on (graph_loader.doc_sha).
+    #: ``None`` = never recorded (a tenant evaluated before migration 040): treated as changed.
+    last_eval_doc_sha: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -160,10 +163,12 @@ def _state(row: Any) -> AssuranceState:
         graph_version=int(row["graph_version"]),
         last_build_at=row["last_build_at"], last_eval_at=row["last_eval_at"],
         last_eval_version=int(row["last_eval_version"]),
-        lease_until=row["lease_until"], lease_owner=row["lease_owner"])
+        lease_until=row["lease_until"], lease_owner=row["lease_owner"],
+        last_eval_doc_sha=row["last_eval_doc_sha"])
 
 
-_STATE_COLS = "graph_version, last_build_at, last_eval_at, last_eval_version, lease_until, lease_owner"
+_STATE_COLS = ("graph_version, last_build_at, last_eval_at, last_eval_version, lease_until, lease_owner, "
+               "last_eval_doc_sha")
 
 
 async def get_state(conn) -> AssuranceState:
@@ -188,17 +193,33 @@ async def touch_build(conn, now: dt.datetime) -> None:
         _aware(now))
 
 
-async def claim_eval(conn, owner: str, now: dt.datetime, lease_s: int = 300) -> Optional[AssuranceState]:
+async def claim_eval(conn, owner: str, now: Optional[dt.datetime] = None,
+                     lease_s: int = 300) -> Optional[AssuranceState]:
     """Try to take the tenant's evaluation lease; ``None`` if another owner holds a live one.
 
     One statement, so of N concurrent claimers exactly one wins: the loser's ON CONFLICT
     re-checks the WHERE against the committed row and returns nothing. The returned state is
     the snapshot the winner must evaluate (``graph_version`` at claim time).
+
+    ``now=None`` (what the runner passes) uses the DATABASE clock: a lease is a contract between
+    replicas, and comparing it against each replica's own clock lets one whose clock runs ahead
+    steal a live lease (and then both write verdicts). An explicit ``now`` is for tests.
     """
     if not owner:
         raise ValueError("owner is required")
+    secs = max(1, int(lease_s))
+    if now is None:
+        row = await conn.fetchrow(
+            "INSERT INTO assurance_state (lease_until, lease_owner) "
+            "VALUES (now() + make_interval(secs => $1::int), $2) "
+            "ON CONFLICT (tenant_id) DO UPDATE "
+            "SET lease_until = EXCLUDED.lease_until, lease_owner = EXCLUDED.lease_owner "
+            "WHERE assurance_state.lease_until IS NULL OR assurance_state.lease_until < now() "
+            f"RETURNING {_STATE_COLS}",
+            secs, owner)
+        return _state(row) if row else None
     now = _aware(now)
-    until = now + dt.timedelta(seconds=max(1, int(lease_s)))
+    until = now + dt.timedelta(seconds=secs)
     row = await conn.fetchrow(
         "INSERT INTO assurance_state (lease_until, lease_owner) VALUES ($1, $2) "
         "ON CONFLICT (tenant_id) DO UPDATE "
@@ -209,20 +230,48 @@ async def claim_eval(conn, owner: str, now: dt.datetime, lease_s: int = 300) -> 
     return _state(row) if row else None
 
 
-async def extend_eval(conn, owner: str, now: dt.datetime, lease_s: int = 300) -> bool:
-    """Extend a lease this ``owner`` still holds (long evaluations). False if it was lost."""
+async def extend_eval(conn, owner: str, now: Optional[dt.datetime] = None, lease_s: int = 300) -> bool:
+    """Extend a lease this ``owner`` still holds (long evaluations). False if it was lost.
+    ``now=None`` = database clock (see ``claim_eval``)."""
+    secs = max(1, int(lease_s))
+    if now is None:
+        res = await conn.execute(
+            "UPDATE assurance_state SET lease_until = now() + make_interval(secs => $1::int) "
+            "WHERE lease_owner = $2 AND lease_until >= now()", secs, owner)
+        return res.endswith(" 1")
     now = _aware(now)
     res = await conn.execute(
         "UPDATE assurance_state SET lease_until = $1 WHERE lease_owner = $2 AND lease_until >= $3",
-        now + dt.timedelta(seconds=max(1, int(lease_s))), owner, now)
+        now + dt.timedelta(seconds=secs), owner, now)
     return res.endswith(" 1")
 
 
+async def fence_lease(conn, owner: str) -> Optional[int]:
+    """Prove, INSIDE the caller's transaction, that ``owner`` still holds a live lease.
+
+    Returns the tenant's current ``graph_version`` if so (the caller may compare it with the
+    version it evaluated), else ``None``: someone else owns the lease, or ours expired (judged by
+    the database clock). The state row is read ``FOR SHARE`` so a competing ``claim_eval`` (an
+    UPDATE of that row) has to wait until the caller's transaction ends: a verdict or a finding
+    status written after this call, in this transaction, cannot be a stale evaluator's.
+
+    This is the write-side fence for "lease expired while we were evaluating, a newer evaluator
+    recorded a VIOLATED, then we woke up and wrote HOLDS over it and closed its finding".
+    """
+    if not owner:
+        return None
+    row = await conn.fetchrow(
+        "SELECT graph_version FROM assurance_state "
+        "WHERE lease_owner = $1 AND lease_until IS NOT NULL AND lease_until > now() FOR SHARE", owner)
+    return int(row["graph_version"]) if row else None
+
+
 async def release_eval(conn, owner: str, now: dt.datetime, *,
-                       evaluated_version: Optional[int] = None) -> bool:
+                       evaluated_version: Optional[int] = None, doc_sha: Optional[str] = None) -> bool:
     """Release the lease ``owner`` holds. With ``evaluated_version`` also record the watermark
-    (``last_eval_at``/``last_eval_version``); without it (a failed run) the watermark is left so
-    the next tick retries. Returns False when the lease was no longer ours (expired and taken)."""
+    (``last_eval_at``/``last_eval_version``, and ``last_eval_doc_sha`` when given); without it (a
+    failed run) the watermark is left so the next tick retries. Returns False when the lease was
+    no longer ours (expired and taken)."""
     now = _aware(now)
     if evaluated_version is None:
         res = await conn.execute(
@@ -231,8 +280,8 @@ async def release_eval(conn, owner: str, now: dt.datetime, *,
     else:
         res = await conn.execute(
             "UPDATE assurance_state SET lease_until = NULL, lease_owner = NULL, "
-            "last_eval_at = $2, last_eval_version = $3 WHERE lease_owner = $1",
-            owner, now, int(evaluated_version))
+            "last_eval_at = $2, last_eval_version = $3, last_eval_doc_sha = $4 WHERE lease_owner = $1",
+            owner, now, int(evaluated_version), doc_sha)
     return res.endswith(" 1")
 
 
@@ -583,39 +632,71 @@ def _as_net(addr_or_net: str) -> Optional["ipaddress.IPv4Network | ipaddress.IPv
         return None
 
 
+class ZoneIndex:
+    """Declared zone CIDRs, parsed ONCE, answering "which zones contain this address/network".
+
+    The loader resolves a zone for every node address. Re-parsing every zone CIDR per address
+    (the old ``zone_matches`` loop) is O(nodes x zone CIDRs) calls to ``ipaddress.ip_network``:
+    seconds of event-loop stall for a few thousand nodes and 1000 zone CIDRs. Here the CIDRs are
+    bucketed by (IP version, prefix length) as network-address integers, so a lookup costs one
+    dict probe per DISTINCT prefix length (at most 33 or 129), whatever the number of CIDRs.
+    """
+
+    def __init__(self, zones: Iterable[Zone]) -> None:
+        # version -> prefixlen -> network address (int) -> zone names
+        self._buckets: dict[int, dict[int, dict[int, set[str]]]] = {4: {}, 6: {}}
+        for z in zones:
+            for c in z.cidrs:
+                net = _as_net(c)
+                if net is None:
+                    continue
+                self._buckets[net.version].setdefault(net.prefixlen, {}) \
+                    .setdefault(int(net.network_address), set()).add(z.name)
+
+    def matches(self, addr_or_net: str) -> list[tuple[str, int]]:
+        """Same contract as ``zone_matches``: ``(zone, prefixlen)`` for every zone CIDR containing
+        the address (or wholly containing the network), most specific first, then by name."""
+        target = _as_net(addr_or_net)
+        if target is None:
+            return []
+        bits = target.max_prefixlen
+        base = int(target.network_address)
+        hits: set[tuple[str, int]] = set()
+        for plen, table in self._buckets[target.version].items():
+            if plen > target.prefixlen:        # a zone CIDR narrower than the target cannot contain it
+                continue
+            masked = (base >> (bits - plen)) << (bits - plen)
+            for name in table.get(masked, ()):
+                hits.add((name, plen))
+        return sorted(hits, key=lambda h: (-h[1], h[0]))
+
+    def resolve(self, addrs: Iterable[str]) -> tuple[Optional[str], list[str]]:
+        """Zone of a node reachable at ``addrs``: each address resolves to its most specific zone;
+        several addresses in different zones is a *conflict* (returned so it can be surfaced) and
+        the winner is the most specific, then alphabetical (deterministic)."""
+        winners: list[tuple[str, int]] = []
+        for a in addrs:
+            m = self.matches(a)
+            if m:
+                winners.append(m[0])
+        if not winners:
+            return None, []
+        best = sorted(winners, key=lambda h: (-h[1], h[0]))[0][0]
+        names = sorted({w[0] for w in winners})
+        return best, (names if len(names) > 1 else [])
+
+
 def zone_matches(zones: Iterable[Zone], addr_or_net: str) -> list[tuple[str, int]]:
     """``(zone name, prefix length)`` for every declared zone CIDR that CONTAINS ``addr_or_net``
     (an address, or a network wholly inside the zone range). Sorted most specific first, then
-    by name, so the first entry is the deterministic winner."""
-    target = _as_net(addr_or_net)
-    if target is None:
-        return []
-    hits: list[tuple[str, int]] = []
-    for z in zones:
-        for c in z.cidrs:
-            net = _as_net(c)
-            if net is None or net.version != target.version:
-                continue
-            if target.subnet_of(net):  # type: ignore[arg-type]
-                hits.append((z.name, net.prefixlen))
-    return sorted(set(hits), key=lambda h: (-h[1], h[0]))
+    by name, so the first entry is the deterministic winner. One-shot helper: a caller resolving
+    many addresses must build a ``ZoneIndex`` once instead."""
+    return ZoneIndex(zones).matches(addr_or_net)
 
 
 def resolve_zone(zones: Iterable[Zone], addrs: Iterable[str]) -> tuple[Optional[str], list[str]]:
-    """Zone of a node reachable at ``addrs``: each address resolves to its most specific zone;
-    several addresses in different zones is a *conflict* (returned so it can be surfaced) and
-    the winner is the most specific, then alphabetical (deterministic)."""
-    zones = list(zones)
-    winners: list[tuple[str, int]] = []
-    for a in addrs:
-        m = zone_matches(zones, a)
-        if m:
-            winners.append(m[0])
-    if not winners:
-        return None, []
-    best = sorted(winners, key=lambda h: (-h[1], h[0]))[0][0]
-    names = sorted({w[0] for w in winners})
-    return best, (names if len(names) > 1 else [])
+    """One-shot ``ZoneIndex(zones).resolve(addrs)`` (see there)."""
+    return ZoneIndex(zones).resolve(addrs)
 
 
 def _zone(r: Any) -> Zone:

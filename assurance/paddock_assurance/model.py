@@ -17,9 +17,16 @@ from . import ports as P
 
 API_VERSION = "paddock.dev/invariant/v1"
 
-ID_RE = re.compile(r"^[a-z][a-z0-9]{0,31}:[a-z0-9][a-z0-9-]{0,63}$")
-SEL_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,64}$")
-DURATION_RE = re.compile(r"^(\d{1,4})([mhd])$")
+# These are applied with ``fullmatch``: ``$`` also matches before a trailing newline, which made
+# ``acme:x\n`` a second, distinct-looking id. ``[0-9]`` rather than ``\d`` (which is any Unicode digit).
+ID_RE = re.compile(r"[a-z][a-z0-9]{0,31}:[a-z0-9][a-z0-9-]{0,63}")
+SEL_VALUE_RE = re.compile(r"[A-Za-z0-9._:/-]{1,64}")
+DURATION_RE = re.compile(r"([0-9]{1,4})([mhd])")
+# The platform derives a finding's identity from CVE/GHSA-looking tokens anywhere in its rule id
+# (``invariant:<id>@<target>``), so an invariant id that carries one makes every finding of that
+# invariant on a shared asset collapse into one. Deliberately a superset of what the platform
+# extracts (no word boundaries, looser GHSA alphabet): an id never needs such a token.
+VULN_TOKEN_RE = re.compile(r"cve-[0-9]{4}-[0-9]{4,}|ghsa(?:-[a-z0-9]{4}){3}", re.IGNORECASE)
 MAX_AGE_LIMIT = dt.timedelta(days=30)
 
 # Free text must describe, never instruct. Deliberately small and aligned in spirit with
@@ -45,7 +52,7 @@ _RANK = {"declared": 0, "configured": 1, "observed": 2, "tested": 3}
 
 
 def parse_duration(text: str) -> dt.timedelta:
-    m = DURATION_RE.match(text)
+    m = DURATION_RE.fullmatch(text) if isinstance(text, str) else None
     if not m:
         raise ValueError("duration must look like 90m, 24h or 7d")
     n, unit = int(m.group(1)), m.group(2)
@@ -100,7 +107,7 @@ class Selector(_Strict):
         if not v:
             raise ValueError("selector field must not be empty")
         for item in v:
-            if not SEL_VALUE_RE.match(item):
+            if not isinstance(item, str) or not SEL_VALUE_RE.fullmatch(item):
                 raise ValueError(f"bad selector value {item!r}")
         return tuple(sorted(set(v)))
 
@@ -213,8 +220,12 @@ class Invariant(_Strict):
     @field_validator("id")
     @classmethod
     def _id(cls, v: str) -> str:
-        if not ID_RE.match(v):
+        if not ID_RE.fullmatch(v):
             raise ValueError("id must look like 'std:no-internet-to-datastore' or 'acme:my-rule'")
+        if VULN_TOKEN_RE.search(v):
+            raise ValueError("id must not contain a CVE or GHSA identifier (CVE-YYYY-NNNN, "
+                             "GHSA-xxxx-xxxx-xxxx): the platform would treat every finding of "
+                             "this invariant as that vulnerability and merge them")
         return v
 
     @field_validator("title", "description")

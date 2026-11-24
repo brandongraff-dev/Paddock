@@ -44,10 +44,17 @@ def port(host, p, *, source="port_scan", last=NOW - H, md=None, aid=None, canoni
             "host_asset_id": None}
 
 
-def scan(target, *, ports="1-65535", finished=NOW - H, failed=False, summary=None, config=None):
+#: what the active worker writes into scans.result_summary for a clean full-port scan
+#: (workers/active/app/modules/port_scan.py + app/main.py: ports_scanned, tool_exit_ok, results_posted).
+GOOD = {"ports_scanned": "1-65535", "tool_exit_ok": True, "results_posted": True}
+
+
+def scan(target, *, ports="1-65535", finished=NOW - H, summary=None, config=None):
+    """A completed port_scan row. ``summary=None`` means the worker's three good markers; pass a
+    dict to replace the summary entirely (``{}`` = a pre-marker scan with nothing proven)."""
     return {"id": str(uuid.uuid4()), "target": target, "started_at": finished - H,
             "finished_at": finished, "config": {"ports": ports} if config is None else config,
-            "result_summary": summary or {}, "error": None, "tool_failed": failed}
+            "result_summary": dict(GOOD) if summary is None else summary, "error": None}
 
 
 def cloud(ips_pub=(), ips_priv=(), rtype="instance"):
@@ -211,6 +218,10 @@ def test_partial_scan_hosts_are_counted_in_notes():
     out = build(rows(scans=[scan(A, ports="top-100"), scan(B, ports="1-1000"), scan(C)]))
     assert [c.node_ref for c in out.coverage] == [f"ip:{C}"]
     assert any(n.startswith("external_scan: 2 host(s) latest scan covered fewer") for n in out.notes)
+    out = build(rows(scans=[scan(A, summary={}), scan(B, summary=_markers(results_posted=False)), scan(C)]))
+    assert [c.node_ref for c in out.coverage] == [f"ip:{C}"]
+    assert any(n.startswith("external_scan: 2 host(s) latest scan lacks the completeness markers")
+               for n in out.notes)
 
 
 @pytest.mark.parametrize("ports", ["1-65535", "full", "FULL", " 1-65535 ", "1-1024,1025-65535",
@@ -224,12 +235,90 @@ def test_full_port_scan_gives_inbound_observed_coverage(ports):
     assert c.detail["ports"] == "1-65535" and c.detail["proto"] == "tcp"
 
 
-def test_tool_failure_or_scan_error_asserts_no_coverage():
-    for s in (scan(A, failed=True), scan(A, summary={"error": "naabu crashed"}),
-              scan(A, summary={"tool_failed": True}), {**scan(A), "error": "boom"}):
+def test_scan_error_or_failure_keys_assert_no_coverage():
+    for s in (scan(A, summary={**GOOD, "error": "naabu crashed"}),
+              scan(A, summary={**GOOD, "tool_failed": True}), {**scan(A), "error": "boom"}):
         out = build(rows(scans=[s]))
         assert out.coverage == []
-        assert any("tool failure" in n for n in out.notes)
+        assert any("recorded an error" in n for n in out.notes)
+
+
+# builders-1: "completed" + a full-port config proved nothing. The worker's markers are the contract.
+def _markers(**over):
+    m = dict(GOOD)
+    for k, v in over.items():
+        if v is _GONE:
+            m.pop(k, None)
+        else:
+            m[k] = v
+    return m
+
+
+_GONE = object()
+
+
+@pytest.mark.parametrize("summary", [
+    {},                                                                    # pre-marker scan
+    {"ports": 3, "open_ports": [22, 80, 443]},                             # the original false-HOLDS shape
+    {"ports": 0},                                                          # timeout / ToolFailed shape
+    _markers(tool_exit_ok=_GONE), _markers(results_posted=_GONE), _markers(ports_scanned=_GONE),
+    _markers(tool_exit_ok=False), _markers(results_posted=False),
+    _markers(tool_exit_ok="true"), _markers(results_posted=1), _markers(tool_exit_ok=None),
+    _markers(ports_scanned=["1-65535"]), _markers(ports_scanned=True),
+])
+def test_scan_without_all_three_true_markers_asserts_no_coverage(summary):
+    out = build(rows([port(A, 80)], scans=[scan(A, summary=summary)]))
+    assert out.coverage == []
+    assert dsts(out) == [(f"ip:{A}", "tcp", 80)]            # the observation itself still counts
+    assert any("lacks the completeness markers" in n or "recorded an error" in n for n in out.notes)
+
+
+@pytest.mark.parametrize("marker", ["top-100", "22,443", "1-65534", "2-65535", "1-1000", "", "garbage",
+                                    "u:53", "0-65535", "1-65536"])
+def test_marker_naming_fewer_than_all_ports_asserts_no_coverage(marker):
+    out = build(rows(scans=[scan(A, summary=_markers(ports_scanned=marker))]))
+    assert out.coverage == []
+    assert any("fewer than all 65535" in n or "lacks the completeness" in n for n in out.notes)
+
+
+def test_markers_alone_do_not_override_a_partial_config():
+    """Both must agree: a full marker on a scan whose config asked for fewer ports is not trusted."""
+    out = build(rows(scans=[scan(A, ports="top-100")]))
+    assert out.coverage == []
+
+
+@pytest.mark.parametrize("marker", ["1-65535", "full", " 1-65535 "])
+def test_full_range_marker_spellings_give_coverage(marker):
+    out = build(rows(scans=[scan(A, summary=_markers(ports_scanned=marker))]))
+    assert [c.node_ref for c in out.coverage] == [f"ip:{A}"]
+
+
+def test_open_ports_listed_in_the_summary_must_exist_as_port_assets():
+    """Defence in depth: results_posted lies (or an ingest was lost) -> listed ports are missing."""
+    s = scan(A, summary={**GOOD, "ports": 2, "open_ports": [22, 443]})
+    assert build(rows([port(A, 22)], scans=[s])).coverage == []             # 443 never landed
+    assert build(rows([], scans=[s])).coverage == []
+    out = build(rows([port(A, 22), port(A, 443)], scans=[s]))               # all landed
+    assert [c.node_ref for c in out.coverage] == [f"ip:{A}"]
+    assert any("never landed" in n for n in build(rows([], scans=[s])).notes)
+    for bad in ("22", [True], [None], [22, "80"], {"22": 1}):
+        out = build(rows([port(A, 22)], scans=[scan(A, summary={**GOOD, "open_ports": bad})]))
+        assert out.coverage == [], bad
+
+
+def test_ipv6_scan_failure_is_judged_from_the_scan_row_not_a_mangled_canonical():
+    """builders-2: the old guard joined findings on canonical == scan target; the worker's finding was
+    keyed on '2606' for 2606:4700:4700::1111. Now the markers on the row decide, so v6 == v4."""
+    bad = scan(V6, summary=_markers(tool_exit_ok=False))
+    good = scan(V6)
+    assert build(rows(scans=[bad])).coverage == []
+    assert [c.node_ref for c in build(rows(scans=[good])).coverage] == [f"ip:{V6}"]
+
+
+def test_scan_row_has_no_finding_lookup_dependency():
+    """The guard must not read findings: SQL for scans names neither findings nor a tool-rule list."""
+    assert "findings" not in ext.SCANS_SQL.lower()
+    assert not hasattr(ext, "TOOL_FAILURE_RULES")
 
 
 def test_stale_scan_private_target_hostname_target_and_out_of_scope_give_no_coverage():
@@ -459,7 +548,8 @@ async def _scan(con, target, *, kind="port_scan", status="completed", ports="1-6
         "INSERT INTO scans (kind, target, status, started_at, finished_at, config, result_summary) "
         "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb) RETURNING id",
         kind, target, status, started or fin - H,
-        fin if status in ("completed", "failed") else None, json.dumps(cfg), json.dumps(summary or {}))
+        fin if status in ("completed", "failed") else None, json.dumps(cfg),
+        json.dumps(dict(GOOD) if summary is None else summary))
 
 
 async def _load_build(pool, tid=TENANT_A):
@@ -525,22 +615,23 @@ async def test_loader_picks_the_latest_completed_scan_per_target(app_pool):
     assert out.coverage[0].observed_at == DB_NOW - H
 
 
-async def test_loader_tool_failure_finding_blocks_coverage_but_old_failure_does_not(app_pool):
+async def test_loader_scan_markers_decide_coverage_not_findings(app_pool):
+    """builders-1/2 on real SQL: a tool-error finding is irrelevant (even keyed by the exact IPv6
+    target); only the scan row's markers matter, and an unmarked completed scan gives nothing."""
     async with conn_for(app_pool) as con:
         await _scope(con, "93.184.216.0/24")
-        a = await _asset(con, "ipv4", A)
-        b = await _asset(con, "ipv4", B)
-        for aid, rule in ((a, "tool-unavailable-naabu"), (b, "tool-error-naabu")):
-            await con.execute(
-                "INSERT INTO findings (asset_id, rule_id, rule_source, severity, title, description, last_seen) "
-                "VALUES ($1, $2, 'policy', 'info', 't', 'd', $3)", aid, rule,
-                DB_NOW - H if aid == a else DB_NOW - 100 * H)           # B's failure predates its scan
-        await _scan(con, A, finished=DB_NOW - H / 2, started=DB_NOW - 2 * H)
-        await _scan(con, B, finished=DB_NOW - H / 2, started=DB_NOW - 2 * H)
+        await _scope(con, "2606:4700::/32", kind="ipv6_cidr")
+        await _scan(con, A)                                                    # clean markers
+        await _scan(con, B, summary={})                                        # old/unmarked scan
+        await _scan(con, "93.184.216.36", summary={**GOOD, "tool_exit_ok": False})
+        await _scan(con, "93.184.216.37", summary={**GOOD, "results_posted": False})
+        await _scan(con, V6, summary={**GOOD, "tool_exit_ok": False})          # IPv6 failure
+        await _scan(con, "93.184.216.38", summary={"ports": 3, "open_ports": [22, 80, 443]})
     r, out = await _load_build(app_pool)
-    flags = {s["target"]: s["tool_failed"] for s in r.scans}
-    assert flags == {A: True, B: False}
-    assert [c.node_ref for c in out.coverage] == [f"ip:{B}"]
+    assert {s["target"] for s in r.scans} == {A, B, "93.184.216.36", "93.184.216.37", V6,
+                                              "93.184.216.38"}
+    assert "tool_failed" not in r.scans[0]                                     # no findings join
+    assert [c.node_ref for c in out.coverage] == [f"ip:{A}"]
 
 
 async def test_loader_sees_only_its_own_tenant(app_pool, tenant_b):
@@ -585,3 +676,104 @@ def test_default_max_age_comes_from_settings():
     from app.config import settings
     out = ext.build(rows([port(A, 80)]), NOW)
     assert out.window == dt.timedelta(hours=settings.assurance_external_max_age_h)
+
+
+# --------------------------------------------------------------------------- #
+# CONTRACT: the worker's real request bodies against the real orchestrator endpoints
+# --------------------------------------------------------------------------- #
+# This is the test that was missing. workers/active posted {"assets", "edges"} and {"findings"},
+# the orchestrator answered 422 (AssetBulkIn/FindingBulkIn take "items"; edges have their own
+# endpoint), the worker swallowed it, completed the scan anyway, and the builder granted full-port
+# coverage from a scan whose results had never landed (Provable Containment builders-1).
+#
+# The dicts below are copied from what workers/active/app/orchestrator.py now puts on the wire for a
+# port_scan result (assets_bulk_body / edges_bulk_body / findings_bulk_body). The worker's own test
+# suite (workers/active/tests/conftest.py, test_orchestrator_client.py) asserts the same literal
+# shapes, so a change on either side without the other fails a test.
+
+WORKER_ASSETS_BODY = {"items": [
+    {"kind": "ipv4", "value": A, "canonical": A, "source": "port_scan", "metadata": {}},
+    {"kind": "port", "value": f"{A}:22", "canonical": f"{A}:22", "source": "port_scan",
+     "metadata": {"port": 22, "protocol": "tcp"}},
+    {"kind": "service", "value": f"{A}:22/ssh", "canonical": f"{A}:22/ssh", "source": "port_scan",
+     "metadata": {"guessed_from": "port_number", "service": "ssh"}},
+    {"kind": "port", "value": f"{A}:5432", "canonical": f"{A}:5432", "source": "port_scan",
+     "metadata": {"port": 5432, "protocol": "tcp"}},
+    {"kind": "ipv6", "value": V6, "canonical": V6, "source": "port_scan", "metadata": {}},
+    {"kind": "port", "value": f"{V6}:443", "canonical": f"{V6}:443", "source": "port_scan",
+     "metadata": {"port": 443, "protocol": "tcp"}},
+]}
+WORKER_EDGES_BODY = {"edges": [
+    {"src_kind": "ipv4", "src_canonical": A, "dst_kind": "port", "dst_canonical": f"{A}:22",
+     "kind": "hosts"},
+    {"src_kind": "port", "src_canonical": f"{A}:22", "dst_kind": "service",
+     "dst_canonical": f"{A}:22/ssh", "kind": "runs"},
+    {"src_kind": "ipv6", "src_canonical": V6, "dst_kind": "port", "dst_canonical": f"{V6}:443",
+     "kind": "hosts"},
+]}
+WORKER_FINDINGS_BODY = {"items": [
+    {"asset_value": V6, "asset_kind": "ipv6", "rule_id": "tool-error-naabu", "rule_source": "policy",
+     "severity": "info", "title": "naabu failed to complete", "description": "timeout after 600s",
+     "evidence": {"tool": "naabu", "error": "timeout after 600s"}},
+]}
+#: exactly what the worker's main loop sends to POST /v1/scans/{id}/complete after the posts above
+WORKER_COMPLETE_SUMMARY = {"ports": 2, "open_ports": [22, 5432], "ports_scanned": "1-65535",
+                           "tool_exit_ok": True, "results_posted": True}
+
+
+async def test_contract_worker_bodies_are_accepted_and_land(client, db_pool):
+    r = await client.post("/v1/assets/bulk", json=WORKER_ASSETS_BODY)
+    assert r.status_code == 200, r.text
+    assert r.json()["inserted"] + r.json()["updated"] == len(WORKER_ASSETS_BODY["items"])
+    r = await client.post("/v1/edges/bulk", json=WORKER_EDGES_BODY)
+    assert r.status_code == 200, r.text
+    assert r.json()["edges_inserted"] == 3 and r.json()["edges_skipped_missing_endpoint"] == 0
+    r = await client.post("/v1/findings/bulk", json=WORKER_FINDINGS_BODY)
+    assert r.status_code == 200, r.text
+    assert r.json()["inserted"] == 1
+
+    async with db_pool.acquire() as con:
+        got = {(k, c) for k, c in await con.fetch("SELECT kind, canonical FROM assets")}
+        n_edges = await con.fetchval("SELECT count(*) FROM asset_edges")
+        f = await con.fetchrow(
+            "SELECT a.kind, a.canonical, f.rule_id FROM findings f JOIN assets a ON a.id = f.asset_id")
+    assert {("port", f"{A}:22"), ("port", f"{A}:5432"), ("ipv6", V6), ("port", f"{V6}:443")} <= got
+    assert n_edges == 3
+    # the tool-failure finding lands on the EXACT IPv6 target asset, not on '2606' (builders-2)
+    assert (f["kind"], f["canonical"], f["rule_id"]) == ("ipv6", V6, "tool-error-naabu")
+
+
+async def test_contract_the_old_worker_bodies_are_rejected():
+    """Pin WHY the old shapes were a bug: the orchestrator rejects them (so a regression in the
+    worker would show up as a 422 here and in the worker tests, not as silent missing coverage)."""
+    # (no DB needed: validation fails before the handler runs)
+    from pydantic import ValidationError
+
+    from app.models import AssetBulkIn, EdgeBulkIn, FindingBulkIn
+    with pytest.raises(ValidationError):
+        AssetBulkIn.model_validate({"assets": WORKER_ASSETS_BODY["items"], "edges": []})
+    with pytest.raises(ValidationError):
+        FindingBulkIn.model_validate({"findings": WORKER_FINDINGS_BODY["items"]})
+    AssetBulkIn.model_validate(WORKER_ASSETS_BODY)
+    EdgeBulkIn.model_validate(WORKER_EDGES_BODY)
+    FindingBulkIn.model_validate(WORKER_FINDINGS_BODY)
+
+
+async def test_contract_posted_scan_flows_through_the_builder_and_markers_gate_coverage(
+        client, db_pool, app_pool):
+    """Worker bodies -> real endpoints -> a completed scan with the worker's summary -> builder."""
+    r = await client.post("/v1/assets/bulk", json=WORKER_ASSETS_BODY)
+    assert r.status_code == 200, r.text
+    async with conn_for(app_pool) as con:
+        await _scope(con, "93.184.216.0/24")
+        await _scan(con, A, summary=WORKER_COMPLETE_SUMMARY)
+    rr, out = await _load_build(app_pool)
+    assert {(e.dst_ref, e.port_lo) for e in out.edges if e.dst_ref == f"ip:{A}"} == {
+        (f"ip:{A}", 22), (f"ip:{A}", 5432)}
+    assert [c.node_ref for c in out.coverage] == [f"ip:{A}"]       # all three markers + ports landed
+
+    # the same scan WITHOUT results_posted (the old worker's shape) -> no coverage, edges unchanged
+    async with conn_for(app_pool) as con:
+        await con.execute("UPDATE scans SET result_summary = result_summary - 'results_posted'")
+    _, out2 = await _load_build(app_pool)
+    assert out2.coverage == [] and {e.dst_ref for e in out2.edges} == {e.dst_ref for e in out.edges}

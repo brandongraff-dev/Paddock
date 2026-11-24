@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import ipaddress
+import re
 from typing import Any, Literal
 from uuid import UUID
 
@@ -29,6 +30,11 @@ from ..db import get_pool
 router = APIRouter(prefix="/v1/reach", tags=["assurance"])
 
 MAX_BATCH = 1000
+#: longest accepted address text (a v6 literal with a v4 tail is 45 characters).
+MAX_IP_TEXT = 64
+#: the canonical dashed UUID text; pydantic's own parser also takes braces, ``urn:uuid:`` and bare
+#: hex, i.e. several spellings of one sensor.
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 #: A sensor clock may run ahead; beyond this we do not believe it (same slack as the store/library).
 CLOCK_SLACK = dt.timedelta(minutes=5)
 #: Per-record counter ceiling, and the saturation point of the stored sums (BIGINT is 2**63-1).
@@ -41,8 +47,8 @@ class FlowIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    src_ip: str
-    dst_ip: str
+    src_ip: str = Field(max_length=MAX_IP_TEXT)
+    dst_ip: str = Field(max_length=MAX_IP_TEXT)
     proto: Literal["icmp", "tcp", "udp", "any"]
     dst_port: int = Field(ge=0, le=65535)
     sensor_id: UUID
@@ -57,6 +63,12 @@ class FlowIn(BaseModel):
     def _ip(cls, v: str) -> str:
         """Canonical text (compressed, lowercase, v4-mapped unwrapped): the same spelling the
         builder's identity map uses, so one machine never appears under two spellings."""
+        # An IPv6 scope id (``fe80::1%eth0``, ``2001:db8::1%9``) is accepted by ``ipaddress`` since
+        # Python 3.9 but names no distinct machine: stored as text it would become a phantom node
+        # that the real host's edges and coverage never meet (review finding security-8). Reject it
+        # here (not only in ``norm_ip``) so the stored text never depends on that helper.
+        if "%" in v or len(v) > MAX_IP_TEXT:
+            raise ValueError("not an IP address (scope ids are not accepted)")
         try:
             ipaddress.ip_address(v.strip("[]"))
         except ValueError as exc:
@@ -65,6 +77,14 @@ class FlowIn(BaseModel):
         if out is None:  # pragma: no cover - norm_ip accepts everything ip_address does
             raise ValueError("not an IP address")
         return out
+
+    @field_validator("sensor_id", mode="before")
+    @classmethod
+    def _sensor_spelling(cls, v: Any) -> Any:
+        """One spelling per sensor: the stored key is part of the upsert's conflict target."""
+        if isinstance(v, str) and not _UUID_RE.fullmatch(v):
+            raise ValueError("sensor_id must be a UUID in canonical dashed form")
+        return v
 
     @field_validator("first_seen", "last_seen")
     @classmethod

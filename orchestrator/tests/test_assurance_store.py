@@ -771,3 +771,159 @@ async def test_all_ports_written_as_0_to_65535_is_widened_not_skipped(app_pool):
     assert rep.skipped == 0 and rep.edges_added == 3
     assert rows == {"ip:10.0.0.2": ("tcp", 1, 65535), "ip:10.0.0.3": ("any", 1, 65535),
                     "ip:10.0.0.4": ("icmp", 0, 0)}
+
+
+# =========================================================================== #
+# P1X hardening (runner-1, runner-2, builders-6, security-3)
+# =========================================================================== #
+
+async def test_leases_are_judged_on_the_database_clock_not_the_callers(app_pool):
+    """runner-1: a replica whose own clock is ahead must not steal a live lease. With ``now=None``
+    the claim/extend compare against the database's ``now()``; the caller's clock plays no part."""
+    async with conn_for(app_pool) as con:
+        assert await store.claim_eval(con, "pod-1", None, 300) is not None
+        # the old behaviour: pod-2 passes ITS clock (+301 s) and steals the lease. Explicit-now
+        # callers (tests) still can, but the runner passes None and cannot.
+        assert await store.claim_eval(con, "pod-2", None, 300) is None
+        assert await store.extend_eval(con, "pod-1", None, 300)
+        assert not await store.extend_eval(con, "pod-2", None, 300)
+        await con.execute("UPDATE assurance_state SET lease_until = now() - interval '1 second'")
+        assert not await store.extend_eval(con, "pod-1", None, 300)       # lapsed: cannot be revived
+        assert await store.claim_eval(con, "pod-2", None, 300) is not None
+
+
+async def test_fence_lease_is_true_only_for_the_live_owner_and_returns_the_graph_version(app_pool):
+    async with conn_for(app_pool) as con:
+        await store.bump_graph_version(con)
+        await store.bump_graph_version(con)
+        await store.claim_eval(con, "pod-1", None, 300)
+        async with con.transaction():
+            assert await store.fence_lease(con, "pod-1") == 2
+            assert await store.fence_lease(con, "pod-2") is None
+            assert await store.fence_lease(con, "") is None
+        await con.execute("UPDATE assurance_state SET lease_until = now() - interval '1 second'")
+        async with con.transaction():
+            assert await store.fence_lease(con, "pod-1") is None             # expired = not the owner any more
+        await con.execute("UPDATE assurance_state SET lease_owner = NULL, lease_until = NULL")
+        async with con.transaction():
+            assert await store.fence_lease(con, "pod-1") is None
+
+
+async def test_release_records_the_document_hash_only_with_the_watermark(app_pool):
+    async with conn_for(app_pool) as con:
+        await store.bump_graph_version(con)
+        assert (await store.get_state(con)).last_eval_doc_sha is None
+        await store.claim_eval(con, "pod-1", None, 300)
+        assert await store.release_eval(con, "pod-1", T0)                       # failed run: nothing recorded
+        assert (await store.get_state(con)).last_eval_doc_sha is None
+        await store.claim_eval(con, "pod-2", None, 300)
+        assert await store.release_eval(con, "pod-2", T0, evaluated_version=1, doc_sha="abc")
+        s = await store.get_state(con)
+        assert (s.last_eval_version, s.last_eval_doc_sha) == (1, "abc")
+
+
+async def _doc(pool, now=T0):
+    async with conn_for(pool) as con:
+        doc, diag = await graph_loader.load_graph_doc_with_diagnostics(con, now)
+    return doc, diag
+
+
+async def test_doc_sha_is_stable_ignores_pure_refreshes_and_sees_inputs_that_do_not_move_graph_version(app_pool, db_pool):
+    """runner-2: the hash covers what the evaluator reads. Node attrs and asset metadata feed the
+    document without moving graph_version; the clock and ``observed_at`` stamps must not move it."""
+    asset = await db_pool.fetchval(
+        "INSERT INTO assets (kind, value, canonical, source) VALUES ('cloud_resource', 'db-1', 'db-1', 'test') RETURNING id")
+    ref = refs.asset_ref(asset)
+    async with conn_for(app_pool) as con:
+        await store.upsert_zone(con, "prod", ["10.1.0.0/16"], set_by="a", justification="j")
+        await store.upsert_zone(con, "guest", ["10.9.0.0/16"], set_by="a", justification="j")
+
+    def out(ip, at):
+        return build(edges=[edge("internet", ref, last=at)], coverage=[cov(ref, at=at)],
+                     nodes=[NodeOut("internet", "internet"), NodeOut(ref, "cloud_db", asset_id=str(asset), attrs={"ips": [ip]})])
+
+    await persist(app_pool, out("10.1.0.5", T0), T0)
+    d0, _ = await _doc(app_pool, T0)
+    v0 = await version(app_pool)
+    sha0 = graph_loader.doc_sha(d0)
+    assert sha0 == graph_loader.doc_sha((await _doc(app_pool, T0))[0])                      # deterministic
+    # a refresh (later clock, later observed_at) is not a change
+    await persist(app_pool, out("10.1.0.5", T0 + H), T0 + H)
+    d1, _ = await _doc(app_pool, T0 + H)
+    assert graph_loader.doc_sha(d1) == sha0 and await version(app_pool) == v0
+    # an address change: the node moves zone, graph_version does not move, the hash does
+    await persist(app_pool, out("10.9.0.5", T0 + H), T0 + H)
+    d2, _ = await _doc(app_pool, T0 + H)
+    assert await version(app_pool) == v0
+    assert next(n for n in d2["nodes"] if n["id"] == ref)["zone"] == "guest"
+    sha2 = graph_loader.doc_sha(d2)
+    assert sha2 != sha0
+    # asset metadata (the crown-jewel tag) likewise
+    await db_pool.execute("UPDATE assets SET metadata = '{\"crown_jewel\": true}' WHERE id = $1", asset)
+    d3, _ = await _doc(app_pool, T0 + H)
+    assert await version(app_pool) == v0 and graph_loader.doc_sha(d3) != sha2
+
+
+async def test_a_cidr_expansion_overflow_is_reported_as_an_incomplete_graph(app_pool, monkeypatch):
+    """builders-6 (loader half): hitting the expansion cap sets ``cidr_overflow`` (the runner then
+    refuses to evaluate), in addition to the destinations in ``cidr_unexpanded``."""
+    src, dst = "ip:10.0.0.5", aid()
+    out = build(edges=[edge("cidr:10.0.0.0/24", dst)], coverage=[cov(dst)],
+                nodes=[NodeOut(src, "ip"), NodeOut("cidr:10.0.0.0/24", "cidr"), NodeOut(dst, "cloud_db")])
+    await persist(app_pool, out)
+    _, diag = await _doc(app_pool)
+    assert diag.cidr_unexpanded == [] and diag.cidr_overflow is False
+    monkeypatch.setattr(graph_loader, "MAX_EXPANDED_EDGES", 0)
+    doc, diag = await _doc(app_pool)
+    assert diag.cidr_unexpanded == [dst] and diag.cidr_overflow is True
+
+
+def _zones(n):
+    return [store.Zone(str(i), f"z{i}", "custom", (f"10.{i // 250}.{i % 250}.0/24", f"172.16.{i % 250}.0/24"))
+            for i in range(n)]
+
+
+def test_zone_index_agrees_with_the_one_shot_helpers_and_parses_each_zone_cidr_once(monkeypatch):
+    """security-3: resolving N node addresses used to re-parse every zone CIDR per address
+    (O(N x CIDRs) ip_network calls, seconds of event-loop stall). The index parses once."""
+    import ipaddress
+    zones = _zones(300) + [store.Zone("w", "wide", "custom", ("10.0.0.0/8", "2001:db8::/32"))]
+    calls = {"n": 0}
+    real = ipaddress.ip_network
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    probes = [f"10.{i % 2}.{i % 250}.{i % 200 + 1}" for i in range(400)] + ["2001:db8::5", "192.0.2.1", "10.0.0.0/20", "x"]
+    expected = {p: store.zone_matches(zones, p) for p in probes[:40]}          # reference (unmocked)
+    monkeypatch.setattr(ipaddress, "ip_network", counting)
+    idx = store.ZoneIndex(zones)
+    built = calls["n"]
+    got = {p: idx.matches(p) for p in probes}
+    assert built == sum(len(z.cidrs) for z in zones)                       # one parse per zone CIDR, ever
+    assert calls["n"] - built <= len(probes)                                # and one per probe, not per CIDR
+    assert {p: got[p] for p in probes[:40]} == expected
+    assert idx.resolve(["10.1.1.5", "192.0.2.1"]) == store.resolve_zone(zones, ["10.1.1.5", "192.0.2.1"])
+    assert idx.matches("10.0.0.0/7") == [] and idx.matches("2001:db8::1") == [("wide", 32)]
+
+
+async def test_the_loader_parses_zone_cidrs_once_per_load_not_once_per_node(app_pool, monkeypatch):
+    import ipaddress
+    async with conn_for(app_pool) as con:
+        for i in range(30):
+            await store.upsert_zone(con, f"z{i}", [f"10.{i}.0.0/16", f"172.{16 + i % 8}.{i}.0/24"], set_by="a", justification="j")
+    nodes = [NodeOut(f"ip:10.{i % 30}.1.{i % 200 + 1}", "ip") for i in range(80)]
+    await persist(app_pool, build(nodes=nodes))
+    calls = {"n": 0}
+    real = ipaddress.ip_network
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(ipaddress, "ip_network", counting)
+    doc, _ = await _doc(app_pool)
+    assert sum(1 for n in doc["nodes"] if n.get("zone", "").startswith("z")) == 80
+    # 60 zone CIDRs + a parse per node address (+ the document's own): nowhere near 80 x 60
+    assert calls["n"] < 400, calls["n"]

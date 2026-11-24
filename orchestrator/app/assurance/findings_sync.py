@@ -12,9 +12,22 @@ Rules, and why they are what they are:
   when the evidence under the HOLDS is at least ``observed``: a HOLDS that rests on a
   configuration read ("the rules say closed") does not stamp ``fix_verified_at``.
 * ``UNKNOWN`` never opens or closes anything. "We cannot tell" is neither a new problem nor a
-  fix. This is also why a ``VIOLATED`` verdict never closes findings for targets that dropped out
-  of the witness list: the list is capped and root-cause filtered, and the dropped target may only
-  have become unprovable, not safe.
+  fix.
+* A ``VIOLATED`` verdict closes the findings of targets that PROVABLY stopped violating, and
+  nothing else. The witness list is capped (5) and root-cause filtered, so it can never be the
+  evidence that a target is fine; the library's ``violating_targets`` (EVERY violator found,
+  sorted, capped at 5000 with ``violating_truncated``) can. An open finding is closed only if its
+  target is absent from that list AND the list is complete (not truncated, present, non-empty)
+  AND the target is not a blind spot inbound and not in the library's ``unproven_targets`` (a
+  target nobody can see into, or that an unknown edge could still reach, may merely have become
+  unprovable, not safe: the evaluator would answer UNKNOWN for it alone). ``fix_verified_at``
+  follows the same evidence-tier rule as HOLDS.
+* Fencing: when the caller passes ``lease_owner`` (the runner does), every close is done inside a
+  transaction that first proves that owner still holds a live tenant lease (database clock) and
+  that the evaluated graph version is not older than the tenant's current one. A stale evaluator
+  (its lease lapsed while it ran) therefore can never close or verify a finding that a newer
+  evaluator just opened. Opening and refreshing findings is not fenced beyond a pre-check: a
+  stale VIOLATED is noise, never a false all-clear.
 * The evidence has a **constant key set** (the upsert merges evidence with ``||``, so a varying
   key set would leave stale keys behind) and never carries ``url`` / ``matched_at`` / a CVE-like
   string: those keys steer verification jobs and CVE de-duplication, which are meaningless here.
@@ -33,6 +46,7 @@ from typing import Any, Optional, Sequence
 
 from .. import audit, lifecycle
 from ..queue import publish_event
+from . import store
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +82,8 @@ class SyncReport:
     verified: int = 0            # closed AND stamped fix_verified_at
     left_alone: int = 0          # fixed-but-suppressed, accepted, false positive, ...
     suppressed: int = 0
-    skipped: str = ""            # why nothing was done ('unknown', 'findings_disabled', ...)
+    skipped: str = ""            # why nothing was done ('unknown', 'findings_disabled', 'lease_lost', ...)
+    close_skipped: str = ""      # why a VIOLATED verdict closed nothing ('truncated', 'no_target_list', ...)
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -303,33 +318,129 @@ UPDATE findings f
 RETURNING f.id, due.status AS from_status
 """
 
+#: Like ``_CLOSE_SQL`` but only for findings whose target is provably no longer violating:
+#: ``$7`` = every target the evaluator still finds violating, ``$8`` = targets it cannot see into.
+#: A finding without a recorded target (``evidence.target_ref``) is never closed this way.
+_CLOSE_RESOLVED_SQL = """
+WITH due AS (
+    SELECT id, status FROM findings
+     WHERE rule_source = 'invariant'
+       AND (rule_id = $1::text OR starts_with(rule_id, $2::text))
+       AND status IN ('open', 'triaged') AND suppressed_by IS NULL
+       AND evidence->>'target_ref' IS NOT NULL
+       AND NOT ((evidence->>'target_ref') = ANY($7::text[]))
+       AND NOT ((evidence->>'target_ref') = ANY($8::text[]))
+     FOR UPDATE
+)
+UPDATE findings f
+   SET status = 'fixed', status_reason = $3::text, status_by = $4::text, status_changed_at = $5::timestamptz,
+       accepted_until = NULL,
+       fix_verified_at = CASE WHEN $6::boolean THEN $5::timestamptz ELSE NULL END
+  FROM due WHERE f.id = due.id
+RETURNING f.id, due.status AS from_status
+"""
+
+
+async def _fenced(con, lease_owner: Optional[str], graph_version: int, rep: SyncReport) -> bool:
+    """True if it is safe to close findings from this evaluation. Must run in the transaction
+    that does the closing (the state row stays share-locked until it ends). No ``lease_owner`` =
+    an unfenced caller (the API, tests): allowed, as before."""
+    if lease_owner is None:
+        return True
+    current = await store.fence_lease(con, lease_owner)
+    if current is None:
+        rep.skipped = "lease_lost"
+        return False
+    if current > graph_version:
+        # The graph moved on while we evaluated: this verdict describes an older world. The
+        # invariant stays due (its last_graph_version is behind), the next evaluation decides.
+        rep.skipped = "graph_moved"
+        return False
+    return True
+
+
+async def _after_close(pool, redis: Any, rows: list[Any], verified: bool, tier: Optional[str], transition: str,
+                       rep: SyncReport) -> None:
+    rep.closed += len(rows)
+    rep.verified += len(rows) if verified else 0
+    for r in rows:
+        await _audit(pool, r["id"], {"transition": transition, "from": r["from_status"],
+                                     "to": "fixed", "verified": verified, "evidence_tier": tier})
+        await _publish(redis, {"event": "finding_closed", "finding_id": str(r["id"]), "status": "fixed"})
+
 
 async def _close_all(pool, redis: Any, invariant_id: str, tier: Optional[str], graph_version: int,
-                     now: datetime, rep: SyncReport) -> None:
+                     now: datetime, rep: SyncReport, lease_owner: Optional[str] = None) -> None:
     verified = tier in VERIFYING_TIERS
     reason = (f"invariant holds at graph version {graph_version}"
               f" (evidence: {tier or 'none'}{'' if verified else ', not enough to verify'})")
     base = f"{RULE_PREFIX}{invariant_id}"
     async with pool.acquire() as con:
         async with con.transaction():
+            if not await _fenced(con, lease_owner, graph_version, rep):
+                return
             rows = await con.fetch(_CLOSE_SQL, base, base + "@", reason, ACTOR, now, verified)
             for r in rows:
                 await lifecycle.record_history(con, r["id"], r["from_status"], "fixed", reason, None, ACTOR)
-    rep.closed += len(rows)
-    rep.verified += len(rows) if verified else 0
-    for r in rows:
-        await _audit(pool, r["id"], {"transition": "invariant_holds", "from": r["from_status"],
-                                     "to": "fixed", "verified": verified, "evidence_tier": tier})
-        await _publish(redis, {"event": "finding_closed", "finding_id": str(r["id"]), "status": "fixed"})
+    await _after_close(pool, redis, rows, verified, tier, "invariant_holds", rep)
+
+
+def _blind_targets(result: dict[str, Any]) -> list[str]:
+    """Nodes the evaluator could not see INTO (inbound or both) and that matter to this verdict:
+    a finding for such a node must stay open, because "no known path" is not "fixed" there."""
+    out: set[str] = set()
+    for b in result.get("blind_spots") or []:
+        if not isinstance(b, dict) or not isinstance(b.get("node"), str):
+            continue
+        if b.get("relevant") is False:
+            continue
+        if b.get("direction", "both") in ("in", "both"):
+            out.add(b["node"])
+    return sorted(out)
+
+
+async def _close_resolved(pool, redis: Any, invariant_id: str, result: dict[str, Any], graph_version: int,
+                          now: datetime, rep: SyncReport, lease_owner: Optional[str]) -> None:
+    """While the verdict is still ``VIOLATED``: close findings of targets that no longer violate
+    (see the module docstring for what "provably" requires)."""
+    targets = result.get("violating_targets")
+    unproven = result.get("unproven_targets")
+    if (not isinstance(targets, list) or not targets or not all(isinstance(t, str) for t in targets)
+            or not isinstance(unproven, list) or not all(isinstance(t, str) for t in unproven)):
+        rep.close_skipped = "no_target_list"          # older library, or nothing to compare with
+        return
+    if result.get("violating_truncated"):
+        rep.close_skipped = "truncated"               # the list is not the whole set: close nothing
+        return
+    tier = result.get("evidence_tier")
+    verified = tier in VERIFYING_TIERS
+    reason = (f"no longer violating at graph version {graph_version}; the invariant still has "
+              f"{len(targets)} other violating target(s) (evidence: {tier or 'none'}"
+              f"{'' if verified else ', not enough to verify'})")
+    base = f"{RULE_PREFIX}{invariant_id}"
+    async with pool.acquire() as con:
+        async with con.transaction():
+            if not await _fenced(con, lease_owner, graph_version, rep):
+                return
+            rows = await con.fetch(_CLOSE_RESOLVED_SQL, base, base + "@", reason, ACTOR, now, verified,
+                                   targets, sorted(set(_blind_targets(result)) | set(unproven)))
+            for r in rows:
+                await lifecycle.record_history(con, r["id"], r["from_status"], "fixed", reason, None, ACTOR)
+    await _after_close(pool, redis, rows, verified, tier, "invariant_target_resolved", rep)
 
 
 async def sync_findings(
     pool, redis: Any, *, invariant_id: str, title: str, finding_enabled: bool = True,
     proposed_fixes: Sequence[str] = (), result: dict[str, Any], graph_version: int, now: datetime,
+    lease_owner: Optional[str] = None,
 ) -> SyncReport:
     """Apply one verdict (``Result.to_dict()``) to the tenant's findings. Must run inside the
     tenant's context (``tenancy.tenant_context``); every statement is tenant-scoped by the pool.
     Idempotent: running it twice with the same result changes nothing the second time.
+
+    ``lease_owner``: the evaluation lease token of the caller (the runner passes it). When given,
+    closing is fenced on it (module docstring); a fenced-out call changes nothing and reports
+    ``skipped='lease_lost'`` / ``'graph_moved'``.
     """
     verdict = str(result.get("verdict", ""))
     assertion = str(result.get("assertion", "unreachable"))
@@ -338,7 +449,8 @@ async def sync_findings(
         rep.skipped = "unknown"
         return rep
     if verdict == "HOLDS":
-        await _close_all(pool, redis, invariant_id, result.get("evidence_tier"), graph_version, now, rep)
+        await _close_all(pool, redis, invariant_id, result.get("evidence_tier"), graph_version, now, rep,
+                         lease_owner)
         return rep
     if verdict != "VIOLATED":
         rep.skipped = "unrecognised_verdict"
@@ -346,6 +458,11 @@ async def sync_findings(
     if not finding_enabled:
         rep.skipped = "findings_disabled"
         return rep
+    if lease_owner is not None:
+        async with pool.acquire() as con:
+            if await store.fence_lease(con, lease_owner) is None:
+                rep.skipped = "lease_lost"            # a stale evaluator writes nothing at all
+                return rep
 
     from ..models import FindingBulkIn
     from ..routers import findings as findings_router
@@ -370,6 +487,7 @@ async def sync_findings(
                 await _reopen(pool, redis, f.id, now, rep)
         elif f.status not in ("open", "triaged"):
             rep.left_alone += 1
+    await _close_resolved(pool, redis, invariant_id, result, graph_version, now, rep, lease_owner)
     return rep
 
 

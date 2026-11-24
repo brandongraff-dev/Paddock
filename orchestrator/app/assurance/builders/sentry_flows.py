@@ -12,16 +12,32 @@ Soundness stance (a false HOLDS is the worst failure, so every unknown widens, D
 * An address claimed by more than one asset is not guessed: the edge is emitted for **every**
   candidate (and ``ip:<addr>``), and the address earns no coverage.
 * A protocol we cannot name (``any``) or a TCP/UDP flow with no port is widened to all ports.
-* Coverage (directions ``in`` and ``out``, tier ``observed``) is asserted only for a node **all**
-  of whose known addresses were seen, inside the window, by a sensor that is active, online and has
-  uploaded. ``observed_at`` is the OLDEST such sensor's ``last_upload_at`` among the sensors that
-  saw the node, so one stale vantage point ages the claim. A silent or offline sensor leaves its
-  nodes blind. Nothing is inferred for an address that was never seen. Observed coverage proves
-  "no such traffic was seen", not "impossible" (section 10); the tier says exactly that.
+* Coverage (directions ``in`` and ``out``, tier ``observed``) is asserted for a node only when
+  **every** known address of the node is (1) inside a CIDR that an active, online sensor's operator
+  declared as that sensor's scope (``sensor_scopes``, schema 040) **and** (2) seen in the window in
+  a flow reported by that same sensor. A sensor that saw ONE flow to a host does not see the host's
+  other traffic (a cloud instance reached over a VPN, an on-prem machine that reuses a VPC's
+  private address), so "was an endpoint of a flow" is not visibility; the declared scope is the
+  only statement of what the sensor can see (review finding builders-3). A sensor with no declared
+  scope (or only unusable entries) covers nothing, and says so in ``notes``. The pinned contract
+  asks for one address in scope; requiring them all is stricter on purpose, because traffic on a
+  second address outside the scope is invisible to the sensor and a node-wide claim would be false.
+  ``observed_at`` is the OLDEST such sensor's ``last_upload_at`` (clamped to ``now``), so one stale
+  vantage point ages the claim; the newest sighting of the node is disclosed in ``detail`` so a
+  reader can see how old the node's own last flow is (builders-4). A silent or offline sensor leaves
+  its nodes blind. Observed coverage proves "no such traffic was seen", not "impossible"
+  (section 10); the tier says exactly that.
+* A read that hit the row cap is a soundness failure, not a note: edges that were loaded are kept
+  but **no coverage at all** is emitted, so a flood of cheap distinct flows degrades the verdict to
+  UNKNOWN instead of hiding an older violating edge behind "fully observed" nodes (builders-5,
+  security-1). The SQL aggregates per ``(src, dst, proto, port)`` first so row multiplicity (one row
+  per sensor) cannot cause that on its own.
 """
 from __future__ import annotations
 
 import datetime as dt
+import ipaddress
+import json
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
@@ -35,25 +51,40 @@ TIER = "observed"
 
 #: Same slack as the store/library: a timestamp further ahead than this is not believed.
 CLOCK_SLACK = dt.timedelta(minutes=5)
-#: Rows read per build. Hitting the cap loses edges (older ones first) and, conservatively, coverage.
+#: Aggregated flows read per build. Hitting the cap loses edges (older ones first), so the builder
+#: then withdraws ALL its coverage (a truncated edge set must never come with "fully observed").
 MAX_FLOWS = 200_000
+#: CIDRs honoured per sensor scope; a longer list is dropped whole (fail closed, bounded work).
+MAX_SCOPE_CIDRS = 256
 #: Candidates per endpoint when an address is ambiguous; beyond this we stop multiplying.
 _MAX_CANDIDATES = 8
 _MAX_EVIDENCE_SENSORS = 8
 _PROTOS = ("icmp", "tcp", "udp", "any")
 
+# One row per distinct flow (src, dst, proto, port), not per sensor: the table already keeps a row per
+# sensor, and the cap must count flows, not copies of them. Orientation is 'syn' if any sensor saw a
+# SYN, timestamps are the envelope, counters add. The cap then orders by newest sighting.
 _FLOWS_SQL = """
-SELECT src_ip, dst_ip, proto, dst_port, sensor_id::text AS sensor_id,
-       first_seen, last_seen, packets, bytes, oriented
+SELECT src_ip, dst_ip, proto, dst_port,
+       array_agg(DISTINCT sensor_id::text ORDER BY sensor_id::text) AS sensor_ids,
+       MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen,
+       COALESCE(SUM(packets), 0) AS packets, COALESCE(SUM(bytes), 0) AS bytes,
+       CASE WHEN bool_or(oriented = 'syn') THEN 'syn' ELSE 'heuristic' END AS oriented
   FROM reach_flow_obs
  WHERE last_seen >= $1
- ORDER BY last_seen DESC, src_ip, dst_ip, proto, dst_port
+ GROUP BY src_ip, dst_ip, proto, dst_port
+ ORDER BY MAX(last_seen) DESC, src_ip, dst_ip, proto, dst_port
  LIMIT $2
 """
 _SENSORS_SQL = """
 SELECT id::text AS id, name, status, online, last_upload_at
   FROM sensors
  ORDER BY id
+"""
+_SCOPES_SQL = """
+SELECT sensor_id::text AS sensor_id, cidrs
+  FROM sensor_scopes
+ ORDER BY sensor_id, id
 """
 
 
@@ -67,7 +98,7 @@ def default_window() -> dt.timedelta:
 
 
 async def load(conn: Any, now: dt.datetime, **opts: Any) -> dict[str, Any]:
-    """Recent flows + identity assets + sensors. Tenancy comes from the connection, never SQL."""
+    """Recent aggregated flows + identity assets + sensors + sensor scopes. Tenancy comes from the connection, never SQL."""
     window: dt.timedelta = opts.get("window") or default_window()
     flows = [dict(r) for r in await conn.fetch(_FLOWS_SQL, now - window, MAX_FLOWS + 1)]
     truncated = len(flows) > MAX_FLOWS
@@ -76,6 +107,7 @@ async def load(conn: Any, now: dt.datetime, **opts: Any) -> dict[str, Any]:
         "truncated": truncated,
         "assets": await _ipmap.load_ip_rows(conn),
         "sensors": [dict(r) for r in await conn.fetch(_SENSORS_SQL)],
+        "scopes": [dict(r) for r in await conn.fetch(_SCOPES_SQL)],
     }
 
 
@@ -112,6 +144,67 @@ def eligible_sensors(sensors: Iterable[Mapping[str, Any]], now: dt.datetime) -> 
     return out
 
 
+def parse_scopes(rows: Iterable[Mapping[str, Any]]) -> tuple[dict[str, tuple[Any, ...]], dict[str, int]]:
+    """sensor id -> declared networks, plus counters for the notes. Pure, order independent.
+
+    Only what parses as a canonical CIDR (or a bare address, a /32 or /128) is honoured. A network
+    with host bits set (``10.20.0.5/24``) is rejected rather than "fixed": we will not guess the
+    operator's intent, and guessing wide is a false HOLDS. ``/0`` is no scope at all (a sensor does
+    not see the whole address space), a ``%scope`` is not an address, and a v4-mapped v6 network is
+    read as the v4 network (the same unwrapping :func:`_ipmap.norm_ip` applies to addresses). More
+    than ``MAX_SCOPE_CIDRS`` entries, or two rows for one sensor, drop that sensor's scope entirely.
+    """
+    stats = {"bad_entries": 0, "too_many": 0, "duplicate": 0}
+    nets: dict[str, set[Any]] = {}
+    dup: set[str] = set()
+    for row in sorted(rows, key=lambda r: (str(r.get("sensor_id")), json.dumps(r.get("cidrs"), default=str))):
+        sid = _uuid_text(row.get("sensor_id"))
+        if sid is None:
+            continue
+        if sid in nets or sid in dup:
+            dup.add(sid)
+            continue
+        cidrs = row.get("cidrs")
+        cidrs = list(cidrs) if isinstance(cidrs, (list, tuple)) else []
+        if len(cidrs) > MAX_SCOPE_CIDRS:
+            stats["too_many"] += 1
+            dup.add(sid)             # reuse the "no scope for this sensor" path
+            continue
+        good: set[Any] = set()
+        for c in cidrs:
+            net = _parse_cidr(c)
+            if net is None:
+                stats["bad_entries"] += 1
+            else:
+                good.add(net)
+        nets[sid] = good
+    for sid in dup:
+        nets.pop(sid, None)
+    stats["duplicate"] = len(dup) - stats["too_many"]
+    out = {sid: tuple(sorted(ns, key=lambda n: (n.version, int(n.network_address), n.prefixlen)))
+           for sid, ns in nets.items() if ns}
+    return out, stats
+
+
+def _parse_cidr(text: Any) -> Any:
+    if not isinstance(text, str) or "%" in text or len(text) > 64:
+        return None
+    try:
+        net = ipaddress.ip_network(text.strip(), strict=True)
+    except ValueError:
+        return None
+    if net.prefixlen == 0:
+        return None
+    if net.version == 6 and net.subnet_of(_V4_MAPPED):
+        net = ipaddress.ip_network((net.network_address.ipv4_mapped, net.prefixlen - 96), strict=True)
+        if net.prefixlen == 0:
+            return None
+    return net
+
+
+_V4_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
+
+
 @dataclass
 class _Edge:
     first: dt.datetime
@@ -140,6 +233,15 @@ def _ports(proto: str, port: int) -> tuple[int, int, Optional[str]]:
     return port, port, None
 
 
+def _row_sensors(row: Mapping[str, Any]) -> tuple[str, ...]:
+    """Sensors that reported this flow: one (``sensor_id``) or, for an aggregated row, several
+    (``sensor_ids``). Unparseable ids are dropped; they can earn neither coverage nor evidence."""
+    raw = row.get("sensor_ids")
+    cand = list(raw) if isinstance(raw, (list, tuple)) else []
+    cand.append(row.get("sensor_id"))
+    return tuple(sorted({u for u in (_uuid_text(c) for c in cand if c is not None) if u}))
+
+
 def _usable(row: Mapping[str, Any], now: dt.datetime, floor: dt.datetime) -> Optional[dict[str, Any]]:
     src, dst = _ipmap.norm_ip(row.get("src_ip")), _ipmap.norm_ip(row.get("dst_ip"))
     last, first = _aware(row.get("last_seen")), _aware(row.get("first_seen"))
@@ -152,7 +254,7 @@ def _usable(row: Mapping[str, Any], now: dt.datetime, floor: dt.datetime) -> Opt
         return None
     first = min(first or last, last)
     return {"src": src, "dst": dst, "proto": proto, "port": port, "first": first, "last": last,
-            "syn": row.get("oriented") == "syn", "sensor": _uuid_text(row.get("sensor_id")),
+            "syn": row.get("oriented") == "syn", "sensors": _row_sensors(row),
             "packets": max(0, int(row.get("packets") or 0)), "bytes": max(0, int(row.get("bytes") or 0))}
 
 
@@ -171,6 +273,8 @@ def build(rows: Mapping[str, Any], now: dt.datetime, **opts: Any) -> BuildOutput
     floor = now - window
     ip_map = _ipmap.build_ip_map(rows.get("assets") or [])
     sensors = eligible_sensors(rows.get("sensors") or [], now)
+    scopes, scope_stats = parse_scopes(rows.get("scopes") or [])
+    truncated = bool(rows.get("truncated"))
 
     flows: list[dict[str, Any]] = []
     bad = 0
@@ -180,15 +284,17 @@ def build(rows: Mapping[str, Any], now: dt.datetime, **opts: Any) -> BuildOutput
             bad += 1
         else:
             flows.append(u)
-    flows.sort(key=lambda f: (f["src"], f["dst"], f["proto"], f["port"], f["sensor"] or ""))
+    flows.sort(key=lambda f: (f["src"], f["dst"], f["proto"], f["port"], f["sensors"]))
 
     edges: dict[tuple, _Edge] = {}
-    seen: dict[str, set[str]] = {}          # ip -> eligible sensors that saw it in the window
+    seen: dict[str, dict[str, dt.datetime]] = {}   # ip -> eligible sensor -> its newest sighting
     self_loops = 0
     for f in flows:
-        if f["sensor"] in sensors:
-            for ip in (f["src"], f["dst"]):
-                seen.setdefault(ip, set()).add(f["sensor"])
+        for sid in f["sensors"]:
+            if sid in sensors:
+                for ip in (f["src"], f["dst"]):
+                    cur = seen.setdefault(ip, {})
+                    cur[sid] = max(cur.get(sid, f["last"]), f["last"])
         lo, hi, widened = _ports(f["proto"], f["port"])
         srcs, dsts = _candidates(ip_map, f["src"]), _candidates(ip_map, f["dst"])
         ambiguous = ip_map.is_ambiguous(f["src"]) or ip_map.is_ambiguous(f["dst"])
@@ -201,8 +307,7 @@ def build(rows: Mapping[str, Any], now: dt.datetime, **opts: Any) -> BuildOutput
                 e.first, e.last = min(e.first, f["first"]), max(e.last, f["last"])
                 e.syn = e.syn or f["syn"]
                 e.packets, e.bytes = e.packets + f["packets"], e.bytes + f["bytes"]
-                if f["sensor"]:
-                    e.sensors.add(f["sensor"])
+                e.sensors.update(f["sensors"])
                 e.src_ips.add(f["src"])
                 e.dst_ips.add(f["dst"])
                 e.widened = e.widened or widened
@@ -210,12 +315,18 @@ def build(rows: Mapping[str, Any], now: dt.datetime, **opts: Any) -> BuildOutput
 
     _add_possible_reverses(edges)
     edge_outs = [_edge_out(k, e) for k, e in sorted(edges.items())]
-    coverage, cov_notes = _coverage(ip_map, seen, sensors)
+    if truncated:
+        # Edges were lost with the rows past the cap, so no node can be called "fully observed":
+        # fail closed. (Loaded edges stay: more edges only make verdicts more cautious.)
+        coverage, cov_notes = [], {"partial": 0, "ambiguous": 0, "out_of_scope": 0}
+    else:
+        coverage, cov_notes = _coverage(ip_map, seen, sensors, scopes)
 
     node_refs = {e.src_ref for e in edge_outs} | {e.dst_ref for e in edge_outs} | {c.node_ref for c in coverage}
     nodes = [_node(ref, ip_map) for ref in sorted(node_refs)]
 
-    notes = _notes(len(flows), bad, edge_outs, edges, self_loops, sensors, rows, ip_map, cov_notes)
+    notes = _notes(len(flows), bad, edge_outs, edges, self_loops, sensors, scopes, scope_stats, truncated,
+                   ip_map, cov_notes)
     return BuildOutput(source=SOURCE, mode="window", nodes=nodes, edges=edge_outs,
                        coverage=coverage, window=window, notes=notes)
 
@@ -272,11 +383,21 @@ def _node(ref: str, ip_map: _ipmap.IpMap) -> NodeOut:
     return NodeOut(ref=ref, kind="ip", label=value or "", attrs={"ip": value})
 
 
-def _coverage(ip_map: _ipmap.IpMap, seen: Mapping[str, set[str]],
-              sensors: Mapping[str, dt.datetime]) -> tuple[list[CoverageOut], dict[str, int]]:
-    """Both-direction observed coverage for fully seen, unambiguous nodes only."""
-    stats = {"partial": 0, "ambiguous": 0}
-    # node ref -> the addresses that must ALL have been seen for the node to count as covered
+def _vantage(ip: str, sightings: Mapping[str, dt.datetime], scopes: Mapping[str, tuple[Any, ...]]) -> list[str]:
+    """Sensors that saw ``ip`` AND declared a scope containing it, sorted."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:                      # pragma: no cover - norm_ip output always parses
+        return []
+    return sorted(s for s in sightings if any(addr in net for net in scopes.get(s, ())))
+
+
+def _coverage(ip_map: _ipmap.IpMap, seen: Mapping[str, Mapping[str, dt.datetime]],
+              sensors: Mapping[str, dt.datetime],
+              scopes: Mapping[str, tuple[Any, ...]]) -> tuple[list[CoverageOut], dict[str, int]]:
+    """Both-direction observed coverage for unambiguous nodes all of whose addresses are in scope."""
+    stats = {"partial": 0, "ambiguous": 0, "out_of_scope": 0}
+    # node ref -> the addresses that must ALL be seen inside a declared scope for the node to count
     owned: dict[str, tuple[str, ...]] = {}
     for ip in sorted(seen):
         if ip_map.is_ambiguous(ip):
@@ -286,12 +407,21 @@ def _coverage(ip_map: _ipmap.IpMap, seen: Mapping[str, set[str]],
         owned[ref] = (ip_map.ips_of(ref) or (ip,)) if ref.startswith("asset:") else (ip,)
     out: list[CoverageOut] = []
     for ref, ips in sorted(owned.items()):
-        if any(ip not in seen or ip_map.is_ambiguous(ip) for ip in ips):
-            stats["partial"] += 1
+        van = {ip: (_vantage(ip, seen[ip], scopes) if ip in seen and not ip_map.is_ambiguous(ip) else [])
+               for ip in ips}
+        if any(not v for v in van.values()):
+            # seen by a sensor whose declared scope does not include it is the loud case (a remote
+            # endpoint); an address never seen at all is the older "partial" case
+            if any(ip in seen and not van[ip] and not ip_map.is_ambiguous(ip) for ip in ips):
+                stats["out_of_scope"] += 1
+            else:
+                stats["partial"] += 1
             continue
-        vantage = sorted({s for ip in ips for s in seen[ip]})
+        vantage = sorted({s for v in van.values() for s in v})
         observed_at = min(sensors[s] for s in vantage)
-        detail = {"sensors": vantage[:_MAX_EVIDENCE_SENSORS], "ips": list(ips)[:_MAX_EVIDENCE_SENSORS]}
+        last = max(seen[ip][s] for ip in ips for s in van[ip])
+        detail = {"sensors": vantage[:_MAX_EVIDENCE_SENSORS], "ips": list(ips)[:_MAX_EVIDENCE_SENSORS],
+                  "last_sighting": last.isoformat()}
         for direction in ("in", "out"):
             out.append(CoverageOut(node_ref=ref, direction=direction, tier=TIER,
                                    observed_at=observed_at, source=SOURCE, detail=detail))
@@ -299,12 +429,14 @@ def _coverage(ip_map: _ipmap.IpMap, seen: Mapping[str, set[str]],
 
 
 def _notes(n_flows: int, bad: int, edge_outs: list[EdgeOut], edges: Mapping[tuple, _Edge],
-           self_loops: int, sensors: Mapping[str, dt.datetime], rows: Mapping[str, Any],
-           ip_map: _ipmap.IpMap, cov: Mapping[str, int]) -> list[str]:
+           self_loops: int, sensors: Mapping[str, dt.datetime], scopes: Mapping[str, tuple[Any, ...]],
+           scope_stats: Mapping[str, int], truncated: bool, ip_map: _ipmap.IpMap,
+           cov: Mapping[str, int]) -> list[str]:
     notes = [f"{n_flows} flow record(s) in the window -> {len(edge_outs)} edge(s); "
              f"{len(sensors)} active online sensor(s)"]
-    if rows.get("truncated"):
-        notes.append(f"flow read hit the {MAX_FLOWS} row cap: older flows and their coverage are missing")
+    if truncated:
+        notes.append(f"TRUNCATED: flow read hit the {MAX_FLOWS} row cap, older flows are missing, so this build "
+                     "asserts no coverage at all and verdicts that depend on Sentry stay UNKNOWN")
     if bad:
         notes.append(f"{bad} flow record(s) skipped (unreadable or outside the window)")
     guessed = sum(1 for e in edges.values() if not e.syn)
@@ -312,6 +444,8 @@ def _notes(n_flows: int, bad: int, edge_outs: list[EdgeOut], edges: Mapping[tupl
         notes.append(f"{guessed} edge(s) have a guessed direction (confidence 50)")
     if self_loops:
         notes.append(f"{self_loops} flow(s) stay inside one asset (same node at both ends) and were dropped")
+    if cov["out_of_scope"]:
+        notes.append(f"{cov['out_of_scope']} node(s) seen outside every declared sensor scope: left blind")
     if cov["partial"]:
         notes.append(f"{cov['partial']} node(s) seen on only some of their addresses: left blind")
     if cov["ambiguous"]:
@@ -319,7 +453,16 @@ def _notes(n_flows: int, bad: int, edge_outs: list[EdgeOut], edges: Mapping[tupl
     notes += ip_map.report()
     if not sensors:
         notes.append("no active online sensor: Sentry asserts no coverage")
+    noscope = sum(1 for sid in sensors if sid not in scopes)
+    if noscope:
+        notes.append(f"{noscope} active online sensor(s) have no declared scope (sensor_scopes): they cover nothing")
+    if scope_stats["bad_entries"]:
+        notes.append(f"{scope_stats['bad_entries']} sensor scope entr(y/ies) ignored: not a canonical CIDR, or /0")
+    if scope_stats["too_many"]:
+        notes.append(f"{scope_stats['too_many']} sensor scope(s) ignored: too many CIDRs (cap {MAX_SCOPE_CIDRS})")
+    if scope_stats["duplicate"]:
+        notes.append(f"{scope_stats['duplicate']} sensor(s) with several scope rows: scope ignored")
     return notes
 
 
-__all__ = ["SOURCE", "load", "build", "eligible_sensors", "default_window"]
+__all__ = ["SOURCE", "load", "build", "eligible_sensors", "parse_scopes", "default_window"]

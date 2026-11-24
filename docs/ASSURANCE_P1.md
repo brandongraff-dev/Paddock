@@ -253,10 +253,8 @@ frozen; request changes through the lead.
 
 NACLs, route tables, IGW/NAT, peering and egress are not read (nodes are blind **outbound** from AWS
 data). Host firewalls arrive with agent v2 (P2). Sentry coverage is `observed` only: it proves "no such
-traffic seen", not "impossible". IPv6 is not parsed by the sensor. `worker-active` posts
-`{"assets": ...}`/`{"findings": ...}` bodies the orchestrator rejects (422), so real active port-scan results
-do not land today; `external_exposure` therefore sees only what passive/Shodan and manual ingest provide until
-that is fixed (tracked separately).
+traffic seen", not "impossible". IPv6 is not parsed by the sensor. (The `worker-active` payload
+mismatch that once kept active scan results from landing is fixed; see section 12.)
 
 ## 11. P1.5 amendments (after independent verification)
 
@@ -284,3 +282,61 @@ wording above.
   internet is blind outbound, so a std internet invariant over such a host stays `UNKNOWN:
   possible_via_unknown_edges` until the host is covered inbound (security group, agent firewall) or the scan
   is extended. This is the soundness rule working, not a defect.
+
+## 12. P1 hardening (after the adversarial review)
+
+An independent review confirmed 30 defects in P1/P1.5 (one critical, three high). They are fixed except where
+stated below. This section supersedes sections 4.2, 4.3, 7 and 10 where they differ. Schema: `040_assurance_hardening.sql`
+(`sensor_scopes`, `assurance_state.last_eval_doc_sha`).
+
+**Evaluator (library).**
+* A node selected by both `subjects.from` and `subjects.to` is a target for paths that start at a *different*
+  source; only the self-path is excluded. If the sole source is the sole target the answer is `UNKNOWN
+  empty_selector:no_distinct_pair`, never `HOLDS`. A reach overlap above 64 nodes is `UNKNOWN
+  overlapping_selectors_too_large`.
+* `valid_until` is the minimum of the stalest relied-on fact plus `max_age` and the end of the day of the
+  earliest active `allow` expiry. No `HOLDS` has an open-ended `valid_until`. An `allow` expiring more than 400
+  days out is invalid (listed in `expired_exceptions` with `invalid_reason`).
+* `Result` carries `violating_targets` and `unproven_targets` (each capped at 5000, with `violating_truncated`
+  set past the cap). Findings close on a still-`VIOLATED` verdict only for targets proven absent from both lists.
+* Input hardening: bracket-depth pre-scan before YAML parsing, parser exceptions become `ParseError`, strict
+  qualifier/type checks on the graph document, `fullmatch` on id/selector/duration patterns, and ids that look
+  like CVE or GHSA identifiers are rejected.
+
+**Sentry coverage requires a declared sensor scope.** A tenant declares which CIDRs each sensor can see
+(`/v1/assurance/sensor-scopes`, justification required, audited). A node is covered only when every address
+of it is inside a declared scope of an online, active sensor and that sensor has sighted it. A sensor with no
+scope covers nothing. Flow truncation emits no coverage (fail closed). The builder cannot tell whether an
+operator declared a scope wider than the sensor really sees; that is an accountability record
+(`set_by`, `justification`), not a technical guard.
+
+**External exposure requires scan completeness markers.** A scan row's `result_summary` must carry
+`{"ports_scanned", "tool_exit_ok", "results_posted"}`; the builder asserts full-range coverage only when all are
+present and true. `worker-active` now posts `{"items": [...]}` bodies and `/v1/edges/bulk`, sets
+`results_posted` only after every post returned 2xx, and fails a scan whose tool or posts failed.
+
+**Runner and store.** Lease fencing on the database clock for every record and finding close (a stale evaluator's
+result is discarded), per-invariant document-hash watermark (`last_eval_doc_sha`) so attribute-only changes
+re-evaluate, CIDR-expansion overflow makes every invariant `UNKNOWN graph_incomplete:cidr_expansion_overflow`,
+per-invariant due-ness with rotation under the time budget, a compile cache and off-loop compilation, shielded
+retry after cancellation, and a billing entitlement check in the loop.
+
+**API.** Clearance (ABAC) filtering on reach/coverage/zone/label reads; compile runs off the event loop with a
+timeout and a 64-level nesting pre-scan; per-tenant caps (enabled invariants 200, total 1000, zones 200, CIDRs
+256 per zone and 4096 total, labels 20000, sensor CIDRs 64); `allow` expiry at most 90 days; `DELETE` requires a
+justification; IPv6 scope ids are rejected at flow ingest.
+
+**Not fixed (stated, not hidden).**
+* **SG-referenced rules over unmodelled ENIs (builders-7).** A database whose security group is referenced by a
+  modelled member still claims complete configured inbound coverage while unread ENIs (Lambda, Fargate, VPC
+  endpoints) may reach it. A correct fix needs an "inside the estate" coverage origin in the library or a
+  `DescribeNetworkInterfaces` read. Highest remaining risk; scheduled before P2 relies on `configured` coverage
+  for server claims.
+* **Disabled or deleted invariants leave their findings open (runner-4).** Closing them would be a false
+  verification. Needs a product decision (close, annotate, or keep open).
+* The API caps `allow` at 90 days and the library at 400; direct library use (CLI) is bounded at 400.
+* `observed_at` is excluded from the document hash, so a backward move of it without a graph version bump is
+  noticed only at `valid_until` or the backstop.
+* Stored results can carry up to 5000+5000 refs per run and `invariant_runs` has no retention policy.
+* Findings are opened only for the witness sample (5 targets) though the verdict lists all violating targets.
+* API redaction is token-based; aggregate numbers inside stored results are not recomputed per clearance.

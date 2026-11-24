@@ -2,9 +2,18 @@
 
 Edges ``internet -> host:port`` come from ``assets`` rows of kind ``port`` (written by the active
 ``port_scan`` worker and by the passive Shodan lookup). Coverage (``in``, tier ``observed``) is
-asserted ONLY for hosts whose latest completed ``port_scan`` covered every port 1-65535 with no
-recorded tool failure (docs/ASSURANCE_P1.md D4 and section 4.2): a top-100 scan proves nothing about
-the other 65,435 ports, and a Shodan row is somebody else's old crawl, so it never gives coverage.
+asserted ONLY for hosts whose latest completed ``port_scan`` PROVES completeness through the
+worker's explicit markers in ``scans.result_summary`` (docs/ASSURANCE_P1.md D4 and section 4.2)::
+
+    {"ports_scanned": "1-65535", "tool_exit_ok": true, "results_posted": true}
+
+All three must be present and true, on top of a full-range ``config.ports``. A top-100 scan proves
+nothing about the other 65,435 ports, a Shodan row is somebody else's old crawl, and a scan that
+merely reached ``status='completed'`` proves nothing at all: the old worker completed scans whose
+naabu had failed or timed out and whose results the orchestrator had rejected (422), and a
+finding-lookup guard keyed on a mangled canonical could not catch it (builders-1/2). Absence of any
+marker means no coverage (fail closed). ``results_posted`` is set by the worker only after every bulk
+post returned 2xx; as defence in depth, ports the summary lists as open must also exist as port assets.
 
 Soundness notes (a false HOLDS is the worst bug):
 * Unknown facts are over-approximated and recorded (D6): an ambiguous address maps to every candidate
@@ -34,8 +43,6 @@ SOURCE = "external_scan"
 SHODAN_ORIGIN = "shodan_internetdb"
 SHODAN_CONFIDENCE = 60
 SCAN_CONFIDENCE = 100
-#: rule ids the active worker records when naabu is missing or failed (workers/active port_scan).
-TOOL_FAILURE_RULES = ("tool-unavailable-naabu", "tool-error-naabu")
 _FUTURE_SKEW = dt.timedelta(minutes=5)
 _FULL = ((1, 65535),)
 _SHODAN_SOURCES = frozenset({"shodan", "internetdb", "shodan_internetdb"})
@@ -69,18 +76,12 @@ SELECT id, kind, value, expires_at
  ORDER BY id
 """
 
-# Latest COMPLETED port_scan per target. tool_failed: the worker records a policy finding on the
-# target's host asset when naabu is missing or errored, yet still completes the scan with zero ports;
-# without this check such a scan would look like "scanned everything, nothing open".
+# Latest COMPLETED port_scan per target. Completeness is NOT inferred from other tables (the old
+# finding-lookup "tool_failed" join was keyed on a canonical the worker mangled for IPv6): the worker's
+# markers in result_summary are the contract and ``build`` reads them.
 SCANS_SQL = """
 SELECT DISTINCT ON (s.target)
-       s.id, s.target, s.started_at, s.finished_at, s.config, s.result_summary, s.error,
-       EXISTS (
-         SELECT 1 FROM findings f JOIN assets a ON a.id = f.asset_id
-          WHERE a.kind IN ('ipv4', 'ipv6') AND a.canonical = s.target
-            AND f.rule_id = ANY($2::text[])
-            AND f.last_seen >= COALESCE(s.started_at, s.queued_at)
-       ) AS tool_failed
+       s.id, s.target, s.started_at, s.finished_at, s.config, s.result_summary, s.error
   FROM scans s
  WHERE s.kind = 'port_scan' AND s.status = 'completed'
    AND s.finished_at IS NOT NULL AND s.finished_at >= $1
@@ -132,7 +133,7 @@ async def load(conn, now: dt.datetime, *, max_age: Optional[dt.timedelta] = None
     cutoff = now - _max_age(max_age)
     ports = [_rec(r) for r in await conn.fetch(PORTS_SQL, cutoff)]
     scope = [dict(r) for r in await conn.fetch(SCOPE_SQL, now)]
-    scans = [_rec(r) for r in await conn.fetch(SCANS_SQL, cutoff, list(TOOL_FAILURE_RULES))]
+    scans = [_rec(r) for r in await conn.fetch(SCANS_SQL, cutoff)]
     assets = [_rec(r) for r in await _ipmap.load_ip_rows(conn)]
     return ExternalRows(ports=ports, scope=scope, scans=scans, assets=assets)
 
@@ -224,13 +225,49 @@ def scan_covers_all_ports(config: Any) -> bool:
 
 
 def _summary_failed(scan: Mapping[str, Any]) -> bool:
-    """A recorded failure on the scan row or in its summary (defence in depth next to the SQL flag)."""
-    if scan.get("tool_failed") or scan.get("error"):
+    """A recorded failure on the scan row or in its summary (defence in depth next to the markers)."""
+    if scan.get("error"):
         return True
     summary = scan.get("result_summary")
     if not isinstance(summary, dict):
         return False
     return any(summary.get(k) for k in ("error", "errors", "failed", "tool_failed", "tool_error"))
+
+
+def scan_completeness(scan: Mapping[str, Any]) -> str:
+    """``"full"`` iff the scan PROVES every TCP port was probed, else why not.
+
+    Reasons: ``failed`` (error recorded), ``unproven`` (a marker is missing or not exactly true),
+    ``partial`` (config or marker names fewer than all ports). Markers are the worker's contract:
+    ``ports_scanned`` parses to exactly 1-65535, ``tool_exit_ok is True``, ``results_posted is True``.
+    """
+    if _summary_failed(scan):
+        return "failed"
+    summary = scan.get("result_summary")
+    if not isinstance(summary, dict):
+        return "unproven"
+    if (summary.get("tool_exit_ok") is not True or summary.get("results_posted") is not True
+            or not isinstance(summary.get("ports_scanned"), str)):
+        return "unproven"
+    if parse_port_spec(summary["ports_scanned"]) != _FULL or not scan_covers_all_ports(scan.get("config")):
+        return "partial"
+    return "full"
+
+
+def _unreconciled(scan: Mapping[str, Any], ip: str,
+                  seen: set[tuple[str, int]]) -> bool:
+    """True if the summary lists open ports that never landed as port assets for this host.
+
+    A cheap tripwire for the original failure (results dropped while the scan completed). A malformed
+    ``open_ports`` is treated as unreconciled: fail closed.
+    """
+    summary = scan.get("result_summary")
+    if not isinstance(summary, dict) or "open_ports" not in summary:
+        return False
+    listed = summary["open_ports"]
+    if not isinstance(listed, list):
+        return True
+    return any(isinstance(p, bool) or not isinstance(p, int) or (ip, p) not in seen for p in listed)
 
 
 def _proto(md: Mapping[str, Any]) -> str:
@@ -337,8 +374,8 @@ def _edge(src: str, dst: str, ip: str, proto: str, port: int, o: _Obs,
 
 
 def _covered_scans(rows: ExternalRows, now: dt.datetime, max_age: dt.timedelta, nets: list[Any],
-                   counters: dict[str, int]) -> dict[str, dict[str, Any]]:
-    """ip -> scan facts, for public in-scope hosts whose latest completed scan was a full, clean one."""
+                   counters: dict[str, int], seen: set[tuple[str, int]]) -> dict[str, dict[str, Any]]:
+    """ip -> scan facts, for public in-scope hosts whose latest completed scan PROVED a full clean scan."""
     out: dict[str, dict[str, Any]] = {}
     for scan in rows.scans:
         ip = _ipmap.norm_ip(str(scan.get("target") or ""))
@@ -348,11 +385,12 @@ def _covered_scans(rows: ExternalRows, now: dt.datetime, max_age: dt.timedelta, 
         fin = min(_aware(fin), now)
         if now - fin > max_age:
             continue
-        if _summary_failed(scan):
-            counters["tool_failed"] += 1
+        verdict = scan_completeness(scan)
+        if verdict != "full":
+            counters["tool_failed" if verdict == "failed" else verdict] += 1
             continue
-        if not scan_covers_all_ports(scan.get("config")):
-            counters["partial"] += 1
+        if _unreconciled(scan, ip, seen):
+            counters["unreconciled"] += 1
             continue
         prev = out.get(ip)
         if prev is None or fin > prev["finished_at"]:  # defensive: SQL already picks the latest
@@ -394,13 +432,16 @@ def build(rows: ExternalRows, now: dt.datetime, *, max_age: Optional[dt.timedelt
     nets = _scope_nets(rows.scope, now)
     ipm = _ipmap.build_ip_map(rows.assets)
     counters = {k: 0 for k in ("unparsable", "stale", "out_of_scope", "partial", "tool_failed",
-                               "ambiguous_uncovered", "multi_ip_uncovered")}
+                               "unproven", "unreconciled", "ambiguous_uncovered",
+                               "multi_ip_uncovered")}
 
     edges: list[EdgeOut] = []
     nodes: dict[str, NodeOut] = {refs.INTERNET: NodeOut(ref=refs.INTERNET, kind="internet",
                                                         label="internet")}
     seen: set[tuple[str, str, int, int]] = set()
-    for (ip, proto, port), o in sorted(_observations(rows, now, age, nets, counters).items()):
+    observed = _observations(rows, now, age, nets, counters)
+    seen_ports = {(ip, port) for (ip, _proto_, port) in observed}
+    for (ip, proto, port), o in sorted(observed.items()):
         targets = ipm.resolve_all(ip)
         for dst in targets:
             key = (dst, proto, port, port)
@@ -411,7 +452,7 @@ def build(rows: ExternalRows, now: dt.datetime, *, max_age: Optional[dt.timedelt
             if dst.startswith("ip:") and dst not in nodes:
                 nodes[dst] = NodeOut(ref=dst, kind="host", label=ip, attrs={"ips": [ip]})
 
-    full = _covered_scans(rows, now, age, nets, counters)
+    full = _covered_scans(rows, now, age, nets, counters, seen_ports)
     coverage = _coverage(full, ipm, counters)
     for cov in coverage:                                # a covered host is a known node even with 0 ports
         if cov.node_ref.startswith("ip:") and cov.node_ref not in nodes:
@@ -429,7 +470,11 @@ def _notes(c: Mapping[str, int], ipm: _ipmap.IpMap, n_edges: int, n_cov: int) ->
     notes = [f"external_scan: {n_edges} exposure edge(s), {n_cov} host(s) with full-port coverage"]
     labels = (
         ("partial", "host(s) latest scan covered fewer than all 65535 ports: no coverage asserted"),
-        ("tool_failed", "host(s) latest scan recorded a tool failure: no coverage asserted"),
+        ("tool_failed", "host(s) latest scan recorded an error: no coverage asserted"),
+        ("unproven", "host(s) latest scan lacks the completeness markers (ports_scanned, "
+                     "tool_exit_ok=true, results_posted=true): no coverage asserted"),
+        ("unreconciled", "host(s) latest scan lists open ports that never landed as port assets: "
+                         "no coverage asserted"),
         ("multi_ip_uncovered", "asset(s) with several public addresses not all fully scanned: "
                                "no coverage asserted"),
         ("ambiguous_uncovered", "scanned address(es) claimed by more than one asset: no coverage asserted"),

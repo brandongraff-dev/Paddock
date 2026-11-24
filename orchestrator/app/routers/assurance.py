@@ -27,9 +27,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import ipaddress
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+import re
+import threading
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Annotated, Any, Literal, Optional
 from uuid import UUID
@@ -39,7 +42,7 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator, model
 
 from .. import audit, tenancy
 from ..assurance import store
-from ..auth import Principal, current_principal
+from ..auth import CLASS_RANK, Principal, classification_rank_sql, current_principal
 from ..billing import gate as billing_gate
 from ..config import settings
 from ..db import get_pool
@@ -50,9 +53,40 @@ router = APIRouter(tags=["assurance"])
 #: ``POST /v1/assurance/evaluate`` gives up (answering 200 ``ok: false``) after this long; the
 #: runner is cancelled cleanly (its lease is released in a ``finally``).
 EVALUATE_TIMEOUT_S = 240.0
-#: Hard caps for the coverage report so one huge tenant cannot make a read unbounded.
-MAX_COVERAGE_NODES = 200_000
-MAX_COVERAGE_FACTS = 400_000
+
+# Per-tenant caps (review finding security-3). Every enabled invariant is re-compiled and
+# re-evaluated, every zone CIDR is matched against every node address, so unbounded counts let one
+# tenant stall the shared loop. Hitting a cap is a clear 409; nothing is silently dropped.
+#: enabled invariants per tenant (std copies included).
+MAX_INVARIANTS_ENABLED = 200
+#: all invariant rows incl. disabled/archived ones (DELETE keeps rows as evidence, so they are
+#: bounded separately and generously rather than never freed).
+MAX_INVARIANTS_TOTAL = 1000
+MAX_ZONES = 200
+#: CIDRs in ONE zone (the store enforces the same number).
+MAX_ZONE_CIDRS = 256
+#: CIDRs over ALL of a tenant's zones: zone resolution is O(nodes x CIDRs).
+MAX_TOTAL_ZONE_CIDRS = 4096
+#: declared labels (metadata/connector-derived labels are not counted: the tenant did not write them).
+MAX_LABELS = 20_000
+#: CIDRs a sensor's declared scope may list.
+MAX_SENSOR_CIDRS = 64
+#: an ``allow`` exception may not run longer than this from today (review finding security-7: a
+#: 3-letter reason with ``expires: 9999-12-31`` is a permanent, silent hole).
+MAX_ALLOW_DAYS = 90
+
+# Parsing is attacker-controlled CPU (PyYAML is pure Python and slow on deep flow nesting).
+#: wall-clock budget for one parse+compile before the request is answered 422.
+COMPILE_TIMEOUT_S = 5.0
+#: parse+compile threads that may run at once (a hung parse keeps its slot until it ends).
+COMPILE_SLOTS = 4
+#: deepest ``[``/``{`` nesting accepted before any parser sees the text (the library allows 12).
+MAX_YAML_NESTING = 64
+
+#: classification filtering materialises the caller's hidden assets; beyond this we refuse
+#: (503) rather than answer with an incomplete filter.
+MAX_HIDDEN_ASSETS = 100_000
+_REDACTED = "[redacted]"
 
 _PAID = Depends(billing_gate.require_paid("assurance"))
 _Tier = Literal["declared", "configured", "observed", "tested"]
@@ -121,6 +155,201 @@ async def _audit(request: Request, pool: Any, principal: Principal, *, action: s
 
 
 # --------------------------------------------------------------------------------------------
+# Classification (ABAC) over the reach graph (review finding security-4)
+# --------------------------------------------------------------------------------------------
+# The reach tables carry no classification of their own; a node is as classified as the asset that
+# backs it. /v1/assets and /v1/findings hide assets above the caller's clearance, so every read
+# here must hide the same assets (and everything that names them) or it re-opens the hole: node
+# refs, private IPs, edges, coverage facts, labels and the witnesses/blind spots inside invariant
+# results. A hidden thing answers exactly like a missing one.
+
+_FULL_RANK = CLASS_RANK["restricted"]
+# A "word" of an address/ref/uuid/hostname: what we compare against the hidden set token by token.
+_RUN = re.compile(r"[A-Za-z0-9_.:/%@-]+")
+_SIMPLE = re.compile(r"[A-Za-z0-9_.:/%@-]+")
+_MIN_VALUE_LEN = 4
+_MAX_ODD_TOKENS = 500
+
+
+def _norm_addr(text: Any) -> Optional[str]:
+    """Canonical address text (the builders' spelling) or None. Scope ids are not addresses."""
+    if not isinstance(text, str) or len(text) > 64 or "%" in text:
+        return None
+    t = text.strip()
+    if t.startswith("[") and t.endswith("]"):
+        t = t[1:-1]
+    try:
+        ip = ipaddress.ip_address(t)
+    except ValueError:
+        return None
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.compressed.lower()
+
+
+def _ips_in(value: Any) -> list[str]:
+    if isinstance(value, (str, bytes)):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    if isinstance(value, str):
+        value = [value]
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+class _Vis:
+    """What the caller may NOT see. ``active`` is False for a fully cleared principal (no work)."""
+
+    __slots__ = ("active", "refs", "ids", "_refset", "_simple", "_odd")
+
+    def __init__(self, refs: Optional[set[str]] = None, ids: Optional[list[str]] = None,
+                 simple: Optional[set[str]] = None, odd: Optional[list[str]] = None,
+                 active: bool = False) -> None:
+        self.active = active
+        self._refset: frozenset[str] = frozenset(refs or ())
+        self.refs: list[str] = sorted(self._refset)
+        self.ids: list[str] = ids or []
+        self._simple: frozenset[str] = frozenset(simple or ())
+        self._odd: tuple[str, ...] = tuple(odd or ())
+
+    def hidden(self, ref: str) -> bool:
+        return self.active and ref in self._refset
+
+    # -- redaction of arbitrary JSON-ish data ---------------------------------------------------
+    def _token_hidden(self, tok: str) -> bool:
+        low = tok.lower()
+        if low in self._simple:
+            return True
+        low = low.strip(".-:/_@%")            # ``10.7.7.7.`` at the end of a sentence, ``ref->``
+        if low in self._simple:
+            return True
+        # ``ip:10.7.7.7:5432``-style compounds: test the pieces too (coarser is safer).
+        if ":" in low or "/" in low:
+            for part in re.split(r"[:/]", low):
+                if part and part in self._simple:
+                    return True
+            if low.partition(":")[2] in self._simple:
+                return True
+        return False
+
+    def text(self, s: str) -> str:
+        if not self.active or not s:
+            return s
+        out = _RUN.sub(lambda m: _REDACTED if self._token_hidden(m.group(0)) else m.group(0), s)
+        if self._odd:
+            low = out.lower()
+            for tok in self._odd:
+                if tok in low:
+                    out = re.sub(re.escape(tok), _REDACTED, out, flags=re.IGNORECASE)
+                    low = out.lower()
+        return out
+
+    def scrub(self, obj: Any) -> Any:
+        """A copy of ``obj`` with every hidden ref / address / asset value replaced by a marker."""
+        if not self.active:
+            return obj
+        if isinstance(obj, str):
+            return self.text(obj)
+        if isinstance(obj, dict):
+            out: dict[Any, Any] = {}
+            for k, v in obj.items():
+                nk = self.text(k) if isinstance(k, str) else k
+                while nk in out:          # two hidden keys collapse to the same marker: keep both
+                    nk = f"{nk}~"
+                out[nk] = self.scrub(v)
+            return out
+        if isinstance(obj, (list, tuple)):
+            return [self.scrub(v) for v in obj]
+        return obj
+
+
+_FULL = _Vis()
+
+
+async def _vis(con: Any, principal: Principal) -> _Vis:
+    """The hidden set for ``principal``: assets whose classification outranks its clearance."""
+    if principal.clearance_rank >= _FULL_RANK:
+        return _FULL
+    rows = await con.fetch(
+        "SELECT a.id, a.value, a.canonical, a.metadata->'public_ips' AS pub, "
+        "a.metadata->'private_ips' AS priv, a.metadata->'ips' AS ips, a.metadata->'ip' AS ip1 "
+        f"FROM assets a WHERE {classification_rank_sql('a.classification')} > $1 LIMIT $2",
+        principal.clearance_rank, MAX_HIDDEN_ASSETS + 1)
+    if len(rows) > MAX_HIDDEN_ASSETS:
+        # An incomplete filter would leak; refuse instead.
+        raise HTTPException(status_code=503, detail="too many classified assets to filter this view")
+    refs: set[str] = set()
+    ids: list[str] = []
+    simple: set[str] = set()
+    odd: list[str] = []
+
+    def add_ip(addr: str) -> None:
+        n = _norm_addr(addr)
+        if n is None:
+            return
+        suffix = "128" if ":" in n else "32"
+        for tok in (f"ip:{n}", f"cidr:{n}/{suffix}"):
+            refs.add(tok)
+            simple.add(tok)
+        simple.add(n)
+
+    for r in rows:
+        aid = str(r["id"])
+        ids.append(aid)
+        refs.add(f"asset:{aid}")
+        simple.update((aid, f"asset:{aid}"))
+        for v in (r["pub"], r["priv"], r["ips"], r["ip1"]):
+            for a in _ips_in(v):
+                add_ip(a)
+        for v in (r["value"], r["canonical"]):
+            if not isinstance(v, str):
+                continue
+            add_ip(v)
+            v = v.strip().lower()
+            if len(v) < _MIN_VALUE_LEN:
+                continue
+            if _SIMPLE.fullmatch(v):
+                simple.add(v)
+            elif len(odd) < _MAX_ODD_TOKENS:
+                odd.append(v)
+    return _Vis(refs, ids, simple, odd, active=True)
+
+
+def _hide_sql(col: str, vis: _Vis, where: list[str], args: list[Any]) -> None:
+    """Append ``col`` is-not-hidden to a WHERE clause (no-op for a fully cleared caller)."""
+    if vis.active and vis.refs:
+        args.append(vis.refs)
+        where.append(f"{col} <> ALL(${len(args)}::text[])")
+
+
+# --------------------------------------------------------------------------------------------
+# Threads: attacker-controlled CPU must never run on the event loop (review findings 2 and 5)
+# --------------------------------------------------------------------------------------------
+
+_compile_slots = threading.BoundedSemaphore(COMPILE_SLOTS)
+
+
+class _Busy(Exception):
+    """Every compile slot is taken (by slow parses): refuse rather than queue behind them."""
+
+
+def _nesting_problem(text: str) -> Optional[str]:
+    """A cheap O(n) scan, BEFORE any parser sees the text: PyYAML's scanner is pure Python and its
+    cost grows with flow depth (4,000 ``[`` took 6s and froze every tenant). Quotes are ignored on
+    purpose: 64 unbalanced openers is not a legitimate invariant either way."""
+    depth = 0
+    for ch in text:
+        if ch == "[" or ch == "{":
+            depth += 1
+            if depth > MAX_YAML_NESTING:
+                return f"document: flow nesting deeper than {MAX_YAML_NESTING} levels"
+        elif (ch == "]" or ch == "}") and depth:
+            depth -= 1
+    return None
+
+
+# --------------------------------------------------------------------------------------------
 # Models
 # --------------------------------------------------------------------------------------------
 
@@ -172,6 +401,8 @@ class InvariantVersionOut(BaseModel):
 
 class InvariantDetail(InvariantOut):
     yaml: str
+    redacted: bool = Field(False, description="Parts were withheld because they name assets above the "
+                                              "caller's clearance.")
     last_result: Optional[dict[str, Any]] = None
     versions: list[InvariantVersionOut] = Field(default_factory=list)
 
@@ -183,14 +414,19 @@ class InvariantPage(BaseModel):
     offset: int
 
 
+_OptWhy = Annotated[Optional[str], StringConstraints(max_length=1000)]
+
+
 class InvariantCreate(BaseModel):
     yaml: str = Field(min_length=1, max_length=65536)
     enabled: bool = True
+    justification: _OptWhy = Field(None, description="Optional: why. Recorded in the audit log.")
 
 
 class InvariantUpdate(BaseModel):
     yaml: Optional[str] = Field(None, min_length=1, max_length=65536)
     enabled: Optional[bool] = None
+    justification: _OptWhy = Field(None, description="Optional: why. Recorded in the audit log.")
 
     @model_validator(mode="after")
     def _something(self) -> "InvariantUpdate":
@@ -222,6 +458,7 @@ class StdInvariantOut(BaseModel):
 
 
 class RunOut(BaseModel):
+    redacted: bool = Field(False, description="The result had parts withheld (clearance).")
     id: UUID
     invariant_id: str
     digest: str
@@ -247,6 +484,47 @@ class EvaluateIn(BaseModel):
     invariant_ids: Optional[list[_Id]] = Field(
         None, max_length=100, description="std:x / acme:y ids or row UUIDs; default: every enabled invariant.")
     rebuild: bool = Field(False, description="Re-run the graph builders first.")
+
+
+class SensorScopeIn(_Justified):
+    cidrs: list[Annotated[str, StringConstraints(max_length=64)]] = Field(
+        min_length=1, max_length=MAX_SENSOR_CIDRS,
+        description="The networks this sensor can actually see (mirror/SPAN coverage). Coverage is "
+                    "asserted only for hosts inside them.")
+
+
+class SensorScopeOut(BaseModel):
+    sensor_id: UUID
+    name: Optional[str] = None
+    site: Optional[str] = None
+    status: Optional[str] = None
+    online: Optional[bool] = None
+    cidrs: list[str] = Field(default_factory=list)
+    scope_declared: bool = True
+    set_by: Optional[str] = None
+    justification: str = ""
+    set_at: Optional[datetime] = None
+
+
+class SensorScopeList(BaseModel):
+    items: list[SensorScopeOut]
+    unscoped_sensors: list[SensorScopeOut] = Field(
+        default_factory=list, description="Active sensors with no declared scope: they cover nothing.")
+    total: int
+
+
+class SensorScopeChange(BaseModel):
+    scope: SensorScopeOut
+    changed: bool
+    previous: Optional[list[str]] = None
+    graph_version: Optional[int] = None
+
+
+class SensorScopeDeleteOut(BaseModel):
+    deleted: bool = True
+    sensor_id: UUID
+    previous: list[str] = Field(default_factory=list)
+    graph_version: Optional[int] = None
 
 
 class EvaluateOut(BaseModel):
@@ -410,11 +688,38 @@ async def _graph_version(con: Any) -> int:
     return (await store.get_state(con)).graph_version
 
 
-def _compile(text: str) -> Any:
-    """Parse + compile via the library. 422 with the library's problem list when it is not valid."""
+def _invalid(problems: list[str]) -> HTTPException:
+    return HTTPException(status_code=422, detail={"error": "invalid_invariant", "problems": problems[:100]})
+
+
+async def _compile(text: str) -> Any:
+    """Parse + compile via the library, OFF the event loop, with a timeout.
+
+    422 with the library's problem list when it is not valid, and 422 when it takes longer than
+    ``COMPILE_TIMEOUT_S`` (a thread cannot be killed, so a hung parse keeps its slot until it ends
+    and at most ``COMPILE_SLOTS`` can ever be wedged; the nesting pre-scan keeps hostile input from
+    getting that far).
+    """
     lib = _lib()
+    bad = _nesting_problem(text)
+    if bad:
+        raise _invalid([bad])
+
+    def work() -> Any:
+        if not _compile_slots.acquire(blocking=False):
+            raise _Busy()
+        try:
+            return lib.compile_text(text)
+        finally:
+            _compile_slots.release()
+
     try:
-        return lib.compile_text(text)
+        return await asyncio.wait_for(asyncio.to_thread(work), COMPILE_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        problems = [f"document: could not be parsed within {COMPILE_TIMEOUT_S:g}s"]
+    except _Busy:
+        raise HTTPException(status_code=429, detail="too many invariant compilations in flight; retry",
+                            headers={"Retry-After": "5"}) from None
     except lib.ParseError as exc:
         problems = list(exc.problems)
     except lib.CompileError as exc:
@@ -422,7 +727,29 @@ def _compile(text: str) -> Any:
     except Exception as exc:  # noqa: BLE001 -- a library bug is the caller's 422, never a 500
         logger.exception("assurance_compile_failed")
         problems = [f"could not be compiled ({type(exc).__name__})"]
-    raise HTTPException(status_code=422, detail={"error": "invalid_invariant", "problems": problems[:100]})
+    raise _invalid(problems)
+
+
+def _allow_problems(plan: Any, today: Optional[date] = None) -> list[str]:
+    """``allow`` exceptions must expire soon: an exception is a hole in the proof, not a setting."""
+    today = today or _now().date()
+    limit = today + timedelta(days=MAX_ALLOW_DAYS)
+    out = []
+    for i, a in enumerate(plan.invariant.allow):
+        if a.expires > limit:
+            out.append(f"allow[{i}].expires: {a.expires.isoformat()} is more than {MAX_ALLOW_DAYS} days "
+                       f"away (latest {limit.isoformat()}); renew the exception instead")
+    return out
+
+
+def _allow_audit(plan: Any) -> list[dict[str, Any]]:
+    """What an exception says, for the audit row: target, ports, the reason given and the expiry."""
+    out = []
+    for a in plan.invariant.allow:
+        out.append({"to": a.to.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+                    if hasattr(a.to, "model_dump") else str(a.to),
+                    "ports": a.ports, "reason": a.reason, "expires": a.expires.isoformat()})
+    return out[:50]
 
 
 @lru_cache(maxsize=1)
@@ -462,12 +789,53 @@ async def _invariant_row(con: Any, inv_uuid: UUID, *, lock: bool = False) -> Any
     return row
 
 
-async def _detail(pool: Any, inv_uuid: UUID) -> dict[str, Any]:
+def _inv_view(row: Any, now: datetime, gv: int, vis: _Vis, *, detail: bool = False,
+              versions: Optional[list[Any]] = None) -> dict[str, Any]:
+    """``_inv_out`` as this caller may see it: the stored result and the definition can name
+    assets (witness hops, blind spots, selectors) above the caller's clearance."""
+    out = _inv_out(row, now, gv, detail=detail, versions=versions)
+    if not vis.active:
+        return out
+    scrubbed = vis.scrub({k: v for k, v in out.items() if k not in ("id", "versions")})
+    scrubbed["id"] = out["id"]
+    if detail:
+        scrubbed["versions"] = out["versions"]
+        scrubbed["redacted"] = scrubbed.get("yaml") != out.get("yaml") or scrubbed.get(
+            "last_result") != out.get("last_result")
+    return scrubbed
+
+
+async def _detail(pool: Any, inv_uuid: UUID, principal: Principal) -> dict[str, Any]:
     async with pool.acquire() as con:
         row = await _invariant_row(con, inv_uuid)
         gv = await _graph_version(con)
         vers = await _versions(con, row["invariant_id"])
-    return _inv_out(row, _now(), gv, detail=True, versions=vers)
+        vis = await _vis(con, principal)
+    return _inv_view(row, _now(), gv, vis, detail=True, versions=vers)
+
+
+async def _lock_invariants(con: Any) -> None:
+    """Serialises the count-then-insert of the per-tenant caps (same key shape as the store's)."""
+    await con.execute("SELECT pg_advisory_xact_lock(hashtextextended("
+                      "coalesce(current_setting('app.tenant_id', true), '') || ':invariants', 0))")
+
+
+async def _check_invariant_caps(con: Any, *, adding_row: bool, enabling: bool) -> None:
+    """409 with the cap named when a new or newly enabled invariant would exceed it."""
+    if adding_row:
+        total = await con.fetchval("SELECT count(*) FROM invariants")
+        if total >= MAX_INVARIANTS_TOTAL:
+            raise HTTPException(status_code=409, detail={
+                "error": "invariant_limit", "limit": MAX_INVARIANTS_TOTAL, "scope": "total",
+                "message": f"this tenant already has {total} invariants including archived ones "
+                           f"(max {MAX_INVARIANTS_TOTAL})"})
+    if enabling:
+        n = await con.fetchval("SELECT count(*) FROM invariants WHERE enabled")
+        if n >= MAX_INVARIANTS_ENABLED:
+            raise HTTPException(status_code=409, detail={
+                "error": "invariant_limit", "limit": MAX_INVARIANTS_ENABLED, "scope": "enabled",
+                "message": f"this tenant already has {n} enabled invariants (max {MAX_INVARIANTS_ENABLED}); "
+                           "disable one first"})
 
 
 async def _insert_version(con: Any, invariant_id: str, digest: str, version: int, text: str,
@@ -490,7 +858,7 @@ async def list_invariants(
     q: Optional[str] = Query(None, max_length=128),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0, le=1_000_000),
-    pool=Depends(get_pool),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ):
     """Invariants with their last verdict, freshness (``EXPIRED``) and coverage ratio."""
     where, args = [], []
@@ -507,18 +875,20 @@ async def list_invariants(
     now = _now()
     async with pool.acquire() as con:
         gv = await _graph_version(con)
+        vis = await _vis(con, principal)
         if status:
-            # The status is derived (expiry, pending), so it is filtered after the read. Bounded.
+            # The status is derived (expiry, pending), so it is filtered after the read. Bounded
+            # by MAX_INVARIANTS_TOTAL.
             rows = await con.fetch(f"SELECT {_INV_COLS} FROM invariants {clause} "
                                    "ORDER BY invariant_id LIMIT 5000", *args)
-            outs = [_inv_out(r, now, gv) for r in rows]
+            outs = [_inv_view(r, now, gv, vis) for r in rows]
             outs = [o for o in outs if o["status"] == status.upper()]
             return _page(outs[offset:offset + limit], len(outs), limit, offset)
         total = await con.fetchval(f"SELECT count(*) FROM invariants {clause}", *args)
         rows = await con.fetch(
             f"SELECT {_INV_COLS} FROM invariants {clause} ORDER BY invariant_id "
             f"LIMIT ${len(args) + 1} OFFSET ${len(args) + 2}", *args, limit, offset)
-    return _page([_inv_out(r, now, gv) for r in rows], total, limit, offset)
+    return _page([_inv_view(r, now, gv, vis) for r in rows], total, limit, offset)
 
 
 @router.get("/v1/invariants/std", response_model=list[StdInvariantOut])
@@ -542,19 +912,29 @@ async def list_std_invariants(pool=Depends(get_pool)):
     return out
 
 
+def _why(text: Optional[str]) -> Optional[str]:
+    """An optional justification, trimmed; empty means none."""
+    t = (text or "").strip()
+    return t or None
+
+
 @router.post("/v1/invariants/std/{std_id}/enable", response_model=InvariantChange, dependencies=[_PAID])
 async def enable_std_invariant(
     std_id: str, request: Request, response: Response, pool=Depends(get_pool),
+    justification: Optional[str] = Query(None, max_length=1000, description="Optional: why (audited)."),
     principal: Principal = Depends(current_principal),
 ):
     """Copy a shipped invariant into the tenant and enable it (idempotent; refreshes a stale copy)."""
     e = _std_entry(std_id)
-    actor, created, new_version, prev_digest = principal.actor, False, False, None
+    why = _why(justification)
+    actor, created, new_version, prev_digest, was_enabled = principal.actor, False, False, None, None
     async with pool.acquire() as con:
         async with con.transaction():
+            await _lock_invariants(con)
             cur = await con.fetchrow("SELECT id, enabled, digest, version FROM invariants "
                                      "WHERE invariant_id = $1 FOR UPDATE", e["id"])
             if cur is None:
+                await _check_invariant_caps(con, adding_row=True, enabling=True)
                 rid = await con.fetchval(
                     "INSERT INTO invariants (invariant_id, title, severity, enabled, source, yaml, digest, "
                     "version, created_by, updated_by) VALUES ($1, $2, $3, TRUE, 'std', $4, $5, 1, $6, $6) "
@@ -563,9 +943,11 @@ async def enable_std_invariant(
                 await _insert_version(con, e["id"], e["digest"], 1, e["yaml"], actor)
                 created = changed = True
             else:
-                rid, prev_digest = cur["id"], cur["digest"]
+                rid, prev_digest, was_enabled = cur["id"], cur["digest"], cur["enabled"]
                 changed = not cur["enabled"] or cur["digest"] != e["digest"]
                 if changed:
+                    if not cur["enabled"]:
+                        await _check_invariant_caps(con, adding_row=False, enabling=True)
                     new_version = cur["digest"] != e["digest"]
                     ver = cur["version"] + 1 if new_version else cur["version"]
                     # last_graph_version/valid_until cleared: the old verdict (from before it was
@@ -579,12 +961,15 @@ async def enable_std_invariant(
                         await _insert_version(con, e["id"], e["digest"], ver, e["yaml"], actor)
         gv = await _graph_version(con)
         row = await _invariant_row(con, rid)
+        vis = await _vis(con, principal)
     if changed:
         await _audit(request, pool, principal, action="assurance_std_enable", resource_type="invariants",
-                     resource_id=str(rid), details={"invariant_id": e["id"], "digest": e["digest"],
-                                                    "previous_digest": prev_digest, "created": created})
+                     resource_id=str(rid), justification=why,
+                     details={"invariant_id": e["id"], "digest": e["digest"],
+                              "previous_digest": prev_digest, "created": created,
+                              "was_enabled": was_enabled})
     response.status_code = 201 if created else 200
-    return {"invariant": _inv_out(row, _now(), gv), "changed": changed, "created": created,
+    return {"invariant": _inv_view(row, _now(), gv, vis), "changed": changed, "created": created,
             "new_version": new_version or created}
 
 
@@ -594,14 +979,18 @@ async def create_invariant(
     principal: Principal = Depends(current_principal),
 ):
     """Create a custom invariant from YAML (parsed and compiled by the library; 422 lists the problems)."""
-    plan = _compile(body.yaml)
+    plan = await _compile(body.yaml)
     if plan.id.startswith("std:"):
-        raise HTTPException(status_code=422, detail={"error": "invalid_invariant", "problems": [
-            "id: the 'std:' namespace is reserved for the shipped library (use POST "
-            "/v1/invariants/std/{id}/enable)"]})
+        raise _invalid(["id: the 'std:' namespace is reserved for the shipped library (use POST "
+                        "/v1/invariants/std/{id}/enable)"])
+    if (late := _allow_problems(plan)):
+        raise _invalid(late)
     inv = plan.invariant
+    why = _why(body.justification)
     async with pool.acquire() as con:
         async with con.transaction():
+            await _lock_invariants(con)
+            await _check_invariant_caps(con, adding_row=True, enabling=body.enabled)
             rid = await con.fetchval(
                 "INSERT INTO invariants (invariant_id, title, severity, enabled, source, yaml, digest, "
                 "version, created_by, updated_by) VALUES ($1, $2, $3, $4, 'custom', $5, $6, 1, $7, $7) "
@@ -613,16 +1002,20 @@ async def create_invariant(
             await _insert_version(con, plan.id, plan.digest, 1, body.yaml, principal.actor)
         gv = await _graph_version(con)
         row = await _invariant_row(con, rid)
+        vis = await _vis(con, principal)
     await _audit(request, pool, principal, action="assurance_invariant_create", resource_type="invariants",
-                 resource_id=str(rid), status=201,
+                 resource_id=str(rid), status=201, justification=why,
                  details={"invariant_id": plan.id, "digest": plan.digest, "severity": inv.severity,
-                          "assertion": inv.assert_, "enabled": body.enabled})
-    return {"invariant": _inv_out(row, _now(), gv), "changed": True, "created": True, "new_version": True}
+                          "assertion": inv.assert_, "enabled": body.enabled,
+                          "exceptions": _allow_audit(plan)})
+    return {"invariant": _inv_view(row, _now(), gv, vis), "changed": True, "created": True,
+            "new_version": True}
 
 
 @router.get("/v1/invariants/{invariant_id}", response_model=InvariantDetail)
-async def get_invariant(invariant_id: UUID, pool=Depends(get_pool)):
-    return await _detail(pool, invariant_id)
+async def get_invariant(invariant_id: UUID, pool=Depends(get_pool),
+                        principal: Principal = Depends(current_principal)):
+    return await _detail(pool, invariant_id, principal)
 
 
 @router.put("/v1/invariants/{invariant_id}", response_model=InvariantChange, dependencies=[_PAID])
@@ -633,13 +1026,18 @@ async def update_invariant(
     """Change the definition (new digest => new version row) and/or toggle ``enabled``.
 
     A std invariant's text is owned by the shipped library (it would be overwritten), so only
-    ``enabled`` can change there.
+    ``enabled`` can change there. An optional ``justification`` is recorded in the audit log, and
+    every ``allow`` exception (reason, expiry) of a new definition is written to it.
     """
-    plan = _compile(body.yaml) if body.yaml is not None else None
+    plan = await _compile(body.yaml) if body.yaml is not None else None
+    if plan is not None and (late := _allow_problems(plan)):
+        raise _invalid(late)
+    why = _why(body.justification)
     changed = new_version = False
     prev: dict[str, Any] = {}
     async with pool.acquire() as con:
         async with con.transaction():
+            await _lock_invariants(con)
             cur = await _invariant_row(con, invariant_id, lock=True)
             prev = {"digest": cur["digest"], "enabled": cur["enabled"], "version": cur["version"]}
             sets: list[tuple[str, Any]] = []     # (column, value) -> "col = $n"
@@ -650,9 +1048,8 @@ async def update_invariant(
                     raise _unprocessable("a std invariant's definition is managed by the shipped library; "
                                          "only 'enabled' can be changed", "yaml")
                 if plan.id != cur["invariant_id"]:
-                    raise HTTPException(status_code=422, detail={"error": "invalid_invariant", "problems": [
-                        f"id: the definition says {plan.id!r} but this invariant is "
-                        f"{cur['invariant_id']!r} (the id cannot change)"]})
+                    raise _invalid([f"id: the definition says {plan.id!r} but this invariant is "
+                                    f"{cur['invariant_id']!r} (the id cannot change)"])
                 if plan.digest != cur["digest"]:
                     version += 1
                     new_version = changed = True
@@ -663,6 +1060,8 @@ async def update_invariant(
                                           principal.actor)
             if body.enabled is not None and body.enabled != cur["enabled"]:
                 changed = True
+                if body.enabled:
+                    await _check_invariant_caps(con, adding_row=False, enabling=True)
                 sets.append(("enabled", body.enabled))
                 if body.enabled:
                     # Re-enabled: whatever verdict is stored predates this moment. Make it due.
@@ -676,24 +1075,30 @@ async def update_invariant(
                     f"WHERE id = ${len(sets) + 1}", *[v for _, v in sets], invariant_id)
         gv = await _graph_version(con)
         row = await _invariant_row(con, invariant_id)
+        vis = await _vis(con, principal)
     if changed:
+        details: dict[str, Any] = {"invariant_id": row["invariant_id"], "previous": prev,
+                                   "digest": row["digest"], "version": row["version"],
+                                   "enabled": row["enabled"], "new_version": new_version}
+        if plan is not None and new_version:
+            details["exceptions"] = _allow_audit(plan)
         await _audit(request, pool, principal, action="assurance_invariant_update",
-                     resource_type="invariants", resource_id=str(invariant_id),
-                     details={"invariant_id": row["invariant_id"], "previous": prev,
-                              "digest": row["digest"], "version": row["version"],
-                              "enabled": row["enabled"], "new_version": new_version})
-    return {"invariant": _inv_out(row, _now(), gv), "changed": changed, "created": False,
+                     resource_type="invariants", resource_id=str(invariant_id), justification=why,
+                     details=details)
+    return {"invariant": _inv_view(row, _now(), gv, vis), "changed": changed, "created": False,
             "new_version": new_version}
 
 
 @router.delete("/v1/invariants/{invariant_id}", response_model=InvariantChange)
 async def delete_invariant(
     invariant_id: UUID, request: Request, pool=Depends(get_pool),
+    justification: Optional[str] = Query(None, max_length=1000, description="Optional: why (audited)."),
     principal: Principal = Depends(current_principal),
 ):
     """Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay
     (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
     Never gated: a downgraded tenant can always switch containment checks off cleanly."""
+    why = _why(justification)
     async with pool.acquire() as con:
         async with con.transaction():
             cur = await _invariant_row(con, invariant_id, lock=True)
@@ -703,11 +1108,12 @@ async def delete_invariant(
                                   "updated_at = NOW() WHERE id = $1", invariant_id, principal.actor)
         gv = await _graph_version(con)
         row = await _invariant_row(con, invariant_id)
+        vis = await _vis(con, principal)
     await _audit(request, pool, principal, action="assurance_invariant_archive",
-                 resource_type="invariants", resource_id=str(invariant_id),
+                 resource_type="invariants", resource_id=str(invariant_id), justification=why,
                  details={"invariant_id": row["invariant_id"], "digest": row["digest"],
                           "was_enabled": changed, "rows_kept": True})
-    return {"invariant": _inv_out(row, _now(), gv), "changed": changed, "created": False,
+    return {"invariant": _inv_view(row, _now(), gv, vis), "changed": changed, "created": False,
             "new_version": False}
 
 
@@ -718,11 +1124,13 @@ async def list_invariant_runs(
     include_result: bool = Query(False, description="Include the stored result (witnesses, blind spots)."),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0, le=1_000_000),
-    pool=Depends(get_pool),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ):
-    """The verdict-transition ledger of one invariant, newest first."""
+    """The verdict-transition ledger of one invariant, newest first. Below full clearance the
+    stored results have everything naming a hidden asset replaced by ``[redacted]``."""
     async with pool.acquire() as con:
         inv = await _invariant_row(con, invariant_id)
+        vis = await _vis(con, principal)
         args: list[Any] = [inv["invariant_id"]]
         clause = "WHERE invariant_id = $1"
         if verdict:
@@ -737,8 +1145,10 @@ async def list_invariant_runs(
     items = []
     for r in rows:
         d = dict(r)
-        d["reasons"] = [x for x in _j(d["reasons"], []) if isinstance(x, str)]
-        d["result"] = (_j(d["result"], {}) or None) if include_result else None
+        d["reasons"] = vis.scrub([x for x in _j(d["reasons"], []) if isinstance(x, str)])
+        raw = (_j(d["result"], {}) or None) if include_result else None
+        d["result"] = vis.scrub(raw)
+        d["redacted"] = bool(vis.active and raw is not None and d["result"] != raw)
         items.append(d)
     return _page(items, total, limit, offset)
 
@@ -784,6 +1194,12 @@ async def evaluate_now(
     out = await _run_evaluation(request, pool, only, body.rebuild)
     out.ignored_disabled = ignored
     await _audit_eval(request, pool, principal, body, out)
+    if principal.clearance_rank < _FULL_RANK:
+        # The runner's summaries can carry witnesses, blind spots and builder notes that name
+        # assets above this caller's clearance.
+        async with pool.acquire() as con:
+            vis = await _vis(con, principal)
+        out = EvaluateOut(**vis.scrub(out.model_dump()))
     return out
 
 
@@ -831,21 +1247,56 @@ async def _run_evaluation(request: Request, pool: Any, only: Optional[list[str]]
 # State and coverage
 # --------------------------------------------------------------------------------------------
 
+def _node_vis_sql(alias: str, vis: _Vis, where: list[str], args: list[Any]) -> None:
+    """``reach_nodes`` rows the caller may see: not a hidden ref AND not backed by a hidden asset
+    (an ``ip:`` node can carry the ``asset_id`` of the machine it was merged into)."""
+    if vis.active and vis.refs:
+        args.append(vis.refs)
+        where.append(f"{alias}.node_ref <> ALL(${len(args)}::text[])")
+    if vis.active and vis.ids:
+        args.append(vis.ids)
+        where.append(f"({alias}.asset_id IS NULL OR {alias}.asset_id::text <> ALL(${len(args)}::text[]))")
+
+
+def _edge_vis_sql(vis: _Vis, where: list[str], args: list[Any]) -> None:
+    """An edge touching a hidden node is hidden (it would name that node)."""
+    if vis.active and vis.refs:
+        args.append(vis.refs)
+        n = len(args)
+        where.append(f"src_ref <> ALL(${n}::text[]) AND dst_ref <> ALL(${n}::text[])")
+
+
+def _w(where: list[str]) -> str:
+    return ("WHERE " + " AND ".join(where)) if where else ""
+
+
 @router.get("/v1/assurance/state")
-async def assurance_state(pool=Depends(get_pool)) -> dict[str, Any]:
-    """Graph version, last build/evaluation, counts, and what the builders last did."""
+async def assurance_state(pool=Depends(get_pool),
+                          principal: Principal = Depends(current_principal)) -> dict[str, Any]:
+    """Graph version, last build/evaluation, counts, and what the builders last did. Counts and
+    notes cover only what the caller's clearance lets them see."""
     now = _now()
     async with pool.acquire() as con:
+        vis = await _vis(con, principal)
         st = await store.get_state(con)
+        nw: list[str] = []
+        na: list[Any] = []
+        _node_vis_sql("n", vis, nw, na)
+        ew: list[str] = []
+        ea: list[Any] = []
+        _edge_vis_sql(vis, ew, ea)
+        cw: list[str] = []
+        ca: list[Any] = []
+        _hide_sql("node_ref", vis, cw, ca)
         counts = {
-            "nodes": await con.fetchval("SELECT count(*) FROM reach_nodes"),
-            "edges": await con.fetchval("SELECT count(*) FROM reach_edges"),
-            "coverage_facts": await con.fetchval("SELECT count(*) FROM reach_coverage"),
+            "nodes": await con.fetchval(f"SELECT count(*) FROM reach_nodes n {_w(nw)}", *na),
+            "edges": await con.fetchval(f"SELECT count(*) FROM reach_edges {_w(ew)}", *ea),
+            "coverage_facts": await con.fetchval(f"SELECT count(*) FROM reach_coverage {_w(cw)}", *ca),
             "zones": await con.fetchval("SELECT count(*) FROM zones"),
-            "labels": await con.fetchval("SELECT count(*) FROM asset_labels"),
+            "labels": await con.fetchval(f"SELECT count(*) FROM asset_labels {_w(cw)}", *ca),
         }
         edges_by_source = {r["source"]: r["n"] for r in await con.fetch(
-            "SELECT source, count(*) AS n FROM reach_edges GROUP BY source ORDER BY source")}
+            f"SELECT source, count(*) AS n FROM reach_edges {_w(ew)} GROUP BY source ORDER BY source", *ea)}
         inv_rows = await con.fetch(f"SELECT {_INV_COLS} FROM invariants")
     by_status: dict[str, int] = {}
     for r in inv_rows:
@@ -871,9 +1322,98 @@ async def assurance_state(pool=Depends(get_pool)) -> dict[str, Any]:
         "enabled": bool(getattr(settings, "assurance_enabled", False)),
         "library_version": lib_version, "counts": counts, "edges_by_source": edges_by_source,
         "invariants": {"total": len(inv_rows), "by_status": by_status},
-        "builders": builders,
+        "builders": vis.scrub(builders),
         "builders_note": "what this replica's last build did per source; other replicas keep their own",
     }
+
+
+# Coverage -----------------------------------------------------------------------------------
+# One SQL pass classifies every visible node per direction with the library's own rule (any
+# unqualified fact of at least ``min_tier`` that is neither stale nor from the future covers the
+# direction; otherwise the reason is the one closest to qualifying). Only the requested PAGE of
+# nodes is then re-derived through ``direction_state`` (so the per-node text is the library's, not
+# a copy), and a test pins the SQL summary to the library over the same facts. Review finding
+# security-5: ``limit=1`` used to load 200k nodes / 400k facts into the event loop.
+
+_TIER_RANK_SQL = "(CASE {c} WHEN 'declared' THEN 0 WHEN 'configured' THEN 1 WHEN 'observed' THEN 2 " \
+                 "WHEN 'tested' THEN 3 ELSE -1 END)"
+
+# $1 = min tier rank, $2 = oldest acceptable observed_at, $3 = newest acceptable (now + slack)
+_DIR_CTE = """
+fd AS (
+  SELECT node_ref, direction,
+         count(*) AS facts,
+         bool_or(rk >= $1 AND observed_at >= $2 AND observed_at <= $3) AS ok,
+         bool_or(rk >= $1 AND observed_at > $3) AS r_future,
+         bool_or(rk >= $1 AND observed_at <= $3 AND observed_at < $2) AS r_stale,
+         bool_or(rk < $1) AS r_tier
+  FROM (SELECT node_ref, direction, observed_at, {rank} AS rk FROM reach_coverage
+        WHERE coalesce(detail->>'origin', '') = '' AND coalesce(detail->>'proto', '') = ''
+          {cov_vis}) c
+  GROUP BY node_ref, direction
+),
+nd AS (
+  SELECT n.node_ref, n.kind, n.label,
+         coalesce(i.ok, FALSE) AS cin, coalesce(o.ok, FALSE) AS cout,
+         CASE WHEN coalesce(i.ok, FALSE) THEN NULL WHEN i.facts IS NULL THEN 'no_sensor'
+              WHEN i.r_stale THEN 'stale' WHEN i.r_future THEN 'future_timestamp'
+              WHEN i.r_tier THEN 'tier_below_min' END AS rin,
+         CASE WHEN coalesce(o.ok, FALSE) THEN NULL WHEN o.facts IS NULL THEN 'no_sensor'
+              WHEN o.r_stale THEN 'stale' WHEN o.r_future THEN 'future_timestamp'
+              WHEN o.r_tier THEN 'tier_below_min' END AS rout
+  FROM reach_nodes n
+  LEFT JOIN fd i ON i.node_ref = n.node_ref AND i.direction = 'in'
+  LEFT JOIN fd o ON o.node_ref = n.node_ref AND o.direction = 'out'
+  WHERE n.kind <> 'internet' AND n.node_ref <> 'internet' {node_vis}
+)
+"""
+
+def _cov_cte(vis: _Vis, args: list[Any]) -> str:
+    """The CTE text with the visibility predicates spliced in (their params appended to ``args``)."""
+    cov_where: list[str] = []
+    node_where: list[str] = []
+    _hide_sql("node_ref", vis, cov_where, args)
+    _node_vis_sql("n", vis, node_where, args)
+    return _DIR_CTE.format(
+        rank=_TIER_RANK_SQL.format(c="tier"),
+        cov_vis=("AND " + " AND ".join(cov_where)) if cov_where else "",
+        node_vis=("AND " + " AND ".join(node_where)) if node_where else "")
+
+
+async def _coverage_summary(con: Any, vis: _Vis, tier_rank: int, lo: datetime, hi: datetime) -> dict[str, Any]:
+    args: list[Any] = [tier_rank, lo, hi]
+    cte = _cov_cte(vis, args)
+    row = await con.fetchrow(
+        f"WITH {cte} SELECT count(*) AS n, count(*) FILTER (WHERE cin AND cout) AS both, "
+        "count(*) FILTER (WHERE cin AND NOT cout) AS in_only, "
+        "count(*) FILTER (WHERE cout AND NOT cin) AS out_only FROM nd", *args)
+    reasons: dict[str, dict[str, int]] = {"in": {}, "out": {}}
+    for d, col in (("in", "rin"), ("out", "rout")):
+        for r in await con.fetch(f"WITH {cte} SELECT {col} AS r, count(*) AS n FROM nd "
+                                 f"WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY {col}", *args):
+            reasons[d][r["r"]] = r["n"]
+    return {"n": row["n"], "both": row["both"], "in_only": row["in_only"], "out_only": row["out_only"],
+            "reasons": reasons}
+
+
+def _page_coverage(lib: Any, lib_graph: Any, rows: list[Any], fact_rows: list[Any], now: datetime,
+                   tier: Any, max_age: timedelta) -> list[dict[str, Any]]:
+    """The library's own per-node view for one page of nodes (small: <= 500)."""
+    facts: dict[str, list[Any]] = {}
+    for f in fact_rows:
+        det = _j(f["detail"], {})
+        kw: dict[str, Any] = {}
+        if det.get("origin"):
+            kw["origin"] = str(det["origin"])
+        if det.get("proto"):
+            kw["proto"] = str(det["proto"])
+        try:
+            facts.setdefault(f["node_ref"], []).append(lib_graph.Coverage(
+                tier=lib.Tier(f["tier"]), observed_at=f["observed_at"], source=f["source"],
+                direction=f["direction"], **kw))
+        except (ValueError, TypeError):
+            continue  # a tier or qualifier outside the vocabulary asserts nothing
+    return _coverage_state(lib_graph, rows, facts, now, tier, max_age)
 
 
 def _coverage_state(lib_graph: Any, rows: list[Any], facts: dict[str, list[Any]], now: datetime,
@@ -904,13 +1444,15 @@ async def assurance_coverage(
     q: Optional[str] = Query(None, max_length=128, description="Substring of the node ref."),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0, le=1_000_000),
-    pool=Depends(get_pool),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
     """Coverage per source and per node (directional), blind spots by reason, stale sensors.
 
     A node counts as covered only when it is covered inbound AND outbound by a fresh fact of at
     least ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody
-    can instrument it, so it is never part of the universe.
+    can instrument it, so it is never part of the universe. Qualified facts (an outside-in TCP scan
+    speaks only for internet-origin TCP) never count here: the unqualified question is the one this
+    report answers. Nodes backed by assets above the caller's clearance are not listed or counted.
     """
     lib = _lib()
     from paddock_assurance import graph as lib_graph  # noqa: PLC0415
@@ -918,58 +1460,63 @@ async def assurance_coverage(
     now = _now()
     max_age = timedelta(hours=max_age_h)
     tier = lib.Tier(min_tier)
+    lo, hi = now - max_age, now + lib_graph.FUTURE_SLACK
     async with pool.acquire() as con:
-        nodes = await con.fetch(
-            "SELECT node_ref, kind, label FROM reach_nodes WHERE kind <> 'internet' AND node_ref <> 'internet' "
-            "ORDER BY node_ref LIMIT $1", MAX_COVERAGE_NODES + 1)
+        vis = await _vis(con, principal)
+        agg = await _coverage_summary(con, vis, tier.rank, lo, hi)
+
+        # the page of nodes (SQL does the filtering, ordering and paging)
+        pargs: list[Any] = [tier.rank, lo, hi]
+        cte = _cov_cte(vis, pargs)
+        sel: list[str] = []
+        if only_blind:
+            sel.append("NOT (cin AND cout)")
+        if kind is not None:
+            pargs.append(kind)
+            sel.append(f"kind = ${len(pargs)}")
+        if q:
+            pargs.append(q)
+            sel.append(f"strpos(node_ref, ${len(pargs)}) > 0")
+        if sel:
+            total = await con.fetchval(f"WITH {cte} SELECT count(*) FROM nd {_w(sel)}", *pargs)
+        else:
+            total = agg["n"]
+        pargs += [limit, offset]
+        page = await con.fetch(
+            f"WITH {cte} SELECT node_ref, kind, label FROM nd {_w(sel)} ORDER BY node_ref "
+            f"LIMIT ${len(pargs) - 1} OFFSET ${len(pargs)}", *pargs)
         fact_rows = await con.fetch(
-            "SELECT node_ref, direction, tier, source, observed_at FROM reach_coverage "
-            "ORDER BY node_ref, direction, source LIMIT $1", MAX_COVERAGE_FACTS + 1)
+            "SELECT node_ref, direction, tier, source, observed_at, detail FROM reach_coverage "
+            "WHERE node_ref = ANY($1::text[]) ORDER BY node_ref, direction, source",
+            [r["node_ref"] for r in page]) if page else []
+        sw: list[str] = []
+        sa: list[Any] = []
+        _hide_sql("node_ref", vis, sw, sa)
         by_source_rows = await con.fetch(
             "SELECT source, direction, tier, count(*) AS facts, count(DISTINCT node_ref) AS nodes, "
             "min(observed_at) AS oldest, max(observed_at) AS newest, "
-            "count(*) FILTER (WHERE observed_at >= $1 AND observed_at <= $2) AS fresh "
-            "FROM reach_coverage GROUP BY source, direction, tier ORDER BY source, direction, tier",
-            now - max_age, now + lib_graph.FUTURE_SLACK)
+            f"count(*) FILTER (WHERE observed_at >= ${len(sa) + 1} AND observed_at <= ${len(sa) + 2}) AS fresh "
+            f"FROM reach_coverage {_w(sw)} GROUP BY source, direction, tier ORDER BY source, direction, tier",
+            *sa, lo, hi)
         sensor_rows = await con.fetch(
             "SELECT id, name, site, online, status, last_seen_at, last_upload_at, offline_since "
             "FROM sensors WHERE status = 'active' AND (NOT online OR last_upload_at IS NULL "
-            "OR last_upload_at < $1) ORDER BY name, id LIMIT 200", now - max_age)
-        inv_rows = await con.fetch("SELECT invariant_id, last_result FROM invariants WHERE enabled "
-                                   "ORDER BY invariant_id")
-    truncated = len(nodes) > MAX_COVERAGE_NODES or len(fact_rows) > MAX_COVERAGE_FACTS
-    nodes, fact_rows = nodes[:MAX_COVERAGE_NODES], fact_rows[:MAX_COVERAGE_FACTS]
-    facts: dict[str, list[Any]] = {}
-    for f in fact_rows:
-        try:
-            facts.setdefault(f["node_ref"], []).append(lib_graph.Coverage(
-                tier=lib.Tier(f["tier"]), observed_at=f["observed_at"], source=f["source"],
-                direction=f["direction"]))
-        except ValueError:
-            continue  # a tier outside the vocabulary asserts nothing
-    per_node = _coverage_state(lib_graph, nodes, facts, now, tier, max_age)
-    n = len(per_node)
-    both = sum(1 for p in per_node if p["covered"])
-    reasons: dict[str, dict[str, int]] = {"in": {}, "out": {}}
-    for p in per_node:
-        for d in ("in", "out"):
-            rsn = p[f"reason_{d}"]
-            if rsn:
-                reasons[d][rsn] = reasons[d].get(rsn, 0) + 1
+            "OR last_upload_at < $1) ORDER BY name, id LIMIT 200", lo)
+        inv_rows = await con.fetch(
+            "SELECT invariant_id, last_result->'blind_spot_summary' AS summ FROM invariants WHERE enabled "
+            "ORDER BY invariant_id")
+    per_node = _page_coverage(lib, lib_graph, page, fact_rows, now, tier, max_age)
+    n, both = agg["n"], agg["both"]
     summary = {
-        "nodes": n, "covered": both,
-        "covered_in_only": sum(1 for p in per_node if p["covered_in"] and not p["covered_out"]),
-        "covered_out_only": sum(1 for p in per_node if p["covered_out"] and not p["covered_in"]),
+        "nodes": n, "covered": both, "covered_in_only": agg["in_only"], "covered_out_only": agg["out_only"],
         "blind": n - both, "ratio": 1.0 if n == 0 else round(both / n, 4),
-        "min_tier": min_tier, "max_age_h": max_age_h, "truncated": truncated,
+        "min_tier": min_tier, "max_age_h": max_age_h, "truncated": False,
     }
-    sel = [p for p in per_node if (not only_blind or not p["covered"])
-           and (kind is None or p["kind"] == kind) and (not q or q in p["node_ref"])]
     inv_spots = []
     totals: dict[str, int] = {}
     for r in inv_rows:
-        summ = _j(r["last_result"], {}).get("blind_spot_summary")
-        if not isinstance(summ, dict):
+        summ = _j(r["summ"], {})
+        if not summ:
             continue
         by_reason = {str(k): int(v) for k, v in _j(summ.get("by_reason"), {}).items()
                      if isinstance(v, (int, float))}
@@ -983,8 +1530,8 @@ async def assurance_coverage(
             "source": r["source"], "direction": r["direction"], "tier": r["tier"], "facts": r["facts"],
             "nodes": r["nodes"], "fresh": r["fresh"], "stale": r["facts"] - r["fresh"],
             "oldest": r["oldest"], "newest": r["newest"]} for r in by_source_rows],
-        "nodes": _page(sel[offset:offset + limit], len(sel), limit, offset),
-        "blind_spots": {"nodes_by_reason": reasons, "evaluated_by_reason": totals,
+        "nodes": _page(per_node, total, limit, offset),
+        "blind_spots": {"nodes_by_reason": agg["reasons"], "evaluated_by_reason": totals,
                         "invariants": inv_spots},
         "stale_sensors": [dict(r) for r in sensor_rows],
         "evaluated_at": now,
@@ -1002,7 +1549,7 @@ async def list_reach_nodes(
     q: Optional[str] = Query(None, max_length=128, description="Substring of the node ref or label."),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0, le=1_000_000),
-    pool=Depends(get_pool),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
     where, args = [], []
     for col, val in (("kind", kind), ("source", source)):
@@ -1012,8 +1559,10 @@ async def list_reach_nodes(
     if q:
         args.append(f"%{q}%")
         where.append(f"(n.node_ref ILIKE ${len(args)} OR n.label ILIKE ${len(args)})")
-    clause = ("WHERE " + " AND ".join(where)) if where else ""
     async with pool.acquire() as con:
+        vis = await _vis(con, principal)
+        _node_vis_sql("n", vis, where, args)
+        clause = _w(where)
         total = await con.fetchval(f"SELECT count(*) FROM reach_nodes n {clause}", *args)
         rows = await con.fetch(
             "SELECT n.node_ref, n.kind, n.label, n.asset_id, n.attrs, n.source, n.first_seen, n.last_seen "
@@ -1029,7 +1578,8 @@ async def list_reach_nodes(
             {k: c[k] for k in ("direction", "tier", "source", "observed_at")})
     items = [{**{k: r[k] for k in ("node_ref", "kind", "label", "asset_id", "source", "first_seen",
                                    "last_seen")},
-              "attrs": _j(r["attrs"], {}), "coverage": by_node.get(r["node_ref"], [])} for r in rows]
+              "attrs": vis.scrub(_j(r["attrs"], {})), "coverage": by_node.get(r["node_ref"], [])}
+             for r in rows]
     return _page(items, total, limit, offset)
 
 
@@ -1044,7 +1594,7 @@ async def list_reach_edges(
     include_evidence: bool = Query(False),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0, le=1_000_000),
-    pool=Depends(get_pool),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
     where, args = [], []
     for col, val in (("source", source), ("basis", basis), ("proto", proto), ("src_ref", src),
@@ -1055,10 +1605,12 @@ async def list_reach_edges(
     if node is not None:
         args.append(node)
         where.append(f"(src_ref = ${len(args)} OR dst_ref = ${len(args)})")
-    clause = ("WHERE " + " AND ".join(where)) if where else ""
     cols = ("id, src_ref, dst_ref, proto, port_lo, port_hi, basis, source, confidence, first_seen, last_seen"
             + (", evidence" if include_evidence else ""))
     async with pool.acquire() as con:
+        vis = await _vis(con, principal)
+        _edge_vis_sql(vis, where, args)
+        clause = _w(where)
         total = await con.fetchval(f"SELECT count(*) FROM reach_edges {clause}", *args)
         rows = await con.fetch(
             f"SELECT {cols} FROM reach_edges {clause} ORDER BY src_ref, dst_ref, proto, port_lo, port_hi, "
@@ -1067,7 +1619,7 @@ async def list_reach_edges(
     for r in rows:
         d = dict(r)
         if include_evidence:
-            d["evidence"] = _j(d["evidence"], {})
+            d["evidence"] = vis.scrub(_j(d["evidence"], {}))
         items.append(d)
     return _page(items, total, limit, offset)
 
@@ -1076,8 +1628,10 @@ async def list_reach_edges(
 # Zones
 # --------------------------------------------------------------------------------------------
 
-def _zone_out(z: Any) -> dict[str, Any]:
-    return {"id": z.id, "name": z.name, "kind": z.kind, "cidrs": list(z.cidrs), "description": z.description,
+def _zone_out(z: Any, vis: _Vis = _FULL) -> dict[str, Any]:
+    # A host-sized CIDR that is exactly a hidden asset's address would name that asset.
+    cidrs = [c for c in z.cidrs if not vis.hidden(f"cidr:{c}")]
+    return {"id": z.id, "name": z.name, "kind": z.kind, "cidrs": cidrs, "description": z.description,
             "source": z.source, "created_by": z.created_by, "created_at": z.created_at,
             "updated_at": z.updated_at}
 
@@ -1098,14 +1652,26 @@ async def _zone_by_id(con: Any, zone_id: UUID) -> Any:
     return zone
 
 
+def _need_why(justification: Optional[str]) -> str:
+    """A removal that moves verdicts must say why (review finding security-7): at least 3 characters
+    after trimming, else 422 (an absent parameter is FastAPI's own 422 first)."""
+    why = (justification or "").strip()
+    if len(why) < 3:
+        raise HTTPException(status_code=422, detail=[{
+            "loc": ["query", "justification"], "type": "value_error",
+            "msg": "a justification of at least 3 characters is required to delete this"}])
+    return why
+
+
 @router.get("/v1/zones", response_model=ZonePage)
 async def list_zones(
     limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0, le=1_000_000),
-    pool=Depends(get_pool),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ):
     async with pool.acquire() as con:
         zones = await store.list_zones(con)
-    return _page([_zone_out(z) for z in zones[offset:offset + limit]], len(zones), limit, offset)
+        vis = await _vis(con, principal)
+    return _page([_zone_out(z, vis) for z in zones[offset:offset + limit]], len(zones), limit, offset)
 
 
 @router.post("/v1/zones", response_model=ZoneChangeOut, status_code=201, dependencies=[_PAID])
@@ -1113,7 +1679,8 @@ async def create_zone(
     body: ZoneCreate, request: Request, pool=Depends(get_pool),
     principal: Principal = Depends(current_principal),
 ):
-    """Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised."""
+    """Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.
+    At most ``MAX_ZONES`` zones and ``MAX_TOTAL_ZONE_CIDRS`` CIDRs over all zones (409)."""
     try:
         store.validate_zone_name(body.name)
         if body.name in store.RESERVED_ZONES:
@@ -1126,6 +1693,7 @@ async def create_zone(
             if await con.fetchval("SELECT 1 FROM zones WHERE name = $1", body.name):
                 raise HTTPException(status_code=409, detail=f"zone {body.name!r} already exists "
                                                             "(use PUT to change it)")
+            await _check_zone_caps(con, new_cidrs=len(body.cidrs), replacing=None)
             try:
                 ch = await store.upsert_zone(con, body.name, body.cidrs, kind=body.kind,
                                              description=body.description, set_by=principal.actor,
@@ -1133,18 +1701,37 @@ async def create_zone(
             except ValueError as exc:
                 raise _unprocessable(str(exc)) from exc
         z = next(z for z in await store.list_zones(con) if z.name == body.name)
+        vis = await _vis(con, principal)
     await _audit(request, pool, principal, action="assurance_zone_create", resource_type="zones",
                  resource_id=str(z.id), justification=body.justification, status=201,
                  details={"name": z.name, "kind": z.kind, "cidrs": list(ch.cidrs),
                           "overlaps": list(ch.overlaps), "graph_version": ch.graph_version})
-    return {"zone": _zone_out(z), "changed": ch.changed, "created": True,
+    return {"zone": _zone_out(z, vis), "changed": ch.changed, "created": True,
             "overlaps": list(ch.overlaps), "graph_version": ch.graph_version}
 
 
+async def _check_zone_caps(con: Any, *, new_cidrs: int, replacing: Optional[str]) -> None:
+    """409 when one more zone / these CIDRs would pass the per-tenant caps. ``replacing`` is the
+    name of the zone being updated (its current CIDRs stop counting); ``None`` means a new zone."""
+    rows = await con.fetch("SELECT name, coalesce(cardinality(cidrs), 0) AS n FROM zones")
+    if replacing is None and len(rows) >= MAX_ZONES:
+        raise HTTPException(status_code=409, detail={
+            "error": "zone_limit", "limit": MAX_ZONES,
+            "message": f"this tenant already has {len(rows)} zones (max {MAX_ZONES})"})
+    others = sum(int(r["n"]) for r in rows if r["name"] != replacing)
+    if others + new_cidrs > MAX_TOTAL_ZONE_CIDRS:
+        raise HTTPException(status_code=409, detail={
+            "error": "zone_cidr_limit", "limit": MAX_TOTAL_ZONE_CIDRS,
+            "message": f"zones would hold {others + new_cidrs} CIDRs in total (max {MAX_TOTAL_ZONE_CIDRS}); "
+                       "widen a prefix instead of listing hosts"})
+
+
 @router.get("/v1/zones/{zone_id}", response_model=ZoneOut)
-async def get_zone(zone_id: UUID, pool=Depends(get_pool)):
+async def get_zone(zone_id: UUID, pool=Depends(get_pool),
+                   principal: Principal = Depends(current_principal)):
     async with pool.acquire() as con:
-        return _zone_out(await _zone_by_id(con, zone_id))
+        vis = await _vis(con, principal)
+        return _zone_out(await _zone_by_id(con, zone_id), vis)
 
 
 @router.put("/v1/zones/{zone_id}", response_model=ZoneChangeOut, dependencies=[_PAID])
@@ -1157,6 +1744,8 @@ async def update_zone(
         async with con.transaction():
             await _lock_zones(con)
             cur = await _zone_by_id(con, zone_id)
+            if body.cidrs is not None:
+                await _check_zone_caps(con, new_cidrs=len(body.cidrs), replacing=cur.name)
             try:
                 ch = await store.upsert_zone(
                     con, cur.name, cur.cidrs if body.cidrs is None else body.cidrs,
@@ -1166,24 +1755,27 @@ async def update_zone(
             except ValueError as exc:
                 raise _unprocessable(str(exc)) from exc
         z = await _zone_by_id(con, zone_id)
+        vis = await _vis(con, principal)
     await _audit(request, pool, principal, action="assurance_zone_update", resource_type="zones",
                  resource_id=str(zone_id), justification=body.justification,
                  details={"name": z.name, "previous_cidrs": list(cur.cidrs), "cidrs": list(ch.cidrs),
                           "kind": z.kind, "changed": ch.changed, "overlaps": list(ch.overlaps),
                           "graph_version": ch.graph_version})
-    return {"zone": _zone_out(z), "changed": ch.changed, "created": False,
+    return {"zone": _zone_out(z, vis), "changed": ch.changed, "created": False,
             "overlaps": list(ch.overlaps), "graph_version": ch.graph_version}
 
 
 @router.delete("/v1/zones/{zone_id}", response_model=ZoneDeleteOut)
 async def delete_zone(
     zone_id: UUID, request: Request,
-    justification: Optional[str] = Query(None, max_length=1000),
+    justification: str = Query(..., max_length=1000,
+                               description="Why the zone is removed (>= 3 characters; audited)."),
     pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ):
     """Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it
-    then select nothing and answer UNKNOWN, never HOLDS. Never gated (clean-up)."""
-    why = (justification or "").strip() or "deleted via API (no justification given)"
+    then select nothing and answer UNKNOWN, never HOLDS. A justification is REQUIRED: removing the
+    zone that defines a boundary changes verdicts. Never billing-gated (clean-up)."""
+    why = _need_why(justification)
     async with pool.acquire() as con:
         async with con.transaction():
             await _lock_zones(con)
@@ -1214,21 +1806,24 @@ async def list_labels(
     tag: Optional[str] = Query(None, max_length=64),
     source: Optional[Literal["declared", "metadata", "connector"]] = Query(None),
     limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0, le=1_000_000),
-    pool=Depends(get_pool),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ):
-    """Labels with their provenance (who set them, why, when)."""
+    """Labels with their provenance (who set them, why, when). Labels on nodes above the caller's
+    clearance are not listed."""
     where, args = [], []
     for col, val in (("node_ref", node_ref), ("tag", tag), ("source", source)):
         if val is not None:
             args.append(val)
             where.append(f"{col} = ${len(args)}")
-    clause = ("WHERE " + " AND ".join(where)) if where else ""
     async with pool.acquire() as con:
+        vis = await _vis(con, principal)
+        _hide_sql("node_ref", vis, where, args)
+        clause = _w(where)
         total = await con.fetchval(f"SELECT count(*) FROM asset_labels {clause}", *args)
         rows = await con.fetch(
             f"SELECT {_LABEL_COLS} FROM asset_labels {clause} ORDER BY node_ref, tag "
             f"LIMIT ${len(args) + 1} OFFSET ${len(args) + 2}", *args, limit, offset)
-    return _page([dict(r) for r in rows], total, limit, offset)
+    return _page([vis.scrub(dict(r)) if vis.active else dict(r) for r in rows], total, limit, offset)
 
 
 @router.put("/v1/labels", response_model=LabelChangeOut, dependencies=[_PAID])
@@ -1237,7 +1832,8 @@ async def set_label(
     principal: Principal = Depends(current_principal),
 ):
     """Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.
-    Changing one changes verdicts, so it bumps the graph version and is audited."""
+    Changing one changes verdicts, so it bumps the graph version and is audited. At most
+    ``MAX_LABELS`` declared labels per tenant (409)."""
     warnings: list[str] = []
     try:
         node_ref, tag, value = store.validate_label(body.node_ref, body.tag, body.value)
@@ -1246,16 +1842,36 @@ async def set_label(
     if tag == "zone" and value in store.RESERVED_ZONES:
         raise _unprocessable(f"zone {value!r} is reserved for the internet node", "value")
     async with pool.acquire() as con:
+        vis = await _vis(con, principal)
+        # A node above the caller's clearance answers exactly like a missing one: a principal that
+        # cannot see an asset must not be able to relabel it (e.g. strip its crown-jewel tag).
+        if vis.hidden(node_ref):
+            raise _unprocessable("no such asset in this tenant", "node_ref")
         if node_ref.startswith("asset:"):
-            if not await con.fetchval("SELECT 1 FROM assets WHERE id = $1", UUID(node_ref[6:])):
+            where, args = ["id = $1"], [UUID(node_ref[6:])]
+            if vis.active:
+                args.append(principal.clearance_rank)
+                where.append(f"{classification_rank_sql('classification')} <= $2")
+            if not await con.fetchval(f"SELECT 1 FROM assets {_w(where)}", *args):
                 raise _unprocessable("no such asset in this tenant", "node_ref")
         if tag == "zone" and not await con.fetchval("SELECT 1 FROM zones WHERE name = $1", value):
             warnings.append(f"zone {value!r} is not declared; the label still places the node in it")
-        try:
-            ch = await store.set_label(con, node_ref, tag, value, set_by=principal.actor,
-                                       justification=body.justification)
-        except ValueError as exc:
-            raise _unprocessable(str(exc)) from exc
+        async with con.transaction():
+            await con.execute("SELECT pg_advisory_xact_lock(hashtextextended("
+                              "coalesce(current_setting('app.tenant_id', true), '') || ':labels', 0))")
+            exists = await con.fetchval("SELECT 1 FROM asset_labels WHERE node_ref = $1 AND tag = $2",
+                                        node_ref, tag)
+            if not exists:
+                n = await con.fetchval("SELECT count(*) FROM asset_labels WHERE source = 'declared'")
+                if n >= MAX_LABELS:
+                    raise HTTPException(status_code=409, detail={
+                        "error": "label_limit", "limit": MAX_LABELS,
+                        "message": f"this tenant already has {n} declared labels (max {MAX_LABELS})"})
+            try:
+                ch = await store.set_label(con, node_ref, tag, value, set_by=principal.actor,
+                                           justification=body.justification)
+            except ValueError as exc:
+                raise _unprocessable(str(exc)) from exc
         row = await con.fetchrow(f"SELECT {_LABEL_COLS} FROM asset_labels WHERE node_ref = $1 AND tag = $2",
                                  node_ref, tag)
     await _audit(request, pool, principal, action="assurance_label_set", resource_type="asset_labels",
@@ -1269,14 +1885,17 @@ async def set_label(
 @router.delete("/v1/labels/{label_id}", response_model=LabelDeleteOut)
 async def delete_label(
     label_id: UUID, request: Request,
-    justification: Optional[str] = Query(None, max_length=1000),
+    justification: str = Query(..., max_length=1000,
+                               description="Why the label is removed (>= 3 characters; audited)."),
     pool=Depends(get_pool), principal: Principal = Depends(current_principal),
 ):
-    """Remove a label (bumps the graph version). Never gated (clean-up)."""
-    why = (justification or "").strip() or "removed via API (no justification given)"
+    """Remove a label (bumps the graph version). A justification is REQUIRED: dropping an
+    ``app-tier``/``crown-jewel``/``zone`` label changes verdicts. Never billing-gated (clean-up)."""
+    why = _need_why(justification)
     async with pool.acquire() as con:
+        vis = await _vis(con, principal)
         row = await con.fetchrow("SELECT node_ref, tag FROM asset_labels WHERE id = $1", label_id)
-        if row is None:
+        if row is None or vis.hidden(row["node_ref"]):
             raise _not_found("label")
         try:
             ch = await store.delete_label(con, row["node_ref"], row["tag"], set_by=principal.actor,
@@ -1293,3 +1912,123 @@ async def delete_label(
     return {"deleted": True, "node_ref": row["node_ref"], "tag": row["tag"], "previous": ch.previous,
             "graph_version": ch.graph_version}
 
+
+# --------------------------------------------------------------------------------------------
+# Sensor scopes (schema 040): which networks a Sentry sensor can actually see
+# --------------------------------------------------------------------------------------------
+# WHY: a sensor that saw ONE flow to a host does not see all of that host's traffic. Coverage
+# ("no such traffic was seen") may therefore be asserted only for addresses inside a network its
+# operator declared here, and a sensor with no declared scope covers nothing. The sentry_flows
+# builder reads this table directly; this API only edits it.
+
+_SCOPE_COLS = "sensor_id, cidrs, set_by, justification, set_at"
+
+
+def _scope_out(sensor_id: Any, scope: Optional[Any], sensor: Optional[Any]) -> dict[str, Any]:
+    return {
+        "sensor_id": sensor_id,
+        "name": sensor["name"] if sensor else None, "site": sensor["site"] if sensor else None,
+        "status": sensor["status"] if sensor else None, "online": sensor["online"] if sensor else None,
+        "cidrs": list(scope["cidrs"] or ()) if scope else [], "scope_declared": scope is not None,
+        "set_by": scope["set_by"] if scope else None,
+        "justification": (scope["justification"] or "") if scope else "",
+        "set_at": scope["set_at"] if scope else None,
+    }
+
+
+def _sensor_cidrs(cidrs: list[str]) -> list[str]:
+    """Canonical, de-duplicated, capped; ``/0`` is refused (a sensor never sees "everything")."""
+    try:
+        out = list(store.validate_zone_cidrs(cidrs))
+    except ValueError as exc:
+        raise _unprocessable(str(exc), "cidrs") from exc
+    if len(out) > MAX_SENSOR_CIDRS:
+        raise _unprocessable(f"too many CIDRs (max {MAX_SENSOR_CIDRS})", "cidrs")
+    return out
+
+
+@router.get("/v1/assurance/sensor-scopes", response_model=SensorScopeList)
+async def list_sensor_scopes(pool=Depends(get_pool)):
+    """Declared sensor scopes, plus the active sensors that have none (they cover nothing)."""
+    async with pool.acquire() as con:
+        scopes = await con.fetch(f"SELECT {_SCOPE_COLS} FROM sensor_scopes ORDER BY set_at, sensor_id LIMIT 1000")
+        sensors = {r["id"]: r for r in await con.fetch(
+            "SELECT id, name, site, status, online FROM sensors ORDER BY name, id LIMIT 5000")}
+    have = {r["sensor_id"] for r in scopes}
+    items = [_scope_out(r["sensor_id"], r, sensors.get(r["sensor_id"])) for r in scopes]
+    unscoped = [_scope_out(sid, None, r) for sid, r in sensors.items()
+                if sid not in have and r["status"] == "active"][:200]
+    return {"items": items, "unscoped_sensors": unscoped, "total": len(items)}
+
+
+@router.put("/v1/assurance/sensor-scopes/{sensor_uuid}", response_model=SensorScopeChange,
+            dependencies=[_PAID])
+async def put_sensor_scope(
+    sensor_uuid: UUID, body: SensorScopeIn, request: Request, pool=Depends(get_pool),
+    principal: Principal = Depends(current_principal),
+):
+    """Declare (replace) the networks a sensor can see. Admin only; justification required.
+
+    Changing the CIDR set bumps the graph version and marks the builders due at once, so coverage
+    that this change withdraws is withdrawn on the next tick, not after the rebuild interval."""
+    cidrs = _sensor_cidrs(body.cidrs)
+    async with pool.acquire() as con:
+        async with con.transaction():
+            sensor = await con.fetchrow("SELECT id, name, site, status, online FROM sensors WHERE id = $1",
+                                        sensor_uuid)
+            if sensor is None:
+                raise _not_found("sensor")
+            await con.execute("SELECT pg_advisory_xact_lock(hashtextextended("
+                              "coalesce(current_setting('app.tenant_id', true), '') || ':sensor_scopes', 0))")
+            prev = await con.fetchrow("SELECT cidrs FROM sensor_scopes WHERE sensor_id = $1 FOR UPDATE",
+                                      sensor_uuid)
+            await con.execute(
+                "INSERT INTO sensor_scopes (sensor_id, cidrs, set_by, justification, set_at) "
+                "VALUES ($1, $2::text[], $3, $4, NOW()) "
+                "ON CONFLICT (tenant_id, sensor_id) DO UPDATE SET cidrs = EXCLUDED.cidrs, "
+                "set_by = EXCLUDED.set_by, justification = EXCLUDED.justification, set_at = EXCLUDED.set_at",
+                sensor_uuid, cidrs, principal.actor, body.justification)
+            before = sorted(prev["cidrs"] or ()) if prev else None
+            changed = before != sorted(cidrs)
+            version = None
+            if changed:
+                version = await store.bump_graph_version(con)
+                await _rebuild_soon(con)
+        row = await con.fetchrow(f"SELECT {_SCOPE_COLS} FROM sensor_scopes WHERE sensor_id = $1", sensor_uuid)
+    await _audit(request, pool, principal, action="assurance_sensor_scope_set",
+                 resource_type="sensor_scopes", resource_id=str(sensor_uuid),
+                 justification=body.justification,
+                 details={"sensor": sensor["name"], "previous_cidrs": before, "cidrs": cidrs,
+                          "changed": changed, "graph_version": version})
+    return {"scope": _scope_out(sensor_uuid, row, sensor), "changed": changed,
+            "previous": before, "graph_version": version}
+
+
+@router.delete("/v1/assurance/sensor-scopes/{sensor_uuid}", response_model=SensorScopeDeleteOut)
+async def delete_sensor_scope(
+    sensor_uuid: UUID, request: Request,
+    justification: str = Query(..., max_length=1000,
+                               description="Why the scope is removed (>= 3 characters; audited)."),
+    pool=Depends(get_pool), principal: Principal = Depends(current_principal),
+):
+    """Remove a sensor's declared scope: it then covers nothing. A justification is REQUIRED.
+    Never billing-gated (withdrawing coverage is always allowed)."""
+    why = _need_why(justification)
+    async with pool.acquire() as con:
+        async with con.transaction():
+            row = await con.fetchrow("DELETE FROM sensor_scopes WHERE sensor_id = $1 RETURNING cidrs",
+                                     sensor_uuid)
+            if row is None:
+                raise _not_found("sensor scope")
+            version = await store.bump_graph_version(con)
+            await _rebuild_soon(con)
+    prev = list(row["cidrs"] or ())
+    await _audit(request, pool, principal, action="assurance_sensor_scope_delete",
+                 resource_type="sensor_scopes", resource_id=str(sensor_uuid), justification=why,
+                 details={"previous_cidrs": prev, "graph_version": version})
+    return {"deleted": True, "sensor_id": sensor_uuid, "previous": prev, "graph_version": version}
+
+
+async def _rebuild_soon(con: Any) -> None:
+    """Make the next runner tick rebuild the graph (a never-built tenant is always due)."""
+    await con.execute("UPDATE assurance_state SET last_build_at = NULL")

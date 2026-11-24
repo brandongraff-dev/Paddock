@@ -65,6 +65,8 @@ def oracle(doc: dict, hops: int) -> Verdict | str:
 
 @pytest.mark.parametrize("seed", range(400))
 def test_matches_oracle(seed):
+    # NB: zones a and b are disjoint here, so "T minus S" is the identity; overlapping selectors
+    # are covered by the pairwise oracle at the end of this file.
     rng = random.Random(seed)
     doc = random_doc(rng)
     hops = rng.randint(1, 5)
@@ -361,3 +363,130 @@ def test_a_holds_stays_true_until_its_stated_expiry(seed):
             continue
         again = evaluate(plan, ReachGraph.from_dict(doc), t)
         assert again.verdict is Verdict.HOLDS, (seed, t, doc)
+
+
+# =============================================================================================
+# Overlapping selectors (P1 hardening, evaluator-1). The old oracles above subtract S from T, the
+# same assumption the evaluator used to make, so they could never see a node selected by both
+# ``from`` and ``to``. This one does NOT: it takes every ordered PAIR (s, t) with s in S, t in T and
+# s != t on its own, and walks from that single source only (no multi-source search, no tree), so
+# "t is in S" never removes t from consideration.
+# =============================================================================================
+
+OVERLAP_YAML = """
+apiVersion: paddock.dev/invariant/v1
+id: acme:oracle-overlap
+title: overlap oracle check
+subjects: {{ from: {{ zone: [a, m] }}, to: {{ zone: [b, m] }} }}
+assert: unreachable
+via: {{ protocols: [tcp], max_hops: {hops}, stop_at: {{ tag: app }} }}
+{allow}
+evidence: {{ min_tier: observed, max_age: 24h }}
+coverage: {{ require: 0 }}
+"""
+ALLOW_M = "allow: [ { to: { zone: m }, reason: lab devices, expires: 2026-12-01 } ]"
+OVERLAP_EXPOSE_YAML = """
+apiVersion: paddock.dev/invariant/v1
+id: acme:oracle-overlap-expose
+title: overlap exposure oracle check
+subjects: { from: { zone: [a, m] }, to: { zone: [b, m] } }
+assert: exposes-only
+ports: [80, 443]
+via: { protocols: [tcp] }
+evidence: { min_tier: observed, max_age: 24h }
+coverage: { require: 0 }
+"""
+
+
+def _pairs(doc: dict) -> tuple[set[str], set[str], list[tuple[str, str]]]:
+    zone = {n["id"]: n["zone"] for n in doc["nodes"]}
+    S = {i for i, z in zone.items() if z in ("a", "m")}
+    T = {i for i, z in zone.items() if z in ("b", "m")}
+    return S, T, [(s, t) for s in sorted(S) for t in sorted(T) if s != t]
+
+
+def oracle_overlap_reach(doc: dict, hops: int, exempt_zone: str | None = None) -> Verdict | str:
+    zone = {n["id"]: n["zone"] for n in doc["nodes"]}
+    app = {n["id"] for n in doc["nodes"] if "app" in n["tags"]}
+    bo = {n["id"] for n in doc["nodes"] if not covered_dir(n, "out")}
+    bi = {n["id"] for n in doc["nodes"] if not covered_dir(n, "in")}
+    _, _, all_pairs = _pairs(doc)
+    if not all_pairs:
+        return "EMPTY"
+    pairs = [(s, t) for s, t in all_pairs if zone[t] != exempt_zone]
+    known = {(e["src"], e["dst"]) for e in doc["edges"] if e["proto"] == "tcp"}
+    unknown = {(u, v) for u in bo for v in bi if u != v}
+
+    def walk(src: str, adj: set[tuple[str, str]]) -> set[str]:
+        seen = {src}
+        for _ in range(hops):
+            seen |= {d for (u, d) in adj if u in seen and (u not in app or u == src)}
+        return seen
+
+    if any(t in walk(s, known) for s, t in pairs):
+        return Verdict.VIOLATED
+    if any(t in walk(s, known | unknown) for s, t in pairs):
+        return Verdict.UNKNOWN
+    return Verdict.HOLDS
+
+
+@pytest.mark.parametrize("seed", range(600))
+def test_overlapping_reach_matches_the_pairwise_oracle(seed):
+    rng = random.Random(80000 + seed)
+    doc = random_dir_doc(rng)
+    hops = rng.randint(1, 5)
+    allow = rng.choice(["", "", ALLOW_M])
+    got = evaluate(compile_text(OVERLAP_YAML.format(hops=hops, allow=allow)),
+                   ReachGraph.from_dict(doc), NOW)
+    want = oracle_overlap_reach(doc, hops, "m" if allow else None)
+    if want == "EMPTY":
+        assert got.verdict is Verdict.UNKNOWN and got.reasons[0].startswith("empty_selector")
+    else:
+        assert got.verdict is want, (seed, hops, allow, doc)
+    if got.verdict is Verdict.VIOLATED:       # the pinned list is every violating target, sorted
+        assert got.violating_targets == sorted(got.violating_targets)
+        assert len(got.violating_targets) == got.violation_count
+
+
+def oracle_overlap_expose(doc: dict) -> Verdict | str:
+    bo = {n["id"] for n in doc["nodes"] if not covered_dir(n, "out")}
+    bi = {n["id"] for n in doc["nodes"] if not covered_dir(n, "in")}
+    S, T, pairs = _pairs(doc)
+    if not pairs:
+        return "EMPTY"
+    if any((e["src"], e["dst"]) in set(pairs) and e["proto"] == "tcp" and e["ports"] not in ("80", "443")
+           for e in doc["edges"]):
+        return Verdict.VIOLATED
+    return Verdict.UNKNOWN if any(s in bo and t in bi for s, t in pairs) else Verdict.HOLDS
+
+
+@pytest.mark.parametrize("seed", range(400))
+def test_overlapping_exposure_matches_the_pairwise_oracle(seed):
+    rng = random.Random(81000 + seed)
+    doc = random_dir_doc(rng)
+    got = evaluate(compile_text(OVERLAP_EXPOSE_YAML), ReachGraph.from_dict(doc), NOW)
+    want = oracle_overlap_expose(doc)
+    if want == "EMPTY":
+        assert got.verdict is Verdict.UNKNOWN and got.reasons[0].startswith("empty_selector")
+    else:
+        assert got.verdict is want, (seed, doc)
+
+
+@pytest.mark.parametrize("seed", range(1500))
+def test_overlap_and_exception_holds_stays_true_until_its_stated_expiry(seed):
+    """The valid_until promise again, now with overlapping selectors and with an allow exception
+    that expires inside the evidence window (the exception, not coverage, is then the limit)."""
+    rng = random.Random(82000 + seed)
+    doc = random_dir_doc(rng)
+    plan = compile_text(rng.choice([
+        OVERLAP_YAML.format(hops=rng.randint(1, 5), allow=""),
+        OVERLAP_YAML.format(hops=rng.randint(1, 5), allow=ALLOW_M),
+        OVERLAP_EXPOSE_YAML]))
+    r = evaluate(plan, ReachGraph.from_dict(doc), NOW)
+    if r.verdict is not Verdict.HOLDS:
+        return
+    assert r.valid_until is not None      # a HOLDS is never open-ended
+    span = r.valid_until - NOW
+    for t in (NOW + span / 5, NOW + span / 2, NOW + span * 0.9, r.valid_until):
+        if t >= NOW:
+            assert evaluate(plan, ReachGraph.from_dict(doc), t).verdict is Verdict.HOLDS, (seed, t, doc)

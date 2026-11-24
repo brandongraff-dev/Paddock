@@ -12,6 +12,13 @@ from .model import Invariant
 
 MAX_BYTES = 64 * 1024
 MAX_DEPTH = 12
+# A flow collection (``[`` / ``{``) nests without indentation, so a tiny document can be thousands
+# of levels deep, and PyYAML's cost on that is superlinear (about 2 ms per level before it finally
+# raises RecursionError). The post-parse ``_depth`` check can never help, so the depth is bounded
+# by a linear character scan *before* the parser sees the text. The cap is a little above
+# MAX_DEPTH because a bracket inside a quoted string is counted too (the scan is deliberately
+# dumb, so unbalanced brackets in free text can at worst make a pathological document fail).
+MAX_FLOW_DEPTH = MAX_DEPTH + 4
 
 
 class ParseError(ValueError):
@@ -30,20 +37,44 @@ def _depth(node: Any, d: int = 0) -> int:
     return d
 
 
+def _check_flow_nesting(text: str) -> None:
+    depth = 0
+    for ch in text:
+        if ch == "[" or ch == "{":
+            depth += 1
+            if depth > MAX_FLOW_DEPTH:
+                raise ParseError([f"document nested deeper than {MAX_DEPTH} levels"])
+        elif (ch == "]" or ch == "}") and depth:
+            depth -= 1
+
+
 def load_document(text: str) -> Any:
+    if not isinstance(text, str):
+        raise ParseError(["document must be text"])
     if len(text.encode("utf-8", "replace")) > MAX_BYTES:
         raise ParseError([f"document larger than {MAX_BYTES} bytes"])
+    _check_flow_nesting(text)
     try:
         # Anchors/aliases are how YAML bombs are made; invariants never need them.
         if any(isinstance(e, yaml.AliasEvent) for e in yaml.parse(text, Loader=yaml.SafeLoader)):
             raise ParseError(["YAML aliases are not allowed"])
         doc = yaml.safe_load(text)
+    except ParseError:
+        raise
     except yaml.YAMLError as exc:
         raise ParseError([f"invalid YAML: {str(exc).splitlines()[0] if str(exc) else 'error'}"]) \
             from exc
+    except RecursionError as exc:      # block nesting the scan above cannot see (``- - - -``)
+        raise ParseError([f"document nested deeper than {MAX_DEPTH} levels"]) from exc
+    except Exception as exc:           # a parser must never leak anything but ParseError
+        raise ParseError([f"invalid YAML: {type(exc).__name__}"]) from exc
     if not isinstance(doc, dict):
         raise ParseError(["document must be a mapping"])
-    if _depth(doc) > MAX_DEPTH:
+    try:
+        too_deep = _depth(doc) > MAX_DEPTH
+    except RecursionError:
+        too_deep = True
+    if too_deep:
         raise ParseError([f"document nested deeper than {MAX_DEPTH} levels"])
     return doc
 

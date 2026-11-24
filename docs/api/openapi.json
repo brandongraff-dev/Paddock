@@ -5602,6 +5602,7 @@
             "type": "integer"
           },
           "dst_ip": {
+            "maxLength": 64,
             "title": "Dst Ip",
             "type": "string"
           },
@@ -5653,6 +5654,7 @@
             "type": "string"
           },
           "src_ip": {
+            "maxLength": 64,
             "title": "Src Ip",
             "type": "string"
           }
@@ -6626,6 +6628,19 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "justification": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional: why. Recorded in the audit log.",
+            "title": "Justification"
+          },
           "yaml": {
             "maxLength": 65536,
             "minLength": 1,
@@ -6756,6 +6771,12 @@
             },
             "title": "Reasons",
             "type": "array"
+          },
+          "redacted": {
+            "default": false,
+            "description": "Parts were withheld because they name assets above the caller's clearance.",
+            "title": "Redacted",
+            "type": "boolean"
           },
           "severity": {
             "title": "Severity",
@@ -7090,6 +7111,19 @@
               }
             ],
             "title": "Enabled"
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional: why. Recorded in the audit log.",
+            "title": "Justification"
           },
           "yaml": {
             "anyOf": [
@@ -10924,6 +10958,12 @@
             "title": "Reasons",
             "type": "array"
           },
+          "redacted": {
+            "default": false,
+            "description": "The result had parts withheld (clearance).",
+            "title": "Redacted",
+            "type": "boolean"
+          },
           "result": {
             "anyOf": [
               {
@@ -13198,6 +13238,240 @@
           }
         },
         "title": "SensorPatch",
+        "type": "object"
+      },
+      "SensorScopeChange": {
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Version"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SensorScopeOut"
+          }
+        },
+        "required": [
+          "scope",
+          "changed"
+        ],
+        "title": "SensorScopeChange",
+        "type": "object"
+      },
+      "SensorScopeDeleteOut": {
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Version"
+          },
+          "previous": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Previous",
+            "type": "array"
+          },
+          "sensor_id": {
+            "format": "uuid",
+            "title": "Sensor Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sensor_id"
+        ],
+        "title": "SensorScopeDeleteOut",
+        "type": "object"
+      },
+      "SensorScopeIn": {
+        "properties": {
+          "cidrs": {
+            "description": "The networks this sensor can actually see (mirror/SPAN coverage). Coverage is asserted only for hosts inside them.",
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Cidrs",
+            "type": "array"
+          },
+          "justification": {
+            "description": "Why. Recorded with the change and in the audit log.",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Justification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "justification",
+          "cidrs"
+        ],
+        "title": "SensorScopeIn",
+        "type": "object"
+      },
+      "SensorScopeList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SensorScopeOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "unscoped_sensors": {
+            "description": "Active sensors with no declared scope: they cover nothing.",
+            "items": {
+              "$ref": "#/components/schemas/SensorScopeOut"
+            },
+            "title": "Unscoped Sensors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "SensorScopeList",
+        "type": "object"
+      },
+      "SensorScopeOut": {
+        "properties": {
+          "cidrs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cidrs",
+            "type": "array"
+          },
+          "justification": {
+            "default": "",
+            "title": "Justification",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "online": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Online"
+          },
+          "scope_declared": {
+            "default": true,
+            "title": "Scope Declared",
+            "type": "boolean"
+          },
+          "sensor_id": {
+            "format": "uuid",
+            "title": "Sensor Id",
+            "type": "string"
+          },
+          "set_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set At"
+          },
+          "set_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set By"
+          },
+          "site": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "sensor_id"
+        ],
+        "title": "SensorScopeOut",
         "type": "object"
       },
       "ServiceStatus": {
@@ -20212,7 +20486,7 @@
     },
     "/v1/assurance/coverage": {
       "get": {
-        "description": "Coverage per source and per node (directional), blind spots by reason, stale sensors.\n\nA node counts as covered only when it is covered inbound AND outbound by a fresh fact of at\nleast ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody\ncan instrument it, so it is never part of the universe.",
+        "description": "Coverage per source and per node (directional), blind spots by reason, stale sensors.\n\nA node counts as covered only when it is covered inbound AND outbound by a fresh fact of at\nleast ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody\ncan instrument it, so it is never part of the universe. Qualified facts (an outside-in TCP scan\nspeaks only for internet-origin TCP) never count here: the unqualified question is the one this\nreport answers. Nodes backed by assets above the caller's clearance are not listed or counted.",
         "operationId": "assurance_coverage_v1_assurance_coverage_get",
         "parameters": [
           {
@@ -20399,9 +20673,139 @@
         ]
       }
     },
+    "/v1/assurance/sensor-scopes": {
+      "get": {
+        "description": "Declared sensor scopes, plus the active sensors that have none (they cover nothing).",
+        "operationId": "list_sensor_scopes_v1_assurance_sensor_scopes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorScopeList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Sensor Scopes",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/assurance/sensor-scopes/{sensor_uuid}": {
+      "delete": {
+        "description": "Remove a sensor's declared scope: it then covers nothing. A justification is REQUIRED.\nNever billing-gated (withdrawing coverage is always allowed).",
+        "operationId": "delete_sensor_scope_v1_assurance_sensor_scopes__sensor_uuid__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sensor_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sensor Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Why the scope is removed (>= 3 characters; audited).",
+            "in": "query",
+            "name": "justification",
+            "required": true,
+            "schema": {
+              "description": "Why the scope is removed (>= 3 characters; audited).",
+              "maxLength": 1000,
+              "title": "Justification",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorScopeDeleteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Sensor Scope",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "put": {
+        "description": "Declare (replace) the networks a sensor can see. Admin only; justification required.\n\nChanging the CIDR set bumps the graph version and marks the builders due at once, so coverage\nthat this change withdraws is withdrawn on the next tick, not after the rebuild interval.",
+        "operationId": "put_sensor_scope_v1_assurance_sensor_scopes__sensor_uuid__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sensor_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sensor Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorScopeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorScopeChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Sensor Scope",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
     "/v1/assurance/state": {
       "get": {
-        "description": "Graph version, last build/evaluation, counts, and what the builders last did.",
+        "description": "Graph version, last build/evaluation, counts, and what the builders last did. Counts and\nnotes cover only what the caller's clearance lets them see.",
         "operationId": "assurance_state_v1_assurance_state_get",
         "responses": {
           "200": {
@@ -26962,6 +27366,25 @@
               "title": "Std Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional: why (audited).",
+            "in": "query",
+            "name": "justification",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional: why (audited).",
+              "title": "Justification"
+            }
           }
         ],
         "responses": {
@@ -27005,6 +27428,25 @@
               "format": "uuid",
               "title": "Invariant Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Optional: why (audited).",
+            "in": "query",
+            "name": "justification",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional: why (audited).",
+              "title": "Justification"
             }
           }
         ],
@@ -27077,7 +27519,7 @@
         ]
       },
       "put": {
-        "description": "Change the definition (new digest => new version row) and/or toggle ``enabled``.\n\nA std invariant's text is owned by the shipped library (it would be overwritten), so only\n``enabled`` can change there.",
+        "description": "Change the definition (new digest => new version row) and/or toggle ``enabled``.\n\nA std invariant's text is owned by the shipped library (it would be overwritten), so only\n``enabled`` can change there. An optional ``justification`` is recorded in the audit log, and\nevery ``allow`` exception (reason, expiry) of a new definition is written to it.",
         "operationId": "update_invariant_v1_invariants__invariant_id__put",
         "parameters": [
           {
@@ -27131,7 +27573,7 @@
     },
     "/v1/invariants/{invariant_id}/runs": {
       "get": {
-        "description": "The verdict-transition ledger of one invariant, newest first.",
+        "description": "The verdict-transition ledger of one invariant, newest first. Below full clearance the\nstored results have everything naming a hidden asset replaced by ``[redacted]``.",
         "operationId": "list_invariant_runs_v1_invariants__invariant_id__runs_get",
         "parameters": [
           {
@@ -27232,7 +27674,7 @@
     },
     "/v1/labels": {
       "get": {
-        "description": "Labels with their provenance (who set them, why, when).",
+        "description": "Labels with their provenance (who set them, why, when). Labels on nodes above the caller's\nclearance are not listed.",
         "operationId": "list_labels_v1_labels_get",
         "parameters": [
           {
@@ -27343,7 +27785,7 @@
         ]
       },
       "put": {
-        "description": "Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.\nChanging one changes verdicts, so it bumps the graph version and is audited.",
+        "description": "Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.\nChanging one changes verdicts, so it bumps the graph version and is audited. At most\n``MAX_LABELS`` declared labels per tenant (409).",
         "operationId": "set_label_v1_labels_put",
         "requestBody": {
           "content": {
@@ -27385,7 +27827,7 @@
     },
     "/v1/labels/{label_id}": {
       "delete": {
-        "description": "Remove a label (bumps the graph version). Never gated (clean-up).",
+        "description": "Remove a label (bumps the graph version). A justification is REQUIRED: dropping an\n``app-tier``/``crown-jewel``/``zone`` label changes verdicts. Never billing-gated (clean-up).",
         "operationId": "delete_label_v1_labels__label_id__delete",
         "parameters": [
           {
@@ -27399,20 +27841,15 @@
             }
           },
           {
+            "description": "Why the label is removed (>= 3 characters; audited).",
             "in": "query",
             "name": "justification",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 1000,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Justification"
+              "description": "Why the label is removed (>= 3 characters; audited).",
+              "maxLength": 1000,
+              "title": "Justification",
+              "type": "string"
             }
           }
         ],
@@ -33939,7 +34376,7 @@
         ]
       },
       "post": {
-        "description": "Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.",
+        "description": "Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.\nAt most ``MAX_ZONES`` zones and ``MAX_TOTAL_ZONE_CIDRS`` CIDRs over all zones (409).",
         "operationId": "create_zone_v1_zones_post",
         "requestBody": {
           "content": {
@@ -33981,7 +34418,7 @@
     },
     "/v1/zones/{zone_id}": {
       "delete": {
-        "description": "Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it\nthen select nothing and answer UNKNOWN, never HOLDS. Never gated (clean-up).",
+        "description": "Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it\nthen select nothing and answer UNKNOWN, never HOLDS. A justification is REQUIRED: removing the\nzone that defines a boundary changes verdicts. Never billing-gated (clean-up).",
         "operationId": "delete_zone_v1_zones__zone_id__delete",
         "parameters": [
           {
@@ -33995,20 +34432,15 @@
             }
           },
           {
+            "description": "Why the zone is removed (>= 3 characters; audited).",
             "in": "query",
             "name": "justification",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 1000,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Justification"
+              "description": "Why the zone is removed (>= 3 characters; audited).",
+              "maxLength": 1000,
+              "title": "Justification",
+              "type": "string"
             }
           }
         ],

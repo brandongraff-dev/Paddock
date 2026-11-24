@@ -55,8 +55,12 @@ def _isolate_runner(monkeypatch):
     monkeypatch.setattr(settings, "assurance_backstop_min", 100_000)
     monkeypatch.setattr(settings, "assurance_rebuild_min", 100_000)
     runner._LAST_BUILD.clear()
+    runner._LAST_EVAL.clear()
+    runner._PLAN_CACHE.clear()
     yield
     runner._LAST_BUILD.clear()
+    runner._LAST_EVAL.clear()
+    runner._PLAN_CACHE.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -548,8 +552,11 @@ async def test_only_selects_by_id_or_row_uuid_and_a_partial_run_does_not_advance
     async with conn_for(app_pool) as con:
         assert (await store.get_state(con)).last_eval_version == -1          # the std one was never evaluated
     assert (await inv(db_pool, STD_REACH))["last_verdict"] is None
-    s = await runner.evaluate_tenant(app_pool, A, redis=fake_redis)           # unforced: the unevaluated one is due
-    assert [r["invariant_id"] for r in s["results"]] == [STD_REACH, CUSTOM] or {r["invariant_id"] for r in s["results"]} == {STD_REACH, CUSTOM}
+    # unforced: only the unevaluated one is due. Due-ness is per invariant now (P1X runner-5): CUSTOM was
+    # already evaluated at this graph version and document, so re-running it would be wasted work
+    # (and, under a time budget, would push the invariants that really are due to the back).
+    s = await runner.evaluate_tenant(app_pool, A, redis=fake_redis)
+    assert [r["invariant_id"] for r in s["results"]] == [STD_REACH]
     async with conn_for(app_pool) as con:
         assert (await store.get_state(con)).last_eval_version == 1
 
@@ -914,3 +921,468 @@ async def test_configuration_evidence_still_finds_the_violation(db_pool, app_poo
     row = await inv(db_pool, "std:public-ports-allowlist")
     assert row["last_verdict"] == "VIOLATED"
     assert len(await findings(db_pool)) == 1
+
+
+# =========================================================================== #
+# P1X hardening
+# =========================================================================== #
+
+import logging  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+JEWEL_YAML = CUSTOM_YAML.replace("acme:db-not-public", "acme:jewel-not-public").replace(
+    "to: { class: data_store }", "to: { tag: crown-jewel }")
+
+
+def named_yaml(name):
+    return CUSTOM_YAML.replace("acme:db-not-public", name)
+
+
+async def lease_state(db_pool, tid=A):
+    return await db_pool.fetchrow("SELECT * FROM assurance_state WHERE tenant_id = $1", tid)
+
+
+# ---- runner-1: fencing ---------------------------------------------------------------------
+
+async def test_a_stale_evaluator_cannot_overwrite_a_newer_verdict_or_close_and_verify_its_finding(
+        db_pool, app_pool, fake_redis, monkeypatch):
+    """The lease lapses while replica A is between 'evaluated HOLDS' and 'recorded it'; replica B
+    claims, sees the newer graph (VIOLATED) and opens a finding. A must not overwrite B's verdict,
+    and must not close and verify B's finding. (Before the fence: HOLDS over VIOLATED, finding
+    'fixed' with fix_verified_at, and the next tick said up_to_date.)"""
+    w = await world(db_pool, app_pool, exposed=False, covered=True)
+    await enable_custom(app_pool)
+    real_record = runner._record
+    reached, proceed, calls = asyncio.Event(), asyncio.Event(), {"n": 0}
+
+    async def gated(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            reached.set()
+            await proceed.wait()
+        return await real_record(*a, **k)
+
+    monkeypatch.setattr(runner, "_record", gated)
+    a_task = asyncio.create_task(go(app_pool, force=True, redis=fake_redis))
+    try:
+        await asyncio.wait_for(reached.wait(), 20)            # A computed HOLDS@v1 and is about to write it
+        await w.set(exposed=True, now=NOW + 5 * dt.timedelta(minutes=1))           # graph v2: the DB is exposed
+        await db_pool.execute("UPDATE assurance_state SET lease_until = now() - interval '1 second'")   # A's lease lapses
+        b = await go(app_pool, force=True, redis=fake_redis, now=NOW + 5 * dt.timedelta(minutes=1))
+        assert result_for(b, CUSTOM)["verdict"] == "VIOLATED" and b["ok"]
+        (f,) = await findings(db_pool)
+        assert f["status"] == "open"
+    finally:
+        proceed.set()
+    a = await asyncio.wait_for(a_task, 30)
+    assert a["ok"] is False and any("lease lost" in e for e in a["errors"])
+    assert result_for(a, CUSTOM).get("skipped") == "lease_lost"
+    row = await inv(db_pool, CUSTOM)
+    assert row["last_verdict"] == "VIOLATED" and row["last_graph_version"] == 2
+    (f,) = await findings(db_pool)
+    assert f["status"] == "open" and f["fix_verified_at"] is None
+    # and the record is B's, intact: the ledger shows no HOLDS@v1 row after B's VIOLATED
+    assert [x["verdict"] for x in await runs(db_pool, CUSTOM)][-1] == "VIOLATED"
+
+
+async def test_the_lease_cannot_be_stolen_by_a_replica_whose_clock_runs_ahead(db_pool, app_pool, fake_redis, monkeypatch):
+    """The lease was compared with each replica's own wall clock: one running 301 s ahead claimed a
+    live lease at once (and then both wrote verdicts). Leases now use the database clock."""
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+    entered, release = asyncio.Event(), asyncio.Event()
+    real = graph_loader.load_graph_doc_with_diagnostics
+
+    async def slow(conn, now):
+        entered.set()
+        await release.wait()
+        return await real(conn, now)
+
+    monkeypatch.setattr(graph_loader, "load_graph_doc_with_diagnostics", slow)
+    first = asyncio.create_task(go(app_pool, force=True, redis=fake_redis))
+    try:
+        await asyncio.wait_for(entered.wait(), 20)
+        skewed = runner._now() + dt.timedelta(seconds=301)
+        monkeypatch.setattr(runner, "_now", lambda: skewed)
+        second = await asyncio.wait_for(go(app_pool, force=True, redis=fake_redis), 15)
+        assert second["skipped"] == "lease_held" and second["results"] == []
+    finally:
+        release.set()
+    assert (await asyncio.wait_for(first, 30))["evaluated"] == 1
+
+
+async def test_a_result_older_than_the_stored_one_is_discarded(db_pool, app_pool, fake_redis):
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+    await go(app_pool, redis=fake_redis)
+    await db_pool.execute("UPDATE invariants SET last_graph_version = 9 WHERE invariant_id = $1", CUSTOM)
+    s = await go(app_pool, force=True, redis=fake_redis, now=NOW + H)
+    r = result_for(s, CUSTOM)
+    assert r.get("skipped") == "stale_result" and s["ok"] is False
+    row = await inv(db_pool, CUSTOM)
+    assert row["last_graph_version"] == 9 and row["last_evaluated_at"] == NOW         # untouched
+    async with conn_for(app_pool) as con:
+        assert (await store.get_state(con)).last_eval_version == 1                     # no watermark advance from a discard
+
+
+async def test_a_graph_that_moved_during_the_evaluation_closes_nothing_and_stays_due(db_pool, app_pool, fake_redis, monkeypatch):
+    """HOLDS@v1 computed, a label/zone/builder bumps the graph to v2 before the findings sync:
+    the verdict describes an older world, so it must not close (or verify) findings."""
+    w = await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+    await go(app_pool, redis=fake_redis)
+    (f,) = await findings(db_pool)
+    assert f["status"] == "open"
+    await w.set(exposed=False, now=NOW + H)                                # fixed: graph v2
+    real = findings_sync.sync_findings
+
+    async def bump_then_sync(*a, **k):
+        async with conn_for(app_pool) as con:
+            await store.bump_graph_version(con)                                # v3 appears mid-evaluation
+        return await real(*a, **k)
+
+    monkeypatch.setattr(findings_sync, "sync_findings", bump_then_sync)
+    s = await go(app_pool, redis=fake_redis, now=NOW + H)
+    assert result_for(s, CUSTOM)["verdict"] == "HOLDS"
+    assert result_for(s, CUSTOM)["findings"]["skipped"] == "graph_moved"
+    assert (await findings(db_pool))[0]["status"] == "open"
+    monkeypatch.setattr(findings_sync, "sync_findings", real)
+    s = await go(app_pool, redis=fake_redis, now=NOW + H)                  # not forced: still due, then closes
+    assert s["evaluated"] == 1
+    assert (await findings(db_pool))[0]["status"] == "fixed"
+
+
+# ---- runner-2: the input-document hash -----------------------------------------------------
+
+async def test_an_input_change_that_does_not_move_graph_version_still_triggers_reevaluation(db_pool, app_pool, fake_redis):
+    """Tagging an asset as a crown jewel (asset metadata) changes the evaluated document but not
+    graph_version; the stored HOLDS used to stand until the backstop."""
+    w = await world(db_pool, app_pool, exposed=True, covered=True)
+    await db_pool.execute("UPDATE assets SET metadata = '{\"crown_jewel\": true}' WHERE id = $1", w.web)
+    await enable_custom(app_pool, JEWEL_YAML)
+    s = await go(app_pool, redis=fake_redis)
+    assert result_for(s, "acme:jewel-not-public")["verdict"] == "HOLDS"       # the exposed DB is not a jewel; web is unreachable
+    st = await lease_state(db_pool)
+    assert st["last_eval_doc_sha"] and st["last_eval_version"] == st["graph_version"]
+    # an idle tick changes nothing and does not spin (the hash ignores clocks and observed_at)
+    s = await go(app_pool, redis=fake_redis, now=NOW + 2 * dt.timedelta(minutes=1))
+    assert s["skipped"] == "up_to_date" and s["evaluated"] == 0
+    v = st["graph_version"]
+    await db_pool.execute("UPDATE assets SET metadata = '{\"crown_jewel\": true}' WHERE id = $1", w.db)
+    assert (await lease_state(db_pool))["graph_version"] == v                    # the version did not move
+    s = await go(app_pool, redis=fake_redis, now=NOW + 3 * dt.timedelta(minutes=1))   # NOT forced
+    assert s["evaluated"] == 1 and result_for(s, "acme:jewel-not-public")["verdict"] == "VIOLATED"
+    assert len(await findings(db_pool)) == 1
+    assert (await lease_state(db_pool))["last_eval_doc_sha"] != st["last_eval_doc_sha"]
+    s = await go(app_pool, redis=fake_redis, now=NOW + 4 * dt.timedelta(minutes=1))
+    assert s["skipped"] == "up_to_date"
+
+
+async def test_a_tenant_evaluated_before_the_hash_existed_is_reevaluated_once(db_pool, app_pool, fake_redis):
+    await world(db_pool, app_pool, exposed=False, covered=True)
+    await enable_custom(app_pool)
+    await go(app_pool, redis=fake_redis)
+    assert (await go(app_pool, redis=fake_redis, now=NOW + dt.timedelta(minutes=1)))["evaluated"] == 0
+    await db_pool.execute("UPDATE assurance_state SET last_eval_doc_sha = NULL")       # as after migration 040
+    await db_pool.execute("UPDATE invariants SET last_result = last_result - 'doc_sha'")
+    assert (await go(app_pool, redis=fake_redis, now=NOW + 2 * dt.timedelta(minutes=1)))["evaluated"] == 1
+    assert (await go(app_pool, redis=fake_redis, now=NOW + 3 * dt.timedelta(minutes=1)))["evaluated"] == 0
+
+
+# ---- builders-6: an incomplete graph is never evaluated -----------------------------------
+
+GUEST_YAML = CUSTOM_YAML.replace("acme:db-not-public", "acme:guest-not-db").replace(
+    "from: { zone: internet }", "from: { zone: guest }").replace("min_tier: observed", "min_tier: configured")
+
+
+async def _guest_world(db_pool, app_pool):
+    db = await seed_asset(db_pool, "db-ov")
+    db_ref, ip_ref = refs.asset_ref(db), "ip:10.9.0.5"
+    async with conn_for(app_pool) as con:
+        await store.upsert_zone(con, "guest", ["10.9.0.0/16"], set_by="t", justification="guests")
+    out = BuildOutput(
+        source="seed", mode="replace",
+        nodes=[NodeOut(ip_ref, "ip"), NodeOut("cidr:10.0.0.0/8", "cidr"), NodeOut(db_ref, "cloud_db", asset_id=str(db))],
+        edges=[EdgeOut("cidr:10.0.0.0/8", db_ref, "tcp", 5432, 5432, "configured", "seed", NOW)],
+        coverage=[CoverageOut(ip_ref, "in", "observed", NOW, "seed"), CoverageOut(ip_ref, "out", "observed", NOW, "seed"),
+                  CoverageOut(db_ref, "in", "configured", NOW, "seed")])
+    async with conn_for(app_pool) as con:
+        await store.persist_build(con, out, NOW)
+    return db_ref
+
+
+async def test_hitting_the_cidr_expansion_cap_makes_every_invariant_unknown_not_holds(db_pool, app_pool, fake_redis, monkeypatch):
+    """With the cap hit the 10.9.0.5 -> db edge (implied by 'allow 10.0.0.0/8') is not in the
+    document, 10.9.0.5 is covered outbound so no unknown edge replaces it, and the guest-cannot-
+    reach-db invariant came out HOLDS although the rules admit it. The runner must refuse to
+    evaluate that graph and say why."""
+    await _guest_world(db_pool, app_pool)
+    await enable_custom(app_pool, GUEST_YAML)
+    await enable_custom(app_pool)
+    s = await go(app_pool, force=True, redis=fake_redis)
+    assert result_for(s, "acme:guest-not-db")["verdict"] == "VIOLATED"          # the real answer
+    assert len(await findings(db_pool)) == 1
+    assert runner.last_evaluation(A)["cidr_unexpanded"] == []
+
+    monkeypatch.setattr(graph_loader, "MAX_EXPANDED_EDGES", 0)
+    s = await go(app_pool, force=True, redis=fake_redis, now=NOW + H)
+    assert s["ok"] is False and any("cidr_expansion_overflow" in e for e in s["errors"])
+    assert {r["verdict"] for r in s["results"]} == {"UNKNOWN"} and len(s["results"]) == 2        # EVERY invariant
+    assert {tuple(r["reasons"]) for r in s["results"]} == {("graph_incomplete:cidr_expansion_overflow",)}
+    row = await inv(db_pool, "acme:guest-not-db")
+    stored = json.loads(row["last_result"])
+    assert row["last_verdict"] == "UNKNOWN" and stored["diagnostics"]["cidr_unexpanded_count"] == 1
+    assert (await findings(db_pool))[0]["status"] == "open"                      # UNKNOWN changes no finding
+    diag = runner.last_evaluation(A)
+    assert diag["cidr_unexpanded"] and diag["cidr_unexpanded_count"] == 1 and diag["graph_ok"] is False
+    assert s["diagnostics"]["cidr_unexpanded_count"] == 1
+    # an unchanged incomplete graph is not re-evaluated every tick (the UNKNOWNs are current) ...
+    assert (await go(app_pool, redis=fake_redis, now=NOW + H + dt.timedelta(minutes=1)))["evaluated"] == 0
+    # ... and the incomplete evaluation did not stand in for a complete one: once the cap no longer
+    # bites the (expanded) document differs, everything is re-evaluated without being forced
+    monkeypatch.setattr(graph_loader, "MAX_EXPANDED_EDGES", 400_000)
+    s = await go(app_pool, redis=fake_redis, now=NOW + 2 * H)
+    assert result_for(s, "acme:guest-not-db")["verdict"] == "VIOLATED"
+
+
+# ---- runner-3: close on a still-violated verdict, end to end -------------------------------
+
+async def test_fixing_one_of_two_exposed_databases_closes_its_finding_while_the_other_stays_open(db_pool, app_pool, fake_redis):
+    d1, d2 = await seed_asset(db_pool, "db-one"), await seed_asset(db_pool, "db-two")
+    r1, r2 = refs.asset_ref(d1), refs.asset_ref(d2)
+
+    async def put(*exposed, now=NOW):
+        out = BuildOutput(
+            source="seed", mode="replace",
+            nodes=[NodeOut("internet", "internet"), NodeOut(r1, "cloud_db", asset_id=str(d1)), NodeOut(r2, "cloud_db", asset_id=str(d2))],
+            edges=[EdgeOut("internet", r, "tcp", 5432, 5432, "configured", "seed", now) for r in exposed],
+            coverage=[CoverageOut(r, "in", "observed", now, "seed") for r in (r1, r2)])
+        async with conn_for(app_pool) as con:
+            return await store.persist_build(con, out, now)
+
+    await put(r1, r2)
+    await enable_custom(app_pool)
+    s = await go(app_pool, redis=fake_redis)
+    assert result_for(s, CUSTOM)["violation_count"] == 2 and len(await findings(db_pool)) == 2
+    await put(r2, now=NOW + H)                                                 # db-one is closed to the world
+    s = await go(app_pool, redis=fake_redis, now=NOW + H)
+    assert result_for(s, CUSTOM)["verdict"] == "VIOLATED"
+    assert result_for(s, CUSTOM)["findings"]["closed"] == 1
+    st = {f["asset_id"]: f for f in await findings(db_pool)}
+    # fixed by the system, but NOT stamped verified: a VIOLATED result carries no evidence tier for the
+    # targets that stopped violating (the library sets it for HOLDS only), so we cannot claim observed
+    # evidence. The verified path is covered with hand-built results in test_assurance_findings.py.
+    assert st[d1]["status"] == "fixed" and st[d1]["fix_verified_at"] is None and st[d1]["status_by"] == findings_sync.ACTOR
+    assert st[d2]["status"] == "open"
+    await put(now=NOW + 2 * H)
+    s = await go(app_pool, redis=fake_redis, now=NOW + 2 * H)
+    assert result_for(s, CUSTOM)["verdict"] == "HOLDS" and {f["status"] for f in await findings(db_pool)} == {"fixed"}
+
+
+# ---- runner-5: budget and rotation ---------------------------------------------------------
+
+def _slow_evaluate(monkeypatch, order, delay=0.25):
+    import paddock_assurance as lib
+    real = lib.evaluate
+
+    def slow(plan, graph, now):
+        order.append(plan.id)
+        time.sleep(delay)
+        return real(plan, graph, now)
+
+    monkeypatch.setattr(lib, "evaluate", slow)
+
+
+async def test_the_budget_clock_starts_after_the_graph_is_loaded(db_pool, app_pool, fake_redis, monkeypatch):
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+    real = graph_loader.load_graph_doc_with_diagnostics
+
+    async def slow_load(conn, now):
+        await asyncio.sleep(0.4)                 # a big estate: loading alone outlasts the budget
+        return await real(conn, now)
+
+    monkeypatch.setattr(graph_loader, "load_graph_doc_with_diagnostics", slow_load)
+    monkeypatch.setattr(runner, "TENANT_BUDGET_S", 0.2)
+    s = await go(app_pool, redis=fake_redis)
+    assert s["evaluated"] == 1 and "deferred" not in s
+
+
+async def test_deferred_invariants_go_first_next_tick_so_none_starves_and_the_deferral_is_logged(
+        db_pool, app_pool, fake_redis, monkeypatch, caplog):
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    for n in ("acme:a", "acme:b", "acme:c"):
+        await enable_custom(app_pool, named_yaml(n))
+    order: list[str] = []
+    _slow_evaluate(monkeypatch, order)
+    monkeypatch.setattr(runner, "TENANT_BUDGET_S", 0.2)
+    with caplog.at_level(logging.WARNING, logger=runner.logger.name):
+        s1 = await go(app_pool, redis=fake_redis, now=NOW)
+    assert s1["evaluated"] == 1 and s1["deferred"] == 2 and s1["deferred_ids"] == ["acme:b", "acme:c"]
+    assert any(r.getMessage() == "assurance_deferred" and r.levelno >= logging.WARNING for r in caplog.records)
+    s2 = await go(app_pool, redis=fake_redis, now=NOW + dt.timedelta(minutes=1))
+    assert [r["invariant_id"] for r in s2["results"]] == ["acme:b"] and s2["deferred"] == 1
+    s3 = await go(app_pool, redis=fake_redis, now=NOW + 2 * dt.timedelta(minutes=1))
+    assert [r["invariant_id"] for r in s3["results"]] == ["acme:c"] and "deferred" not in s3
+    assert order == ["acme:a", "acme:b", "acme:c"]                           # each exactly once: no wasted re-runs
+    for n in ("acme:a", "acme:b", "acme:c"):
+        assert (await inv(db_pool, n))["last_verdict"] == "VIOLATED"
+    async with conn_for(app_pool) as con:
+        assert (await store.get_state(con)).last_eval_version == 1               # the watermark advanced once all were done
+
+
+async def test_when_everything_is_due_again_the_longest_unevaluated_runs_first(db_pool, app_pool, fake_redis, monkeypatch):
+    """Backstop-driven passes make every invariant due; with a budget that fits one, the order must
+    rotate (oldest evaluation first) instead of always starting with 'a'."""
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    for n in ("acme:a", "acme:b", "acme:c"):
+        await enable_custom(app_pool, named_yaml(n))
+    await go(app_pool, redis=fake_redis, now=NOW)                                # all three evaluated
+    monkeypatch.setattr(settings, "assurance_backstop_min", 1)
+    order: list[str] = []
+    _slow_evaluate(monkeypatch, order)
+    monkeypatch.setattr(runner, "TENANT_BUDGET_S", 0.2)
+    for k in (2, 4, 6):
+        await go(app_pool, redis=fake_redis, now=NOW + k * dt.timedelta(minutes=1))
+    assert order == ["acme:a", "acme:b", "acme:c"]
+
+
+# ---- runner-6 / security-3: compile once, off the event loop -----------------------------------
+
+async def test_stored_definitions_are_compiled_once_per_digest_and_off_the_event_loop(db_pool, app_pool, fake_redis, monkeypatch):
+    import paddock_assurance as lib
+    await world(db_pool, app_pool, exposed=False, covered=True)
+    await enable_custom(app_pool)
+    await enable_std(app_pool)
+    real = lib.compile_text
+    seen: list[tuple[str, bool]] = []
+
+    def counting(text):
+        seen.append((text[:60], threading.current_thread() is threading.main_thread()))
+        return real(text)
+
+    monkeypatch.setattr(lib, "compile_text", counting)
+    runner._PLAN_CACHE.clear()
+    await go(app_pool, redis=fake_redis)
+    first = len(seen)
+    assert first == 2 and not any(on_loop for _t, on_loop in seen)             # one each, in a worker thread
+    for k in range(1, 4):                                                       # idle ticks and a forced run
+        await go(app_pool, redis=fake_redis, now=NOW + k * dt.timedelta(minutes=1))
+    await go(app_pool, force=True, redis=fake_redis, now=NOW + 5 * dt.timedelta(minutes=1))
+    assert len(seen) == first, seen
+    # an edit (new yaml, new digest) is compiled once, and only that one
+    row = await inv(db_pool, CUSTOM)
+    edited = row["yaml"].replace("severity: high", "severity: medium")
+    plan = real(edited)
+    await db_pool.execute("UPDATE invariants SET yaml = $2, digest = $3, severity = 'medium' WHERE id = $1",
+                          row["id"], edited, plan.digest)
+    s = await go(app_pool, redis=fake_redis, now=NOW + 6 * dt.timedelta(minutes=1))
+    assert s["evaluated"] == 1 and len(seen) == first + 1
+
+
+async def test_an_invalid_definition_is_not_recompiled_every_tick(db_pool, app_pool, fake_redis, monkeypatch):
+    import paddock_assurance as lib
+    await world(db_pool, app_pool, exposed=False, covered=True)
+    await enable_custom(app_pool)
+    await db_pool.execute("UPDATE invariants SET yaml = 'not: [valid' WHERE invariant_id = $1", CUSTOM)
+    real = lib.compile_text
+    n = {"c": 0}
+
+    def counting(text):
+        n["c"] += 1
+        return real(text)
+
+    monkeypatch.setattr(lib, "compile_text", counting)
+    for k in range(4):
+        s = await go(app_pool, redis=fake_redis, now=NOW + k * dt.timedelta(minutes=1))
+    assert n["c"] == 1
+    assert (await inv(db_pool, CUSTOM))["last_verdict"] == "UNKNOWN"
+
+
+# ---- runner-7: cancellation between record and sync --------------------------------------------
+
+async def test_cancellation_between_record_and_findings_sync_makes_the_invariant_due_again(db_pool, app_pool, fake_redis, monkeypatch):
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+    await go(app_pool, redis=fake_redis)                                       # a complete pass: watermark == graph version
+    await enable_std(app_pool)                                                 # a new invariant
+    real = findings_sync.sync_findings
+    entered = asyncio.Event()
+
+    async def hang(*a, **k):
+        entered.set()
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(findings_sync, "sync_findings", hang)
+    task = asyncio.create_task(go(app_pool, redis=fake_redis, now=NOW + dt.timedelta(minutes=1)))
+    await asyncio.wait_for(entered.wait(), 20)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    row = await inv(db_pool, STD_REACH)
+    assert row["last_verdict"] is not None and row["last_graph_version"] is None      # verdict recorded, sync flagged for retry
+    assert (await lease_state(db_pool))["lease_owner"] is None
+    monkeypatch.setattr(findings_sync, "sync_findings", real)
+    s = await go(app_pool, redis=fake_redis, now=NOW + 2 * dt.timedelta(minutes=1))       # not forced, graph unchanged
+    assert [r["invariant_id"] for r in s["results"]] == [STD_REACH]
+    assert len(await findings(db_pool, rule_like=f"invariant:{STD_REACH}%")) == 1
+
+
+# ---- security-6: the loop honours the billing gate ---------------------------------------------
+
+@pytest.fixture
+def enforce(monkeypatch):
+    from app.billing import config as bcfg
+    monkeypatch.setattr(bcfg.settings, "enforce_editions", "on")
+    yield
+
+
+async def test_the_loop_skips_tenants_without_the_assurance_entitlement_when_editions_are_enforced(
+        db_pool, app_pool, fake_redis, monkeypatch, enforce):
+    w = await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+    built = []
+    good = _fake_builder("good", edge=EdgeOut("internet", w.db_ref, "tcp", 5432, 5432, "configured", "good", NOW))
+    real_build = good.build
+    good.build = lambda rows, now, **o: (built.append(1), real_build(rows, now, **o))[1]
+    monkeypatch.setattr(builders_pkg, "load_builders", lambda: [good])
+    out = await runner.tick_once(app_pool, redis=fake_redis, now=NOW)
+    assert out[A]["skipped"] == "not_entitled" and out[A]["evaluated"] == 0 and out[A]["ok"] is True
+    assert built == [] and await findings(db_pool) == []
+    assert (await inv(db_pool, CUSTOM))["last_verdict"] is None
+    # the API path (evaluate_tenant) is gated by its own dependency and is not changed here
+    assert (await runner.evaluate_tenant(app_pool, A, force=True, redis=fake_redis))["evaluated"] == 1
+
+
+async def test_an_entitled_tenant_is_served_and_lookup_failures_fail_open(db_pool, app_pool, fake_redis, monkeypatch, enforce):
+    from app import licensing
+    from app.billing import service as billing_service
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+
+    async def paid(pool, lic, **kw):
+        return types.SimpleNamespace(has=lambda f: f == "assurance")
+
+    monkeypatch.setattr(billing_service, "resolve", paid)
+    out = await runner.tick_once(app_pool, redis=fake_redis, now=NOW)
+    assert out[A]["skipped"] is None and out[A]["evaluated"] == 1
+
+    async def boom(pool):
+        raise RuntimeError("billing is down")
+
+    monkeypatch.undo()                                                          # drop the entitlement stub ...
+    monkeypatch.setattr(builders_pkg, "load_builders", lambda: [])
+    monkeypatch.setattr(settings, "assurance_backstop_min", 100_000)
+    monkeypatch.setattr(settings, "assurance_rebuild_min", 100_000)
+    from app.billing import config as bcfg
+    monkeypatch.setattr(bcfg.settings, "enforce_editions", "on")
+    monkeypatch.setattr(licensing, "load_active_license", boom)                 # ... and break the lookup
+    assert await runner._entitled(app_pool, A) is True
+
+
+async def test_without_enforcement_the_loop_is_unchanged(db_pool, app_pool, fake_redis):
+    await world(db_pool, app_pool, exposed=True, covered=True)
+    await enable_custom(app_pool)
+    out = await runner.tick_once(app_pool, redis=fake_redis, now=NOW)
+    assert out[A]["skipped"] is None and out[A]["evaluated"] == 1

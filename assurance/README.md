@@ -48,7 +48,27 @@ or `EXPIRED`, `3` bad input.
   internet to its database through the app. A boundary lets the search reach a node without
   passing through it. It is part of the invariant's digest and is reported in every result.
 - **Exceptions** (`allow`) must carry a reason and an expiry; expired ones are ignored and
-  reported.
+  reported, and so is one whose expiry is more than 400 days after the evaluation time
+  (`invalid_reason: expiry_too_far`; `expired` for the ordinary case). A `HOLDS` that is
+  evaluated while an exception is active is only valid until the end (23:59:59 UTC) of the
+  earliest active exception's last day, as well as until its stalest coverage fact ages out:
+  `valid_until` is the minimum of the two, and a `HOLDS` always has a finite `valid_until`.
+- **Overlapping selectors.** A node selected by both `subjects.from` and `subjects.to` is a
+  *target* for anything that starts at a different source; only the trivial self-path is
+  excluded (a pos-tagged device sitting in the guest zone is exactly what `guest cannot reach pos`
+  should catch). If no source/target pair exists at all (the one source is the one target) the
+  answer is `UNKNOWN` (`empty_selector:no_distinct_pair`), never `HOLDS`. For `unreachable` an
+  overlap of more than 64 nodes is `UNKNOWN` with `overlapping_selectors_too_large` and the
+  overlapping nodes listed as blind spots (the search runs once per overlapping node); `exposes-only`
+  is one pass over the edges, so its overlap is never capped.
+- **Every violating target** is in `Result.to_dict()['violating_targets']` (sorted node refs, at
+  most 5000; `violating_truncated` says when the cap bit). For `assert: covered` they are the
+  uncovered nodes. `witnesses` stays the short readable sample (root causes first).
+- **`unproven_targets`** (reach only; empty otherwise) lists, next to a `VIOLATED` verdict, the
+  targets no known path reaches but a path through an unknown (blind) edge could. A consumer must
+  never read "absent from `violating_targets`" as "proven safe": the findings sync closes a finding
+  of a target that stopped violating only if it is in neither list. If the list is longer than the
+  cap, `violating_truncated` is set so such a consumer closes nothing.
 - Output is deterministic (sorted adjacency, no hidden clock) and every invariant has a
   content-addressed digest that is stable under key order and defaulted fields.
 
@@ -70,7 +90,9 @@ to, so that source is `in` only.
   `internet` node (and only with `direction: in`), `proto` only when the invariant's
   `via.protocols` are all that protocol. Everything else ignores it, so it never makes a node
   count as covered, never satisfies `assert: covered`, and never rules out an edge from an
-  internal source. Unknown qualifier values are a `GraphError`.
+  internal source. Unknown qualifier values are a `GraphError`, and so is a qualifier that is present but not a
+  non-empty string (`0`, `false`, `[]`, `""`, `null`): omit the key for "unqualified", because
+  silently reading a mangled qualifier as unqualified would widen what the fact claims.
 - A node is covered in a direction when some fact for that direction (or `both`) is **fresh**
   (`now - observed_at <= evidence.max_age`, not more than 5 minutes in the future) and at least
   `evidence.min_tier`. Several sources can each cover one direction.
@@ -117,6 +139,19 @@ absent (blind). At most 32 facts per node.
 
 `examples/gen_estates.py` regenerates the two sample estates (clean, and one with a planted
 guest to POS path, an exposed database and SSH open to the internet).
+
+## Input limits (what is rejected, and why)
+
+- Invariant YAML: at most 64 KiB, no aliases, at most 12 levels deep. A flow collection (`[`/`{`)
+  nests without indentation and PyYAML is superlinear on it, so bracket depth is bounded by a
+  linear character scan *before* parsing; any parser failure (including `RecursionError`) is a
+  `ParseError`, nothing else escapes.
+- Invariant ids must fully match `^[a-z][a-z0-9]{0,31}:[a-z0-9][a-z0-9-]{0,63}$` (a trailing
+  newline no longer slips through) and must not contain a CVE or GHSA identifier
+  (`CVE-2021-44228`, `GHSA-xxxx-xxxx-xxxx`): the platform derives a finding's identity from such
+  tokens in its rule id and would merge every finding of that invariant.
+- Graph documents: `version` must be the integer 1; ids, endpoints, zones, classes and timestamps
+  are type-checked and anything malformed (including an out-of-range timestamp) is a `GraphError`.
 
 ## What this library is not
 

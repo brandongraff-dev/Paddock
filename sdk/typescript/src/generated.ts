@@ -1136,6 +1136,10 @@ export interface InvariantChange {
 
 export interface InvariantCreate {
   enabled?: boolean;
+  /**
+   * Optional: why. Recorded in the audit log.
+   */
+  justification?: string | null;
   yaml: string;
 }
 
@@ -1153,6 +1157,10 @@ export interface InvariantDetail {
   last_result?: Record<string, unknown> | null;
   last_verdict?: string | null;
   reasons?: string[];
+  /**
+   * Parts were withheld because they name assets above the caller's clearance.
+   */
+  redacted?: boolean;
   severity: string;
   source: "std" | "custom";
   /**
@@ -1213,6 +1221,10 @@ export interface InvariantPage {
 
 export interface InvariantUpdate {
   enabled?: boolean | null;
+  /**
+   * Optional: why. Recorded in the audit log.
+   */
+  justification?: string | null;
   yaml?: string | null;
 }
 
@@ -1888,6 +1900,10 @@ export interface RunOut {
   id: string;
   invariant_id: string;
   reasons?: string[];
+  /**
+   * The result had parts withheld (clearance).
+   */
+  redacted?: boolean;
   result?: Record<string, unknown> | null;
   valid_until?: string | null;
   verdict: string;
@@ -2242,6 +2258,53 @@ export interface SensorPatch {
   name?: string | null;
   silent_after_s?: number | null;
   site?: string | null;
+}
+
+export interface SensorScopeChange {
+  changed: boolean;
+  graph_version?: number | null;
+  previous?: string[] | null;
+  scope: SensorScopeOut;
+}
+
+export interface SensorScopeDeleteOut {
+  deleted?: boolean;
+  graph_version?: number | null;
+  previous?: string[];
+  sensor_id: string;
+}
+
+export interface SensorScopeIn {
+  /**
+   * The networks this sensor can actually see (mirror/SPAN coverage). Coverage is asserted only for hosts inside them.
+   */
+  cidrs: string[];
+  /**
+   * Why. Recorded with the change and in the audit log.
+   */
+  justification: string;
+}
+
+export interface SensorScopeList {
+  items: SensorScopeOut[];
+  total: number;
+  /**
+   * Active sensors with no declared scope: they cover nothing.
+   */
+  unscoped_sensors?: SensorScopeOut[];
+}
+
+export interface SensorScopeOut {
+  cidrs?: string[];
+  justification?: string;
+  name?: string | null;
+  online?: boolean | null;
+  scope_declared?: boolean;
+  sensor_id: string;
+  set_at?: string | null;
+  set_by?: string | null;
+  site?: string | null;
+  status?: string | null;
 }
 
 export interface ServiceStatus {
@@ -3203,6 +3266,9 @@ export const OPERATIONS = {
   getAssetGraph: ["GET", "/v1/assets/{asset_id}/graph", false],
   assuranceCoverage: ["GET", "/v1/assurance/coverage", true],
   evaluateNow: ["POST", "/v1/assurance/evaluate", false],
+  listSensorScopes: ["GET", "/v1/assurance/sensor-scopes", false],
+  putSensorScope: ["PUT", "/v1/assurance/sensor-scopes/{sensor_uuid}", false],
+  deleteSensorScope: ["DELETE", "/v1/assurance/sensor-scopes/{sensor_uuid}", false],
   assuranceState: ["GET", "/v1/assurance/state", false],
   listAttackPaths: ["GET", "/v1/attack-paths", true],
   recomputeAttackPaths: ["POST", "/v1/attack-paths/recompute", false],
@@ -3743,7 +3809,9 @@ export abstract class GeneratedOperations {
    *
    * A node counts as covered only when it is covered inbound AND outbound by a fresh fact of at
    * least ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody
-   * can instrument it, so it is never part of the universe.
+   * can instrument it, so it is never part of the universe. Qualified facts (an outside-in TCP scan
+   * speaks only for internet-origin TCP) never count here: the unqualified question is the one this
+   * report answers. Nodes backed by assets above the caller's clearance are not listed or counted.
    */
   assuranceCoverage(query?: { min_tier?: "declared" | "configured" | "observed" | "tested"; max_age_h?: number; only_blind?: boolean; kind?: string | null; q?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<Record<string, unknown>> {
     return this._request<Record<string, unknown>>("GET", "/v1/assurance/coverage", { query, options });
@@ -3760,9 +3828,41 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/assurance/sensor-scopes — List Sensor Scopes
+   *
+   * Declared sensor scopes, plus the active sensors that have none (they cover nothing).
+   */
+  listSensorScopes(options?: RequestOptions): Promise<SensorScopeList> {
+    return this._request<SensorScopeList>("GET", "/v1/assurance/sensor-scopes", { options });
+  }
+
+  /**
+   * PUT /v1/assurance/sensor-scopes/{sensor_uuid} — Put Sensor Scope
+   *
+   * Declare (replace) the networks a sensor can see. Admin only; justification required.
+   *
+   * Changing the CIDR set bumps the graph version and marks the builders due at once, so coverage
+   * that this change withdraws is withdrawn on the next tick, not after the rebuild interval.
+   */
+  putSensorScope(sensorUuid: string, body: SensorScopeIn, options?: RequestOptions): Promise<SensorScopeChange> {
+    return this._request<SensorScopeChange>("PUT", "/v1/assurance/sensor-scopes/{sensor_uuid}", { pathParams: { sensor_uuid: sensorUuid }, body, options });
+  }
+
+  /**
+   * DELETE /v1/assurance/sensor-scopes/{sensor_uuid} — Delete Sensor Scope
+   *
+   * Remove a sensor's declared scope: it then covers nothing. A justification is REQUIRED.
+   * Never billing-gated (withdrawing coverage is always allowed).
+   */
+  deleteSensorScope(sensorUuid: string, query: { justification: string }, options?: RequestOptions): Promise<SensorScopeDeleteOut> {
+    return this._request<SensorScopeDeleteOut>("DELETE", "/v1/assurance/sensor-scopes/{sensor_uuid}", { pathParams: { sensor_uuid: sensorUuid }, query, options });
+  }
+
+  /**
    * GET /v1/assurance/state — Assurance State
    *
-   * Graph version, last build/evaluation, counts, and what the builders last did.
+   * Graph version, last build/evaluation, counts, and what the builders last did. Counts and
+   * notes cover only what the caller's clearance lets them see.
    */
   assuranceState(options?: RequestOptions): Promise<Record<string, unknown>> {
     return this._request<Record<string, unknown>>("GET", "/v1/assurance/state", { options });
@@ -4727,8 +4827,8 @@ export abstract class GeneratedOperations {
    *
    * Copy a shipped invariant into the tenant and enable it (idempotent; refreshes a stale copy).
    */
-  enableStdInvariant(stdId: string, options?: RequestOptions): Promise<InvariantChange> {
-    return this._request<InvariantChange>("POST", "/v1/invariants/std/{std_id}/enable", { pathParams: { std_id: stdId }, options });
+  enableStdInvariant(stdId: string, query?: { justification?: string | null }, options?: RequestOptions): Promise<InvariantChange> {
+    return this._request<InvariantChange>("POST", "/v1/invariants/std/{std_id}/enable", { pathParams: { std_id: stdId }, query, options });
   }
 
   /**
@@ -4744,7 +4844,8 @@ export abstract class GeneratedOperations {
    * Change the definition (new digest => new version row) and/or toggle ``enabled``.
    *
    * A std invariant's text is owned by the shipped library (it would be overwritten), so only
-   * ``enabled`` can change there.
+   * ``enabled`` can change there. An optional ``justification`` is recorded in the audit log, and
+   * every ``allow`` exception (reason, expiry) of a new definition is written to it.
    */
   updateInvariant(invariantId: string, body: InvariantUpdate, options?: RequestOptions): Promise<InvariantChange> {
     return this._request<InvariantChange>("PUT", "/v1/invariants/{invariant_id}", { pathParams: { invariant_id: invariantId }, body, options });
@@ -4757,14 +4858,15 @@ export abstract class GeneratedOperations {
    * (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
    * Never gated: a downgraded tenant can always switch containment checks off cleanly.
    */
-  deleteInvariant(invariantId: string, options?: RequestOptions): Promise<InvariantChange> {
-    return this._request<InvariantChange>("DELETE", "/v1/invariants/{invariant_id}", { pathParams: { invariant_id: invariantId }, options });
+  deleteInvariant(invariantId: string, query?: { justification?: string | null }, options?: RequestOptions): Promise<InvariantChange> {
+    return this._request<InvariantChange>("DELETE", "/v1/invariants/{invariant_id}", { pathParams: { invariant_id: invariantId }, query, options });
   }
 
   /**
    * GET /v1/invariants/{invariant_id}/runs — List Invariant Runs
    *
-   * The verdict-transition ledger of one invariant, newest first.
+   * The verdict-transition ledger of one invariant, newest first. Below full clearance the
+   * stored results have everything naming a hidden asset replaced by ``[redacted]``.
    */
   listInvariantRuns(invariantId: string, query?: { verdict?: ("HOLDS" | "VIOLATED" | "UNKNOWN") | null; include_result?: boolean; limit?: number; offset?: number }, options?: RequestOptions): Promise<RunPage> {
     return this._request<RunPage>("GET", "/v1/invariants/{invariant_id}/runs", { pathParams: { invariant_id: invariantId }, query, options });
@@ -4773,7 +4875,8 @@ export abstract class GeneratedOperations {
   /**
    * GET /v1/labels — List Labels
    *
-   * Labels with their provenance (who set them, why, when).
+   * Labels with their provenance (who set them, why, when). Labels on nodes above the caller's
+   * clearance are not listed.
    */
   listLabels(query?: { node_ref?: string | null; tag?: string | null; source?: ("declared" | "metadata" | "connector") | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<LabelPage> {
     return this._request<LabelPage>("GET", "/v1/labels", { query, options });
@@ -4783,7 +4886,8 @@ export abstract class GeneratedOperations {
    * PUT /v1/labels — Set Label
    *
    * Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.
-   * Changing one changes verdicts, so it bumps the graph version and is audited.
+   * Changing one changes verdicts, so it bumps the graph version and is audited. At most
+   * ``MAX_LABELS`` declared labels per tenant (409).
    */
   setLabel(body: LabelSet, options?: RequestOptions): Promise<LabelChangeOut> {
     return this._request<LabelChangeOut>("PUT", "/v1/labels", { body, options });
@@ -4792,9 +4896,10 @@ export abstract class GeneratedOperations {
   /**
    * DELETE /v1/labels/{label_id} — Delete Label
    *
-   * Remove a label (bumps the graph version). Never gated (clean-up).
+   * Remove a label (bumps the graph version). A justification is REQUIRED: dropping an
+   * ``app-tier``/``crown-jewel``/``zone`` label changes verdicts. Never billing-gated (clean-up).
    */
-  deleteLabel(labelId: string, query?: { justification?: string | null }, options?: RequestOptions): Promise<LabelDeleteOut> {
+  deleteLabel(labelId: string, query: { justification: string }, options?: RequestOptions): Promise<LabelDeleteOut> {
     return this._request<LabelDeleteOut>("DELETE", "/v1/labels/{label_id}", { pathParams: { label_id: labelId }, query, options });
   }
 
@@ -5828,6 +5933,7 @@ export abstract class GeneratedOperations {
    * POST /v1/zones — Create Zone
    *
    * Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.
+   * At most ``MAX_ZONES`` zones and ``MAX_TOTAL_ZONE_CIDRS`` CIDRs over all zones (409).
    */
   createZone(body: ZoneCreate, options?: RequestOptions): Promise<ZoneChangeOut> {
     return this._request<ZoneChangeOut>("POST", "/v1/zones", { body, options });
@@ -5853,9 +5959,10 @@ export abstract class GeneratedOperations {
    * DELETE /v1/zones/{zone_id} — Delete Zone
    *
    * Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it
-   * then select nothing and answer UNKNOWN, never HOLDS. Never gated (clean-up).
+   * then select nothing and answer UNKNOWN, never HOLDS. A justification is REQUIRED: removing the
+   * zone that defines a boundary changes verdicts. Never billing-gated (clean-up).
    */
-  deleteZone(zoneId: string, query?: { justification?: string | null }, options?: RequestOptions): Promise<ZoneDeleteOut> {
+  deleteZone(zoneId: string, query: { justification: string }, options?: RequestOptions): Promise<ZoneDeleteOut> {
     return this._request<ZoneDeleteOut>("DELETE", "/v1/zones/{zone_id}", { pathParams: { zone_id: zoneId }, query, options });
   }
 

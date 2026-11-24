@@ -366,3 +366,170 @@ async def test_verification_paths_do_not_raise_for_an_invariant_finding(db_pool,
     assert await db_pool.fetchval("SELECT count(*) FROM scans WHERE kind = 'verify_finding'") == 0
     after = (await rows(db_pool))[0]
     assert after["exploitability"] == "unverified" and after["fix_verified_at"] is None
+
+
+# =========================================================================== #
+# P1X hardening: close on a still-VIOLATED verdict (runner-3) and the lease fence (runner-1)
+# =========================================================================== #
+
+def vres(targets, *, only_witness=None, tier="observed", truncated=False, blind=(), assertion="unreachable",
+         key=True, severity="high", unproven=()):
+    """A VIOLATED result as the library reports it: a capped witness sample plus the FULL sorted
+    ``violating_targets`` list (pinned interface). ``key=False`` = an older library without it."""
+    sample = targets if only_witness is None else only_witness
+    mk = covered_witness if assertion == "covered" else reach_witness
+    res = result("VIOLATED", *[mk(t) for t in sample], assertion=assertion, tier=tier, severity=severity)
+    if key:
+        res["violating_targets"] = sorted(targets)
+        res["violating_truncated"] = truncated
+        res["unproven_targets"] = sorted(unproven)    # reachable only through unknown edges (not proven safe)
+    res["blind_spots"] = [{"node": n, "reason": "no_sensor", "relevant": True, "direction": d} for n, d in blind]
+    return res
+
+
+async def three_open(db_pool, fake_redis):
+    ids = [await mk_asset(db_pool, f"db-{i}.example") for i in range(3)]
+    refs_ = [f"asset:{i}" for i in ids]
+    rep = await sync(db_pool, fake_redis, vres(refs_))
+    assert rep.opened == 3
+    return ids, refs_
+
+
+def status_by_asset(fr):
+    return {r["asset_id"]: r["status"] for r in fr}
+
+
+async def test_violated_closes_findings_of_targets_that_stopped_violating_and_only_those(db_pool, fake_redis):
+    ids, rs = await three_open(db_pool, fake_redis)
+    # two are fixed; the verdict is still VIOLATED because the third is not
+    rep = await sync(db_pool, fake_redis, vres([rs[2]]), now=NOW + dt.timedelta(minutes=5), version=8)
+    assert (rep.closed, rep.verified, rep.close_skipped) == (2, 2, "")
+    fr = await rows(db_pool)
+    assert status_by_asset(fr) == {ids[0]: "fixed", ids[1]: "fixed", ids[2]: "open"}
+    for r in fr:
+        if r["asset_id"] != ids[2]:
+            assert r["fix_verified_at"] == NOW + dt.timedelta(minutes=5) and r["status_by"] == fs.ACTOR
+            assert "no longer violating" in r["status_reason"]
+            h = await history(db_pool, r["id"])
+            assert [(x["from_status"], x["to_status"], x["actor"]) for x in h][-1] == ("open", "fixed", fs.ACTOR)
+    assert len(await events(fake_redis, "finding_closed")) == 2
+    # idempotent, and the survivor keeps being refreshed
+    assert (await sync(db_pool, fake_redis, vres([rs[2]]), version=9)).closed == 0
+
+
+async def test_a_violated_close_is_not_verified_by_configuration_only_evidence(db_pool, fake_redis):
+    ids, rs = await three_open(db_pool, fake_redis)
+    rep = await sync(db_pool, fake_redis, vres([rs[0]], tier="configured"), version=8)
+    assert (rep.closed, rep.verified) == (2, 0)
+    assert all(r["fix_verified_at"] is None for r in await rows(db_pool) if r["status"] == "fixed")
+
+
+@pytest.mark.parametrize("why,kw", [
+    ("truncated", {"truncated": True}),            # the list is not the whole violator set
+    ("no_target_list", {"key": False}),            # an older library: nothing to compare with
+])
+async def test_a_violated_verdict_closes_nothing_without_a_complete_violator_list(db_pool, fake_redis, why, kw):
+    ids, rs = await three_open(db_pool, fake_redis)
+    rep = await sync(db_pool, fake_redis, vres([rs[2]], **kw), version=8)
+    assert rep.closed == 0 and rep.close_skipped == why
+    assert {r["status"] for r in await rows(db_pool)} == {"open"}
+
+
+async def test_an_empty_violator_list_on_a_violated_verdict_closes_nothing(db_pool, fake_redis):
+    ids, rs = await three_open(db_pool, fake_redis)
+    res = vres([rs[2]])
+    res["violating_targets"] = []                    # inconsistent with VIOLATED: fail closed
+    assert (await sync(db_pool, fake_redis, res, version=8)).closed == 0
+    assert {r["status"] for r in await rows(db_pool)} == {"open"}
+
+
+async def test_a_target_nobody_can_see_into_stays_open_even_when_no_known_path_remains(db_pool, fake_redis):
+    """"No known path" is not "fixed" for a node that is blind inbound (it may have become merely
+    unprovable); a node that is only blind outbound cannot hide a path into itself."""
+    ids, rs = await three_open(db_pool, fake_redis)
+    rep = await sync(db_pool, fake_redis, vres([rs[2]], blind=[(rs[0], "in"), (rs[1], "out")]), version=8)
+    assert rep.closed == 1
+    assert status_by_asset(await rows(db_pool)) == {ids[0]: "open", ids[1]: "fixed", ids[2]: "open"}
+
+
+async def test_violated_close_works_for_estate_targets_and_never_touches_human_decisions_or_other_invariants(db_pool, fake_redis):
+    await sync(db_pool, fake_redis, vres(["ip:203.0.113.5", "ip:203.0.113.6", "ip:203.0.113.7"]))
+    await sync(db_pool, fake_redis, vres(["ip:203.0.113.5"]), inv="acme:other")
+    await db_pool.execute("UPDATE findings SET status = 'accepted', status_by = 'alice', status_reason = 'known' "
+                          "WHERE evidence->>'target_ref' = 'ip:203.0.113.6' AND rule_id LIKE $1", f"invariant:{INV}@%")
+    rep = await sync(db_pool, fake_redis, vres(["ip:203.0.113.7"]), version=8)
+    assert rep.closed == 1                                   # only .5 of INV: .6 is a human decision
+    by = {(r["rule_id"].split("@")[0], json.loads(r["evidence"])["target_ref"]): r["status"] for r in await rows(db_pool)}
+    assert by == {(f"invariant:{INV}", "ip:203.0.113.5"): "fixed", (f"invariant:{INV}", "ip:203.0.113.6"): "accepted",
+                  (f"invariant:{INV}", "ip:203.0.113.7"): "open", ("invariant:acme:other", "ip:203.0.113.5"): "open"}
+
+
+async def test_violated_close_for_the_covered_assertion_closes_nodes_that_got_covered(db_pool, fake_redis):
+    a, b = await mk_asset(db_pool, "n1"), await mk_asset(db_pool, "n2")
+    await sync(db_pool, fake_redis, vres([f"asset:{a}", f"asset:{b}"], assertion="covered"))
+    rep = await sync(db_pool, fake_redis, vres([f"asset:{b}"], assertion="covered", tier="configured"), version=8)
+    assert rep.closed == 1
+    assert status_by_asset(await rows(db_pool)) == {a: "fixed", b: "open"}
+
+
+# ---- the lease fence ------------------------------------------------------------------------
+
+async def hold_lease(db_pool, owner="me", *, graph_version=7, live=True):
+    await db_pool.execute("DELETE FROM assurance_state")
+    await db_pool.execute(
+        "INSERT INTO assurance_state (graph_version, lease_owner, lease_until) VALUES ($1, $2, "
+        f"now() {'+' if live else '-'} interval '5 minutes')", graph_version, owner)
+
+
+@pytest.mark.parametrize("owner,live,state_version,skipped", [
+    ("someone-else", True, 7, "lease_lost"),        # another replica owns the lease
+    ("me", False, 7, "lease_lost"),                 # ours, but it lapsed (database clock)
+    ("me", True, 9, "graph_moved"),                 # the graph moved on while we evaluated
+])
+async def test_a_stale_evaluator_cannot_close_or_verify_a_finding(db_pool, fake_redis, owner, live, state_version, skipped):
+    a = await mk_asset(db_pool)
+    await sync(db_pool, fake_redis, result("VIOLATED", reach_witness(f"asset:{a}")))
+    await hold_lease(db_pool, owner, graph_version=state_version, live=live)
+    rep = await sync(db_pool, fake_redis, result("HOLDS", tier="observed"), lease_owner="me")
+    assert rep.skipped == skipped and rep.closed == 0 and rep.verified == 0
+    (f,) = await rows(db_pool)
+    assert f["status"] == "open" and f["fix_verified_at"] is None
+    # the same fence holds for a close on a still-violated verdict
+    rep = await sync(db_pool, fake_redis, vres([f"asset:{uuid.uuid4()}"]), lease_owner="me")
+    assert rep.closed == 0
+    assert [r["status"] for r in await rows(db_pool) if r["asset_id"] == a] == ["open"]
+
+
+async def test_the_lease_holder_at_the_current_version_may_close(db_pool, fake_redis):
+    a = await mk_asset(db_pool)
+    await sync(db_pool, fake_redis, result("VIOLATED", reach_witness(f"asset:{a}")))
+    await hold_lease(db_pool, "me", graph_version=7)
+    rep = await sync(db_pool, fake_redis, result("HOLDS", tier="observed"), lease_owner="me")
+    assert (rep.closed, rep.verified, rep.skipped) == (1, 1, "")
+
+
+async def test_a_stale_evaluator_opens_no_findings_either(db_pool, fake_redis):
+    a = await mk_asset(db_pool)
+    await hold_lease(db_pool, "someone-else")
+    rep = await sync(db_pool, fake_redis, result("VIOLATED", reach_witness(f"asset:{a}")), lease_owner="me")
+    assert rep.skipped == "lease_lost" and rep.opened == 0 and await rows(db_pool) == []
+
+
+# ---- verification pass: "absent from violating_targets" is not "proven safe" -----------------------
+
+async def test_a_target_that_is_only_unproven_stays_open_while_the_verdict_is_violated(db_pool, fake_redis):
+    """Old: the finding of a target that no KNOWN path reaches any more was closed as fixed even
+    when an unknown edge could still reach it (the library would answer UNKNOWN for it alone)."""
+    ids, rs = await three_open(db_pool, fake_redis)
+    rep = await sync(db_pool, fake_redis, vres([rs[2]], unproven=[rs[0]]), version=8)
+    assert rep.closed == 1
+    assert status_by_asset(await rows(db_pool)) == {ids[0]: "open", ids[1]: "fixed", ids[2]: "open"}
+
+
+async def test_a_violated_result_without_the_unproven_list_closes_nothing(db_pool, fake_redis):
+    ids, rs = await three_open(db_pool, fake_redis)
+    res = vres([rs[2]])
+    del res["unproven_targets"]                    # a library that predates the list: fail closed
+    rep = await sync(db_pool, fake_redis, res, version=8)
+    assert rep.closed == 0 and rep.close_skipped == "no_target_list"
+    assert {r["status"] for r in await rows(db_pool)} == {"open"}

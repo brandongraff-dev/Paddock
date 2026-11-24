@@ -149,8 +149,11 @@ def test_internet_reaches_the_target_through_a_blind_internal_host():
 
 
 def test_origin_alone_is_enough_to_keep_an_internal_source_unruled():
-    # no proto qualifier: only the origin keeps lan1 -> h1 possible
-    only_origin = scan_fact(proto="")
+    # no proto qualifier: only the origin keeps lan1 -> h1 possible. The qualifier is *omitted*:
+    # since the P1 hardening an explicit empty/falsy qualifier is a GraphError (it used to be read
+    # as "unqualified", which silently widened a fact whose builder meant to restrict it).
+    only_origin = scan_fact()
+    del only_origin["proto"]
     assert evaluate(plan("lan", "dmz", TCP), world(only_origin), NOW).verdict is Verdict.UNKNOWN
     assert evaluate(plan("internet", "dmz", ANY), world(only_origin), NOW).verdict is Verdict.HOLDS
 
