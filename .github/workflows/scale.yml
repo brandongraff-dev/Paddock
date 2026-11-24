@@ -43,7 +43,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install orchestrator
-        run: pip install -e "orchestrator[dev]"
+        run: pip install -e assurance -e "orchestrator[dev]"
       - name: Run scale test
         run: |
           python hardening/scale_test.py \
@@ -80,7 +80,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install orchestrator
-        run: pip install -e "orchestrator[dev]"
+        run: pip install -e assurance -e "orchestrator[dev]"
       - name: Install otdiscovery in its own venv (its package is also called "app")
         run: |
           python -m venv /tmp/otd

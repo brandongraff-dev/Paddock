@@ -94,7 +94,7 @@ its test extra and run `pytest` from its directory:
 cd correlation && pip install -e ".[test]" && pytest -q
 
 # a few use `dev` instead (orchestrator, intel, workers/active):
-cd orchestrator && pip install -e ".[dev]" && pytest -q
+pip install -e assurance && cd orchestrator && pip install -e ".[dev]" && pytest -q   # the orchestrator imports the pure evaluator library
 ```
 
 `make test` runs the core suites via Docker; the dashboard:

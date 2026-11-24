@@ -113,6 +113,11 @@ jobs:
           pip install -q asyncpg
           python scripts/ci_apply_schema.py
 
+      # The orchestrator evaluates invariants in-process with the pure library (docs/ASSURANCE_P1.md D2).
+      - name: Install the assurance library (orchestrator legs)
+        if: ${{ startsWith(matrix.service, 'orchestrator') }}
+        run: pip install -e assurance
+
       - name: Install ${{ matrix.service }} (+ ${{ matrix.extra }} extra)
         working-directory: ${{ matrix.path }}
         run: |
@@ -195,7 +200,7 @@ jobs:
         with:
           node-version: "20"
       - name: Install orchestrator (for in-process spec export)
-        run: pip install -e orchestrator pytest
+        run: pip install -e assurance -e orchestrator pytest
       - name: Spec is up to date
         run: python scripts/export_openapi.py --check
       - name: SDKs are regenerated

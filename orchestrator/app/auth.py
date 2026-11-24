@@ -598,6 +598,7 @@ _rule("POST", r"/v1/findings/bulk", "write")
 _rule("POST", r"/v1/outbound/bulk", "write")
 _rule("POST", r"/v1/chains", "write")
 _rule("POST", r"/v1/tls-grades/bulk", "write")
+_rule("POST", r"/v1/reach/flows/bulk", "write")
 _rule("PATCH", rf"/v1/scans/{_ANY}", "write")
 _rule("POST", rf"/v1/scans/{_ANY}/(start|complete|fail)", "write")
 

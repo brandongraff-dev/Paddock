@@ -79,6 +79,7 @@ FEATURES: dict[str, FeatureInfo] = {
         FeatureInfo("sso_saml", "team", "SAML 2.0 single sign-on"),
         FeatureInfo("digest_branding", "team", "Custom-branded digests and executive reports"),
         FeatureInfo("hosted_sites", "team", "Hosted Sentry site management beyond self-hosting"),
+        FeatureInfo("assurance", "team", "Provable containment: invariants, reach graph and continuous evaluation"),
         FeatureInfo("scim", "enterprise", "SCIM 2.0 user/group provisioning"),
         FeatureInfo("multi_tenant", "enterprise", "Multi-tenant / MSP workspaces"),
         FeatureInfo("audit_anchoring", "enterprise", "Keyed + externally anchored audit chain"),

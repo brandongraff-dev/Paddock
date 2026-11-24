@@ -29,6 +29,7 @@ in the catalogue below; existing features are never moved behind a license.
 | SAML SSO (`sso_saml`) | — | ✅ | ✅ | ✅ |
 | Branded digests & exec reports (`digest_branding`) | — | ✅ | ✅ | ✅ |
 | Hosted Sentry site management (`hosted_sites`) | — | ✅ 1–3 sites | ✅ | ✅ |
+| Provable containment: invariants, reach graph, continuous evaluation (`assurance`) | — | ✅ | ✅ | ✅ |
 | SCIM provisioning (`scim`) | — | — | ✅ | ✅ |
 | Multi-tenant / MSP workspaces (`multi_tenant`) | — | — | ✅ | ✅ |
 | Anchored audit chain (`audit_anchoring`) + SIEM audit export (`audit_export`) | — | — | ✅ | ✅ |

@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     # `scheduler_interval_sec`; schedules without a cron (or when croniter is
     # not installed) fall back to `scheduler_default_minutes`.
     scheduler_enabled: bool = True
+    # Provable containment (schema 039, app/assurance/). The loop builds the reach graph from
+    # stored data and evaluates each tenant's enabled invariants. It only reads stored rows
+    # and writes the graph, run ledger and findings: it never sends a packet.
+    assurance_enabled: bool = True
+    assurance_tick_s: int = 30             # how often the loop wakes
+    assurance_rebuild_min: int = 10        # full rebuild of all builders, per tenant
+    assurance_backstop_min: int = 15       # re-evaluate even if nothing changed
+    assurance_edge_window_h: int = 24      # observed flow edges older than this are dropped
+    assurance_external_max_age_h: int = 168  # external-scan observations older than this are ignored
     scheduler_interval_sec: int = 60
     scheduler_default_minutes: int = 60
 

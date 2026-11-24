@@ -76,6 +76,9 @@ from .growth.runner import growth_loop
 from . import sensors as sensors_svc
 from . import tenancy
 from .routers import sensors as sensors_router
+from .routers import assurance as assurance_router
+from .routers import reach_flows as reach_flows_router
+from .assurance import runner as assurance_runner
 
 logger = logging.getLogger(__name__)
 
@@ -141,11 +144,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.growth_task = growth_task
     # Sentry liveness: flags silent sensors and emits sensor.offline/online.
     sensor_task: asyncio.Task | None = asyncio.create_task(sensors_svc.monitor_loop(app))
+    # Provable containment: builds the reach graph and evaluates invariants per tenant.
+    assurance_task: asyncio.Task | None = None
+    if settings.assurance_enabled:
+        assurance_task = asyncio.create_task(assurance_runner.assurance_loop(app))
+        app.state.assurance_task = assurance_task
 
     try:
         yield
     finally:
-        for task in (scheduler_task, anchor_task, growth_task, sensor_task):
+        for task in (scheduler_task, anchor_task, growth_task, sensor_task, assurance_task):
             if task is None:
                 continue
             task.cancel()
@@ -340,6 +348,8 @@ def create_app() -> FastAPI:
     app.include_router(growth_trust.router)
     app.include_router(growth_trust.public_router)
     app.include_router(growth_suppliers.router)
+    app.include_router(assurance_router.router)
+    app.include_router(reach_flows_router.router)
 
     return app
 

@@ -60,6 +60,7 @@ COMPUTE_ROUTES = [
     _r("POST", r"/v1/sensors/enroll"),
     _r("POST", r"/v1/sensors/heartbeat"),
     _r("POST", r"/v1/sensors/ingest/(?:claim|done)"),
+    _r("POST", r"/v1/reach/flows/bulk"),
 ]
 
 WORKER_HEADER = "x-worker-id"

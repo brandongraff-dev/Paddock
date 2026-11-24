@@ -18,6 +18,13 @@ WORKDIR /app
 # Built from the REPOSITORY ROOT (context: ., file: orchestrator/Dockerfile)
 # so the migrations ship inside the image: the app migrates on startup
 # (migrate_on_startup) and app.migrate looks in /app/schema first.
+# Provable containment: the pure evaluator library ships inside the image (the evaluator runs
+# in the orchestrator process; see docs/ASSURANCE_P1.md D1/D2). Installed before the app so the
+# lazy `import paddock_assurance` always resolves.
+COPY assurance/pyproject.toml assurance/README.md /tmp/assurance/
+COPY assurance/paddock_assurance /tmp/assurance/paddock_assurance
+RUN pip install --no-cache-dir /tmp/assurance && rm -rf /tmp/assurance
+
 COPY orchestrator/pyproject.toml ./
 COPY orchestrator/app ./app
 COPY schema ./schema

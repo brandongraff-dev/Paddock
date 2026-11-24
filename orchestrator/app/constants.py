@@ -14,7 +14,7 @@ type from it removes that seam.
 from __future__ import annotations
 
 # Order mirrors the schema's CHECK clause (003 base set, then the tier ALTERs
-# in 008/009/010 and the threat-intel ALTER in 013).
+# in 008/009/010, the threat-intel ALTER in 013 and 'invariant' in 039).
 RULE_SOURCES: tuple[str, ...] = (
     "nuclei",
     "cve_match",
@@ -30,4 +30,5 @@ RULE_SOURCES: tuple[str, ...] = (
     "sca",
     "sast",
     "threat_intel",
+    "invariant",
 )
