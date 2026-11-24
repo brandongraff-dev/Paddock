@@ -37,6 +37,7 @@
 #   -Uninstall      stop and remove the containers (data volume and .env are kept)
 #   -Purge          with -Uninstall: also delete the data volume and the install directory
 #   -Yes            do not ask for confirmation (required for -Purge without a terminal)
+#   -NoShortcut     do not add a "Paddock" shortcut to the Start menu (it opens the dashboard)
 #   -Json           machine-readable output for the Paddock Setup app (installer/): one JSON
 #                   object per line on stdout. Events: step, check, summary, log, warn, error,
 #                   result, done. See installer/README.md for the exact shapes.
@@ -46,6 +47,7 @@
 # PADDOCK_SHA256 (pin the downloaded archive), PADDOCK_VERSION (= -Version),
 # PADDOCK_REGISTRY (image registry/namespace, default ghcr.io/brandongraff-dev),
 # PADDOCK_CHECK_PORTS (ports the checks look at, default "3000 8080"),
+# PADDOCK_SHORTCUT_DIR (where the Start menu shortcut goes, for tests),
 # PADDOCK_TEST_MEM_MB / PADDOCK_TEST_FREE_MB (pretend RAM / free disk, for tests).
 # When this script sits next to docker-compose.lite.yml (the release zip), those
 # files are used instead of downloading anything.
@@ -66,7 +68,8 @@ param(
     [switch]$Uninstall,
     [switch]$Purge,
     [switch]$Yes,
-    [switch]$Json
+    [switch]$Json,
+    [switch]$NoShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -504,6 +507,32 @@ services:
     [IO.File]::WriteAllText((Join-Path $Dir $OverrideFile), ($yaml -replace "`r`n", "`n") + "`n", $Utf8NoBom)
 }
 
+# A "Paddock" entry in the Start menu that opens the dashboard: a plain .url file (no COM).
+function Get-ShortcutPath {
+    $base = $null
+    if ($env:PADDOCK_SHORTCUT_DIR) { $base = $env:PADDOCK_SHORTCUT_DIR }
+    elseif ($env:APPDATA) { $base = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs' }
+    if (-not $base) { return $null }
+    return (Join-Path $base 'Paddock.url')
+}
+
+function New-Shortcut {
+    $path = Get-ShortcutPath
+    if (-not $path) { return }
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
+        [IO.File]::WriteAllText($path, "[InternetShortcut]`r`nURL=$UiUrl`r`n", [Text.Encoding]::ASCII)
+        Say 'added a "Paddock" shortcut to the Start menu'
+    } catch {
+        Warn "could not add the Start menu shortcut: $($_.Exception.Message)"   # never fails the install
+    }
+}
+
+function Remove-Shortcut {
+    $path = Get-ShortcutPath
+    if ($path -and (Test-Path $path)) { Remove-Item -Force -Path $path -ErrorAction SilentlyContinue }
+}
+
 function Wait-Healthy {
     Step "waiting for Paddock to become healthy (up to ${Wait}s)" 'health'
     $i = 0
@@ -551,6 +580,7 @@ if ($Uninstall) {
         if ($full -eq [IO.Path]::GetPathRoot($full).TrimEnd('\') -or $full -eq $env:USERPROFILE.TrimEnd('\')) { Die "refusing to delete '$Dir'" }
         [void](Compose down -v --remove-orphans)
         Remove-Item -Recurse -Force -Path $Dir
+        Remove-Shortcut
         Say "removed containers, data volume and $Dir"
         if ($Json) { Emit @{ type = 'done'; action = 'remove' } }
     } else {
@@ -605,6 +635,7 @@ if ($DryRun) {
         Plan "generate $k only if it is not already set"
     }
     if ($Version) { Plan "set PADDOCK_VERSION=$Version in $Dir\.env" }
+    if (-not $NoShortcut) { Plan 'add a "Paddock" shortcut to the Start menu' }
     Plan "write $Dir\$OverrideFile (passes JWT_SECRET, PADDOCK_SECRET_KEY, AUDIT_HMAC_KEY, PADDOCK_VERSION to the orchestrator)"
     if ($NoStart) {
         Plan '(-NoStart) stop here'
@@ -679,6 +710,7 @@ if ($Version) {
 }
 
 $healthy = Wait-Healthy
+if (-not $NoShortcut) { New-Shortcut }
 $adminPw = Get-EnvValue 'ADMIN_BOOTSTRAP_PASSWORD'
 if ($Json) {
     Emit @{ type = 'result'; healthy = [bool]$healthy; url = $UiUrl; username = 'admin'; password = $adminPw; dir = $Dir; version = $Version }

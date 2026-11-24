@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PADDOCK_URL, type AppState } from "./bridge";
+import { helpUrl, PADDOCK_URL, type AppState } from "./bridge";
 import { CheckTable, CopyRow, Disclosure, Problems, Screen, Spinner } from "./components";
 import { explainError, friendlyStep, friendlyWarning } from "./humanize";
 import { hasBlocker, percent, type RunState } from "./protocol";
@@ -10,9 +10,10 @@ type Open = (url: string) => void;
 /* ------------------------------ 1. ready ------------------------------ */
 
 /** The PC check runs by itself; this only interrupts when something needs fixing. */
-export function Ready({ pc, dir, active, dirError, onDir, onActive, onOpen, onAgain, onInstall, onClose }: {
-  pc: RunState | null; dir: string; active: boolean; dirError: string | null;
-  onDir: (v: string) => void; onActive: (v: boolean) => void; onOpen: Open; onAgain: () => void; onInstall: () => void; onClose: () => void;
+export function Ready({ pc, dir, active, shortcut, dirError, onDir, onActive, onShortcut, onBrowse, onOpen, onAgain, onInstall, onClose }: {
+  pc: RunState | null; dir: string; active: boolean; shortcut: boolean; dirError: string | null;
+  onDir: (v: string) => void; onActive: (v: boolean) => void; onShortcut: (v: boolean) => void; onBrowse: () => void;
+  onOpen: Open; onAgain: () => void; onInstall: () => void; onClose: () => void;
 }) {
   const checking = !pc || pc.status === "running";
   const blocked = !!pc && hasBlocker(pc.checks);
@@ -47,9 +48,18 @@ export function Ready({ pc, dir, active, dirError, onDir, onActive, onOpen, onAg
 
       <form id="inst-ready" className="inst-section" onSubmit={(e) => { e.preventDefault(); if (canInstall) onInstall(); }}>
         <label className="inst-h2" htmlFor="inst-dir">Install location</label>
-        <input id="inst-dir" className="inst-input" value={dir} onChange={(e) => onDir(e.target.value)} spellCheck={false} autoComplete="off" aria-invalid={!!dirError} aria-describedby={dirError ? "inst-dir-err" : undefined} />
+        <div className="inst-field">
+          <input id="inst-dir" className="inst-input" value={dir} onChange={(e) => onDir(e.target.value)} spellCheck={false} autoComplete="off" aria-invalid={!!dirError} aria-describedby={dirError ? "inst-dir-err" : undefined} />
+          <button type="button" onClick={onBrowse}>Browse…</button>
+        </div>
         {dirError && <p id="inst-dir-err" className="inst-error" role="alert">{dirError}</p>}
         <Disclosure summary="More options">
+          <label className="inst-check">
+            <input type="checkbox" checked={shortcut} onChange={(e) => onShortcut(e.target.checked)} />
+            <span>Add a shortcut to the Start menu
+              <span className="inst-hint">So you can open Paddock like any other app.</span>
+            </span>
+          </label>
           <label className="inst-check">
             <input type="checkbox" checked={active} onChange={(e) => onActive(e.target.checked)} />
             <span>Include the active scanner
@@ -104,13 +114,14 @@ function Details({ run, label = "Details" }: { run: RunState; label?: string }) 
 export function Failed({ run, onOpen, onRetry, onBack, backLabel = "Back", onCopy }: {
   run: RunState; onOpen: Open; onRetry: () => void; onBack: () => void; backLabel?: string; onCopy: () => void;
 }) {
+  const help = () => onOpen(helpUrl(explainError(run.error ?? "").headline));
   const cancelled = run.error === CANCELLED;
   const e = explainError(run.error ?? "");
   return (
     <Screen
       title={cancelled ? "Setup stopped" : e.headline}
       lede={cancelled ? "Run it again whenever you like. It picks up where it left off." : e.hint || undefined}
-      left={!cancelled ? <button type="button" onClick={onCopy}>Copy details</button> : undefined}
+      left={!cancelled ? <><button type="button" onClick={onCopy}>Copy details</button><button type="button" className="inst-linkbtn" onClick={help}>Get help</button></> : undefined}
       actions={<><button type="button" onClick={onBack}>{backLabel}</button><button type="button" className="primary" onClick={onRetry}>Try again</button></>}
     >
       {!cancelled && <Problems checks={run.checks} onOpen={onOpen} />}

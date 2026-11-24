@@ -18,7 +18,9 @@ Three screens, in a flat window with a fixed button bar:
    nothing to click through. If everything passes it is one line ("Your PC is ready", with the
    full list one click away) beside the install folder and an Install button. If something
    blocks, only that is shown: what is wrong, numbered steps to fix it, and a download link where
-   one helps. Install stays disabled until it is fixed.
+   one helps. Install stays disabled until it is fixed. The install location has a **Browse**
+   button (the native folder dialog), and *More options* holds a Start menu shortcut (on by
+   default) and the optional active scanner.
 2. **Installing.** One status line, one progress bar with a percentage; the raw output is under
    Details.
 3. **Done.** Address, user and password (hidden until Show, with Copy) and Open Paddock.
@@ -26,7 +28,11 @@ Three screens, in a flat window with a fixed button bar:
 If Paddock is already installed the wizard opens on a manage screen instead: Open or Start,
 Update or repair, Stop, and Remove (with a confirmation). Failures lead with one plain sentence
 about what happened and what to do; the tool output is under Technical details and in Copy
-details.
+details. **Get help** opens a pre-filled GitHub issue containing only the headline: the technical
+details can name folders or machines, so the person pastes them in themselves.
+
+A successful install also leaves a **Paddock** entry in the Start menu (a plain `.url` file that
+opens the dashboard; `-NoShortcut` skips it, and a full remove deletes it).
 
 The script speaks to a console (lowercase log lines, raw megabytes), so `ui/src/humanize.ts`
 translates what it says into what a person should read (16 GB, "Downloading Paddock (about
@@ -100,8 +106,8 @@ The demo bridge is a build-time option (`VITE_DEMO=1`); a real build contains no
 ## Tests
 
 ```bash
-(cd installer/core && cargo test)                  # 12: folder validation, args, URL allow-list, detection
-(cd installer/ui && npm test)                      # 46: the protocol, the wording, and every screen, with a fake bridge
+(cd installer/core && cargo test)                  # 13: folder validation, args, URL allow-list, detection
+(cd installer/ui && npm test)                      # 51: the protocol, the wording, and every screen, with a fake bridge
 python3 -m pytest scripts/tests/test_installer_resources.py
 ```
 
@@ -125,7 +131,5 @@ but nothing here starts the real stack. Treat the first run on a clean machine a
 * **It still needs Docker Desktop.** The wizard checks for it, explains how to install it and
   offers the download page, but it does not install Docker itself (that needs admin rights, a
   restart and acceptance of Docker's licence terms).
-* **No folder picker.** The install folder is a text box (validated); a native "Browse" dialog is a
-  small addition (`tauri-plugin-dialog`) that was left out to keep the shell minimal.
 * **Closing the window cancels a running install.** The partly pulled images are kept, so running
   Setup again resumes quickly.

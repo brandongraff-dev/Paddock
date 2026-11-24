@@ -84,5 +84,6 @@ export const demoBridge: Bridge = {
     return { done, cancel: () => { timers.forEach(clearTimeout); end(1); } };
   },
   openUrl: async (url) => { console.info("open", url); },
+  pickFolder: async (current) => { console.info("pick folder", current); return "D:\\Apps\\Paddock"; },
   quit: async () => { console.info("quit"); },
 };

@@ -22,6 +22,8 @@ export interface AppState {
 export interface RunOptions {
   dir?: string | null;
   active?: boolean;
+  /** Add a Start menu shortcut (installing only). Default true. */
+  shortcut?: boolean;
 }
 
 export interface RunHandle {
@@ -34,9 +36,21 @@ export interface Bridge {
   getState(): Promise<AppState>;
   run(action: Action, opts: RunOptions, onLine: (line: string) => void): RunHandle;
   openUrl(url: string): Promise<void>;
+  /** The native "choose a folder" dialog. Resolves with the chosen folder, or null if cancelled. */
+  pickFolder(current: string): Promise<string | null>;
   quit(): Promise<void>;
 }
 
 export const PADDOCK_URL = "http://localhost:3000";
 export const DOCKER_URL = "https://www.docker.com/products/docker-desktop/";
 export const WSL_URL = "https://learn.microsoft.com/windows/wsl/install";
+
+/**
+ * A pre-filled "new issue" page. Only the headline travels in the address: the technical details can be
+ * long and may name folders or machines, so the person pastes them in themselves (Copy details).
+ */
+export function helpUrl(headline: string): string {
+  const title = `Setup problem: ${headline}`.slice(0, 120);
+  const body = "**What happened**\n\n\n**Technical details** (in Setup, choose Copy details, then paste here)\n\n";
+  return `https://github.com/brandongraff-dev/paddock/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+}

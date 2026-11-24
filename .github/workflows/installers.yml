@@ -93,6 +93,7 @@ jobs:
           '@ | Set-Content -Encoding ASCII (Join-Path $bin 'docker.cmd')
           "$bin" | Out-File -Append -Encoding ASCII $env:GITHUB_PATH
           "FAKE_DOCKER_LOG=$env:RUNNER_TEMP\docker.log" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
+          "PADDOCK_SHORTCUT_DIR=$env:RUNNER_TEMP\shortcuts" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
           "PADDOCK_API_URL=http://127.0.0.1:8099" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
           "PADDOCK_UI_URL=http://127.0.0.1:8099" | Out-File -Append -Encoding ASCII $env:GITHUB_ENV
           Start-Process python -ArgumentList 'scripts/tests/ok_server.py', '8099' -WindowStyle Hidden
@@ -185,6 +186,15 @@ jobs:
           foreach ($k in 'POSTGRES_PASSWORD', 'JWT_SECRET', 'PADDOCK_SECRET_KEY', 'AUDIT_HMAC_KEY', 'ADMIN_BOOTSTRAP_PASSWORD') {
             if ($envf -notmatch "(?m)^$k=\S{20,}$") { throw "$k not generated" }
           }
+          # the Start menu shortcut: a .url that opens the dashboard
+          $lnk = Join-Path $env:PADDOCK_SHORTCUT_DIR 'Paddock.url'
+          if (-not (Test-Path $lnk)) { throw 'Start menu shortcut was not created' }
+          if ((Get-Content $lnk -Raw) -notmatch '(?m)^URL=http://127\.0\.0\.1:8099\s*$') { throw "shortcut does not open the dashboard: $(Get-Content $lnk -Raw)" }
+          Remove-Item $lnk -Force
+          # -NoShortcut is honoured
+          .\scripts\install.ps1 -Dir "$env:RUNNER_TEMP\no-shortcut" -Version 1.2.3 -Wait 30 -NoShortcut
+          if (Test-Path $lnk) { throw '-NoShortcut still created a shortcut' }
+          .\scripts\install.ps1 -Uninstall -Purge -Yes -Dir "$env:RUNNER_TEMP\no-shortcut"
 
       - name: Release-zip layout (stamped scripts, install.bat, no download)
         run: |
@@ -216,3 +226,4 @@ jobs:
           if (-not (Test-Path "$d\.env")) { throw 'uninstall must keep .env' }
           .\scripts\install.ps1 -Uninstall -Purge -Yes -Dir $d
           if (Test-Path $d) { throw 'purge must remove the directory' }
+          if (Test-Path (Join-Path $env:PADDOCK_SHORTCUT_DIR 'Paddock.url')) { throw 'purge must remove the shortcut' }

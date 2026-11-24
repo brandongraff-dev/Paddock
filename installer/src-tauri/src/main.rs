@@ -271,12 +271,14 @@ async fn run_script(
     action: String,
     dir: Option<String>,
     active: bool,
+    shortcut: bool,
 ) -> Result<i32, String> {
     let action = core::Action::parse(&action).ok_or_else(|| "Unknown action.".to_string())?;
     let opts = core::Options {
         action,
         dir,
         active,
+        shortcut,
     };
     let table = runs.0.clone();
     let result =
@@ -345,6 +347,7 @@ fn quit_app(app: AppHandle, runs: State<'_, Runs>) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Runs::default())
         .invoke_handler(tauri::generate_handler![
             get_state, run_script, cancel_run, open_url, quit_app

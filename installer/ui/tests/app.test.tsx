@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App, { detailsText } from "../src/App";
-import { DOCKER_URL } from "../src/bridge";
+import { DOCKER_URL, helpUrl } from "../src/bridge";
 import { initialRun, reduce } from "../src/protocol";
 import { CANCELLED } from "../src/useRun";
 import { check, makeBridge, RESULT, step } from "./helpers";
@@ -131,6 +131,83 @@ describe("ready: the PC check runs by itself", () => {
     expect(await screen.findByRole("heading", { name: "Install Paddock" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("not a whole drive");
     expect(screen.getByLabelText("Install location")).toHaveAttribute("aria-invalid", "true");
+  });
+});
+
+describe("browse, shortcut and help", () => {
+  it("Browse opens the native folder dialog at the current folder and fills the field; cancelling changes nothing", async () => {
+    const h = await setup();
+    await waitFor(() => expect(h.runs).toHaveLength(1));
+    finishCheck(h);
+    const dir = await screen.findByLabelText("Install location");
+    (h.bridge.pickFolder as any).mockResolvedValueOnce("D:\\Apps\\Paddock");
+    await h.user.click(screen.getByRole("button", { name: "Browse…" }));
+    expect(h.bridge.pickFolder).toHaveBeenCalledWith("C:\\Users\\Ada\\paddock");
+    await waitFor(() => expect(dir).toHaveValue("D:\\Apps\\Paddock"));
+    (h.bridge.pickFolder as any).mockResolvedValueOnce(null);                        // cancelled
+    await h.user.click(screen.getByRole("button", { name: "Browse…" }));
+    expect(dir).toHaveValue("D:\\Apps\\Paddock");
+    (h.bridge.pickFolder as any).mockRejectedValueOnce(new Error("dialog failed"));  // a broken dialog must not break the wizard
+    await h.user.click(screen.getByRole("button", { name: "Browse…" }));
+    expect(dir).toHaveValue("D:\\Apps\\Paddock");
+    await h.user.click(installButton());
+    await waitFor(() => expect(h.runs).toHaveLength(2));
+    expect(h.runs[1].opts.dir).toBe("D:\\Apps\\Paddock");
+  });
+
+  it("a folder chosen with Browse clears an earlier folder error", async () => {
+    const h = await setup();
+    await toInstall(h);
+    act(() => h.last().fail("Choose a folder, not a whole drive."));
+    await screen.findByRole("alert");
+    (h.bridge.pickFolder as any).mockResolvedValueOnce("E:\\Paddock");
+    await h.user.click(screen.getByRole("button", { name: "Browse…" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("the Start menu shortcut is on by default, and can be switched off", async () => {
+    const h = await setup();
+    await waitFor(() => expect(h.runs).toHaveLength(1));
+    finishCheck(h);
+    await screen.findByLabelText("Install location");
+    await h.user.click(screen.getByText("More options"));
+    const box = screen.getByRole("checkbox", { name: /Start menu/ });
+    expect(box).toBeChecked();
+    await h.user.click(installButton());
+    await waitFor(() => expect(h.runs).toHaveLength(2));
+    expect(h.runs[1].opts.shortcut).toBe(true);
+
+    cleanup();
+    const h2 = await setup();
+    await waitFor(() => expect(h2.runs).toHaveLength(1));
+    finishCheck(h2);
+    await screen.findByLabelText("Install location");
+    await h2.user.click(screen.getByText("More options"));
+    await h2.user.click(screen.getByRole("checkbox", { name: /Start menu/ }));
+    await h2.user.click(installButton());
+    await waitFor(() => expect(h2.runs).toHaveLength(2));
+    expect(h2.runs[1].opts.shortcut).toBe(false);
+  });
+
+  it("Get help opens a pre-filled issue with the headline only, never the details or the login", async () => {
+    const h = await setup();
+    await toInstall(h);
+    act(() => { h.last().emit({ type: "error", text: "docker compose pull failed: could not reach ghcr.io (C:\\Users\\Ada\\paddock)" }); h.last().finish(1); });
+    await h.user.click(await screen.findByRole("button", { name: "Get help" }));
+    const url = (h.bridge.openUrl as any).mock.calls.at(-1)[0] as string;
+    expect(url).toBe(helpUrl("Setup could not download Paddock."));
+    expect(url.startsWith("https://github.com/brandongraff-dev/paddock/issues/new?")).toBe(true);
+    expect(decodeURIComponent(url)).toContain("Setup problem: Setup could not download Paddock.");
+    expect(decodeURIComponent(url)).not.toMatch(/ghcr|Ada|docker compose|password/i);
+  });
+
+  it("there is no Get help on a cancelled run", async () => {
+    const h = await setup();
+    await toInstall(h);
+    act(() => h.last().emit(step("images", "x")));
+    await h.user.click(await screen.findByRole("button", { name: "Cancel" }));
+    await screen.findByRole("heading", { name: "Setup stopped" });
+    expect(screen.queryByRole("button", { name: "Get help" })).toBeNull();
   });
 });
 

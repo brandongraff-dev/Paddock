@@ -31,6 +31,7 @@ export function makeBridge(state: Partial<AppState> = {}) {
       return { done, cancel: () => { r.cancelled = true; resolve(1); } };
     },
     openUrl: vi.fn(async () => undefined),
+    pickFolder: vi.fn(async () => null as string | null),
     quit: vi.fn(async () => undefined),
   };
   return { bridge, runs, last: () => runs[runs.length - 1], setState: (s: Partial<AppState>) => { current = { ...current, ...s }; } };

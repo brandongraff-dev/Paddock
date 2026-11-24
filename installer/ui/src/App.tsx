@@ -22,6 +22,7 @@ export default function App({ bridge }: { bridge: Bridge }) {
   const [screen, setScreen] = useState<Screen_>("ready");
   const [dir, setDir] = useState("");
   const [active, setActive] = useState(false);
+  const [shortcut, setShortcut] = useState(true);
   const [work, setWork] = useState<"stop" | "remove">("stop");
   const [dirError, setDirError] = useState<string | null>(null);
   const pcRun = useRun(bridge);   // the automatic PC check
@@ -61,9 +62,10 @@ export default function App({ bridge }: { bridge: Bridge }) {
 
   const open = (url: string) => void bridge.openUrl(url).catch(() => undefined);
   const quit = () => void bridge.quit();
+  const browse = () => void bridge.pickFolder(dir).then((p) => { if (p) { setDir(p); setDirError(null); } }).catch(() => undefined);
   const copyDetails = () => void navigator.clipboard?.writeText(detailsText(st)).catch(() => undefined);
 
-  const install = (d = dir, a = active) => { setDirError(null); setScreen("install"); job.start("install", { dir: d, active: a }); };
+  const install = (d = dir, a = active) => { setDirError(null); setScreen("install"); job.start("install", { dir: d, active: a, shortcut }); };
   const doWork = (a: "stop" | "remove") => { setWork(a); setScreen("work"); job.start(a, { dir: app?.dir ?? dir }); };
   const backToReady = () => { job.reset(); setScreen("ready"); check(dir); };
   const backFromWork = async () => {
@@ -101,7 +103,7 @@ export default function App({ bridge }: { bridge: Bridge }) {
   switch (screen) {
     case "ready":
       step = "Step 1 of 3";
-      view = <Ready pc={pc} dir={dir} active={active} dirError={dirError} onDir={setDir} onActive={setActive} onOpen={open} onAgain={() => check(dir)} onInstall={() => install()} onClose={quit} />;
+      view = <Ready pc={pc} dir={dir} active={active} shortcut={shortcut} dirError={dirError} onDir={setDir} onActive={setActive} onShortcut={setShortcut} onBrowse={browse} onOpen={open} onAgain={() => check(dir)} onInstall={() => install()} onClose={quit} />;
       break;
     case "install":
       step = finished && st?.result ? "Step 3 of 3" : "Step 2 of 3";

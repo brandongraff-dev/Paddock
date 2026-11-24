@@ -45,6 +45,8 @@ pub struct Options {
     pub dir: Option<String>,
     /// Also start the active scanner (`-Active`).
     pub active: bool,
+    /// Add a Start menu shortcut that opens Paddock (installing only; `-NoShortcut` when false).
+    pub shortcut: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +188,9 @@ pub fn build_args(script: &str, opts: &Options) -> Result<Vec<String>, OptionsEr
             if opts.active {
                 a.push("-Active".into());
             }
+            if !opts.shortcut {
+                a.push("-NoShortcut".into());
+            }
             a.push("-Yes".into());
             a.push("-Wait".into());
             a.push("600".into());
@@ -292,6 +297,7 @@ mod tests {
             action,
             dir: None,
             active: false,
+            shortcut: true,
         }
     }
 
@@ -389,6 +395,7 @@ mod tests {
                 action: Action::Install,
                 dir: Some("D:\\p".into()),
                 active: true,
+                shortcut: true,
             },
         )
         .unwrap();
@@ -419,6 +426,38 @@ mod tests {
     }
 
     #[test]
+    fn the_start_menu_shortcut_is_on_unless_declined_and_only_for_installs() {
+        let args = |o: Options| build_args("s.ps1", &o).unwrap();
+        let on = args(Options {
+            action: Action::Install,
+            dir: None,
+            active: false,
+            shortcut: true,
+        });
+        assert!(!on.iter().any(|x| x == "-NoShortcut"));
+        let off = args(Options {
+            action: Action::Install,
+            dir: None,
+            active: false,
+            shortcut: false,
+        });
+        assert!(off.iter().any(|x| x == "-NoShortcut"));
+        for a in [Action::Doctor, Action::Stop, Action::Remove] {
+            assert!(
+                !args(Options {
+                    action: a,
+                    dir: None,
+                    active: false,
+                    shortcut: false
+                })
+                .iter()
+                .any(|x| x == "-NoShortcut"),
+                "{a:?}"
+            );
+        }
+    }
+
+    #[test]
     fn each_action_maps_to_exactly_its_flags() {
         let has = |o: Options, f: &str| build_args("s.ps1", &o).unwrap().iter().any(|x| x == f);
         assert!(has(opts(Action::Doctor), "-Doctor"));
@@ -435,6 +474,7 @@ mod tests {
                 action: Action::Stop,
                 dir: None,
                 active: true,
+                shortcut: true,
             },
         )
         .unwrap();
@@ -449,6 +489,7 @@ mod tests {
                 action: Action::Remove,
                 dir: Some("C:\\".into()),
                 active: false,
+                shortcut: true,
             },
         );
         assert_eq!(
@@ -462,6 +503,7 @@ mod tests {
                 action: Action::Install,
                 dir: Some("x\"; calc; \"".into()),
                 active: false,
+                shortcut: true,
             },
         );
         assert!(r.is_err());
@@ -485,6 +527,7 @@ mod tests {
             "https://docs.docker.com/desktop/setup/install/windows-install/",
             "https://learn.microsoft.com/windows/wsl/install",
             "https://github.com/brandongraff-dev/paddock/releases",
+            "https://github.com/brandongraff-dev/paddock/issues/new?title=Setup%20problem&labels=installer",
         ] {
             assert!(allowed_url(ok), "{ok}");
         }

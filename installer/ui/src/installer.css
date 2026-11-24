@@ -104,3 +104,8 @@ code { font-family: var(--mono); font-size: 12px; }
 .inst-copy-actions { display: inline-flex; align-items: center; gap: 12px; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* folder field + Browse */
+.inst-field { display: flex; gap: 8px; }
+.inst-field .inst-input { flex: 1; min-width: 0; }
+.inst-footer-left .inst-linkbtn { margin-left: 4px; }

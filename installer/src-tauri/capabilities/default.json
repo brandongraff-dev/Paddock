@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The wizard window: events (installer output) and the commands in src/main.rs, nothing else.",
+  "description": "The wizard window: events (installer output), the commands in src/main.rs, and the native folder picker. Nothing else.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }
