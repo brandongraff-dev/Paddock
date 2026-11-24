@@ -16,6 +16,7 @@ the caller should treat the build as degraded.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import ipaddress
 import json
@@ -259,6 +260,16 @@ def _clean_nodes(out: BuildOutput, rep: BuildReport) -> dict[str, dict[str, Any]
     return nodes
 
 
+def _widen_port_zero(e: Any) -> Any:
+    """Port 0 is not a TCP/UDP port and the table forbids it; a builder that means "all ports" and
+    wrote 0-65535 must get 1-65535, not a skipped edge (a dropped edge under-approximates)."""
+    lo, hi = e.port_lo, e.port_hi
+    if e.proto == "icmp" or isinstance(lo, bool) or isinstance(hi, bool) \
+            or not isinstance(lo, int) or not isinstance(hi, int) or lo != 0:
+        return e
+    return dataclasses.replace(e, port_lo=1, port_hi=65535 if hi < 1 else hi)
+
+
 def _edge_issue(e: Any, source: str) -> Optional[str]:
     if e.source != source:
         return f"edge source {e.source!r} != build source {source!r}"
@@ -288,6 +299,7 @@ def _clean_edges(out: BuildOutput, now: dt.datetime, rep: BuildReport) -> dict[t
     expired = 0
     for e in out.edges:
         try:
+            e = _widen_port_zero(e)
             issue = _edge_issue(e, out.source)
             if issue:
                 raise ValueError(issue)

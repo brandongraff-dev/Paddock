@@ -278,7 +278,6 @@ async def test_bad_rows_are_skipped_and_counted_never_raised(app_pool):
         edge("not-a-ref", DB),
         edge("internet", "asset:not-a-uuid"),
         edge("ip:010.1.1.1", DB),                                   # non-canonical
-        edge("internet", DB, lo=0, hi=10),                          # tcp port 0
         edge("internet", DB, lo=100, hi=10),
         edge("internet", DB, lo=1, hi=70000),
         edge("internet", DB, proto="sctp"),                         # type: ignore[arg-type]
@@ -305,10 +304,15 @@ async def test_bad_rows_are_skipped_and_counted_never_raised(app_pool):
     assert [x["dst_ref"] for x in await edge_rows(app_pool)] == [DB]
 
 
-async def test_icmp_ports_may_be_zero_but_tcp_ports_may_not(app_pool):
+async def test_icmp_ports_may_be_zero_and_a_tcp_zero_is_widened_never_skipped(app_pool):
+    # Port 0 is not a TCP port, but a builder that wrote it meant "unknown / all": skipping the edge
+    # would under-approximate (a false HOLDS), so it is widened to 1..hi (0-0 -> every port).
     r = await persist(app_pool, build(edges=[edge("internet", DB, proto="icmp", lo=0, hi=0),
-                                             edge("internet", DB, proto="tcp", lo=0, hi=0)]))
-    assert r.edges_added == 1 and r.skipped == 1
+                                             edge("internet", DB, proto="tcp", lo=0, hi=0),
+                                             edge("internet", DB, proto="udp", lo=0, hi=10)]))
+    assert r.edges_added == 3 and r.skipped == 0
+    got = {(x["proto"], x["port_lo"], x["port_hi"]) for x in await edge_rows(app_pool)}
+    assert got == {("icmp", 0, 0), ("tcp", 1, 65535), ("udp", 1, 10)}
 
 
 async def test_oversized_evidence_keeps_the_edge_and_drops_the_detail(app_pool):
@@ -671,7 +675,10 @@ async def test_internet_never_gets_coverage_even_if_a_row_is_forced_in(app_pool,
     assert "coverage" not in inet
 
 
-async def test_load_graph_doc_is_deterministic_regardless_of_insert_order(app_pool, db_pool):
+async def test_load_graph_doc_is_deterministic_regardless_of_insert_order(app_pool, db_pool, monkeypatch):
+    # The CIDR expansion depends on the addresses of the assets a tenant can SEE (tenant B cannot see
+    # A's asset rows under RLS), so it is switched off here: this test is about row order only.
+    monkeypatch.setattr(graph_loader, "_expand_cidr_sources", lambda nodes, edges, addrs: [])
     ref = await _estate(app_pool, db_pool)
     async with conn_for(app_pool) as con:
         first = await graph_loader.load_graph_doc(con, T0)
@@ -743,3 +750,24 @@ async def test_document_with_directional_coverage_loads_in_the_library(app_pool,
     g = ReachGraph.from_dict(doc)
     assert g.nodes[ref["db"]].coverage is not None
     assert g.nodes["internet"].coverage is None or not g.nodes["internet"].coverage
+
+
+async def test_all_ports_written_as_0_to_65535_is_widened_not_skipped(app_pool):
+    """A builder that means 'every port' and writes 0-65535 must not lose the edge to the table's
+    port >= 1 rule: a skipped edge is an under-approximation, and that is a false HOLDS."""
+    from app.assurance import store
+    from app.assurance.types import BuildOutput, EdgeOut, NodeOut
+
+    now = dt.datetime.now(dt.timezone.utc)
+    e = [EdgeOut("ip:10.0.0.1", "ip:10.0.0.2", "tcp", 0, 65535, "observed", "t", now),
+         EdgeOut("ip:10.0.0.1", "ip:10.0.0.3", "any", 0, 0, "observed", "t", now),
+         EdgeOut("ip:10.0.0.1", "ip:10.0.0.4", "icmp", 0, 0, "observed", "t", now)]
+    out = BuildOutput("t", "replace", [NodeOut(r, "ip") for r in ("ip:10.0.0.1", "ip:10.0.0.2", "ip:10.0.0.3", "ip:10.0.0.4")], e)
+    with tenancy.tenant_context(TENANT_A):
+        async with app_pool.acquire() as con:
+            rep = await store.persist_build(con, out, now)
+            rows = {r["dst_ref"]: (r["proto"], r["port_lo"], r["port_hi"])
+                    for r in await con.fetch("SELECT dst_ref, proto, port_lo, port_hi FROM reach_edges")}
+    assert rep.skipped == 0 and rep.edges_added == 3
+    assert rows == {"ip:10.0.0.2": ("tcp", 1, 65535), "ip:10.0.0.3": ("any", 1, 65535),
+                    "ip:10.0.0.4": ("icmp", 0, 0)}

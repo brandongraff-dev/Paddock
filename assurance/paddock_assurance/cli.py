@@ -1,7 +1,8 @@
 """``paddock-invariants``: lint, explain and test invariants against a reach-graph file.
 
 Exit codes (``test``): 0 every invariant HOLDS, 1 any VIOLATED, 2 none violated but some UNKNOWN
-or EXPIRED, 3 bad input. ``lint``: 0 ok, 3 invalid.
+or EXPIRED, 3 bad input. ``lint``: 0 ok, 3 invalid. A ``covered`` invariant that finds uncovered
+nodes is VIOLATED (exit 1) like any other: the gap is the counterexample.
 """
 from __future__ import annotations
 

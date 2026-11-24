@@ -718,6 +718,30 @@ export interface EdgeIn {
   src_kind?: string | null;
 }
 
+export interface EvaluateIn {
+  /**
+   * std:x / acme:y ids or row UUIDs; default: every enabled invariant.
+   */
+  invariant_ids?: string[] | null;
+  /**
+   * Re-run the graph builders first.
+   */
+  rebuild?: boolean;
+}
+
+export interface EvaluateOut {
+  builders?: Record<string, unknown>;
+  built?: boolean;
+  degraded?: boolean;
+  errors?: string[];
+  evaluated?: number;
+  graph_version?: number | null;
+  ignored_disabled?: string[];
+  ok: boolean;
+  results?: Record<string, unknown>[];
+  skipped?: string | null;
+}
+
 export interface ExchangeIn {
   code: string;
   verifier?: string | null;
@@ -814,7 +838,7 @@ export interface FindingIn {
   references?: string[];
   remediation?: string | null;
   rule_id: string;
-  rule_source: "nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel";
+  rule_source: "nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel" | "invariant";
   severity: "info" | "low" | "medium" | "high" | "critical";
   title: string;
 }
@@ -859,7 +883,7 @@ export interface FindingLifecycleOut {
   references: string[];
   remediation: string | null;
   rule_id: string;
-  rule_source: "nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel";
+  rule_source: "nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel" | "invariant";
   severity: "info" | "low" | "medium" | "high" | "critical";
   sla_breached?: boolean;
   sla_hours?: number | null;
@@ -910,6 +934,33 @@ export interface FindingTechniqueOut {
   tactic: string;
   technique: string;
   technique_id: string;
+}
+
+export interface FlowBulkIn {
+  flows: FlowIn[];
+}
+
+export interface FlowBulkOut {
+  inserted: number;
+  merged: number;
+  received: number;
+  updated: number;
+}
+
+/**
+ * One aggregated flow: ``src`` opened ``proto`` connections to ``dst:dst_port``.
+ */
+export interface FlowIn {
+  bytes?: number;
+  dst_ip: string;
+  dst_port: number;
+  first_seen: string;
+  last_seen: string;
+  oriented?: "syn" | "heuristic";
+  packets?: number;
+  proto: "icmp" | "tcp" | "udp" | "any";
+  sensor_id: string;
+  src_ip: string;
 }
 
 export interface FrameworkSummary {
@@ -1073,6 +1124,105 @@ export interface InterfaceIn {
   up?: boolean | null;
 }
 
+export interface InvariantChange {
+  /**
+   * False when nothing moved (same definition, same enabled flag).
+   */
+  changed: boolean;
+  created?: boolean;
+  invariant: InvariantOut;
+  new_version?: boolean;
+}
+
+export interface InvariantCreate {
+  enabled?: boolean;
+  yaml: string;
+}
+
+export interface InvariantDetail {
+  coverage?: Record<string, unknown> | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  digest: string;
+  enabled: boolean;
+  evidence_tier?: string | null;
+  id: string;
+  invariant_id: string;
+  last_evaluated_at?: string | null;
+  last_graph_version?: number | null;
+  last_result?: Record<string, unknown> | null;
+  last_verdict?: string | null;
+  reasons?: string[];
+  severity: string;
+  source: "std" | "custom";
+  /**
+   * Evaluated against an older graph version than the current one.
+   */
+  stale?: boolean;
+  /**
+   * HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED
+   */
+  status: string;
+  title: string;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  valid_until?: string | null;
+  version: number;
+  versions?: InvariantVersionOut[];
+  violation_count?: number;
+  yaml: string;
+}
+
+export interface InvariantOut {
+  coverage?: Record<string, unknown> | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  digest: string;
+  enabled: boolean;
+  evidence_tier?: string | null;
+  id: string;
+  invariant_id: string;
+  last_evaluated_at?: string | null;
+  last_graph_version?: number | null;
+  last_verdict?: string | null;
+  reasons?: string[];
+  severity: string;
+  source: "std" | "custom";
+  /**
+   * Evaluated against an older graph version than the current one.
+   */
+  stale?: boolean;
+  /**
+   * HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED
+   */
+  status: string;
+  title: string;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  valid_until?: string | null;
+  version: number;
+  violation_count?: number;
+}
+
+export interface InvariantPage {
+  items: InvariantOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface InvariantUpdate {
+  enabled?: boolean | null;
+  yaml?: string | null;
+}
+
+export interface InvariantVersionOut {
+  created_at?: string | null;
+  created_by?: string | null;
+  digest: string;
+  version: number;
+}
+
 export interface InventoryIn {
   listeners?: Record<string, unknown>[];
   os_info?: Record<string, unknown>;
@@ -1097,6 +1247,50 @@ export interface InventorySnapshot {
 
 export interface InviteIn {
   label?: string | null;
+}
+
+export interface LabelChangeOut {
+  changed: boolean;
+  graph_version?: number | null;
+  label: LabelOut;
+  previous?: string | null;
+  warnings?: string[];
+}
+
+export interface LabelDeleteOut {
+  deleted?: boolean;
+  graph_version?: number | null;
+  node_ref: string;
+  previous?: string | null;
+  tag: string;
+}
+
+export interface LabelOut {
+  id: string;
+  justification?: string;
+  node_ref: string;
+  set_at?: string | null;
+  set_by?: string | null;
+  source: string;
+  tag: string;
+  value: string;
+}
+
+export interface LabelPage {
+  items: LabelOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface LabelSet {
+  /**
+   * Why. Recorded with the change and in the audit log.
+   */
+  justification: string;
+  node_ref: string;
+  tag: string;
+  value?: string;
 }
 
 export interface LicenseLimits {
@@ -1685,6 +1879,28 @@ export interface RoleMapping {
   role: "viewer" | "analyst" | "admin" | "auditor";
 }
 
+export interface RunOut {
+  coverage_covered: number;
+  coverage_universe: number;
+  digest: string;
+  evaluated_at: string;
+  graph_version: number;
+  id: string;
+  invariant_id: string;
+  reasons?: string[];
+  result?: Record<string, unknown> | null;
+  valid_until?: string | null;
+  verdict: string;
+  violation_count: number;
+}
+
+export interface RunPage {
+  items: RunOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
 export interface SAMLConfig {
   email_attribute?: string | null;
   graph_base_url?: string;
@@ -2104,6 +2320,24 @@ export interface StatusHistoryOut {
   id: string;
   reason: string | null;
   to_status: string;
+}
+
+export interface StdInvariantOut {
+  assertion: string;
+  description?: string | null;
+  digest: string;
+  enabled: boolean;
+  id: string;
+  installed: boolean;
+  installed_digest?: string | null;
+  invariant_row_id?: string | null;
+  severity: string;
+  title: string;
+  /**
+   * The tenant's copy has the shipped digest.
+   */
+  up_to_date: boolean;
+  version?: number | null;
 }
 
 export interface SuggestionOut {
@@ -2723,6 +2957,64 @@ export interface Window {
   start: string;
 }
 
+export interface ZoneChangeOut {
+  changed: boolean;
+  created?: boolean;
+  graph_version?: number | null;
+  /**
+   * Other zones sharing address space (most specific wins).
+   */
+  overlaps?: string[];
+  zone: ZoneOut;
+}
+
+export interface ZoneCreate {
+  cidrs: string[];
+  description?: string;
+  /**
+   * Why. Recorded with the change and in the audit log.
+   */
+  justification: string;
+  kind?: string;
+  name: string;
+}
+
+export interface ZoneDeleteOut {
+  deleted?: boolean;
+  graph_version?: number | null;
+  labels_still_naming_it?: number;
+  name: string;
+}
+
+export interface ZoneOut {
+  cidrs: string[];
+  created_at?: string | null;
+  created_by?: string | null;
+  description?: string;
+  id: string;
+  kind: string;
+  name: string;
+  source?: string;
+  updated_at?: string | null;
+}
+
+export interface ZonePage {
+  items: ZoneOut[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface ZoneUpdate {
+  cidrs?: string[] | null;
+  description?: string | null;
+  /**
+   * Why. Recorded with the change and in the audit log.
+   */
+  justification: string;
+  kind?: string | null;
+}
+
 export interface app__reports__models__EvidenceOut {
   detail: string;
   key: string;
@@ -2909,6 +3201,9 @@ export const OPERATIONS = {
   surfaceGraph: ["GET", "/v1/assets/graph", false],
   getAsset: ["GET", "/v1/assets/{asset_id}", false],
   getAssetGraph: ["GET", "/v1/assets/{asset_id}/graph", false],
+  assuranceCoverage: ["GET", "/v1/assurance/coverage", true],
+  evaluateNow: ["POST", "/v1/assurance/evaluate", false],
+  assuranceState: ["GET", "/v1/assurance/state", false],
   listAttackPaths: ["GET", "/v1/attack-paths", true],
   recomputeAttackPaths: ["POST", "/v1/attack-paths/recompute", false],
   getAttackPath: ["GET", "/v1/attack-paths/{path_id}", false],
@@ -3023,6 +3318,17 @@ export const OPERATIONS = {
   enableIntegration: ["POST", "/v1/integrations/{integration_id}/enable", false],
   integrationInbound: ["POST", "/v1/integrations/{integration_id}/inbound", false],
   testIntegration: ["POST", "/v1/integrations/{integration_id}/test", false],
+  listInvariants: ["GET", "/v1/invariants", true],
+  createInvariant: ["POST", "/v1/invariants", false],
+  listStdInvariants: ["GET", "/v1/invariants/std", false],
+  enableStdInvariant: ["POST", "/v1/invariants/std/{std_id}/enable", false],
+  getInvariant: ["GET", "/v1/invariants/{invariant_id}", false],
+  updateInvariant: ["PUT", "/v1/invariants/{invariant_id}", false],
+  deleteInvariant: ["DELETE", "/v1/invariants/{invariant_id}", false],
+  listInvariantRuns: ["GET", "/v1/invariants/{invariant_id}/runs", true],
+  listLabels: ["GET", "/v1/labels", true],
+  setLabel: ["PUT", "/v1/labels", false],
+  deleteLabel: ["DELETE", "/v1/labels/{label_id}", false],
   getLicense: ["GET", "/v1/license", false],
   uploadLicense: ["POST", "/v1/license", false],
   removeLicense: ["DELETE", "/v1/license", false],
@@ -3066,6 +3372,9 @@ export const OPERATIONS = {
   getReport: ["GET", "/v1/public/exposure-report/{report_id}", false],
   publicViewGet: ["GET", "/v1/public/trust/{token}", false],
   publicViewPost: ["POST", "/v1/public/trust/{token}", false],
+  listReachEdges: ["GET", "/v1/reach/edges", true],
+  bulkFlows: ["POST", "/v1/reach/flows/bulk", false],
+  listReachNodes: ["GET", "/v1/reach/nodes", true],
   listRemediations: ["GET", "/v1/remediation", true],
   proposeRemediation: ["POST", "/v1/remediation/propose", false],
   remediationMerged: ["POST", "/v1/remediation/{remediation_id}/merged", false],
@@ -3150,6 +3459,11 @@ export const OPERATIONS = {
   takeSnapshot: ["POST", "/v1/usage/snapshot", false],
   listSnapshots: ["GET", "/v1/usage/snapshots", false],
   postResultVerification: ["POST", "/v1/verifications/{verification_id}/result", false],
+  listZones: ["GET", "/v1/zones", true],
+  createZone: ["POST", "/v1/zones", false],
+  getZone: ["GET", "/v1/zones/{zone_id}", false],
+  updateZone: ["PUT", "/v1/zones/{zone_id}", false],
+  deleteZone: ["DELETE", "/v1/zones/{zone_id}", false],
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -3420,6 +3734,38 @@ export abstract class GeneratedOperations {
    */
   getAssetGraph(assetId: string, query?: { depth?: number }, options?: RequestOptions): Promise<AssetGraphOut> {
     return this._request<AssetGraphOut>("GET", "/v1/assets/{asset_id}/graph", { pathParams: { asset_id: assetId }, query, options });
+  }
+
+  /**
+   * GET /v1/assurance/coverage — Assurance Coverage
+   *
+   * Coverage per source and per node (directional), blind spots by reason, stale sensors.
+   *
+   * A node counts as covered only when it is covered inbound AND outbound by a fresh fact of at
+   * least ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody
+   * can instrument it, so it is never part of the universe.
+   */
+  assuranceCoverage(query?: { min_tier?: "declared" | "configured" | "observed" | "tested"; max_age_h?: number; only_blind?: boolean; kind?: string | null; q?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/assurance/coverage", { query, options });
+  }
+
+  /**
+   * POST /v1/assurance/evaluate — Evaluate Now
+   *
+   * Evaluate now (optionally after rebuilding the graph). Always 200: a degraded run answers
+   * ``ok: false`` with the reason, never a 5xx, and never turns a failure into a ``HOLDS``.
+   */
+  evaluateNow(body?: EvaluateIn | null, options?: RequestOptions): Promise<EvaluateOut> {
+    return this._request<EvaluateOut>("POST", "/v1/assurance/evaluate", { body, options });
+  }
+
+  /**
+   * GET /v1/assurance/state — Assurance State
+   *
+   * Graph version, last build/evaluation, counts, and what the builders last did.
+   */
+  assuranceState(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/assurance/state", { options });
   }
 
   /**
@@ -3840,7 +4186,7 @@ export abstract class GeneratedOperations {
   /**
    * GET /v1/export/findings.ocsf — Export Findings Ocsf
    */
-  exportFindingsOcsf(query?: { severity?: (Array<"info" | "low" | "medium" | "high" | "critical">) | null; min_severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: (Array<"open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted">) | null; rule_source?: (Array<"nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel">) | null; since?: string | null; limit?: number }, options?: RequestOptions): Promise<unknown> {
+  exportFindingsOcsf(query?: { severity?: (Array<"info" | "low" | "medium" | "high" | "critical">) | null; min_severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: (Array<"open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted">) | null; rule_source?: (Array<"nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel" | "invariant">) | null; since?: string | null; limit?: number }, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("GET", "/v1/export/findings.ocsf", { query, options });
   }
 
@@ -3868,7 +4214,7 @@ export abstract class GeneratedOperations {
   /**
    * GET /v1/findings — List Findings Paged
    */
-  listFindingsPaged(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; sla_breached?: boolean | null; fingerprint?: string | null; sort?: string; limit?: number; offset?: number; exploitability?: string | null; fix_verified?: boolean | null }, options?: RequestOptions): Promise<FindingLifecyclePage> {
+  listFindingsPaged(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel" | "invariant") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; sla_breached?: boolean | null; fingerprint?: string | null; sort?: string; limit?: number; offset?: number; exploitability?: string | null; fix_verified?: boolean | null }, options?: RequestOptions): Promise<FindingLifecyclePage> {
     return this._request<FindingLifecyclePage>("GET", "/v1/findings", { query, options });
   }
 
@@ -3884,7 +4230,7 @@ export abstract class GeneratedOperations {
    *
    * Legacy bare-list response for pre-pagination clients.
    */
-  listFindingsLegacy(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; limit?: number; offset?: number }, options?: RequestOptions): Promise<FindingLifecycleOut[]> {
+  listFindingsLegacy(query?: { severity?: ("info" | "low" | "medium" | "high" | "critical") | null; status?: ("open" | "triaged" | "false_positive" | "accepted_risk" | "fixed" | "wontfix" | "accepted") | null; asset_id?: string | null; rule_source?: ("nuclei" | "cve_match" | "policy" | "chain" | "secret_scan" | "tls_check" | "header_check" | "exposed_file" | "manual" | "takeover" | "tls_grade" | "sca" | "sast" | "threat_intel" | "invariant") | null; kev?: boolean | null; q?: string | null; suppressed?: "exclude" | "include" | "only"; include_duplicates?: boolean; limit?: number; offset?: number }, options?: RequestOptions): Promise<FindingLifecycleOut[]> {
     return this._request<FindingLifecycleOut[]>("GET", "/v1/findings/list", { query, options });
   }
 
@@ -4350,6 +4696,109 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/invariants — List Invariants
+   *
+   * Invariants with their last verdict, freshness (``EXPIRED``) and coverage ratio.
+   */
+  listInvariants(query?: { enabled?: boolean | null; source?: ("std" | "custom") | null; status?: string | null; q?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<InvariantPage> {
+    return this._request<InvariantPage>("GET", "/v1/invariants", { query, options });
+  }
+
+  /**
+   * POST /v1/invariants — Create Invariant
+   *
+   * Create a custom invariant from YAML (parsed and compiled by the library; 422 lists the problems).
+   */
+  createInvariant(body: InvariantCreate, options?: RequestOptions): Promise<InvariantChange> {
+    return this._request<InvariantChange>("POST", "/v1/invariants", { body, options });
+  }
+
+  /**
+   * GET /v1/invariants/std — List Std Invariants
+   *
+   * The shipped std invariants and whether this tenant has each one enabled.
+   */
+  listStdInvariants(options?: RequestOptions): Promise<StdInvariantOut[]> {
+    return this._request<StdInvariantOut[]>("GET", "/v1/invariants/std", { options });
+  }
+
+  /**
+   * POST /v1/invariants/std/{std_id}/enable — Enable Std Invariant
+   *
+   * Copy a shipped invariant into the tenant and enable it (idempotent; refreshes a stale copy).
+   */
+  enableStdInvariant(stdId: string, options?: RequestOptions): Promise<InvariantChange> {
+    return this._request<InvariantChange>("POST", "/v1/invariants/std/{std_id}/enable", { pathParams: { std_id: stdId }, options });
+  }
+
+  /**
+   * GET /v1/invariants/{invariant_id} — Get Invariant
+   */
+  getInvariant(invariantId: string, options?: RequestOptions): Promise<InvariantDetail> {
+    return this._request<InvariantDetail>("GET", "/v1/invariants/{invariant_id}", { pathParams: { invariant_id: invariantId }, options });
+  }
+
+  /**
+   * PUT /v1/invariants/{invariant_id} — Update Invariant
+   *
+   * Change the definition (new digest => new version row) and/or toggle ``enabled``.
+   *
+   * A std invariant's text is owned by the shipped library (it would be overwritten), so only
+   * ``enabled`` can change there.
+   */
+  updateInvariant(invariantId: string, body: InvariantUpdate, options?: RequestOptions): Promise<InvariantChange> {
+    return this._request<InvariantChange>("PUT", "/v1/invariants/{invariant_id}", { pathParams: { invariant_id: invariantId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/invariants/{invariant_id} — Delete Invariant
+   *
+   * Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay
+   * (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
+   * Never gated: a downgraded tenant can always switch containment checks off cleanly.
+   */
+  deleteInvariant(invariantId: string, options?: RequestOptions): Promise<InvariantChange> {
+    return this._request<InvariantChange>("DELETE", "/v1/invariants/{invariant_id}", { pathParams: { invariant_id: invariantId }, options });
+  }
+
+  /**
+   * GET /v1/invariants/{invariant_id}/runs — List Invariant Runs
+   *
+   * The verdict-transition ledger of one invariant, newest first.
+   */
+  listInvariantRuns(invariantId: string, query?: { verdict?: ("HOLDS" | "VIOLATED" | "UNKNOWN") | null; include_result?: boolean; limit?: number; offset?: number }, options?: RequestOptions): Promise<RunPage> {
+    return this._request<RunPage>("GET", "/v1/invariants/{invariant_id}/runs", { pathParams: { invariant_id: invariantId }, query, options });
+  }
+
+  /**
+   * GET /v1/labels — List Labels
+   *
+   * Labels with their provenance (who set them, why, when).
+   */
+  listLabels(query?: { node_ref?: string | null; tag?: string | null; source?: ("declared" | "metadata" | "connector") | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<LabelPage> {
+    return this._request<LabelPage>("GET", "/v1/labels", { query, options });
+  }
+
+  /**
+   * PUT /v1/labels — Set Label
+   *
+   * Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.
+   * Changing one changes verdicts, so it bumps the graph version and is audited.
+   */
+  setLabel(body: LabelSet, options?: RequestOptions): Promise<LabelChangeOut> {
+    return this._request<LabelChangeOut>("PUT", "/v1/labels", { body, options });
+  }
+
+  /**
+   * DELETE /v1/labels/{label_id} — Delete Label
+   *
+   * Remove a label (bumps the graph version). Never gated (clean-up).
+   */
+  deleteLabel(labelId: string, query?: { justification?: string | null }, options?: RequestOptions): Promise<LabelDeleteOut> {
+    return this._request<LabelDeleteOut>("DELETE", "/v1/labels/{label_id}", { pathParams: { label_id: labelId }, query, options });
+  }
+
+  /**
    * GET /v1/license — Get License
    */
   getLicense(options?: RequestOptions): Promise<LicenseOut> {
@@ -4686,6 +5135,29 @@ export abstract class GeneratedOperations {
    */
   publicViewPost(token: string, body: TrustUnlockIn, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("POST", "/v1/public/trust/{token}", { pathParams: { token: token }, body, options });
+  }
+
+  /**
+   * GET /v1/reach/edges — List Reach Edges
+   */
+  listReachEdges(query?: { source?: string | null; basis?: ("declared" | "configured" | "observed" | "tested") | null; proto?: ("icmp" | "tcp" | "udp" | "any") | null; node?: string | null; src?: string | null; dst?: string | null; include_evidence?: boolean; limit?: number; offset?: number }, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/reach/edges", { query, options });
+  }
+
+  /**
+   * POST /v1/reach/flows/bulk — Bulk Flows
+   *
+   * Upsert aggregated flows; one statement, so the batch is stored whole or not at all.
+   */
+  bulkFlows(body: FlowBulkIn, options?: RequestOptions): Promise<FlowBulkOut> {
+    return this._request<FlowBulkOut>("POST", "/v1/reach/flows/bulk", { body, options });
+  }
+
+  /**
+   * GET /v1/reach/nodes — List Reach Nodes
+   */
+  listReachNodes(query?: { kind?: string | null; source?: string | null; q?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/reach/nodes", { query, options });
   }
 
   /**
@@ -5343,6 +5815,48 @@ export abstract class GeneratedOperations {
    */
   postResultVerification(verificationId: string, body: app__verification__models__ResultIn, options?: RequestOptions): Promise<VerificationOut> {
     return this._request<VerificationOut>("POST", "/v1/verifications/{verification_id}/result", { pathParams: { verification_id: verificationId }, body, options });
+  }
+
+  /**
+   * GET /v1/zones — List Zones
+   */
+  listZones(query?: { limit?: number; offset?: number }, options?: RequestOptions): Promise<ZonePage> {
+    return this._request<ZonePage>("GET", "/v1/zones", { query, options });
+  }
+
+  /**
+   * POST /v1/zones — Create Zone
+   *
+   * Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.
+   */
+  createZone(body: ZoneCreate, options?: RequestOptions): Promise<ZoneChangeOut> {
+    return this._request<ZoneChangeOut>("POST", "/v1/zones", { body, options });
+  }
+
+  /**
+   * GET /v1/zones/{zone_id} — Get Zone
+   */
+  getZone(zoneId: string, options?: RequestOptions): Promise<ZoneOut> {
+    return this._request<ZoneOut>("GET", "/v1/zones/{zone_id}", { pathParams: { zone_id: zoneId }, options });
+  }
+
+  /**
+   * PUT /v1/zones/{zone_id} — Update Zone
+   *
+   * Change a zone's CIDRs, kind or description (the name is its identity and cannot change).
+   */
+  updateZone(zoneId: string, body: ZoneUpdate, options?: RequestOptions): Promise<ZoneChangeOut> {
+    return this._request<ZoneChangeOut>("PUT", "/v1/zones/{zone_id}", { pathParams: { zone_id: zoneId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/zones/{zone_id} — Delete Zone
+   *
+   * Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it
+   * then select nothing and answer UNKNOWN, never HOLDS. Never gated (clean-up).
+   */
+  deleteZone(zoneId: string, query?: { justification?: string | null }, options?: RequestOptions): Promise<ZoneDeleteOut> {
+    return this._request<ZoneDeleteOut>("DELETE", "/v1/zones/{zone_id}", { pathParams: { zone_id: zoneId }, query, options });
   }
 
 }

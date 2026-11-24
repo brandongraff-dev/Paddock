@@ -33,6 +33,11 @@ class GraphError(ValueError):
 
 
 DIRECTIONS = ("in", "out", "both")
+#: The id of the one node that stands for everything outside the estate.
+INTERNET = "internet"
+#: Optional qualifiers of a coverage fact (see ``Coverage``). Anything else is a GraphError.
+ORIGINS = ("", INTERNET)
+FACT_PROTOS = ("", "icmp", "tcp", "udp")
 MAX_COVERAGE_FACTS = 32
 FUTURE_SLACK = dt.timedelta(minutes=5)
 # When no fact qualifies, report the reason closest to qualifying (a quiet sensor beats a missing
@@ -42,15 +47,30 @@ _REASON_ORDER = ("stale", "future_timestamp", "tier_below_min", "no_sensor")
 
 @dataclass(frozen=True)
 class Coverage:
-    """One coverage fact. ``direction`` says which side of a node's connections it speaks for."""
+    """One coverage fact. ``direction`` says which side of a node's connections it speaks for.
+
+    ``origin`` and ``proto`` narrow what the fact is complete *for*. An outside-in TCP port scan
+    knows every TCP port the internet can reach, and nothing about connections from inside the
+    estate or about UDP, so it carries ``origin="internet"`` and ``proto="tcp"``. A qualified fact
+    only rules out an unknown edge whose source and protocols it speaks for (``applies``); an
+    unqualified fact (the default) speaks for every source and protocol.
+    """
 
     tier: Tier
     observed_at: dt.datetime
     source: str = ""
     direction: str = "both"
+    origin: str = ""
+    proto: str = ""
 
     def covers(self, direction: str) -> bool:
         return self.direction == "both" or self.direction == direction
+
+    def applies(self, internet_src: bool, protocols: frozenset[str]) -> bool:
+        """Does this fact rule out unknown edges from the given kind of source over ``protocols``?"""
+        if self.origin == INTERNET and not internet_src:
+            return False
+        return self.proto == "" or protocols <= {self.proto}
 
 
 @dataclass(frozen=True)
@@ -188,12 +208,17 @@ def _fact(c: Any, nid: str, *, legacy: bool) -> Coverage:
         raise GraphError(f"node {nid!r}: coverage fact needs a 'direction' (in, out or both)")
     if direction not in DIRECTIONS:
         raise GraphError(f"node {nid!r}: bad coverage direction {direction!r}")
+    origin, proto = c.get("origin") or "", c.get("proto") or ""
+    if origin not in ORIGINS or proto not in FACT_PROTOS:
+        raise GraphError(f"node {nid!r}: bad coverage origin/proto {origin!r}/{proto!r}")
+    if origin and direction != "in":
+        raise GraphError(f"node {nid!r}: a coverage fact with an origin must have direction 'in'")
     try:
         tier = Tier(c.get("tier"))
     except ValueError as exc:
         raise GraphError(f"node {nid!r}: bad coverage tier {c.get('tier')!r}") from exc
     return Coverage(tier, _ts(c.get("observed_at"), f"node {nid!r} observed_at"),
-                    str(c.get("source", "")), direction)
+                    str(c.get("source", "")), direction, origin, proto)
 
 
 def _coverage(raw: Any, nid: str) -> tuple[Coverage, ...]:
@@ -207,7 +232,8 @@ def _coverage(raw: Any, nid: str) -> tuple[Coverage, ...]:
     if len(raw) > MAX_COVERAGE_FACTS:
         raise GraphError(f"node {nid!r}: too many coverage facts (max {MAX_COVERAGE_FACTS})")
     return tuple(sorted((_fact(c, nid, legacy=False) for c in raw),
-                        key=lambda f: (f.direction, f.tier.rank, f.observed_at, f.source)))
+                        key=lambda f: (f.direction, f.tier.rank, f.observed_at, f.source, f.origin,
+                                       f.proto)))
 
 
 def _edge(raw: Any, i: int, nodes: dict[str, Node]) -> Edge:
@@ -260,15 +286,24 @@ class DirState:
         return self.reason is None
 
 
+_ALL_PROTOS = frozenset({"icmp", "tcp", "udp"})
+
+
 def direction_state(node: Node, direction: str, now: dt.datetime, min_tier: Tier,
-                    max_age: dt.timedelta) -> DirState:
+                    max_age: dt.timedelta, *, internet_src: bool = False,
+                    protocols: frozenset[str] = _ALL_PROTOS) -> DirState:
     """Is ``node`` covered in ``direction`` (``in`` or ``out``)?
 
     Any fresh fact of at least ``min_tier`` whose direction is that one (or ``both``) qualifies.
     The *best* qualifying fact (highest tier, then freshest) is returned so a verdict's evidence
     tier and expiry come from a single fact that really holds, never a mix of two.
+
+    By default only unqualified facts count (every source, every protocol): the safe answer for
+    "could *anything* connect to this node". Pass ``internet_src`` and ``protocols`` to ask the
+    narrower question "could the *internet* connect over these protocols", which origin- and
+    proto-qualified facts (an outside-in TCP scan) can answer.
     """
-    facts = [c for c in node.coverage if c.covers(direction)]
+    facts = [c for c in node.coverage if c.covers(direction) and c.applies(internet_src, protocols)]
     if not facts:
         return DirState(None, "no_sensor")
     ok = [c for c in facts if _fact_reason(c, now, min_tier, max_age) is None]

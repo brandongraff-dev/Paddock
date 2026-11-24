@@ -398,7 +398,8 @@ class OtDiscoveryService:
                                 "site": claim.get("site")})
             # CVE lookups and orchestrator calls run as the sensor's tenant
             with tenancy.tenant_context(tenant):
-                result = await engine.ingest(pcap_bytes=pcap_bytes, observations=observations)
+                result = await engine.ingest(pcap_bytes=pcap_bytes, observations=observations,
+                                             sensor_id=sid)
             failed = [k for k, v in (result.get("orchestrator") or {}).items()
                       if isinstance(v, dict) and "error" in v]
             if failed:  # the data did not land: let the sensor retry the same batch id

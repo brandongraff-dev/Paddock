@@ -4179,6 +4179,113 @@
         "title": "EdgeIn",
         "type": "object"
       },
+      "EvaluateIn": {
+        "properties": {
+          "invariant_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "std:x / acme:y ids or row UUIDs; default: every enabled invariant.",
+            "title": "Invariant Ids"
+          },
+          "rebuild": {
+            "default": false,
+            "description": "Re-run the graph builders first.",
+            "title": "Rebuild",
+            "type": "boolean"
+          }
+        },
+        "title": "EvaluateIn",
+        "type": "object"
+      },
+      "EvaluateOut": {
+        "properties": {
+          "builders": {
+            "additionalProperties": true,
+            "title": "Builders",
+            "type": "object"
+          },
+          "built": {
+            "default": false,
+            "title": "Built",
+            "type": "boolean"
+          },
+          "degraded": {
+            "default": false,
+            "title": "Degraded",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "evaluated": {
+            "default": 0,
+            "title": "Evaluated",
+            "type": "integer"
+          },
+          "graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Version"
+          },
+          "ignored_disabled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ignored Disabled",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "skipped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "EvaluateOut",
+        "type": "object"
+      },
       "ExchangeIn": {
         "properties": {
           "code": {
@@ -4745,7 +4852,8 @@
               "tls_grade",
               "sca",
               "sast",
-              "threat_intel"
+              "threat_intel",
+              "invariant"
             ],
             "title": "Rule Source",
             "type": "string"
@@ -5086,7 +5194,8 @@
               "tls_grade",
               "sca",
               "sast",
-              "threat_intel"
+              "threat_intel",
+              "invariant"
             ],
             "title": "Rule Source",
             "type": "string"
@@ -5433,6 +5542,131 @@
           "mapped_at"
         ],
         "title": "FindingTechniqueOut",
+        "type": "object"
+      },
+      "FlowBulkIn": {
+        "additionalProperties": false,
+        "properties": {
+          "flows": {
+            "items": {
+              "$ref": "#/components/schemas/FlowIn"
+            },
+            "maxItems": 1000,
+            "title": "Flows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "flows"
+        ],
+        "title": "FlowBulkIn",
+        "type": "object"
+      },
+      "FlowBulkOut": {
+        "properties": {
+          "inserted": {
+            "title": "Inserted",
+            "type": "integer"
+          },
+          "merged": {
+            "title": "Merged",
+            "type": "integer"
+          },
+          "received": {
+            "title": "Received",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "received",
+          "merged",
+          "inserted",
+          "updated"
+        ],
+        "title": "FlowBulkOut",
+        "type": "object"
+      },
+      "FlowIn": {
+        "additionalProperties": false,
+        "description": "One aggregated flow: ``src`` opened ``proto`` connections to ``dst:dst_port``.",
+        "properties": {
+          "bytes": {
+            "default": 0,
+            "maximum": 1000000000000000.0,
+            "minimum": 0.0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "dst_ip": {
+            "title": "Dst Ip",
+            "type": "string"
+          },
+          "dst_port": {
+            "maximum": 65535.0,
+            "minimum": 0.0,
+            "title": "Dst Port",
+            "type": "integer"
+          },
+          "first_seen": {
+            "format": "date-time",
+            "title": "First Seen",
+            "type": "string"
+          },
+          "last_seen": {
+            "format": "date-time",
+            "title": "Last Seen",
+            "type": "string"
+          },
+          "oriented": {
+            "default": "heuristic",
+            "enum": [
+              "syn",
+              "heuristic"
+            ],
+            "title": "Oriented",
+            "type": "string"
+          },
+          "packets": {
+            "default": 0,
+            "maximum": 1000000000000000.0,
+            "minimum": 0.0,
+            "title": "Packets",
+            "type": "integer"
+          },
+          "proto": {
+            "enum": [
+              "icmp",
+              "tcp",
+              "udp",
+              "any"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "sensor_id": {
+            "format": "uuid",
+            "title": "Sensor Id",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          }
+        },
+        "required": [
+          "src_ip",
+          "dst_ip",
+          "proto",
+          "dst_port",
+          "sensor_id",
+          "first_seen",
+          "last_seen"
+        ],
+        "title": "FlowIn",
         "type": "object"
       },
       "FrameworkSummary": {
@@ -6357,6 +6591,564 @@
         "title": "InterfaceIn",
         "type": "object"
       },
+      "InvariantChange": {
+        "properties": {
+          "changed": {
+            "description": "False when nothing moved (same definition, same enabled flag).",
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "created": {
+            "default": false,
+            "title": "Created",
+            "type": "boolean"
+          },
+          "invariant": {
+            "$ref": "#/components/schemas/InvariantOut"
+          },
+          "new_version": {
+            "default": false,
+            "title": "New Version",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "invariant",
+          "changed"
+        ],
+        "title": "InvariantChange",
+        "type": "object"
+      },
+      "InvariantCreate": {
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "yaml": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "title": "Yaml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "yaml"
+        ],
+        "title": "InvariantCreate",
+        "type": "object"
+      },
+      "InvariantDetail": {
+        "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "evidence_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Tier"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invariant_id": {
+            "title": "Invariant Id",
+            "type": "string"
+          },
+          "last_evaluated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Evaluated At"
+          },
+          "last_graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Graph Version"
+          },
+          "last_result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Result"
+          },
+          "last_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verdict"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "std",
+              "custom"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "stale": {
+            "default": false,
+            "description": "Evaluated against an older graph version than the current one.",
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/InvariantVersionOut"
+            },
+            "title": "Versions",
+            "type": "array"
+          },
+          "violation_count": {
+            "default": 0,
+            "title": "Violation Count",
+            "type": "integer"
+          },
+          "yaml": {
+            "title": "Yaml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "invariant_id",
+          "title",
+          "severity",
+          "enabled",
+          "source",
+          "digest",
+          "version",
+          "status",
+          "yaml"
+        ],
+        "title": "InvariantDetail",
+        "type": "object"
+      },
+      "InvariantOut": {
+        "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "evidence_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Tier"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invariant_id": {
+            "title": "Invariant Id",
+            "type": "string"
+          },
+          "last_evaluated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Evaluated At"
+          },
+          "last_graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Graph Version"
+          },
+          "last_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verdict"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "std",
+              "custom"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "stale": {
+            "default": false,
+            "description": "Evaluated against an older graph version than the current one.",
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "violation_count": {
+            "default": 0,
+            "title": "Violation Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "invariant_id",
+          "title",
+          "severity",
+          "enabled",
+          "source",
+          "digest",
+          "version",
+          "status"
+        ],
+        "title": "InvariantOut",
+        "type": "object"
+      },
+      "InvariantPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InvariantOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "InvariantPage",
+        "type": "object"
+      },
+      "InvariantUpdate": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "yaml": {
+            "anyOf": [
+              {
+                "maxLength": 65536,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yaml"
+          }
+        },
+        "title": "InvariantUpdate",
+        "type": "object"
+      },
+      "InvariantVersionOut": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "digest",
+          "version"
+        ],
+        "title": "InvariantVersionOut",
+        "type": "object"
+      },
       "InventoryIn": {
         "additionalProperties": false,
         "properties": {
@@ -6481,6 +7273,224 @@
           }
         },
         "title": "InviteIn",
+        "type": "object"
+      },
+      "LabelChangeOut": {
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Version"
+          },
+          "label": {
+            "$ref": "#/components/schemas/LabelOut"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "changed"
+        ],
+        "title": "LabelChangeOut",
+        "type": "object"
+      },
+      "LabelDeleteOut": {
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Version"
+          },
+          "node_ref": {
+            "title": "Node Ref",
+            "type": "string"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          },
+          "tag": {
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_ref",
+          "tag"
+        ],
+        "title": "LabelDeleteOut",
+        "type": "object"
+      },
+      "LabelOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "justification": {
+            "default": "",
+            "title": "Justification",
+            "type": "string"
+          },
+          "node_ref": {
+            "title": "Node Ref",
+            "type": "string"
+          },
+          "set_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set At"
+          },
+          "set_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set By"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "tag": {
+            "title": "Tag",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_ref",
+          "tag",
+          "value",
+          "source"
+        ],
+        "title": "LabelOut",
+        "type": "object"
+      },
+      "LabelPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LabelOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "LabelPage",
+        "type": "object"
+      },
+      "LabelSet": {
+        "properties": {
+          "justification": {
+            "description": "Why. Recorded with the change and in the audit log.",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Justification",
+            "type": "string"
+          },
+          "node_ref": {
+            "maxLength": 128,
+            "title": "Node Ref",
+            "type": "string"
+          },
+          "tag": {
+            "maxLength": 64,
+            "title": "Tag",
+            "type": "string"
+          },
+          "value": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "justification",
+          "node_ref",
+          "tag"
+        ],
+        "title": "LabelSet",
         "type": "object"
       },
       "LicenseLimits": {
@@ -9875,6 +10885,123 @@
         "title": "RoleMapping",
         "type": "object"
       },
+      "RunOut": {
+        "properties": {
+          "coverage_covered": {
+            "title": "Coverage Covered",
+            "type": "integer"
+          },
+          "coverage_universe": {
+            "title": "Coverage Universe",
+            "type": "integer"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "graph_version": {
+            "title": "Graph Version",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invariant_id": {
+            "title": "Invariant Id",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          },
+          "violation_count": {
+            "title": "Violation Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "invariant_id",
+          "digest",
+          "verdict",
+          "graph_version",
+          "violation_count",
+          "coverage_covered",
+          "coverage_universe",
+          "evaluated_at"
+        ],
+        "title": "RunOut",
+        "type": "object"
+      },
+      "RunPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RunOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "RunPage",
+        "type": "object"
+      },
       "SAMLConfig": {
         "properties": {
           "email_attribute": {
@@ -12520,6 +13647,100 @@
           "at"
         ],
         "title": "StatusHistoryOut",
+        "type": "object"
+      },
+      "StdInvariantOut": {
+        "properties": {
+          "assertion": {
+            "title": "Assertion",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "installed": {
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "installed_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Installed Digest"
+          },
+          "invariant_row_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invariant Row Id"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "up_to_date": {
+            "description": "The tenant's copy has the shipped digest.",
+            "title": "Up To Date",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "severity",
+          "assertion",
+          "digest",
+          "installed",
+          "enabled",
+          "up_to_date"
+        ],
+        "title": "StdInvariantOut",
         "type": "object"
       },
       "SuggestionOut": {
@@ -16328,6 +17549,289 @@
         "title": "Window",
         "type": "object"
       },
+      "ZoneChangeOut": {
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "created": {
+            "default": false,
+            "title": "Created",
+            "type": "boolean"
+          },
+          "graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Version"
+          },
+          "overlaps": {
+            "description": "Other zones sharing address space (most specific wins).",
+            "items": {
+              "type": "string"
+            },
+            "title": "Overlaps",
+            "type": "array"
+          },
+          "zone": {
+            "$ref": "#/components/schemas/ZoneOut"
+          }
+        },
+        "required": [
+          "zone",
+          "changed"
+        ],
+        "title": "ZoneChangeOut",
+        "type": "object"
+      },
+      "ZoneCreate": {
+        "properties": {
+          "cidrs": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Cidrs",
+            "type": "array"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "justification": {
+            "description": "Why. Recorded with the change and in the audit log.",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Justification",
+            "type": "string"
+          },
+          "kind": {
+            "default": "custom",
+            "maxLength": 32,
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "justification",
+          "name",
+          "cidrs"
+        ],
+        "title": "ZoneCreate",
+        "type": "object"
+      },
+      "ZoneDeleteOut": {
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "graph_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Version"
+          },
+          "labels_still_naming_it": {
+            "default": 0,
+            "title": "Labels Still Naming It",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ZoneDeleteOut",
+        "type": "object"
+      },
+      "ZoneOut": {
+        "properties": {
+          "cidrs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cidrs",
+            "type": "array"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "default": "declared",
+            "title": "Source",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "cidrs"
+        ],
+        "title": "ZoneOut",
+        "type": "object"
+      },
+      "ZonePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ZoneOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ZonePage",
+        "type": "object"
+      },
+      "ZoneUpdate": {
+        "properties": {
+          "cidrs": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cidrs"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "justification": {
+            "description": "Why. Recorded with the change and in the audit log.",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Justification",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "justification"
+        ],
+        "title": "ZoneUpdate",
+        "type": "object"
+      },
       "app__reports__models__EvidenceOut": {
         "properties": {
           "detail": {
@@ -18703,6 +20207,219 @@
         "summary": "Get Asset Graph",
         "tags": [
           "assets"
+        ]
+      }
+    },
+    "/v1/assurance/coverage": {
+      "get": {
+        "description": "Coverage per source and per node (directional), blind spots by reason, stale sensors.\n\nA node counts as covered only when it is covered inbound AND outbound by a fresh fact of at\nleast ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody\ncan instrument it, so it is never part of the universe.",
+        "operationId": "assurance_coverage_v1_assurance_coverage_get",
+        "parameters": [
+          {
+            "description": "Weakest evidence that counts as coverage.",
+            "in": "query",
+            "name": "min_tier",
+            "required": false,
+            "schema": {
+              "default": "configured",
+              "description": "Weakest evidence that counts as coverage.",
+              "enum": [
+                "declared",
+                "configured",
+                "observed",
+                "tested"
+              ],
+              "title": "Min Tier",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Oldest observation that still counts.",
+            "in": "query",
+            "name": "max_age_h",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "description": "Oldest observation that still counts.",
+              "maximum": 720,
+              "minimum": 1,
+              "title": "Max Age H",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only nodes not covered in both directions.",
+            "in": "query",
+            "name": "only_blind",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Only nodes not covered in both directions.",
+              "title": "Only Blind",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "description": "Substring of the node ref.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Substring of the node ref.",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Assurance Coverage V1 Assurance Coverage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assurance Coverage",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/assurance/evaluate": {
+      "post": {
+        "description": "Evaluate now (optionally after rebuilding the graph). Always 200: a degraded run answers\n``ok: false`` with the reason, never a 5xx, and never turns a failure into a ``HOLDS``.",
+        "operationId": "evaluate_now_v1_assurance_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/EvaluateIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Now",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/assurance/state": {
+      "get": {
+        "description": "Graph version, last build/evaluation, counts, and what the builders last did.",
+        "operationId": "assurance_state_v1_assurance_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Assurance State V1 Assurance State Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Assurance State",
+        "tags": [
+          "assurance"
         ]
       }
     },
@@ -21171,7 +22888,8 @@
                       "tls_grade",
                       "sca",
                       "sast",
-                      "threat_intel"
+                      "threat_intel",
+                      "invariant"
                     ],
                     "type": "string"
                   },
@@ -21577,7 +23295,8 @@
                     "tls_grade",
                     "sca",
                     "sast",
-                    "threat_intel"
+                    "threat_intel",
+                    "invariant"
                   ],
                   "type": "string"
                 },
@@ -21915,7 +23634,8 @@
                     "tls_grade",
                     "sca",
                     "sast",
-                    "threat_intel"
+                    "threat_intel",
+                    "invariant"
                   ],
                   "type": "string"
                 },
@@ -25035,6 +26755,695 @@
         ]
       }
     },
+    "/v1/invariants": {
+      "get": {
+        "description": "Invariants with their last verdict, freshness (``EXPIRED``) and coverage ratio.",
+        "operationId": "list_invariants_v1_invariants_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "enabled",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Enabled"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "std",
+                    "custom"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvariantPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Invariants",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "post": {
+        "description": "Create a custom invariant from YAML (parsed and compiled by the library; 422 lists the problems).",
+        "operationId": "create_invariant_v1_invariants_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvariantCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvariantChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Invariant",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/invariants/std": {
+      "get": {
+        "description": "The shipped std invariants and whether this tenant has each one enabled.",
+        "operationId": "list_std_invariants_v1_invariants_std_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StdInvariantOut"
+                  },
+                  "title": "Response List Std Invariants V1 Invariants Std Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Std Invariants",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/invariants/std/{std_id}/enable": {
+      "post": {
+        "description": "Copy a shipped invariant into the tenant and enable it (idempotent; refreshes a stale copy).",
+        "operationId": "enable_std_invariant_v1_invariants_std__std_id__enable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "std_id",
+            "required": true,
+            "schema": {
+              "title": "Std Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvariantChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enable Std Invariant",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/invariants/{invariant_id}": {
+      "delete": {
+        "description": "Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay\n(they are evidence); the runner stops evaluating it. ``PUT {\"enabled\": true}`` brings it back.\nNever gated: a downgraded tenant can always switch containment checks off cleanly.",
+        "operationId": "delete_invariant_v1_invariants__invariant_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invariant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invariant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvariantChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Invariant",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "get": {
+        "operationId": "get_invariant_v1_invariants__invariant_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invariant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invariant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvariantDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Invariant",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "put": {
+        "description": "Change the definition (new digest => new version row) and/or toggle ``enabled``.\n\nA std invariant's text is owned by the shipped library (it would be overwritten), so only\n``enabled`` can change there.",
+        "operationId": "update_invariant_v1_invariants__invariant_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invariant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invariant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvariantUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvariantChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Invariant",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/invariants/{invariant_id}/runs": {
+      "get": {
+        "description": "The verdict-transition ledger of one invariant, newest first.",
+        "operationId": "list_invariant_runs_v1_invariants__invariant_id__runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invariant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invariant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "verdict",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "HOLDS",
+                    "VIOLATED",
+                    "UNKNOWN"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Verdict"
+            }
+          },
+          {
+            "description": "Include the stored result (witnesses, blind spots).",
+            "in": "query",
+            "name": "include_result",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include the stored result (witnesses, blind spots).",
+              "title": "Include Result",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Invariant Runs",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/labels": {
+      "get": {
+        "description": "Labels with their provenance (who set them, why, when).",
+        "operationId": "list_labels_v1_labels_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "node_ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Ref"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "declared",
+                    "metadata",
+                    "connector"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Labels",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "put": {
+        "description": "Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.\nChanging one changes verdicts, so it bumps the graph version and is audited.",
+        "operationId": "set_label_v1_labels_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelSet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelChangeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Label",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/labels/{label_id}": {
+      "delete": {
+        "description": "Remove a label (bumps the graph version). Never gated (clean-up).",
+        "operationId": "delete_label_v1_labels__label_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "label_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Label Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "justification",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Justification"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelDeleteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Label",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
     "/v1/license": {
       "delete": {
         "operationId": "remove_license_v1_license_delete",
@@ -26931,6 +29340,343 @@
         "summary": "Public View Post",
         "tags": [
           "public"
+        ]
+      }
+    },
+    "/v1/reach/edges": {
+      "get": {
+        "operationId": "list_reach_edges_v1_reach_edges_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "declared",
+                    "configured",
+                    "observed",
+                    "tested"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Basis"
+            }
+          },
+          {
+            "in": "query",
+            "name": "proto",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "icmp",
+                    "tcp",
+                    "udp",
+                    "any"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Proto"
+            }
+          },
+          {
+            "description": "Edges into or out of this node ref.",
+            "in": "query",
+            "name": "node",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Edges into or out of this node ref.",
+              "title": "Node"
+            }
+          },
+          {
+            "in": "query",
+            "name": "src",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Src"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dst",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dst"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_evidence",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Evidence",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Reach Edges V1 Reach Edges Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Reach Edges",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/reach/flows/bulk": {
+      "post": {
+        "description": "Upsert aggregated flows; one statement, so the batch is stored whole or not at all.",
+        "operationId": "bulk_flows_v1_reach_flows_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowBulkIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowBulkOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Flows",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/reach/nodes": {
+      "get": {
+        "operationId": "list_reach_nodes_v1_reach_nodes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "description": "Substring of the node ref or label.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Substring of the node ref or label.",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Reach Nodes V1 Reach Nodes Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Reach Nodes",
+        "tags": [
+          "assurance"
         ]
       }
     },
@@ -31133,6 +33879,257 @@
         "summary": "Post Result",
         "tags": [
           "verification"
+        ]
+      }
+    },
+    "/v1/zones": {
+      "get": {
+        "operationId": "list_zones_v1_zones_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZonePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Zones",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "post": {
+        "description": "Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.",
+        "operationId": "create_zone_v1_zones_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZoneCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneChangeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Zone",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/zones/{zone_id}": {
+      "delete": {
+        "description": "Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it\nthen select nothing and answer UNKNOWN, never HOLDS. Never gated (clean-up).",
+        "operationId": "delete_zone_v1_zones__zone_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "zone_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Zone Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "justification",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Justification"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneDeleteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Zone",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "get": {
+        "operationId": "get_zone_v1_zones__zone_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "zone_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Zone Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Zone",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "put": {
+        "description": "Change a zone's CIDRs, kind or description (the name is its identity and cannot change).",
+        "operationId": "update_zone_v1_zones__zone_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "zone_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Zone Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZoneUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneChangeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Zone",
+        "tags": [
+          "assurance"
         ]
       }
     }

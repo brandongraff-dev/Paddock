@@ -9,6 +9,7 @@ Contract (matches the orchestrator routers):
   * POST /v1/assets/bulk   {items:[AssetIn...]}  -> upsert by (kind, canonical)
   * POST /v1/edges/bulk    {edges:[EdgeIn...]}   -> upsert, resolve by (kind,canonical)
   * POST /v1/findings/bulk {items:[FindingIn...]} -> upsert by (asset,rule)
+  * POST /v1/reach/flows/bulk {flows:[FlowIn...]} -> upsert aggregated flows (<= 1000 per call)
 """
 from __future__ import annotations
 
@@ -132,3 +133,14 @@ class OrchestratorClient:
         if not findings:
             return {"inserted": 0, "updated": 0}
         return await self._post("/v1/findings/bulk", {"items": findings})
+
+    async def bulk_flows(self, flows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Post aggregated flows (the caller keeps batches <= ``FLOW_BATCH``). Same error
+        convention as the other bulk calls: a failure comes back as ``{"error": ...}``."""
+        if not flows:
+            return {"received": 0, "merged": 0, "inserted": 0, "updated": 0}
+        return await self._post("/v1/reach/flows/bulk", {"flows": flows})
+
+
+#: The orchestrator rejects larger batches (routers/reach_flows.py MAX_BATCH).
+FLOW_BATCH = 1000

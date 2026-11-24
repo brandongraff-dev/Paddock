@@ -128,6 +128,7 @@ def test_gaining_coverage_never_creates_a_violation(seed):
 
 TIER_RANK = {"declared": 0, "configured": 1, "observed": 2, "tested": 3}
 SEEN_CHOICES = ["2026-12-01T08:30:00Z", "2026-12-01T08:30:00Z", "2026-12-01T08:30:00Z",
+                "2026-11-30T12:00:00Z", "2026-12-01T00:00:00Z", "2026-11-30T20:00:00Z",  # fresh, expire at staggered times
                 "2026-11-30T09:00:00Z",      # exactly max_age old: still fresh
                 "2026-11-30T08:59:59Z",      # one second too old
                 "2026-11-28T08:30:00Z",
@@ -342,7 +343,7 @@ def test_more_coverage_never_makes_things_worse_and_less_never_better(seed):
     assert _RANK[after] >= _RANK[before] or before is Verdict.VIOLATED
 
 
-@pytest.mark.parametrize("seed", range(300))
+@pytest.mark.parametrize("seed", range(1500))
 def test_a_holds_stays_true_until_its_stated_expiry(seed):
     """``valid_until`` is a promise: re-evaluating the same graph at any later moment up to and
     including it must still say HOLDS. If a verdict leaned on a node-direction it did not count
@@ -354,7 +355,8 @@ def test_a_holds_stays_true_until_its_stated_expiry(seed):
     r = evaluate(plan, ReachGraph.from_dict(doc), NOW)
     if r.verdict is not Verdict.HOLDS or r.valid_until is None:
         return
-    for t in (NOW + (r.valid_until - NOW) / 3, NOW + (r.valid_until - NOW) / 2, r.valid_until):
+    span = r.valid_until - NOW
+    for t in (NOW + span / 5, NOW + span / 3, NOW + span / 2, NOW + span * 0.9, r.valid_until):
         if t < NOW:
             continue
         again = evaluate(plan, ReachGraph.from_dict(doc), t)

@@ -12,6 +12,7 @@ never given to the internet node.
 from __future__ import annotations
 
 import datetime as dt
+import ipaddress
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -34,10 +35,18 @@ _ASSET_SQL = (
 )
 
 
+#: Most edges the CIDR expansion may add to one document. Past it a destination keeps its CIDR
+#: edge but loses its inbound coverage (so the evaluator assumes unknown edges into it) instead of
+#: silently under-approximating who is inside the CIDR.
+MAX_EXPANDED_EDGES = 400_000
+
+
 @dataclass
 class LoadDiagnostics:
     """Facts about the load that are not part of the document."""
     graph_version: int = 0
+    #: destinations whose CIDR sources could not be expanded (cap hit): inbound coverage withdrawn.
+    cidr_unexpanded: list[str] = field(default_factory=list)
     #: node id -> zone names its addresses resolved into (a multi-homed node in two zones).
     zone_conflicts: dict[str, list[str]] = field(default_factory=dict)
 
@@ -60,6 +69,32 @@ def _ports(proto: str, lo: int, hi: int) -> Optional[str]:
     if hi < lo:                       # only port 0 / nonsense: widen, never narrow
         lo, hi = 1, 65535
     return f"{lo}-{hi}"
+
+
+_ORIGINS = frozenset({"internet"})
+_FACT_PROTOS = frozenset({"icmp", "tcp", "udp"})
+
+
+def _add_qualifiers(fact: dict[str, str], detail: Any) -> bool:
+    """Copy a builder's ``detail.origin`` / ``detail.proto`` onto the coverage fact.
+
+    A scan that looked from the internet over TCP is not coverage against internal sources or UDP
+    (the library only applies a qualified fact where it speaks). A qualifier the library does not
+    know would make it reject the whole graph, so such a fact is dropped instead (False): a node
+    left blind is the safe outcome.
+    """
+    if not isinstance(detail, dict):
+        return True
+    origin, proto = detail.get("origin"), detail.get("proto")
+    if origin is not None:
+        if origin not in _ORIGINS or fact["direction"] != "in":
+            return False
+        fact["origin"] = origin
+    if proto is not None:
+        if proto not in _FACT_PROTOS:
+            return False
+        fact["proto"] = proto
+    return True
 
 
 def _default_kind(ref: str) -> str:
@@ -97,7 +132,7 @@ async def _fetch(conn) -> dict[str, Any]:
             "SELECT src_ref, dst_ref, proto, port_lo, port_hi, basis, source FROM reach_edges "
             "ORDER BY src_ref, dst_ref, proto, port_lo, port_hi, source, basis"),
         "cov": await conn.fetch(
-            "SELECT node_ref, direction, tier, observed_at, source FROM reach_coverage "
+            "SELECT node_ref, direction, tier, observed_at, source, detail FROM reach_coverage "
             "ORDER BY node_ref, direction, source"),
         "labels": await conn.fetch("SELECT node_ref, tag, value, source FROM asset_labels ORDER BY node_ref, tag"),
         "zones": await conn.fetch("SELECT * FROM zones ORDER BY name"),
@@ -159,6 +194,76 @@ def _declared_zone_label(labels: dict[str, tuple[int, str]]) -> tuple[Optional[s
     return (value, None) if rank >= _SOURCE_RANK["declared"] else (None, value)
 
 
+def _node_addrs(ref: str, attrs: Any, md: Any) -> list[Any]:
+    """The addresses a node is known by (``[]`` = unknown, which may be anywhere)."""
+    raw = [ref.partition(":")[2]] if ref.startswith("ip:") else _ips_of(attrs, md)
+    out: list[Any] = []
+    for v in raw:
+        try:
+            out.append(ipaddress.ip_address(str(v).strip()))
+        except ValueError:
+            continue
+    return out
+
+
+def _expand_cidr_sources(nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
+                         addrs: dict[str, list[Any]]) -> list[str]:
+    """Make ``cidr:<net> -> dst`` mean what it says: every node inside ``net`` may connect to ``dst``.
+
+    A security group rule "allow 10.0.0.0/8" is stored as an edge from the node ``cidr:10.0.0.0/8``,
+    which is connected to nothing else in the graph. Without this step a guest laptop at 10.20.0.5
+    (known only from Sentry) has no edge to that server, the server is covered inbound by its
+    configuration, and "guest cannot reach the server" would HOLD although the rule admits it.
+    A node whose addresses are unknown may be inside any CIDR, so it is included (D6). The
+    ``internet`` node is never inside a CIDR (world-open rules on addressable nodes are already
+    ``internet`` edges). Returns the destinations that could not be expanded within the cap; their
+    inbound coverage is withdrawn from the document.
+    """
+    by_dst: dict[str, list[dict[str, Any]]] = {}
+    for e in edges:
+        if e["src"].startswith("cidr:"):
+            by_dst.setdefault(e["dst"], []).append(e)
+    if not by_dst:
+        return []
+    have = {(e["src"], e["dst"], e["proto"], e.get("ports"), e["basis"], e["source"]) for e in edges}
+    members: dict[str, list[str]] = {}
+    candidates = sorted(r for r in addrs if r != INTERNET and not r.startswith("cidr:"))
+    added: list[dict[str, Any]] = []
+    unexpanded: list[str] = []
+    for dst in sorted(by_dst):
+        new: list[dict[str, Any]] = []
+        for e in by_dst[dst]:
+            net = e["src"][len("cidr:"):]
+            if net not in members:
+                try:
+                    n = ipaddress.ip_network(net, strict=False)
+                except ValueError:
+                    n = None
+                members[net] = candidates if n is None else [
+                    r for r in candidates if not addrs[r] or any(a.version == n.version and a in n for a in addrs[r])]
+            for r in members[net]:
+                if r == dst:
+                    continue
+                key = (r, dst, e["proto"], e.get("ports"), e["basis"], e["source"])
+                if key not in have:
+                    have.add(key)
+                    new.append({**e, "src": r})
+        if len(added) + len(new) > MAX_EXPANDED_EDGES:
+            unexpanded.append(dst)
+            continue
+        added.extend(new)
+    edges.extend(added)
+    edges.sort(key=lambda d: (d["src"], d["dst"], d["proto"], d.get("ports", ""), d["source"], d["basis"]))
+    if unexpanded:
+        bad = set(unexpanded)
+        for n in nodes:
+            if n["id"] in bad and n.get("coverage"):
+                n["coverage"] = [c for c in n["coverage"] if c["direction"] != "in"]
+                if not n["coverage"]:
+                    del n["coverage"]
+    return unexpanded
+
+
 async def load_graph_doc_with_diagnostics(conn, now: dt.datetime) -> tuple[dict[str, Any], LoadDiagnostics]:
     """Build the graph document and the side facts a runner may want to record."""
     snap = await _fetch_snapshot(conn)
@@ -198,9 +303,11 @@ async def load_graph_doc_with_diagnostics(conn, now: dt.datetime) -> tuple[dict[
     for r in snap["cov"]:
         if r["node_ref"] == INTERNET:
             continue                              # the internet is never covered
-        cov_by.setdefault(r["node_ref"], []).append({
-            "direction": r["direction"], "tier": r["tier"],
-            "observed_at": _iso(r["observed_at"]), "source": r["source"]})
+        fact = {"direction": r["direction"], "tier": r["tier"],
+                "observed_at": _iso(r["observed_at"]), "source": r["source"]}
+        if not _add_qualifiers(fact, _loads(r["detail"])):
+            continue                              # a qualifier we do not understand: no coverage
+        cov_by.setdefault(r["node_ref"], []).append(fact)
 
     nodes: list[dict[str, Any]] = []
     for ref in sorted(kinds):
@@ -236,6 +343,8 @@ async def load_graph_doc_with_diagnostics(conn, now: dt.datetime) -> tuple[dict[
         d["source"] = e["source"]
         edges.append(d)
 
+    addrs = {ref: _node_addrs(ref, attrs.get(ref), assets.get(asset_ids.get(ref, ""), {})) for ref in kinds}
+    diag.cidr_unexpanded = _expand_cidr_sources(nodes, edges, addrs)
     doc = {"version": 1, "now": _iso(now), "nodes": nodes, "edges": edges}
     return doc, diag
 

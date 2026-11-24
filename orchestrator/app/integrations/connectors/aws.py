@@ -147,6 +147,113 @@ def sg_ingress_sources(sg: dict[str, Any]) -> tuple[set[str], list[Any]]:
     return groups, nets
 
 
+_INGRESS_PROTO = {
+    "-1": "any", "all": "any", "any": "any",
+    "6": "tcp", "tcp": "tcp", "17": "udp", "udp": "udp",
+    "1": "icmp", "icmp": "icmp", "58": "icmp", "icmpv6": "icmp",
+}
+# Bounds so a hostile or enormous account cannot bloat one asset row. Hitting either sets
+# ``ingress_truncated`` and the reach builder then refuses to claim complete coverage.
+MAX_INGRESS_RULES = 256
+MAX_RULE_SOURCES = 256
+
+
+def _ingress_ports(proto: str, lo: Any, hi: Any) -> tuple[int, int]:
+    """Port range of one rule. Unknown or odd values widen to every port (over-approximate)."""
+    if proto == "any":
+        return 0, 65535
+    if proto == "icmp":     # FromPort/ToPort carry ICMP type/code, not ports
+        return 0, 0
+    try:
+        a, b = int(lo), int(hi)
+    except (TypeError, ValueError):
+        return 0, 65535
+    if a < 0 or b < 0:      # -1 means "all"
+        return 0, 65535
+    a, b = min(a, b), max(a, b)
+    return max(0, a), min(65535, b)
+
+
+def _unparsed(world: str) -> dict[str, Any]:
+    """A source we could not read is treated as the whole world, never silently dropped."""
+    return {"type": "cidr6" if world == _WORLD_V6 else "cidr", "value": world, "unparsed": True}
+
+
+def _ingress_sources(perm: dict[str, Any]) -> list[dict[str, Any]]:
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def add(src: dict[str, Any]) -> None:
+        out.setdefault((src["type"], src["value"]), src)
+
+    for field_, key, kind, world in (("IpRanges", "CidrIp", "cidr", _WORLD_V4),
+                                     ("Ipv6Ranges", "CidrIpv6", "cidr6", _WORLD_V6)):
+        for r in _as_list(perm.get(field_)):
+            raw = r.get(key) if isinstance(r, dict) else None
+            try:
+                net = ipaddress.ip_network(str(raw).strip(), strict=False)
+            except ValueError:
+                add(_unparsed(world))
+                continue
+            add({"type": kind, "value": net.compressed.lower()})
+    for pair in _as_list(perm.get("UserIdGroupPairs")):
+        gid = pair.get("GroupId") if isinstance(pair, dict) else None
+        if not isinstance(gid, str) or not gid:
+            add(_unparsed(_WORLD_V4))
+            continue
+        src: dict[str, Any] = {"type": "sg", "value": gid}
+        if isinstance(pair.get("UserId"), str) and pair["UserId"]:
+            src["account"] = pair["UserId"]
+        if pair.get("VpcPeeringConnectionId"):
+            src["peered"] = True
+        add(src)
+    for pl in _as_list(perm.get("PrefixListIds")):
+        pid = pl.get("PrefixListId") if isinstance(pl, dict) else None
+        if isinstance(pid, str) and pid:
+            add({"type": "prefix_list", "value": pid})
+        else:
+            add(_unparsed(_WORLD_V4))
+    return sorted(out.values(), key=lambda s: (s["type"], s["value"]))
+
+
+def normalize_ingress(sg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Security-group ingress rules in the shape the reach builder (``aws_sg``) reads.
+
+    ``[{"proto": "tcp|udp|icmp|any", "from": int, "to": int, "sources": [{"type": "cidr|cidr6|sg|
+    prefix_list", "value": str, ...}]}]``, sorted for stable output. Pure and defensive: anything
+    unparseable widens (an unreadable CIDR becomes the whole world with ``unparsed: true``, an
+    unknown IP protocol becomes ``any`` with ``proto_raw``) because under-reporting a rule would
+    let an assurance verdict claim containment that does not exist. The caller records whether
+    the list was capped (``len(IpPermissions) > MAX_INGRESS_RULES``) via ``ingress_truncated``.
+    """
+    rules: list[dict[str, Any]] = []
+    perms = _as_list(sg.get("IpPermissions")) if isinstance(sg, dict) else []
+    for perm in perms[:MAX_INGRESS_RULES]:
+        if not isinstance(perm, dict):
+            rules.append({"proto": "any", "from": 0, "to": 65535, "sources": [_unparsed(_WORLD_V4)]})
+            continue
+        raw = str(perm.get("IpProtocol", "-1")).strip().lower()
+        proto = _INGRESS_PROTO.get(raw, "any")
+        lo, hi = _ingress_ports(proto, perm.get("FromPort"), perm.get("ToPort"))
+        sources = _ingress_sources(perm)[:MAX_RULE_SOURCES]
+        if not sources:
+            continue
+        rule: dict[str, Any] = {"proto": proto, "from": lo, "to": hi, "sources": sources}
+        if raw not in _INGRESS_PROTO:
+            rule["proto_raw"] = raw[:16]
+        rules.append(rule)
+    rules.sort(key=lambda r: (r["proto"], r["from"], r["to"],
+                              [(s["type"], s["value"]) for s in r["sources"]]))
+    return rules
+
+
+def ingress_truncated(sg: dict[str, Any]) -> bool:
+    perms = _as_list(sg.get("IpPermissions"))
+    return len(perms) > MAX_INGRESS_RULES or any(
+        isinstance(p, dict) and sum(len(_as_list(p.get(k))) for k in (
+            "IpRanges", "Ipv6Ranges", "UserIdGroupPairs", "PrefixListIds")) > MAX_RULE_SOURCES
+        for p in perms)
+
+
 def s3_grants(document: Any) -> list[tuple[list[str], list[str]]]:
     """Allow statements touching S3: [(actions, resource_patterns)].
 
@@ -535,13 +642,22 @@ class AwsConnector(Connector):
             world = world_open_ranges(sg)
             hit = admin_ports_hit(world, st.admin_ports)
             arn = st.arn("ec2", region, f"security-group/{sid}")
-            st.batch.assets.append(asset("cloud_resource", arn, SOURCE, {
+            md: dict[str, Any] = {
                 "provider": "aws", "service": "ec2", "resource_type": "security_group",
                 "account_id": st.account, "region": region, "group_id": sid,
                 "name": sg.get("GroupName"), "vpc_id": sg.get("VpcId"),
                 "world_ingress": describe_ranges(world),
                 "attached_instances": attached.get(sid, []),
-            }))
+            }
+            # Full ingress rules for the reach graph (aws_sg builder). Present even when empty
+            # ("rules synced"); omitted when the API gave no IpPermissions list at all, so a
+            # malformed answer never reads as "this group admits nothing".
+            if isinstance(sg.get("IpPermissions"), list):
+                md["ingress_rules"] = normalize_ingress(sg)
+                md["ingress_truncated"] = ingress_truncated(sg)
+            else:   # the merge is shallow: flag any older rules as no longer complete
+                md["ingress_truncated"] = True
+            st.batch.assets.append(asset("cloud_resource", arn, SOURCE, md))
             if hit:
                 st.batch.findings.append(finding(
                     "cloud_resource", arn, "aws.ec2.sg_admin_port_open_to_world", "medium",

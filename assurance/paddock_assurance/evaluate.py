@@ -30,10 +30,11 @@ from typing import Any, Callable, Optional
 
 from . import ports as P
 from .compile import Plan, PlanKind
-from .graph import DirState, Edge, Node, ReachGraph, direction_state, matches
+from .graph import INTERNET, DirState, Edge, Node, ReachGraph, direction_state, matches
 from .model import Allow, Tier
 
 MAX_WITNESSES = 5
+PSEUDO_KINDS = frozenset({"internet", "cidr"})   # not coverable: outside the coverage universe
 MAX_COVERED_WITNESSES = 50   # one per uncovered node: the list is the work queue
 
 
@@ -139,11 +140,17 @@ _Parent = dict[str, Optional[tuple[str, Optional[Edge]]]]
 
 def _search(g: ReachGraph, sources: set[str], edge_ok: Callable[[Edge], bool], max_hops: int,
             blind_out: frozenset[str] = frozenset(), blind_in: frozenset[str] = frozenset(),
-            stop: frozenset[str] = frozenset()) -> tuple[_Parent, dict[str, int]]:
+            stop: frozenset[str] = frozenset(),
+            blind_in_net: Optional[frozenset[str]] = None) -> tuple[_Parent, dict[str, int]]:
     """Multi-source BFS. A possible (unknown) edge ``u -> v`` exists iff ``u`` is in ``blind_out``
     and ``v`` is in ``blind_in``. Nodes in ``stop`` are reached but not expanded (unless they
-    are themselves sources)."""
+    are themselves sources).
+
+    ``blind_in_net`` is the (smaller) set of nodes an *internet* source could still reach through
+    an unknown edge: a node covered inbound only by an outside-in scan is in ``blind_in`` (anything
+    inside the estate may reach it) but not in ``blind_in_net``. Default: the same as ``blind_in``."""
     pending = sorted(blind_in)           # blind-inbound nodes not reached yet
+    pending_net = sorted(blind_in if blind_in_net is None else blind_in_net)
     parent: _Parent = {s: None for s in sorted(sources)}
     dist = {s: 0 for s in parent}
     q: deque[str] = deque(sorted(sources))
@@ -155,7 +162,7 @@ def _search(g: ReachGraph, sources: set[str], edge_ok: Callable[[Edge], bool], m
         if u in blind_out:
             # Everything still pending is first reached from here (BFS order), so the list is
             # consumed rather than rescanned: linear overall instead of blind_out x blind_in.
-            cands += [(v, None) for v in pending if v != u]
+            cands += [(v, None) for v in (pending_net if u == INTERNET else pending) if v != u]
         # known edges sort before unknown ones for the same neighbour (stable sort on dst only)
         for v, e in sorted(cands, key=lambda c: (c[0], c[1] is None)):
             if v not in dist:
@@ -190,8 +197,8 @@ def _edge_filter(plan: Plan) -> Callable[[Edge], bool]:
     def ok(e: Edge) -> bool:
         if e.proto != "any" and e.proto not in plan.protocols:
             return False
-        if e.proto == "any" and not (plan.protocols & {"tcp", "udp"}):
-            return False
+        # proto "any" is "all traffic" (an AWS -1 rule): it includes ICMP, so an icmp-only invariant
+        # must not skip it.
         if plan.via_ports is not None and e.proto != "icmp":
             return bool(P.intersect(e.ports, plan.via_ports))
         return True
@@ -209,11 +216,20 @@ def _active_allows(plan: Plan, now: dt.datetime) -> tuple[list[Allow], list[Allo
 class _NodeCov:
     """A node's coverage in each direction at the evaluation time and policy."""
 
-    inn: DirState
+    inn: DirState                 # covered for every source and protocol
     out: DirState
+    inn_net: DirState             # covered against the *internet* as the source (>= inn)
 
     def of(self, direction: str) -> DirState:
         return self.inn if direction == "in" else self.out
+
+    def relied(self, direction: str) -> Optional[Any]:
+        """The fact a verdict that relies on this node-direction rests on: the unqualified one if
+        there is one, else (inbound only) the origin-qualified one."""
+        st = self.of(direction)
+        if st.fact is None and direction == "in":
+            st = self.inn_net
+        return st.fact
 
     @property
     def both(self) -> bool:
@@ -221,9 +237,12 @@ class _NodeCov:
 
 
 def _coverage_map(plan: Plan, g: ReachGraph, now: dt.datetime) -> dict[str, _NodeCov]:
-    return {n.id: _NodeCov(direction_state(n, "in", now, plan.min_tier, plan.max_age),
-                           direction_state(n, "out", now, plan.min_tier, plan.max_age))
-            for n in g.nodes.values()}
+    return {n.id: _NodeCov(
+        direction_state(n, "in", now, plan.min_tier, plan.max_age, protocols=plan.protocols),
+        direction_state(n, "out", now, plan.min_tier, plan.max_age, protocols=plan.protocols),
+        direction_state(n, "in", now, plan.min_tier, plan.max_age,
+                        internet_src=True, protocols=plan.protocols))
+        for n in g.nodes.values()}
 
 
 def _blind_spots(cov: dict[str, _NodeCov], relevant: set[str]) -> list[BlindSpot]:
@@ -253,11 +272,15 @@ def _finish(res: Result, plan: Plan, g: ReachGraph, cov: dict[str, _NodeCov],
     the best qualifying fact is used; the weakest tier and the earliest expiry among them bound
     the whole verdict.
     """
-    res.coverage_universe = len(g.nodes)
-    res.coverage_covered = sum(1 for c in cov.values() if c.both)
+    # The internet and CIDR blocks are not things a sensor can be installed on: counting them as
+    # blind would cap a small estate below any coverage floor (5 covered hosts + the internet is
+    # 0.83 of 6, under the 0.95 the std invariants ask for) however well it was covered.
+    real = [n for n in g.nodes if g.nodes[n].kind not in PSEUDO_KINDS]
+    res.coverage_universe = len(real)
+    res.coverage_covered = sum(1 for n in real if cov[n].both)
     res.blind_spots = _blind_spots(cov, relevant)
     if res.verdict is Verdict.HOLDS:
-        facts = [f for n, d in sorted(relied) if (f := cov[n].of(d).fact) is not None]
+        facts = [f for n, d in sorted(relied) if (f := cov[n].relied(d)) is not None]
         if facts:
             res.evidence_tier = min((f.tier for f in facts), key=lambda t: t.rank)
             res.valid_until = min(f.observed_at for f in facts) + plan.max_age
@@ -298,7 +321,7 @@ def _reach_reliance(cov: dict[str, _NodeCov], expandable: list[str],
     blind_out = {u for u in exp if not cov[u].out.covered}
     relied: set[tuple[str, str]] = {(u, "out") for u in exp if cov[u].out.covered}
     for v, c in cov.items():
-        if not c.inn.covered:
+        if not c.inn_net.covered:      # (covered for every source implies covered for the internet)
             continue
         others = len(exp) - (v in exp)
         if others and (v in frontier or len(blind_out) - (v in blind_out) > 0):
@@ -313,6 +336,7 @@ def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     cov = _coverage_map(plan, g, now)
     blind_out = frozenset(n for n, c in cov.items() if not c.out.covered)
     blind_in = frozenset(n for n, c in cov.items() if not c.inn.covered)
+    blind_in_net = frozenset(n for n, c in cov.items() if not c.inn_net.covered)
     allows, expired = _active_allows(plan, now)
 
     def done(res: Result, relevant: set[str],
@@ -351,7 +375,7 @@ def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
         return done(res, set(S) | set(T) | set(parent))
 
     aparent, adist = _search(g, S, edge_ok, plan.max_hops, blind_out=blind_out,
-                             blind_in=blind_in, stop=stop)
+                             blind_in=blind_in, stop=stop, blind_in_net=blind_in_net)
     maybe = sorted(t for t in T if t in aparent and t not in exempt)
     relevant = set(S) | set(T) | set(aparent)
     if maybe:
@@ -424,8 +448,10 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
 
     # An unknown s -> t needs s blind outbound and t blind inbound (s != t: T excludes S).
     s_blind = sorted(s for s in S if not cov[s].out.covered)
-    t_blind = sorted(t for t in T if not cov[t].inn.covered)
-    possible = [(s, t) for s in s_blind for t in t_blind]
+    # (an internet source is only ruled out by an origin-qualified fact, anything else needs an
+    # unqualified one)
+    possible = [(s, t) for s in s_blind for t in sorted(T)
+                if not (cov[t].inn_net if s == INTERNET else cov[t].inn).covered]
     if possible:
         res = _new(plan, now, Verdict.UNKNOWN, "possible_via_unknown_edges")
         res.witnesses = [_witness((Hop(s, t, "unknown", "", "unknown"),))
@@ -437,7 +463,7 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     res.exceptions_used = exc_list
     # Either end rules s -> t out; both are counted (conservative: the weakest evidence wins).
     relied = {(s, "out") for s in S if cov[s].out.covered} \
-        | {(t, "in") for t in T if cov[t].inn.covered}
+        | {(t, "in") for t in T if cov[t].inn_net.covered}
     return done(res, relevant, relied)
 
 

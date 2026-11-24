@@ -205,3 +205,129 @@ async def test_aws_bad_credentials_fail_safely(monkeypatch):
     conn.session_factory = Boom
     res = await conn.test()
     assert not res.ok and "InvalidClientTokenId" in res.detail and "AKIASECRET" not in res.detail
+
+
+# --------------------------------------------------------------------------- #
+# normalize_ingress / persisted ingress_rules (reach-graph input, docs/ASSURANCE_P1.md 4.1)
+# --------------------------------------------------------------------------------------- #
+
+def _src(rule, typ):
+    return [(s["value"]) for s in rule["sources"] if s["type"] == typ]
+
+
+def test_normalize_ingress_covers_every_source_kind():
+    sg = {"IpPermissions": [
+        {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+         "IpRanges": [{"CidrIp": "10.1.2.9/16", "Description": "kept out of the output"},
+                      {"CidrIp": "0.0.0.0/0"}],
+         "Ipv6Ranges": [{"CidrIpv6": "2001:DB8::/32"}],
+         "UserIdGroupPairs": [{"GroupId": "sg-aaa", "UserId": "999999999999",
+                               "VpcPeeringConnectionId": "pcx-1"}, {"GroupId": "sg-bbb"}],
+         "PrefixListIds": [{"PrefixListId": "pl-123"}]},
+    ]}
+    rules = aws_mod.normalize_ingress(sg)
+    assert len(rules) == 1
+    r = rules[0]
+    assert (r["proto"], r["from"], r["to"]) == ("tcp", 443, 443)
+    assert _src(r, "cidr") == ["0.0.0.0/0", "10.1.0.0/16"]        # canonical, sorted
+    assert _src(r, "cidr6") == ["2001:db8::/32"]
+    assert _src(r, "sg") == ["sg-aaa", "sg-bbb"]
+    assert _src(r, "prefix_list") == ["pl-123"]
+    foreign = next(s for s in r["sources"] if s["value"] == "sg-aaa")
+    assert foreign["account"] == "999999999999" and foreign["peered"] is True
+    assert "kept out" not in json.dumps(rules)
+
+
+@pytest.mark.parametrize("raw,proto,lo,hi", [
+    ("-1", "any", 0, 65535), ("all", "any", 0, 65535), ("6", "tcp", 22, 22),
+    ("TCP", "tcp", 22, 22), ("17", "udp", 22, 22), ("1", "icmp", 0, 0), ("58", "icmp", 0, 0),
+])
+def test_normalize_ingress_protocols(raw, proto, lo, hi):
+    perm = {"IpProtocol": raw, "FromPort": 22, "ToPort": 22, "IpRanges": [{"CidrIp": "10.0.0.0/8"}]}
+    (r,) = aws_mod.normalize_ingress({"IpPermissions": [perm]})
+    assert (r["proto"], r["from"], r["to"]) == (proto, lo, hi)
+
+
+def test_normalize_ingress_widens_what_it_cannot_read():
+    perms = [
+        {"IpProtocol": "47", "IpRanges": [{"CidrIp": "10.0.0.0/8"}]},                 # GRE
+        {"IpProtocol": "tcp", "FromPort": "x", "ToPort": None, "IpRanges": [{"CidrIp": "10.0.0.0/8"}]},
+        {"IpProtocol": "tcp", "FromPort": 9000, "ToPort": 8000, "IpRanges": [{"CidrIp": "10.0.0.0/8"}]},
+        {"IpProtocol": "tcp", "FromPort": -1, "ToPort": -1, "IpRanges": [{"CidrIp": "10.0.0.0/8"}]},
+        {"IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "IpRanges": [{"CidrIp": "not-a-cidr"}]},
+        {"IpProtocol": "tcp", "FromPort": 81, "ToPort": 81, "UserIdGroupPairs": [{"UserId": "1"}]},
+        {"IpProtocol": "tcp", "FromPort": 82, "ToPort": 82, "Ipv6Ranges": [{}]},
+        "garbage",
+        {"IpProtocol": "tcp", "FromPort": 83, "ToPort": 83},                          # no sources
+    ]
+    rules = {(r["proto"], r["from"], r["to"]): r for r in aws_mod.normalize_ingress(
+        {"IpPermissions": perms})}
+    assert rules[("any", 0, 65535)]["proto_raw"] == "47"                      # unknown proto -> any
+    assert ("tcp", 0, 65535) in rules                                         # bad/-1 ports -> all
+    assert ("tcp", 8000, 9000) in rules                                       # inverted -> ordered
+    for key in (("tcp", 80, 80), ("tcp", 81, 81)):
+        (s,) = rules[key]["sources"]
+        assert s == {"type": "cidr", "value": "0.0.0.0/0", "unparsed": True}  # world, flagged
+    assert rules[("tcp", 82, 82)]["sources"] == [
+        {"type": "cidr6", "value": "::/0", "unparsed": True}]
+    assert not any(k[1] == 83 for k in rules)                                 # nothing to admit
+    assert aws_mod.normalize_ingress({"IpPermissions": None}) == []
+    assert aws_mod.normalize_ingress({}) == []
+
+
+def test_normalize_ingress_is_sorted_and_capped():
+    perms = [{"IpProtocol": "tcp", "FromPort": p, "ToPort": p, "IpRanges": [{"CidrIp": "10.0.0.0/8"}]}
+             for p in (443, 22, 80)]
+    assert [r["from"] for r in aws_mod.normalize_ingress({"IpPermissions": perms})] == [22, 80, 443]
+    many = {"IpPermissions": [{"IpProtocol": "tcp", "FromPort": i % 60000, "ToPort": i % 60000,
+                               "IpRanges": [{"CidrIp": "10.0.0.0/8"}]}
+                              for i in range(aws_mod.MAX_INGRESS_RULES + 5)]}
+    assert len(aws_mod.normalize_ingress(many)) == aws_mod.MAX_INGRESS_RULES
+    assert aws_mod.ingress_truncated(many) is True
+    wide = {"IpPermissions": [{"IpProtocol": "-1", "IpRanges": [
+        {"CidrIp": f"10.{i // 256}.{i % 256}.0/24"} for i in range(aws_mod.MAX_RULE_SOURCES + 1)]}]}
+    assert len(aws_mod.normalize_ingress(wide)[0]["sources"]) == aws_mod.MAX_RULE_SOURCES
+    assert aws_mod.ingress_truncated(wide) is True
+    assert aws_mod.ingress_truncated(
+        {"IpPermissions": perms}) is False
+
+
+async def test_sg_assets_persist_ingress_rules_without_changing_existing_keys(monkeypatch):
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(k, "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
+    with moto.mock_aws():
+        _build_world()
+        conn = aws_mod.AwsConnector(
+            {"regions": [REGION], "role_arn": "arn:aws:iam::123456789012:role/paddock-readonly"},
+            SECRETS, http=None)
+        batch = await conn.pull()
+    sgs = {a["metadata"]["name"]: a["metadata"] for a in batch.assets
+           if a["kind"] == "cloud_resource" and a["metadata"].get("resource_type") == "security_group"}
+    assert {"web", "db", "default"} <= set(sgs)
+    web, db = sgs["web"], sgs["db"]
+    # the pre-existing keys are untouched
+    for key in ("provider", "service", "account_id", "region", "group_id", "name", "vpc_id",
+                "world_ingress", "attached_instances"):
+        assert key in web
+    assert web["world_ingress"] == ["tcp/22", "tcp/443"]
+    assert web["ingress_truncated"] is False
+    assert {(r["proto"], r["from"], r["to"], s["type"], s["value"]) for r in web["ingress_rules"]
+            for s in r["sources"]} == {("tcp", 22, 22, "cidr", "0.0.0.0/0"),
+                                       ("tcp", 443, 443, "cidr", "0.0.0.0/0")}
+    (dbrule,) = db["ingress_rules"]
+    assert (dbrule["proto"], dbrule["from"], dbrule["to"]) == ("tcp", 5432, 5432)
+    assert dbrule["sources"] == [{"type": "sg", "value": web["group_id"], "account": "123456789012"}]
+    # rules synced but empty is "[]", not absent (moto's default group allows only itself)
+    assert isinstance(sgs["default"]["ingress_rules"], list)
+
+
+def test_sg_without_an_ip_permissions_list_is_flagged_not_treated_as_empty():
+    st = aws_mod._State(account="1", partition="aws", admin_ports=(), crown_tags=[],
+                        data_stores_sensitive=True)
+    st.sgs = {"sg-1": {"GroupId": "sg-1", "_region": REGION},                    # no IpPermissions
+              "sg-2": {"GroupId": "sg-2", "_region": REGION, "IpPermissions": []}}
+    aws_mod.AwsConnector._security_group_findings(aws_mod.AwsConnector({}, {}, None), st, REGION)
+    md = {a["metadata"]["group_id"]: a["metadata"] for a in st.batch.assets}
+    assert "ingress_rules" not in md["sg-1"] and md["sg-1"]["ingress_truncated"] is True
+    assert md["sg-2"]["ingress_rules"] == [] and md["sg-2"]["ingress_truncated"] is False

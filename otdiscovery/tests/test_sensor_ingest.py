@@ -36,6 +36,9 @@ class FakeOrch:
         self.enroll_answer: tuple[int, dict] = (201, {"credential": CRED})
         self.tenants_seen: list[str | None] = []
         self.assets_posted = 0
+        self.flows_posted: list[dict] = []     # every wire record posted to /v1/reach/flows/bulk
+        self.flow_calls: list[int] = []        # batch sizes
+        self.flow_error = False
 
     # -- gateway surface ---------------------------------------------------
     async def request(self, method, path, *, json_body=None, headers=None):
@@ -84,6 +87,13 @@ class FakeOrch:
 
             async def bulk_findings(self, findings):
                 return {"inserted": len(findings), "updated": 0}
+
+            async def bulk_flows(self, flows):
+                outer.flow_calls.append(len(flows))
+                if outer.flow_error:
+                    return {"error": "flows boom"}
+                outer.flows_posted.extend(flows)
+                return {"received": len(flows), "merged": len(flows), "inserted": len(flows), "updated": 0}
 
         return View()
 

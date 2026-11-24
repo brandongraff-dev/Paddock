@@ -31,7 +31,8 @@ export type RuleSource =
   | "tls_check"
   | "header_check"
   | "exposed_file"
-  | "manual";
+  | "manual"
+  | "invariant";
 
 export type AssetKind =
   | "org"

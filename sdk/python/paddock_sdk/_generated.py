@@ -998,6 +998,32 @@ EdgeIn = TypedDict(
 )
 """An edge, either referenced by uuid or by (kind, canonical) pair."""
 
+EvaluateIn = TypedDict(
+    'EvaluateIn',
+    {
+        'invariant_ids': NotRequired['list[str] | None'],
+        'rebuild': NotRequired['bool'],
+    },
+    total=False,
+)
+
+EvaluateOut = TypedDict(
+    'EvaluateOut',
+    {
+        'builders': NotRequired['dict[str, Any]'],
+        'built': NotRequired['bool'],
+        'degraded': NotRequired['bool'],
+        'errors': NotRequired['list[str]'],
+        'evaluated': NotRequired['int'],
+        'graph_version': NotRequired['int | None'],
+        'ignored_disabled': NotRequired['list[str]'],
+        'ok': Required['bool'],
+        'results': NotRequired['list[dict[str, Any]]'],
+        'skipped': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 ExchangeIn = TypedDict(
     'ExchangeIn',
     {
@@ -1140,7 +1166,7 @@ FindingIn = TypedDict(
         'references': NotRequired['list[str]'],
         'remediation': NotRequired['str | None'],
         'rule_id': Required['str'],
-        'rule_source': Required["Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel']"],
+        'rule_source': Required["Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel', 'invariant']"],
         'severity': Required["Literal['info', 'low', 'medium', 'high', 'critical']"],
         'title': Required['str'],
     },
@@ -1189,7 +1215,7 @@ FindingLifecycleOut = TypedDict(
         'references': Required['list[str]'],
         'remediation': Required['str | None'],
         'rule_id': Required['str'],
-        'rule_source': Required["Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel']"],
+        'rule_source': Required["Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel', 'invariant']"],
         'severity': Required["Literal['info', 'low', 'medium', 'high', 'critical']"],
         'sla_breached': NotRequired['bool'],
         'sla_hours': NotRequired['int | None'],
@@ -1260,6 +1286,43 @@ FindingTechniqueOut = TypedDict(
     },
     total=False,
 )
+
+FlowBulkIn = TypedDict(
+    'FlowBulkIn',
+    {
+        'flows': Required['list[FlowIn]'],
+    },
+    total=False,
+)
+
+FlowBulkOut = TypedDict(
+    'FlowBulkOut',
+    {
+        'inserted': Required['int'],
+        'merged': Required['int'],
+        'received': Required['int'],
+        'updated': Required['int'],
+    },
+    total=False,
+)
+
+FlowIn = TypedDict(
+    'FlowIn',
+    {
+        'bytes': NotRequired['int'],
+        'dst_ip': Required['str'],
+        'dst_port': Required['int'],
+        'first_seen': Required['str'],
+        'last_seen': Required['str'],
+        'oriented': NotRequired["Literal['syn', 'heuristic']"],
+        'packets': NotRequired['int'],
+        'proto': Required["Literal['icmp', 'tcp', 'udp', 'any']"],
+        'sensor_id': Required['str'],
+        'src_ip': Required['str'],
+    },
+    total=False,
+)
+"""One aggregated flow: ``src`` opened ``proto`` connections to ``dst:dst_port``."""
 
 FrameworkSummary = TypedDict(
     'FrameworkSummary',
@@ -1470,6 +1533,118 @@ InterfaceIn = TypedDict(
     total=False,
 )
 
+InvariantChange = TypedDict(
+    'InvariantChange',
+    {
+        'changed': Required['bool'],
+        'created': NotRequired['bool'],
+        'invariant': Required['InvariantOut'],
+        'new_version': NotRequired['bool'],
+    },
+    total=False,
+)
+
+InvariantCreate = TypedDict(
+    'InvariantCreate',
+    {
+        'enabled': NotRequired['bool'],
+        'yaml': Required['str'],
+    },
+    total=False,
+)
+
+InvariantDetail = TypedDict(
+    'InvariantDetail',
+    {
+        'coverage': NotRequired['dict[str, Any] | None'],
+        'created_at': NotRequired['str | None'],
+        'created_by': NotRequired['str | None'],
+        'digest': Required['str'],
+        'enabled': Required['bool'],
+        'evidence_tier': NotRequired['str | None'],
+        'id': Required['str'],
+        'invariant_id': Required['str'],
+        'last_evaluated_at': NotRequired['str | None'],
+        'last_graph_version': NotRequired['int | None'],
+        'last_result': NotRequired['dict[str, Any] | None'],
+        'last_verdict': NotRequired['str | None'],
+        'reasons': NotRequired['list[str]'],
+        'severity': Required['str'],
+        'source': Required["Literal['std', 'custom']"],
+        'stale': NotRequired['bool'],
+        'status': Required['str'],
+        'title': Required['str'],
+        'updated_at': NotRequired['str | None'],
+        'updated_by': NotRequired['str | None'],
+        'valid_until': NotRequired['str | None'],
+        'version': Required['int'],
+        'versions': NotRequired['list[InvariantVersionOut]'],
+        'violation_count': NotRequired['int'],
+        'yaml': Required['str'],
+    },
+    total=False,
+)
+
+InvariantOut = TypedDict(
+    'InvariantOut',
+    {
+        'coverage': NotRequired['dict[str, Any] | None'],
+        'created_at': NotRequired['str | None'],
+        'created_by': NotRequired['str | None'],
+        'digest': Required['str'],
+        'enabled': Required['bool'],
+        'evidence_tier': NotRequired['str | None'],
+        'id': Required['str'],
+        'invariant_id': Required['str'],
+        'last_evaluated_at': NotRequired['str | None'],
+        'last_graph_version': NotRequired['int | None'],
+        'last_verdict': NotRequired['str | None'],
+        'reasons': NotRequired['list[str]'],
+        'severity': Required['str'],
+        'source': Required["Literal['std', 'custom']"],
+        'stale': NotRequired['bool'],
+        'status': Required['str'],
+        'title': Required['str'],
+        'updated_at': NotRequired['str | None'],
+        'updated_by': NotRequired['str | None'],
+        'valid_until': NotRequired['str | None'],
+        'version': Required['int'],
+        'violation_count': NotRequired['int'],
+    },
+    total=False,
+)
+
+InvariantPage = TypedDict(
+    'InvariantPage',
+    {
+        'items': Required['list[InvariantOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
+InvariantUpdate = TypedDict(
+    'InvariantUpdate',
+    {
+        'enabled': NotRequired['bool | None'],
+        'yaml': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+InvariantVersionOut = TypedDict(
+    'InvariantVersionOut',
+    {
+        'created_at': NotRequired['str | None'],
+        'created_by': NotRequired['str | None'],
+        'digest': Required['str'],
+        'version': Required['int'],
+    },
+    total=False,
+)
+
 InventoryIn = TypedDict(
     'InventoryIn',
     {
@@ -1508,6 +1683,67 @@ InviteIn = TypedDict(
     'InviteIn',
     {
         'label': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+LabelChangeOut = TypedDict(
+    'LabelChangeOut',
+    {
+        'changed': Required['bool'],
+        'graph_version': NotRequired['int | None'],
+        'label': Required['LabelOut'],
+        'previous': NotRequired['str | None'],
+        'warnings': NotRequired['list[str]'],
+    },
+    total=False,
+)
+
+LabelDeleteOut = TypedDict(
+    'LabelDeleteOut',
+    {
+        'deleted': NotRequired['bool'],
+        'graph_version': NotRequired['int | None'],
+        'node_ref': Required['str'],
+        'previous': NotRequired['str | None'],
+        'tag': Required['str'],
+    },
+    total=False,
+)
+
+LabelOut = TypedDict(
+    'LabelOut',
+    {
+        'id': Required['str'],
+        'justification': NotRequired['str'],
+        'node_ref': Required['str'],
+        'set_at': NotRequired['str | None'],
+        'set_by': NotRequired['str | None'],
+        'source': Required['str'],
+        'tag': Required['str'],
+        'value': Required['str'],
+    },
+    total=False,
+)
+
+LabelPage = TypedDict(
+    'LabelPage',
+    {
+        'items': Required['list[LabelOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
+LabelSet = TypedDict(
+    'LabelSet',
+    {
+        'justification': Required['str'],
+        'node_ref': Required['str'],
+        'tag': Required['str'],
+        'value': NotRequired['str'],
     },
     total=False,
 )
@@ -2298,6 +2534,36 @@ RoleMapping = TypedDict(
 )
 """One IdP group/claim value -> Paddock role (+ optional clearance)."""
 
+RunOut = TypedDict(
+    'RunOut',
+    {
+        'coverage_covered': Required['int'],
+        'coverage_universe': Required['int'],
+        'digest': Required['str'],
+        'evaluated_at': Required['str'],
+        'graph_version': Required['int'],
+        'id': Required['str'],
+        'invariant_id': Required['str'],
+        'reasons': NotRequired['list[str]'],
+        'result': NotRequired['dict[str, Any] | None'],
+        'valid_until': NotRequired['str | None'],
+        'verdict': Required['str'],
+        'violation_count': Required['int'],
+    },
+    total=False,
+)
+
+RunPage = TypedDict(
+    'RunPage',
+    {
+        'items': Required['list[RunOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
 SAMLConfig = TypedDict(
     'SAMLConfig',
     {
@@ -2876,6 +3142,25 @@ StatusHistoryOut = TypedDict(
         'id': Required['str'],
         'reason': Required['str | None'],
         'to_status': Required['str'],
+    },
+    total=False,
+)
+
+StdInvariantOut = TypedDict(
+    'StdInvariantOut',
+    {
+        'assertion': Required['str'],
+        'description': NotRequired['str | None'],
+        'digest': Required['str'],
+        'enabled': Required['bool'],
+        'id': Required['str'],
+        'installed': Required['bool'],
+        'installed_digest': NotRequired['str | None'],
+        'invariant_row_id': NotRequired['str | None'],
+        'severity': Required['str'],
+        'title': Required['str'],
+        'up_to_date': Required['bool'],
+        'version': NotRequired['int | None'],
     },
     total=False,
 )
@@ -3721,6 +4006,79 @@ Window = TypedDict(
     total=False,
 )
 
+ZoneChangeOut = TypedDict(
+    'ZoneChangeOut',
+    {
+        'changed': Required['bool'],
+        'created': NotRequired['bool'],
+        'graph_version': NotRequired['int | None'],
+        'overlaps': NotRequired['list[str]'],
+        'zone': Required['ZoneOut'],
+    },
+    total=False,
+)
+
+ZoneCreate = TypedDict(
+    'ZoneCreate',
+    {
+        'cidrs': Required['list[str]'],
+        'description': NotRequired['str'],
+        'justification': Required['str'],
+        'kind': NotRequired['str'],
+        'name': Required['str'],
+    },
+    total=False,
+)
+
+ZoneDeleteOut = TypedDict(
+    'ZoneDeleteOut',
+    {
+        'deleted': NotRequired['bool'],
+        'graph_version': NotRequired['int | None'],
+        'labels_still_naming_it': NotRequired['int'],
+        'name': Required['str'],
+    },
+    total=False,
+)
+
+ZoneOut = TypedDict(
+    'ZoneOut',
+    {
+        'cidrs': Required['list[str]'],
+        'created_at': NotRequired['str | None'],
+        'created_by': NotRequired['str | None'],
+        'description': NotRequired['str'],
+        'id': Required['str'],
+        'kind': Required['str'],
+        'name': Required['str'],
+        'source': NotRequired['str'],
+        'updated_at': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+ZonePage = TypedDict(
+    'ZonePage',
+    {
+        'items': Required['list[ZoneOut]'],
+        'limit': Required['int'],
+        'offset': Required['int'],
+        'total': Required['int'],
+    },
+    total=False,
+)
+
+ZoneUpdate = TypedDict(
+    'ZoneUpdate',
+    {
+        'cidrs': NotRequired['list[str] | None'],
+        'description': NotRequired['str | None'],
+        'justification': Required['str'],
+        'kind': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 app__reports__models__EvidenceOut = TypedDict(
     'app__reports__models__EvidenceOut',
     {
@@ -3949,6 +4307,9 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'surface_graph': ('GET', '/v1/assets/graph', False),
     'get_asset': ('GET', '/v1/assets/{asset_id}', False),
     'get_asset_graph': ('GET', '/v1/assets/{asset_id}/graph', False),
+    'assurance_coverage': ('GET', '/v1/assurance/coverage', True),
+    'evaluate_now': ('POST', '/v1/assurance/evaluate', False),
+    'assurance_state': ('GET', '/v1/assurance/state', False),
     'list_attack_paths': ('GET', '/v1/attack-paths', True),
     'recompute_attack_paths': ('POST', '/v1/attack-paths/recompute', False),
     'get_attack_path': ('GET', '/v1/attack-paths/{path_id}', False),
@@ -4063,6 +4424,17 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'enable_integration': ('POST', '/v1/integrations/{integration_id}/enable', False),
     'integration_inbound': ('POST', '/v1/integrations/{integration_id}/inbound', False),
     'test_integration': ('POST', '/v1/integrations/{integration_id}/test', False),
+    'list_invariants': ('GET', '/v1/invariants', True),
+    'create_invariant': ('POST', '/v1/invariants', False),
+    'list_std_invariants': ('GET', '/v1/invariants/std', False),
+    'enable_std_invariant': ('POST', '/v1/invariants/std/{std_id}/enable', False),
+    'get_invariant': ('GET', '/v1/invariants/{invariant_id}', False),
+    'update_invariant': ('PUT', '/v1/invariants/{invariant_id}', False),
+    'delete_invariant': ('DELETE', '/v1/invariants/{invariant_id}', False),
+    'list_invariant_runs': ('GET', '/v1/invariants/{invariant_id}/runs', True),
+    'list_labels': ('GET', '/v1/labels', True),
+    'set_label': ('PUT', '/v1/labels', False),
+    'delete_label': ('DELETE', '/v1/labels/{label_id}', False),
     'get_license': ('GET', '/v1/license', False),
     'upload_license': ('POST', '/v1/license', False),
     'remove_license': ('DELETE', '/v1/license', False),
@@ -4106,6 +4478,9 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_report': ('GET', '/v1/public/exposure-report/{report_id}', False),
     'public_view_get': ('GET', '/v1/public/trust/{token}', False),
     'public_view_post': ('POST', '/v1/public/trust/{token}', False),
+    'list_reach_edges': ('GET', '/v1/reach/edges', True),
+    'bulk_flows': ('POST', '/v1/reach/flows/bulk', False),
+    'list_reach_nodes': ('GET', '/v1/reach/nodes', True),
     'list_remediations': ('GET', '/v1/remediation', True),
     'propose_remediation': ('POST', '/v1/remediation/propose', False),
     'remediation_merged': ('POST', '/v1/remediation/{remediation_id}/merged', False),
@@ -4190,6 +4565,11 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'take_snapshot': ('POST', '/v1/usage/snapshot', False),
     'list_snapshots': ('GET', '/v1/usage/snapshots', False),
     'post_result_verification': ('POST', '/v1/verifications/{verification_id}/result', False),
+    'list_zones': ('GET', '/v1/zones', True),
+    'create_zone': ('POST', '/v1/zones', False),
+    'get_zone': ('GET', '/v1/zones/{zone_id}', False),
+    'update_zone': ('PUT', '/v1/zones/{zone_id}', False),
+    'delete_zone': ('DELETE', '/v1/zones/{zone_id}', False),
 }
 
 
@@ -4392,6 +4772,38 @@ class GeneratedOperations:
         """GET /v1/assets/{asset_id}/graph -- Get Asset Graph
         """
         return self._request('GET', '/v1/assets/{asset_id}/graph', path_params={'asset_id': asset_id}, query={'depth': depth})
+
+    def assurance_coverage(self, *, min_tier: Literal['declared', 'configured', 'observed', 'tested'] | None = None, max_age_h: int | None = None, only_blind: bool | None = None, kind: str | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None) -> dict[str, Any]:
+        """GET /v1/assurance/coverage -- Assurance Coverage
+
+        Coverage per source and per node (directional), blind spots by reason, stale sensors.
+
+        A node counts as covered only when it is covered inbound AND outbound by a fresh fact of at
+        least ``min_tier`` (the same rule the evaluator applies). The internet node is excluded: nobody
+        can instrument it, so it is never part of the universe.
+
+        Args:
+            min_tier: Weakest evidence that counts as coverage.
+            max_age_h: Oldest observation that still counts.
+            only_blind: Only nodes not covered in both directions.
+            q: Substring of the node ref.
+        """
+        return self._request('GET', '/v1/assurance/coverage', query={'min_tier': min_tier, 'max_age_h': max_age_h, 'only_blind': only_blind, 'kind': kind, 'q': q, 'limit': limit, 'offset': offset})
+
+    def evaluate_now(self, body: EvaluateIn | None | dict[str, Any] | None = None) -> EvaluateOut:
+        """POST /v1/assurance/evaluate -- Evaluate Now
+
+        Evaluate now (optionally after rebuilding the graph). Always 200: a degraded run answers
+        ``ok: false`` with the reason, never a 5xx, and never turns a failure into a ``HOLDS``.
+        """
+        return self._request('POST', '/v1/assurance/evaluate', body=body)
+
+    def assurance_state(self) -> dict[str, Any]:
+        """GET /v1/assurance/state -- Assurance State
+
+        Graph version, last build/evaluation, counts, and what the builders last did.
+        """
+        return self._request('GET', '/v1/assurance/state')
 
     def list_attack_paths(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, kev: bool | None = None, limit: int | None = None, offset: int | None = None) -> AttackPathPage:
         """GET /v1/attack-paths -- List Attack Paths
@@ -4720,7 +5132,7 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/events', query={'since': since})
 
-    def export_findings_ocsf(self, *, severity: list[Literal['info', 'low', 'medium', 'high', 'critical']] | None = None, min_severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: list[Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted']] | None = None, rule_source: list[Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel']] | None = None, since: str | None = None, limit: int | None = None) -> Any:
+    def export_findings_ocsf(self, *, severity: list[Literal['info', 'low', 'medium', 'high', 'critical']] | None = None, min_severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: list[Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted']] | None = None, rule_source: list[Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel', 'invariant']] | None = None, since: str | None = None, limit: int | None = None) -> Any:
         """GET /v1/export/findings.ocsf -- Export Findings Ocsf
 
         Args:
@@ -4758,7 +5170,7 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/export/vex', query={'project': project, 'format': format})
 
-    def list_findings_paged(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, sla_breached: bool | None = None, fingerprint: str | None = None, sort: str | None = None, limit: int | None = None, offset: int | None = None, exploitability: str | None = None, fix_verified: bool | None = None) -> FindingLifecyclePage:
+    def list_findings_paged(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel', 'invariant'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, sla_breached: bool | None = None, fingerprint: str | None = None, sort: str | None = None, limit: int | None = None, offset: int | None = None, exploitability: str | None = None, fix_verified: bool | None = None) -> FindingLifecyclePage:
         """GET /v1/findings -- List Findings Paged
 
         Args:
@@ -4774,7 +5186,7 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/findings/bulk', body=body)
 
-    def list_findings_legacy(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, limit: int | None = None, offset: int | None = None) -> list[FindingLifecycleOut]:
+    def list_findings_legacy(self, *, severity: Literal['info', 'low', 'medium', 'high', 'critical'] | None = None, status: Literal['open', 'triaged', 'false_positive', 'accepted_risk', 'fixed', 'wontfix', 'accepted'] | None = None, asset_id: str | None = None, rule_source: Literal['nuclei', 'cve_match', 'policy', 'chain', 'secret_scan', 'tls_check', 'header_check', 'exposed_file', 'manual', 'takeover', 'tls_grade', 'sca', 'sast', 'threat_intel', 'invariant'] | None = None, kev: bool | None = None, q: str | None = None, suppressed: Literal['exclude', 'include', 'only'] | None = None, include_duplicates: bool | None = None, limit: int | None = None, offset: int | None = None) -> list[FindingLifecycleOut]:
         """GET /v1/findings/list -- List Findings Legacy
 
         Legacy bare-list response for pre-pagination clients.
@@ -5144,6 +5556,90 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/integrations/{integration_id}/test', path_params={'integration_id': integration_id}, body=body)
 
+    def list_invariants(self, *, enabled: bool | None = None, source: Literal['std', 'custom'] | None = None, status: str | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None) -> InvariantPage:
+        """GET /v1/invariants -- List Invariants
+
+        Invariants with their last verdict, freshness (``EXPIRED``) and coverage ratio.
+        """
+        return self._request('GET', '/v1/invariants', query={'enabled': enabled, 'source': source, 'status': status, 'q': q, 'limit': limit, 'offset': offset})
+
+    def create_invariant(self, body: InvariantCreate | dict[str, Any]) -> InvariantChange:
+        """POST /v1/invariants -- Create Invariant
+
+        Create a custom invariant from YAML (parsed and compiled by the library; 422 lists the problems).
+        """
+        return self._request('POST', '/v1/invariants', body=body)
+
+    def list_std_invariants(self) -> list[StdInvariantOut]:
+        """GET /v1/invariants/std -- List Std Invariants
+
+        The shipped std invariants and whether this tenant has each one enabled.
+        """
+        return self._request('GET', '/v1/invariants/std')
+
+    def enable_std_invariant(self, std_id: str) -> InvariantChange:
+        """POST /v1/invariants/std/{std_id}/enable -- Enable Std Invariant
+
+        Copy a shipped invariant into the tenant and enable it (idempotent; refreshes a stale copy).
+        """
+        return self._request('POST', '/v1/invariants/std/{std_id}/enable', path_params={'std_id': std_id})
+
+    def get_invariant(self, invariant_id: str) -> InvariantDetail:
+        """GET /v1/invariants/{invariant_id} -- Get Invariant
+        """
+        return self._request('GET', '/v1/invariants/{invariant_id}', path_params={'invariant_id': invariant_id})
+
+    def update_invariant(self, invariant_id: str, body: InvariantUpdate | dict[str, Any]) -> InvariantChange:
+        """PUT /v1/invariants/{invariant_id} -- Update Invariant
+
+        Change the definition (new digest => new version row) and/or toggle ``enabled``.
+
+        A std invariant's text is owned by the shipped library (it would be overwritten), so only
+        ``enabled`` can change there.
+        """
+        return self._request('PUT', '/v1/invariants/{invariant_id}', path_params={'invariant_id': invariant_id}, body=body)
+
+    def delete_invariant(self, invariant_id: str) -> InvariantChange:
+        """DELETE /v1/invariants/{invariant_id} -- Delete Invariant
+
+        Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay
+        (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
+        Never gated: a downgraded tenant can always switch containment checks off cleanly.
+        """
+        return self._request('DELETE', '/v1/invariants/{invariant_id}', path_params={'invariant_id': invariant_id})
+
+    def list_invariant_runs(self, invariant_id: str, *, verdict: Literal['HOLDS', 'VIOLATED', 'UNKNOWN'] | None = None, include_result: bool | None = None, limit: int | None = None, offset: int | None = None) -> RunPage:
+        """GET /v1/invariants/{invariant_id}/runs -- List Invariant Runs
+
+        The verdict-transition ledger of one invariant, newest first.
+
+        Args:
+            include_result: Include the stored result (witnesses, blind spots).
+        """
+        return self._request('GET', '/v1/invariants/{invariant_id}/runs', path_params={'invariant_id': invariant_id}, query={'verdict': verdict, 'include_result': include_result, 'limit': limit, 'offset': offset})
+
+    def list_labels(self, *, node_ref: str | None = None, tag: str | None = None, source: Literal['declared', 'metadata', 'connector'] | None = None, limit: int | None = None, offset: int | None = None) -> LabelPage:
+        """GET /v1/labels -- List Labels
+
+        Labels with their provenance (who set them, why, when).
+        """
+        return self._request('GET', '/v1/labels', query={'node_ref': node_ref, 'tag': tag, 'source': source, 'limit': limit, 'offset': offset})
+
+    def set_label(self, body: LabelSet | dict[str, Any]) -> LabelChangeOut:
+        """PUT /v1/labels -- Set Label
+
+        Declare a label (zone, class, crown-jewel, app-tier, ...) with a mandatory justification.
+        Changing one changes verdicts, so it bumps the graph version and is audited.
+        """
+        return self._request('PUT', '/v1/labels', body=body)
+
+    def delete_label(self, label_id: str, *, justification: str | None = None) -> LabelDeleteOut:
+        """DELETE /v1/labels/{label_id} -- Delete Label
+
+        Remove a label (bumps the graph version). Never gated (clean-up).
+        """
+        return self._request('DELETE', '/v1/labels/{label_id}', path_params={'label_id': label_id}, query={'justification': justification})
+
     def get_license(self) -> LicenseOut:
         """GET /v1/license -- Get License
         """
@@ -5396,6 +5892,29 @@ class GeneratedOperations:
         """POST /v1/public/trust/{token} -- Public View Post
         """
         return self._request('POST', '/v1/public/trust/{token}', path_params={'token': token}, body=body)
+
+    def list_reach_edges(self, *, source: str | None = None, basis: Literal['declared', 'configured', 'observed', 'tested'] | None = None, proto: Literal['icmp', 'tcp', 'udp', 'any'] | None = None, node: str | None = None, src: str | None = None, dst: str | None = None, include_evidence: bool | None = None, limit: int | None = None, offset: int | None = None) -> dict[str, Any]:
+        """GET /v1/reach/edges -- List Reach Edges
+
+        Args:
+            node: Edges into or out of this node ref.
+        """
+        return self._request('GET', '/v1/reach/edges', query={'source': source, 'basis': basis, 'proto': proto, 'node': node, 'src': src, 'dst': dst, 'include_evidence': include_evidence, 'limit': limit, 'offset': offset})
+
+    def bulk_flows(self, body: FlowBulkIn | dict[str, Any]) -> FlowBulkOut:
+        """POST /v1/reach/flows/bulk -- Bulk Flows
+
+        Upsert aggregated flows; one statement, so the batch is stored whole or not at all.
+        """
+        return self._request('POST', '/v1/reach/flows/bulk', body=body)
+
+    def list_reach_nodes(self, *, kind: str | None = None, source: str | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None) -> dict[str, Any]:
+        """GET /v1/reach/nodes -- List Reach Nodes
+
+        Args:
+            q: Substring of the node ref or label.
+        """
+        return self._request('GET', '/v1/reach/nodes', query={'kind': kind, 'source': source, 'q': q, 'limit': limit, 'offset': offset})
 
     def list_remediations(self, *, status: str | None = None, limit: int | None = None, offset: int | None = None) -> RemediationPage:
         """GET /v1/remediation -- List Remediations
@@ -5905,6 +6424,38 @@ class GeneratedOperations:
         or API key, even an admin's, can never post a verdict.
         """
         return self._request('POST', '/v1/verifications/{verification_id}/result', path_params={'verification_id': verification_id}, body=body)
+
+    def list_zones(self, *, limit: int | None = None, offset: int | None = None) -> ZonePage:
+        """GET /v1/zones -- List Zones
+        """
+        return self._request('GET', '/v1/zones', query={'limit': limit, 'offset': offset})
+
+    def create_zone(self, body: ZoneCreate | dict[str, Any]) -> ZoneChangeOut:
+        """POST /v1/zones -- Create Zone
+
+        Declare a zone. Names ``^[a-z][a-z0-9-]{0,31}$``; CIDRs are validated and canonicalised.
+        """
+        return self._request('POST', '/v1/zones', body=body)
+
+    def get_zone(self, zone_id: str) -> ZoneOut:
+        """GET /v1/zones/{zone_id} -- Get Zone
+        """
+        return self._request('GET', '/v1/zones/{zone_id}', path_params={'zone_id': zone_id})
+
+    def update_zone(self, zone_id: str, body: ZoneUpdate | dict[str, Any]) -> ZoneChangeOut:
+        """PUT /v1/zones/{zone_id} -- Update Zone
+
+        Change a zone's CIDRs, kind or description (the name is its identity and cannot change).
+        """
+        return self._request('PUT', '/v1/zones/{zone_id}', path_params={'zone_id': zone_id}, body=body)
+
+    def delete_zone(self, zone_id: str, *, justification: str | None = None) -> ZoneDeleteOut:
+        """DELETE /v1/zones/{zone_id} -- Delete Zone
+
+        Delete a zone (bumps the graph version). Nodes in it lose the zone; invariants that select it
+        then select nothing and answer UNKNOWN, never HOLDS. Never gated (clean-up).
+        """
+        return self._request('DELETE', '/v1/zones/{zone_id}', path_params={'zone_id': zone_id}, query={'justification': justification})
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError

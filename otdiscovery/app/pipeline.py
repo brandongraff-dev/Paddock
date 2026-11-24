@@ -18,8 +18,11 @@ is to other hosts and passes through untouched.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import math
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -31,7 +34,7 @@ from .cvematch import match_devices
 from .db import Database
 from .exposure import ExposureResult, analyze as analyze_exposure
 from .fingerprint import Device, fingerprint_devices
-from .orchestrator import OrchestratorClient
+from .orchestrator import FLOW_BATCH, OrchestratorClient
 
 log = logging.getLogger("otdiscovery.pipeline")
 
@@ -144,6 +147,151 @@ def project_assets(
 
 
 # --------------------------------------------------------------------------- #
+# Reach-graph flow reporting (docs/ASSURANCE_P1.md section 4.3)
+# --------------------------------------------------------------------------- #
+
+_REACH_PROTOS = {"tcp": "tcp", "udp": "udp", "icmp": "icmp", "icmpv6": "icmp", "icmp6": "icmp",
+                 "ipv6-icmp": "icmp"}
+_MAX_COUNTER = 10**15      # mirrors the orchestrator's per-record ceiling
+
+
+def _canon_ip(v: Any) -> Optional[str]:
+    """Canonical text for an address (same spelling the orchestrator stores), or ``None``."""
+    if not isinstance(v, str):
+        return None
+    try:
+        ip = ipaddress.ip_address(v.strip().strip("[]"))
+    except ValueError:
+        return None
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.compressed.lower()
+
+
+def _epoch(v: Any, default: float) -> float:
+    """A usable epoch second, else ``default`` (a bad clock must not poison the whole batch)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 < v < 32503680000:
+        return default
+    return float(v)
+
+
+def _counter(v: Any) -> int:
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+        return 0
+    return min(int(v), _MAX_COUNTER)
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def clean_sensor_id(v: Any) -> Optional[str]:
+    """The sensor id as the orchestrator spells it (a UUID), or ``None`` when it is not one."""
+    try:
+        return str(uuid.UUID(str(v)))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+class ReachFlowBuffer:
+    """Per-tenant aggregate of sensor-stamped flows that the orchestrator has not seen yet.
+
+    WHY it exists instead of re-posting the engine's flow list: analysis re-runs over everything
+    the engine remembers, and the orchestrator ADDS counters on conflict, so posting the full
+    state every run would inflate packets/bytes without bound. Each entry therefore remembers what
+    was already delivered and only the difference is sent; the watermark advances only for a batch
+    the orchestrator acknowledged, so a failed post is retried, never lost.
+
+    Flows without a sensor id (the legacy shared-token path) are not tracked: the sensor id is the
+    row's identity and the basis of coverage, and a client-supplied one is never trusted.
+    """
+
+    def __init__(self, max_entries: int = 100_000, retention_s: float = 86_400.0) -> None:
+        self._e: dict[tuple, dict[str, Any]] = {}
+        self.max_entries = max_entries
+        self.retention_s = retention_s
+        self.dropped = 0
+
+    def __len__(self) -> int:
+        return len(self._e)
+
+    def add(self, observations: list[dict[str, Any]], sensor_id: Optional[str]) -> int:
+        """Fold flow observations from ``sensor_id`` into the buffer; returns how many were taken."""
+        sid = clean_sensor_id(sensor_id)
+        if sid is None:
+            return 0
+        now = time.time()
+        taken = 0
+        for o in observations:
+            if not isinstance(o, dict) or o.get("kind") != "flow":
+                continue
+            src, dst = _canon_ip(o.get("src_ip")), _canon_ip(o.get("dst_ip"))
+            proto = _REACH_PROTOS.get(str(o.get("proto") or "").lower(), "any")
+            port = _coerce_port(o.get("dst_port"))
+            if src is None or dst is None:
+                continue
+            if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535 or proto in ("icmp", "any"):
+                port = 0
+            last = _epoch(o.get("last_seen"), now)
+            first = min(_epoch(o.get("first_seen"), last), last)
+            key = (src, dst, proto, port, sid)
+            cur = self._e.get(key)
+            if cur is None:
+                if len(self._e) >= self.max_entries and not self._evict_one():
+                    self.dropped += 1
+                    continue
+                cur = self._e[key] = {"first": first, "last": last, "packets": 0, "bytes": 0, "syn": False,
+                                      "p_last": None, "p_packets": 0, "p_bytes": 0, "p_syn": False}
+            cur["first"], cur["last"] = min(cur["first"], first), max(cur["last"], last)
+            cur["packets"] = min(cur["packets"] + _counter(o.get("packets")), _MAX_COUNTER)
+            cur["bytes"] = min(cur["bytes"] + _counter(o.get("bytes")), _MAX_COUNTER)
+            cur["syn"] = cur["syn"] or (proto == "tcp" and bool(o.get("tcp_syn")))
+            taken += 1
+        return taken
+
+    def _evict_one(self) -> bool:
+        """Make room by dropping the oldest ALREADY DELIVERED entry; never an undelivered one."""
+        delivered = [(e["last"], k) for k, e in self._e.items() if self._done(e)]
+        if not delivered:
+            return False
+        del self._e[min(delivered)[1]]
+        return True
+
+    @staticmethod
+    def _done(e: dict[str, Any]) -> bool:
+        return (e["p_last"] is not None and e["last"] <= e["p_last"] and e["packets"] <= e["p_packets"]
+                and e["bytes"] <= e["p_bytes"] and (e["p_syn"] or not e["syn"]))
+
+    def pending(self) -> list[tuple[tuple, dict[str, Any], dict[str, Any]]]:
+        """``(key, wire_record, snapshot)`` for every entry with something new, sorted for stability."""
+        out = []
+        for key in sorted(self._e):
+            e = self._e[key]
+            if self._done(e):
+                continue
+            src, dst, proto, port, sid = key
+            rec = {"src_ip": src, "dst_ip": dst, "proto": proto, "dst_port": port, "sensor_id": sid,
+                   "first_seen": _iso(e["first"]), "last_seen": _iso(e["last"]),
+                   "packets": max(0, e["packets"] - e["p_packets"]), "bytes": max(0, e["bytes"] - e["p_bytes"]),
+                   "oriented": "syn" if e["syn"] else "heuristic"}
+            out.append((key, rec, {"last": e["last"], "packets": e["packets"], "bytes": e["bytes"], "syn": e["syn"]}))
+        return out
+
+    def mark_posted(self, key: tuple, snap: dict[str, Any]) -> None:
+        e = self._e.get(key)
+        if e is not None:
+            e["p_last"], e["p_packets"], e["p_bytes"], e["p_syn"] = snap["last"], snap["packets"], snap["bytes"], snap["syn"]
+
+    def prune(self) -> None:
+        """Forget delivered entries that aged out (undelivered ones are kept until delivered)."""
+        if not self._e:
+            return
+        horizon = max(e["last"] for e in self._e.values()) - self.retention_s
+        for k in [k for k, e in self._e.items() if e["last"] < horizon and self._done(e)]:
+            del self._e[k]
+
+
+# --------------------------------------------------------------------------- #
 # Engine
 # --------------------------------------------------------------------------- #
 
@@ -173,6 +321,7 @@ class DiscoveryEngine:
         # One record per distinct flow (a sensor reports the same peer pair every
         # 30 s window; storing each repeat made analysis O(flow events) per upload).
         self._flow_index: dict[tuple, dict[str, Any]] = {}
+        self._reach = ReachFlowBuffer(max_entries=cfg.max_observations, retention_s=cfg.flow_retention_s)
         self._lock = asyncio.Lock()
         self._last_run_mono = 0.0
         self._deferred: Optional[asyncio.Task] = None
@@ -208,8 +357,16 @@ class DiscoveryEngine:
         pcap_bytes: Optional[bytes] = None,
         observations: Optional[list[Any]] = None,
         replace: bool = False,
+        sensor_id: Optional[str] = None,
     ) -> dict[str, Any]:
         parsed = parse_input(pcap_bytes=pcap_bytes, observations=observations)
+        # The sensor id comes from the authenticated claim, never from the payload: stamp every
+        # flow (overwriting anything the sender wrote) so one sensor cannot speak for another.
+        sid = clean_sensor_id(sensor_id) if sensor_id else None
+        for o in parsed:
+            if o.get("kind") == "flow":
+                o["sensor_id"] = sid
+        self._reach.add(parsed, sid)
         if replace:
             self.observations = []
             self._flow_index = {}
@@ -339,6 +496,31 @@ class DiscoveryEngine:
             self._last_run_mono = time.monotonic()
             return result
 
+    async def _post_reach_flows(self) -> dict[str, Any]:
+        """Deliver not-yet-delivered flow aggregates to the reach graph, <= FLOW_BATCH per call.
+
+        Returns ``{}`` when there is nothing to send, ``{"error": ...}`` on the first failed batch
+        (the same convention as the other bulk calls, so a managed ingest answers 503 and the
+        sensor retries), else the totals. Batches already acknowledged stay acknowledged.
+        """
+        pending = self._reach.pending()
+        if not pending or self.orch is None:
+            return {}
+        sent = {"received": 0, "inserted": 0, "updated": 0}
+        for i in range(0, len(pending), FLOW_BATCH):
+            chunk = pending[i:i + FLOW_BATCH]
+            resp = await self.orch.bulk_flows([rec for _, rec, _ in chunk])
+            if not isinstance(resp, dict) or "error" in resp:
+                err = resp.get("error") if isinstance(resp, dict) else None
+                return {"error": err or "flow post failed", **sent}
+            for key, _, snap in chunk:
+                self._reach.mark_posted(key, snap)
+            for k in sent:
+                sent[k] += int(resp.get(k, 0) or 0)
+        self._reach.prune()
+        self.stats["reach_flows_posted"] = self.stats.get("reach_flows_posted", 0) + sent["received"]
+        return sent
+
     async def _project(self, devices, exposure, behav) -> dict[str, Any]:  # type: ignore[no-untyped-def]
 
         # Every IP we discovered is forbidden as an active-connection target.
@@ -350,6 +532,7 @@ class DiscoveryEngine:
         asset_resp: dict[str, Any] = {}
         edge_resp: dict[str, Any] = {}
         finding_resp: dict[str, Any] = {}
+        flow_resp: dict[str, Any] = {}
 
         self.last_segment_matrix = behav.segment_matrix
 
@@ -379,6 +562,7 @@ class DiscoveryEngine:
                     posted_findings = int(finding_resp.get("inserted", 0) or 0) + int(
                         finding_resp.get("updated", 0) or 0
                     )
+                flow_resp = await self._post_reach_flows()
 
         self.last_inventory = devices
         self.last_guard_attempts = list(guard.attempts)
@@ -415,6 +599,7 @@ class DiscoveryEngine:
             + len(exposure.segments),
             "orchestrator": {
                 "assets": asset_resp, "edges": edge_resp, "findings": finding_resp,
+                **({"flows": flow_resp} if flow_resp else {}),
             },
             # surfaced for the safety test: active-probe guard accounting
             "active_probe_attempts_to_devices": len(self.last_guard_violations),
