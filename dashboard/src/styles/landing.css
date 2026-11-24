@@ -612,9 +612,3 @@
 
 
 @media (max-width: 899px) { .lp-footer-in { padding-bottom: 470px; } .lp-footer-px { height: 560px; } }
-
-/* "Download for Windows": the .cta-cmd pill, as a link. */
-a.cta-download { text-decoration: none; padding: 0 18px 0 16px; }
-a.cta-download svg { opacity: 0.85; }
-.cta-row { flex-wrap: wrap; row-gap: 10px; }
-.cta-dl-note { margin-top: 0; }
