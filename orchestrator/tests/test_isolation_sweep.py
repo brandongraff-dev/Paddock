@@ -38,6 +38,8 @@ GLOBAL_ALLOWLIST = {
     "sla_policies": "platform-wide SLA policy",
     "billing_customers": "opaque Stripe customer->tenant routing, platform-written (webhook has no tenant)",
     "billing_events": "opaque Stripe webhook event ids (replay protection), platform-written",
+    "ai_settings": "the operator's own encrypted model key, one row per install; writes are platform-tenant-only "
+                   "(global_platform_write) and the route that releases it accepts only the service key",
 }
 
 #: Extra permissive policies on tenant tables, and the only condition each may

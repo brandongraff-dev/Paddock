@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -11,11 +15,27 @@
     "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "types": ["vitest/globals", "@testing-library/jest-dom"],
+    "types": [
+      "vitest/globals",
+      "@testing-library/jest-dom"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@dash/*": ["../../dashboard/src/*"]
+      "@dash/*": [
+        "../../dashboard/src/*"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/*": [
+        "./node_modules/@types/react/*"
+      ]
     }
   },
-  "include": ["src", "tests", "vite.config.ts", "../../dashboard/src/brand"]
+  "include": [
+    "src",
+    "tests",
+    "vite.config.ts",
+    "../../dashboard/src/brand"
+  ]
 }

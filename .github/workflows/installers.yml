@@ -101,11 +101,15 @@ jobs:
 
       - name: Doctor (healthy PC passes; each problem gets a plain-English fix)
         run: |
+          # A child PowerShell per case: a script that THROWS loses the output it already printed when it is
+          # run in-process, and the exit code is what the wizard and a person's shell actually see.
+          $exe = (Get-Process -Id $PID).Path
           function Run-Doctor([hashtable]$extra) {
             foreach ($k in $extra.Keys) { Set-Item "Env:$k" $extra[$k] }
-            try { $out = & .\scripts\install.ps1 -Doctor -Dir "$env:RUNNER_TEMP\doc" *>&1 | Out-String; $ok = $true }
-            catch { $out = ($_ | Out-String); $ok = $false }
-            finally { foreach ($k in $extra.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue } }
+            try {
+              $out = & $exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Doctor -Dir "$env:RUNNER_TEMP\doc" *>&1 | Out-String
+              $ok = ($LASTEXITCODE -eq 0)
+            } finally { foreach ($k in $extra.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue } }
             return [pscustomobject]@{ Ok = $ok; Out = $out }
           }
           $r = Run-Doctor @{}
