@@ -105,11 +105,20 @@ jobs:
           # run in-process, and the exit code is what the wizard and a person's shell actually see.
           $exe = (Get-Process -Id $PID).Path
           function Run-Doctor([hashtable]$extra) {
-            foreach ($k in $extra.Keys) { Set-Item "Env:$k" $extra[$k] }
+            # GitHub's powershell shell runs with $ErrorActionPreference='Stop', which turns the child's stderr
+            # (the script's own throw message) into a terminating error here; we WANT its output and exit code.
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $saved = @{}
+            foreach ($k in $extra.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); Set-Item "Env:$k" $extra[$k] }
             try {
               $out = & $exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Doctor -Dir "$env:RUNNER_TEMP\doc" *>&1 | Out-String
               $ok = ($LASTEXITCODE -eq 0)
-            } finally { foreach ($k in $extra.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue } }
+            } finally {
+              $ErrorActionPreference = $prevEap
+              # restore what the job pinned (memory, disk, ports) instead of deleting it
+              foreach ($k in $extra.Keys) { if ($null -ne $saved[$k]) { Set-Item "Env:$k" $saved[$k] } else { Remove-Item "Env:$k" -ErrorAction SilentlyContinue } }
+            }
             return [pscustomobject]@{ Ok = $ok; Out = $out }
           }
           $r = Run-Doctor @{}
