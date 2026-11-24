@@ -689,3 +689,9 @@ html { scrollbar-color: #2b2621 #0e0c0a; scrollbar-width: thin; }
 
 /* the pixel grid laid over the painted cliff, on the same cell pitch as the sky, so they read as one surface */
 .scene-grid { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(to right, rgba(14, 12, 10, 0.4) 1px, transparent 1px), linear-gradient(to bottom, rgba(14, 12, 10, 0.4) 1px, transparent 1px); background-size: var(--cs, 5px) var(--cs, 5px); background-position: calc(var(--cs, 5px) - 1px) calc(var(--cs, 5px) - 1px); }
+
+/* "Download for Windows": the .cta-cmd pill, as a link. */
+a.cta-download { text-decoration: none; padding: 0 18px 0 16px; }
+a.cta-download svg { opacity: 0.85; }
+.cta-row { flex-wrap: wrap; row-gap: 10px; }
+.cta-dl-note { margin-top: 0; }

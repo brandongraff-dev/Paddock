@@ -6,6 +6,7 @@ import PixelField from "../brand/PixelField";
 import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
+import { DOWNLOAD_URL } from "./landing/download";
 import FlatArt from "./landing/FlatArt";
 import Faq from "./landing/Faq";
 import { useAuth } from "../state/auth";
@@ -114,6 +115,9 @@ export default function Landing() {
             <a href="#principles">Principles</a>
             <a href="https://docs.openpaddock.dev" target="_blank" rel="noreferrer">
               Docs
+            </a>
+            <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer">
+              Download
             </a>
             <GitHubStars />
             <Link to={enter} className="lp-cta">

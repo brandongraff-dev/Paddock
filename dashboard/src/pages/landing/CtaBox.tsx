@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../state/auth";
 import { BRAND_ICONS } from "../../brand/brandIcons";
+import { DOWNLOAD_NOTE, DOWNLOAD_URL } from "./download";
 
 const DOCS = "https://docs.openpaddock.dev";
 const REPO_URL = "https://github.com/brandongraff-dev/Paddock";
@@ -63,6 +64,12 @@ export default function CtaBox({ className }: { className?: string }) {
         <button type="submit">Start mapping</button>
       </form>
       <div className="cta-row">
+        <a className="cta-cmd cta-download" href={DOWNLOAD_URL} target="_blank" rel="noreferrer" title={DOWNLOAD_NOTE}>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+            <path d="M0 2.3l6.5-.9v6.1H0zM7.4 1.3L16 0v7.5H7.4zM0 8.4h6.5v6.1L0 13.7zM7.4 8.4H16V16l-8.6-1.2z" />
+          </svg>
+          <span>Download for Windows</span>
+        </a>
         <button type="button" className="cta-cmd" onClick={copy} aria-label="Copy a setup prompt to paste into your coding agent" title="Copies a setup prompt for Cursor, ChatGPT or Claude">
           <span className="cta-dots" aria-hidden="true">
             {(["cursor", "openai", "claude"] as const).map((k) => (
@@ -79,6 +86,7 @@ export default function CtaBox({ className }: { className?: string }) {
         <a className="cta-link" href="https://docs.openpaddock.dev" target="_blank" rel="noreferrer">Read the docs</a>
       </div>
       <p className="cta-note">Open source. Self-hosted. Your data and keys stay on your own infrastructure.</p>
+      <p className="cta-note cta-dl-note">{DOWNLOAD_NOTE}</p>
     </div>
   );
 }
