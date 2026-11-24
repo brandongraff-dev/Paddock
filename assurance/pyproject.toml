@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paddock-assurance"
+version = "0.1.0"
+description = "Provable containment: declare what must never be reachable, then search for counterexamples. Pure library + CLI (P0)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+dependencies = [
+    "pydantic>=2.5",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+paddock-invariants = "paddock_assurance.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["paddock_assurance*"]
+
+[tool.setuptools.package-data]
+"paddock_assurance.stdlib" = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

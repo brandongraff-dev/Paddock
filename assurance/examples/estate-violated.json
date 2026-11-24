@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "now": "2026-12-01T09:00:00Z",
+  "nodes": [
+    {
+      "id": "internet",
+      "kind": "internet",
+      "zone": "internet",
+      "tags": [],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "external_scan"
+      }
+    },
+    {
+      "id": "lb-1",
+      "kind": "host",
+      "zone": "dmz",
+      "tags": [],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "aws_sg"
+      }
+    },
+    {
+      "id": "web-1",
+      "kind": "host",
+      "zone": "dmz",
+      "tags": [],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sensor"
+      }
+    },
+    {
+      "id": "app-1",
+      "kind": "host",
+      "zone": "prod",
+      "tags": [
+        "app-tier"
+      ],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sensor"
+      }
+    },
+    {
+      "id": "db-1",
+      "kind": "host",
+      "zone": "prod",
+      "tags": [
+        "crown-jewel"
+      ],
+      "class": "data_store",
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sensor"
+      }
+    },
+    {
+      "id": "guest-ap",
+      "kind": "access_point",
+      "zone": "guest",
+      "tags": [],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sentry"
+      }
+    },
+    {
+      "id": "guest-laptop",
+      "kind": "device",
+      "zone": "guest",
+      "tags": [],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sentry"
+      }
+    },
+    {
+      "id": "printer-1",
+      "kind": "device",
+      "zone": "office",
+      "tags": [],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sentry"
+      }
+    },
+    {
+      "id": "pos-1",
+      "kind": "device",
+      "zone": "pos",
+      "tags": [
+        "cardholder-data"
+      ],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sentry"
+      }
+    },
+    {
+      "id": "pos-hub",
+      "kind": "host",
+      "zone": "pos",
+      "tags": [],
+      "coverage": {
+        "tier": "observed",
+        "observed_at": "2026-12-01T08:30:00Z",
+        "source": "sentry"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "internet",
+      "dst": "lb-1",
+      "proto": "tcp",
+      "ports": "80,443",
+      "basis": "observed",
+      "source": "external_scan"
+    },
+    {
+      "src": "lb-1",
+      "dst": "web-1",
+      "proto": "tcp",
+      "ports": "8080",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "web-1",
+      "dst": "app-1",
+      "proto": "tcp",
+      "ports": "9000",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "app-1",
+      "dst": "db-1",
+      "proto": "tcp",
+      "ports": "5432",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "guest-laptop",
+      "dst": "guest-ap",
+      "proto": "tcp",
+      "ports": "1-65535",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "guest-laptop",
+      "dst": "printer-1",
+      "proto": "tcp",
+      "ports": "9100",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "pos-1",
+      "dst": "pos-hub",
+      "proto": "tcp",
+      "ports": "443",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "pos-hub",
+      "dst": "app-1",
+      "proto": "tcp",
+      "ports": "9000",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "printer-1",
+      "dst": "pos-1",
+      "proto": "tcp",
+      "ports": "445",
+      "basis": "observed",
+      "source": "flows"
+    },
+    {
+      "src": "internet",
+      "dst": "web-1",
+      "proto": "tcp",
+      "ports": "22",
+      "basis": "observed",
+      "source": "external_scan"
+    },
+    {
+      "src": "internet",
+      "dst": "db-1",
+      "proto": "tcp",
+      "ports": "5432",
+      "basis": "observed",
+      "source": "external_scan"
+    }
+  ]
+}

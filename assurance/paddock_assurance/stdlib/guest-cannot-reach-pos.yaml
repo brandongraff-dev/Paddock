@@ -1,0 +1,18 @@
+apiVersion: paddock.dev/invariant/v1
+id: std:guest-cannot-reach-pos
+title: Guest networks cannot reach the point-of-sale segment
+description: >
+  No device in the guest zone can open a connection to any device in the pos zone, directly or
+  by hopping through other devices (printers, shared servers, IoT) up to six hops. Zone names
+  follow the convention guest and pos; label zones accordingly.
+severity: critical
+subjects:
+  from: { zone: guest }
+  to: { zone: pos }
+assert: unreachable
+via: { max_hops: 6 }
+evidence: { min_tier: observed, max_age: 24h, confirm: all }
+coverage: { require: 0.95 }
+on_violation:
+  finding: true
+  propose: [restrict_port_to_cidr]

@@ -67,6 +67,7 @@ jobs:
           - { service: sentry,          path: sentry,          extra: test }
           - { service: remediation,     path: remediation,     extra: test }
           - { service: agent,           path: agent,           extra: test }
+          - { service: assurance,       path: assurance,       extra: test }
           - { service: mcp,             path: mcp,             extra: test }
 
     services:

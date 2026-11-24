@@ -1,0 +1,21 @@
+apiVersion: paddock.dev/invariant/v1
+id: std:no-internet-to-datastore
+title: No internet path reaches a data store
+description: >
+  From the public internet, across any chain of allowed connections up to six hops, no data
+  store (database, cache, search index, object store) is reachable. The search reaches but does
+  not pass through nodes labelled app-tier: a normal web, app, database stack always links the
+  internet to its database *through the application*, and getting past the application needs a
+  different kind of compromise. Everything else (direct exposure, proxies, load balancers,
+  flat networks) is covered.
+severity: critical
+subjects:
+  from: { zone: internet }
+  to: { class: data_store }
+assert: unreachable
+via: { protocols: [tcp, udp], max_hops: 6, stop_at: { tag: app-tier } }
+evidence: { min_tier: observed, max_age: 24h, confirm: all }
+coverage: { require: 0.95 }
+on_violation:
+  finding: true
+  propose: [cloud_sg_change_pr, restrict_port_to_cidr]

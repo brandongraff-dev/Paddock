@@ -1,0 +1,18 @@
+apiVersion: paddock.dev/invariant/v1
+id: std:public-ports-allowlist
+title: Only web ports are exposed to the internet
+description: >
+  Every internet-facing connection into the estate is limited to TCP/UDP ports 80 and 443.
+  Anything else (SSH, RDP, databases, admin consoles) is a violation unless an expiring,
+  reasoned exception is declared with allow.
+severity: high
+subjects:
+  from: { zone: internet }
+assert: exposes-only
+ports: [80, 443]
+via: { protocols: [tcp, udp] }
+evidence: { min_tier: observed, max_age: 24h, confirm: all }
+coverage: { require: 0.95 }
+on_violation:
+  finding: true
+  propose: [restrict_port_to_cidr, cloud_sg_change_pr]

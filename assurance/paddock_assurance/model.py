@@ -1,0 +1,242 @@
+"""The invariant document (DSL v0) as strict pydantic models.
+
+Closed vocabulary on purpose: no free-form queries, no expressions, nothing Turing-complete.
+Unknown keys are rejected everywhere. Set-like lists are normalised (sorted, de-duplicated) so
+the canonical digest does not depend on how an author ordered them.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import re
+from enum import Enum
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from . import ports as P
+
+API_VERSION = "paddock.dev/invariant/v1"
+
+ID_RE = re.compile(r"^[a-z][a-z0-9]{0,31}:[a-z0-9][a-z0-9-]{0,63}$")
+SEL_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,64}$")
+DURATION_RE = re.compile(r"^(\d{1,4})([mhd])$")
+MAX_AGE_LIMIT = dt.timedelta(days=30)
+
+# Free text must describe, never instruct. Deliberately small and aligned in spirit with
+# correlation/app/engine/policy.py (this package does not import from other services).
+_REJECT = ("payload", "msfvenom", "reverse shell", "nc -e", "union select", "/bin/sh",
+           "powershell -enc")
+
+
+class Tier(str, Enum):
+    """How strong the evidence behind a fact is. Ordered: declared < configured < observed < tested."""
+
+    declared = "declared"      # the tenant says it should be so
+    configured = "configured"  # a config says it is so (SG rule, firewall ruleset, sshd -T)
+    observed = "observed"      # traffic or an outside scan saw it
+    tested = "tested"          # a scope-proven active test confirmed it
+
+    @property
+    def rank(self) -> int:
+        return _RANK[self.value]
+
+
+_RANK = {"declared": 0, "configured": 1, "observed": 2, "tested": 3}
+
+
+def parse_duration(text: str) -> dt.timedelta:
+    m = DURATION_RE.match(text)
+    if not m:
+        raise ValueError("duration must look like 90m, 24h or 7d")
+    n, unit = int(m.group(1)), m.group(2)
+    delta = dt.timedelta(minutes=n) if unit == "m" else dt.timedelta(hours=n) if unit == "h" \
+        else dt.timedelta(days=n)
+    if delta <= dt.timedelta(0) or delta > MAX_AGE_LIMIT:
+        raise ValueError("duration must be between 1m and 30d")
+    return delta
+
+
+def _check_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return value
+    low = value.lower()
+    for tok in _REJECT:
+        if tok in low:
+            raise ValueError(f"text may describe a control, not an attack step (found {tok!r})")
+    return value
+
+
+def _listify(v: Any) -> Any:
+    if v is None:
+        return v
+    if isinstance(v, (str, int)) and not isinstance(v, bool):
+        return [str(v)]
+    return v
+
+
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+
+class Selector(_Strict):
+    """Picks graph nodes. All present fields must match (AND); values within a field are OR."""
+
+    id: Optional[tuple[str, ...]] = None
+    zone: Optional[tuple[str, ...]] = None
+    tag: Optional[tuple[str, ...]] = None
+    kind: Optional[tuple[str, ...]] = None
+    cls: Optional[tuple[str, ...]] = Field(default=None, alias="class")
+
+    @field_validator("id", "zone", "tag", "kind", "cls", mode="before")
+    @classmethod
+    def _as_list(cls, v: Any) -> Any:
+        return _listify(v)
+
+    @field_validator("id", "zone", "tag", "kind", "cls", mode="after")
+    @classmethod
+    def _norm(cls, v: Optional[tuple[str, ...]]) -> Optional[tuple[str, ...]]:
+        if v is None:
+            return v
+        if not v:
+            raise ValueError("selector field must not be empty")
+        for item in v:
+            if not SEL_VALUE_RE.match(item):
+                raise ValueError(f"bad selector value {item!r}")
+        return tuple(sorted(set(v)))
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> "Selector":
+        if not any((self.id, self.zone, self.tag, self.kind, self.cls)):
+            raise ValueError("empty selector (omit the key to mean 'everything')")
+        return self
+
+
+class Subjects(_Strict):
+    from_: Optional[Selector] = Field(default=None, alias="from")
+    to: Optional[Selector] = None
+
+
+class Via(_Strict):
+    protocols: tuple[Literal["icmp", "tcp", "udp"], ...] = ("icmp", "tcp", "udp")
+    ports: Optional[str] = None
+    max_hops: int = Field(default=8, ge=1, le=16)
+    # Application boundary: nodes matching this selector can be reached, but the search does not
+    # continue *through* them (passing one needs an application-layer compromise, which is a
+    # different question). Part of the digest, and reported in every result.
+    stop_at: Optional[Selector] = None
+
+    @field_validator("protocols", mode="before")
+    @classmethod
+    def _protocols(cls, v: Any) -> Any:
+        return _listify(v)
+
+    @field_validator("protocols", mode="after")
+    @classmethod
+    def _protocols_norm(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if not v:
+            raise ValueError("protocols must not be empty")
+        return tuple(sorted(set(v)))
+
+    @field_validator("ports", mode="before")
+    @classmethod
+    def _ports(cls, v: Any) -> Any:
+        return None if v is None else P.format_ports(P.parse_ports(v))
+
+
+class Allow(_Strict):
+    """An explicit, expiring, audited exception. ``expires`` is inclusive and mandatory."""
+
+    to: Selector
+    ports: Optional[str] = None
+    reason: str = Field(min_length=3, max_length=300)
+    expires: dt.date
+
+    @field_validator("ports", mode="before")
+    @classmethod
+    def _ports(cls, v: Any) -> Any:
+        return None if v is None else P.format_ports(P.parse_ports(v))
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, v: str) -> str:
+        return _check_text(v) or v
+
+
+class Evidence(_Strict):
+    min_tier: Tier = Tier.configured
+    max_age: str = "24h"
+    # Active confirmation of counterexamples arrives in P5. Accepted and recorded, not yet run.
+    confirm: Literal["none", "sample", "all"] = "none"
+
+    @field_validator("max_age")
+    @classmethod
+    def _max_age(cls, v: str) -> str:
+        parse_duration(v)
+        return v
+
+
+class Coverage(_Strict):
+    """Policy floor on the share of *known* assets with live, fresh, sufficient evidence."""
+
+    require: float = Field(default=0.95, ge=0.0, le=1.0)
+
+
+FixId = Literal["restrict_port_to_cidr", "firewall_default_deny_inbound",
+                "disable_ssh_password_auth", "disable_unit", "isolate_host", "cloud_sg_change_pr"]
+
+
+class OnViolation(_Strict):
+    finding: bool = True
+    propose: tuple[FixId, ...] = ()
+
+    @field_validator("propose", mode="after")
+    @classmethod
+    def _norm(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(sorted(set(v)))
+
+
+class Invariant(_Strict):
+    apiVersion: Literal["paddock.dev/invariant/v1"]
+    id: str
+    title: str = Field(min_length=3, max_length=160)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    severity: Literal["info", "low", "medium", "high", "critical"] = "high"
+    subjects: Subjects = Subjects()
+    assert_: Literal["unreachable", "exposes-only"] = Field(alias="assert")
+    via: Via = Via()
+    ports: Optional[str] = None
+    allow: tuple[Allow, ...] = ()
+    evidence: Evidence = Evidence()
+    coverage: Coverage = Coverage()
+    on_violation: OnViolation = OnViolation()
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, v: str) -> str:
+        if not ID_RE.match(v):
+            raise ValueError("id must look like 'std:no-internet-to-datastore' or 'acme:my-rule'")
+        return v
+
+    @field_validator("title", "description")
+    @classmethod
+    def _text(cls, v: Optional[str]) -> Optional[str]:
+        return _check_text(v)
+
+    @field_validator("ports", mode="before")
+    @classmethod
+    def _ports(cls, v: Any) -> Any:
+        return None if v is None else P.format_ports(P.parse_ports(v))
+
+    @model_validator(mode="after")
+    def _shape(self) -> "Invariant":
+        if self.assert_ == "unreachable":
+            if self.subjects.from_ is None or self.subjects.to is None:
+                raise ValueError("'unreachable' needs both subjects.from and subjects.to")
+            if self.ports is not None or any(a.ports for a in self.allow):
+                raise ValueError("'ports' belongs to 'exposes-only'; use via.ports to filter edges")
+        else:
+            if self.subjects.from_ is None:
+                raise ValueError("'exposes-only' needs subjects.from (e.g. the internet zone)")
+            if self.ports is None:
+                raise ValueError("'exposes-only' needs 'ports' (the allow-list)")
+        return self

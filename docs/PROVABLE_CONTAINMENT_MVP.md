@@ -607,6 +607,29 @@ SSH-hardened", verifiable by a customer's insurer.
 
 ---
 
+## 10a. P0 status (implemented in `assurance/`)
+
+P0 shipped as a **pure library + CLI** (`paddock-invariants lint|test|explain|std`), 803 tests, with
+three standard invariants (`std:no-internet-to-datastore`, `std:guest-cannot-reach-pos`,
+`std:public-ports-allowlist`). Deviations from the plan above, and why:
+
+- **No database or findings wiring yet.** `rule_source = 'invariant'` touches the DB CHECK, `constants.py`,
+  `test_rule_source_sync.py`, OpenAPI and both SDKs; it moves to P1 with the persistent graph.
+- **Own console script, not `paddock invariants`.** The existing CLI is deliberately stdlib-only; this
+  package needs `pydantic` and `PyYAML`.
+- **Coverage semantics refined (supersedes §5.1/§5.2 wording).** Coverage is a property of *nodes*. A connection
+  needs both ends to allow it, so one covered end rules an edge out and unknown edges exist only between
+  two blind nodes. The evaluator re-searches with a clique among blind nodes; a target reachable only that
+  way is `UNKNOWN`. `coverage.require` is a separate, consumer-visible floor on the share of known assets covered.
+- **Application boundary (`via.stop_at`) added.** The first run flagged a *clean* three-tier estate, because
+  internet -> LB -> web -> app -> database is a transitive path in every ordinary architecture. The search
+  now reaches but does not pass through nodes the tenant labels as a boundary. Consequence for later phases:
+  **labels are tenant-controlled, so a boundary can be abused to make an invariant vacuous.** The boundary is
+  part of the digest and reported in every result; P3 must also commit to the boundary node set in the
+  attestation, and label provenance (who set it, when) needs to be audited.
+- **Witnesses are root causes.** A target reachable only through another violating target is counted but not
+  repeated as its own witness.
+
 ## 11. Testing and quality gates
 
 1. **Invariant ranges** (extend `docs/EVALS.md`): synthetic estates with planted paths and
