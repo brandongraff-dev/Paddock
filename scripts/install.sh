@@ -8,17 +8,27 @@
 # .env (never overwriting ones you already have), starts the lite stack, waits
 # until it is healthy and prints the URL and the admin credentials.
 #
+# Prebuilt vs from source: the copy attached to a GitHub release is stamped with
+# its version and pulls the signed, prebuilt images from GHCR (1-2 minutes).
+# A copy taken from a branch has no version and builds from source (15+
+# minutes), unless you pass --version. Get the release copy with:
+#   curl -fsSL https://github.com/brandongraff-dev/paddock/releases/latest/download/install.sh | sh
+#
 # Safe to re-run: existing .env values, containers and data are kept.
 # Needs no root unless your Docker setup does (it never escalates itself).
 #
 # Options:
 #   --dir DIR        install directory            (default: $HOME/paddock, or $PADDOCK_HOME)
-#   --ref REF        git branch or tag to install (default: main, or $PADDOCK_REF)
+#   --version X.Y.Z  release to install (prebuilt images; default: the version this
+#                    script was stamped with, else the one in .env, else build from source)
+#   --ref REF        git branch or tag to install (default: v<version>, else main, or $PADDOCK_REF)
 #   --repo OWNER/R   GitHub repository            (default: brandongraff-dev/paddock, or $PADDOCK_REPO)
 #   --active         also start the active worker (polite HTTP/TLS/port probing)
 #   --upgrade        re-download the sources even if the directory already has them
 #   --no-start       prepare files and secrets, do not start containers
 #   --wait SECONDS   how long to wait for health (default 300)
+#   --doctor         check this machine (Docker, memory, disk, ports, network) and
+#                    explain how to fix each problem; changes nothing
 #   --dry-run        print what would happen; change nothing, no network
 #   --uninstall      stop and remove the containers (data volume and .env are kept)
 #   --purge          with --uninstall: also delete the data volume and the install directory
@@ -27,11 +37,21 @@
 #
 # Environment for testing / air-gapped use: PADDOCK_SRC_DIR (copy sources from a
 # local directory instead of downloading), PADDOCK_API_URL, PADDOCK_UI_URL,
-# PADDOCK_SHA256 (pin the downloaded tarball).
+# PADDOCK_SHA256 (pin the downloaded tarball), PADDOCK_VERSION (= --version),
+# PADDOCK_REGISTRY (image registry/namespace, default ghcr.io/brandongraff-dev),
+# PADDOCK_CHECK_PORTS (ports the checks look at, default "3000 8080"),
+# PADDOCK_TEST_MEM_MB / PADDOCK_TEST_FREE_MB (pretend RAM / free disk, for tests).
+# When this script sits next to docker-compose.lite.yml (the release zip), those
+# files are used instead of downloading anything.
 set -eu
 
+# Stamped with the release version by scripts/make_release_bundle.py. Empty in a
+# checkout: then the stack is built from source.
+STAMPED_VERSION=""
+
 REPO="${PADDOCK_REPO:-brandongraff-dev/paddock}"
-REF="${PADDOCK_REF:-main}"
+REF="${PADDOCK_REF:-}"
+VERSION="${PADDOCK_VERSION:-}"
 DIR="${PADDOCK_HOME:-${HOME:-.}/paddock}"
 API_URL="${PADDOCK_API_URL:-http://127.0.0.1:8080}"
 UI_URL="${PADDOCK_UI_URL:-http://localhost:3000}"
@@ -40,6 +60,7 @@ ACTIVE=0
 UPGRADE=0
 NO_START=0
 DRY_RUN=0
+DOCTOR=0
 UNINSTALL=0
 PURGE=0
 YES=0
@@ -67,12 +88,14 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dir)       [ $# -ge 2 ] || die "--dir needs a value";  DIR="$2"; shift ;;
     --ref)       [ $# -ge 2 ] || die "--ref needs a value";  REF="$2"; shift ;;
+    --version)   [ $# -ge 2 ] || die "--version needs a value"; VERSION="$2"; shift ;;
     --repo)      [ $# -ge 2 ] || die "--repo needs a value"; REPO="$2"; shift ;;
     --wait)      [ $# -ge 2 ] || die "--wait needs a value"; WAIT="$2"; shift ;;
     --active)    ACTIVE=1 ;;
     --upgrade)   UPGRADE=1 ;;
     --no-start)  NO_START=1 ;;
     --dry-run)   DRY_RUN=1 ;;
+    --doctor)    DOCTOR=1 ;;
     --uninstall) UNINSTALL=1 ;;
     --purge)     PURGE=1 ;;
     --yes|-y)    YES=1 ;;
@@ -84,7 +107,7 @@ done
 
 case "$WAIT" in ''|*[!0-9]*) die "--wait must be a number of seconds" ;; esac
 case "$REPO" in */*) : ;; *) die "--repo must look like OWNER/NAME" ;; esac
-case "$REPO$REF" in *[!A-Za-z0-9._/-]*) die "--repo/--ref contain unexpected characters" ;; esac
+case "$REPO$REF$VERSION" in *[!A-Za-z0-9._/-]*) die "--repo/--ref/--version contain unexpected characters" ;; esac
 [ "$PURGE" = 0 ] || [ "$UNINSTALL" = 1 ] || die "--purge only makes sense with --uninstall"
 
 # ---------------------------------------------------------------------------
@@ -131,6 +154,37 @@ env_ensure() {
   esac
 }
 
+# env_set KEY VALUE: set KEY unconditionally (for non-secret settings such as the version).
+env_set() {
+  if grep -q "^$1=" "$DIR/.env" 2>/dev/null; then
+    awk -v k="$1" -v v="$2" 'BEGIN{FS=OFS="="} $1==k{print k"="v; next} {print}' \
+      "$DIR/.env" >"$DIR/.env.tmp" && mv "$DIR/.env.tmp" "$DIR/.env" && chmod 600 "$DIR/.env"
+  else
+    printf '%s=%s\n' "$1" "$2" >>"$DIR/.env"
+  fi
+}
+
+# Version to install: --version / $PADDOCK_VERSION > stamped into this script >
+# already recorded in .env > none (build from source). A leading "v" is dropped
+# (image tags are 1.2.3, git tags are v1.2.3).
+resolve_version() {
+  [ -n "$VERSION" ] || VERSION="$STAMPED_VERSION"
+  [ -n "$VERSION" ] || VERSION="$(env_get PADDOCK_VERSION)"
+  VERSION="${VERSION#v}"
+  case "$VERSION" in dev) VERSION="" ;; esac     # "dev" is the from-source tag
+  if [ -z "$REF" ]; then
+    if [ -n "$VERSION" ]; then REF="v$VERSION"; else REF="main"; fi
+  fi
+}
+
+# Directory holding a release zip's files (compose file next to this script), or empty.
+bundle_dir() {
+  [ -f "$0" ] || return 0
+  d="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || return 0
+  [ -f "$d/$COMPOSE_FILE" ] && printf '%s' "$d"
+  return 0
+}
+
 compose() {
   if [ "$ACTIVE" = 1 ]; then
     docker compose -p "$PROJECT" --project-directory "$DIR" -f "$DIR/$COMPOSE_FILE" -f "$DIR/$OVERRIDE_FILE" \
@@ -152,12 +206,163 @@ check_docker() {
   say "   docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo ok), compose ok"
 }
 
+# ---------------------------------------------------------------------------
+# preflight / doctor: one line per check, a plain-English fix for each problem
+# ---------------------------------------------------------------------------
+CHK_FAIL=0
+CHK_WARN=0
+
+# chk STATUS NAME DETAIL [FIX]   (STATUS: ok | warn | fail)
+chk() {
+  case "$1" in
+    ok)   tag="${G}[ OK ]${N}" ;;
+    warn) tag="${Y}[WARN]${N}"; CHK_WARN=$((CHK_WARN + 1)) ;;
+    *)    tag="${R}[FAIL]${N}"; CHK_FAIL=$((CHK_FAIL + 1)) ;;
+  esac
+  say "  $tag $2: $3"
+  if [ "$1" != ok ] && [ -n "${4:-}" ]; then printf '%s\n' "$4" | sed 's/^/           /'; fi
+}
+
+host_os() { case "$(uname -s 2>/dev/null)" in Darwin) echo mac ;; *) echo linux ;; esac; }
+
+mem_mb() {
+  if [ -n "${PADDOCK_TEST_MEM_MB:-}" ]; then echo "$PADDOCK_TEST_MEM_MB"; return 0; fi
+  if [ -r /proc/meminfo ]; then
+    awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo
+  elif have sysctl; then
+    echo $(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+  else
+    echo 0
+  fi
+}
+
+# Free space (MB) where Docker keeps images, else where Paddock is installed.
+free_mb() {
+  if [ -n "${PADDOCK_TEST_FREE_MB:-}" ]; then echo "$PADDOCK_TEST_FREE_MB"; return 0; fi
+  root=""
+  if have docker; then root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"; fi
+  [ -n "$root" ] && [ -d "$root" ] || root="$DIR"
+  while [ ! -d "$root" ] && [ "$root" != "/" ] && [ "$root" != "." ]; do root="$(dirname "$root")"; done
+  df -Pm "$root" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+port_busy() { # port_busy PORT: 0 when something is listening there
+  if have ss; then
+    ss -ltn 2>/dev/null | awk -v want=":$1" '$4 ~ (want "$") {f=1} END {exit !f}'
+  elif have lsof; then
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+  elif have nc; then
+    nc -z 127.0.0.1 "$1" >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+own_stack_running() {
+  have docker || return 1
+  [ -n "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null)" ]
+}
+
+doctor_docker() { # the Docker checks as table lines (check_docker dies on the first problem instead)
+  if ! have docker; then
+    if [ "$(host_os)" = mac ]; then
+      chk fail "Docker" "not installed" "Install Docker Desktop (free): https://www.docker.com/products/docker-desktop/
+Open it once and wait for \"Engine running\", then run this installer again."
+    else
+      chk fail "Docker" "not installed" "Install Docker Engine: https://docs.docker.com/engine/install/
+Then run this installer again."
+    fi
+    return 0
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    chk fail "Docker Compose" "version 2 not found" "Update Docker (Docker Desktop includes Compose v2): https://docs.docker.com/compose/install/"
+    return 0
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    if [ "$(host_os)" = mac ]; then
+      chk fail "Docker engine" "not running" "Start Docker Desktop (open -a Docker) and wait until it says \"Engine running\", then try again."
+    else
+      chk fail "Docker engine" "not reachable" "Start it:                   sudo systemctl start docker
+Or allow your user:         sudo usermod -aG docker \"\$USER\"   (then log out and back in)
+Or re-run this installer with sudo."
+    fi
+    return 0
+  fi
+  chk ok "Docker" "engine running ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo ok)), Compose v2"
+}
+
+preflight_system() { # memory, disk, ports, network: the checks that are not Docker itself
+  m="$(mem_mb)"; m="${m:-0}"
+  if [ "$m" -le 0 ]; then
+    chk warn "Memory" "could not be read"
+  elif [ "$m" -lt 2048 ]; then
+    chk fail "Memory" "$m MB. Paddock needs about 1 GB and Docker needs more on top" "Use a computer with at least 4 GB of RAM, or close other programs and try again."
+  elif [ "$m" -lt 4096 ]; then
+    chk warn "Memory" "$m MB (4 GB or more is comfortable)" "Close other programs while Paddock starts. If Docker keeps stopping, give it more memory in Docker Desktop > Settings > Resources."
+  else
+    chk ok "Memory" "$m MB"
+  fi
+
+  f="$(free_mb)"; f="${f:-0}"
+  if [ "$f" -le 0 ]; then
+    chk warn "Disk space" "could not be read"
+  elif [ "$f" -lt 3072 ]; then
+    chk fail "Disk space" "$f MB free. The images alone need about 1.5 GB (5 GB with the active worker)" "Free up space: empty the trash, delete old downloads, or run: docker system prune"
+  elif [ "$f" -lt 8192 ]; then
+    chk warn "Disk space" "$f MB free (8 GB or more is comfortable)" "Free up some space if the install runs out of room."
+  else
+    chk ok "Disk space" "$f MB free"
+  fi
+
+  own=0; own_stack_running && own=1
+  for port in ${PADDOCK_CHECK_PORTS:-3000 8080}; do
+    if ! port_busy "$port"; then
+      chk ok "Port $port" "free"
+    elif [ "$own" = 1 ]; then
+      chk ok "Port $port" "in use by Paddock itself (already running)"
+    else
+      chk fail "Port $port" "already in use by another program" "Paddock needs this port. Find the program with:   lsof -nP -iTCP:$port -sTCP:LISTEN
+Close it (or stop its container) and run this installer again."
+    fi
+  done
+
+  if [ -n "$VERSION" ] && have curl; then
+    url="${PADDOCK_REGISTRY_CHECK_URL:-https://${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}/v2/}"
+    case "$url" in https://*/*/v2/) url="https://$(printf '%s' "${url#https://}" | cut -d/ -f1)/v2/" ;; esac
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$url" 2>/dev/null || echo 000)"
+    case "$code" in
+      200|401|403) chk ok "Image download" "$url is reachable" ;;
+      *) chk warn "Image download" "cannot reach $url" "Check your internet connection, VPN, proxy or firewall. The images come from ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}." ;;
+    esac
+  fi
+}
+
+doctor_summary() {
+  say ""
+  if [ "$CHK_FAIL" -gt 0 ]; then
+    say "${R}${B}$CHK_FAIL problem(s) must be fixed before Paddock can run.${N} Fix the [FAIL] lines above, then run this again."
+  elif [ "$CHK_WARN" -gt 0 ]; then
+    say "${Y}${B}Ready, with $CHK_WARN warning(s).${N} Paddock should run; the [WARN] lines say what to watch."
+  else
+    say "${G}${B}All checks passed.${N}"
+  fi
+}
+
 fetch_sources() {
-  if [ -n "${PADDOCK_SRC_DIR:-}" ]; then
-    [ -f "$PADDOCK_SRC_DIR/$COMPOSE_FILE" ] || die "PADDOCK_SRC_DIR has no $COMPOSE_FILE"
+  src="${PADDOCK_SRC_DIR:-}"
+  [ -n "$src" ] || src="$(bundle_dir)"
+  if [ -n "$src" ]; then
+    [ -f "$src/$COMPOSE_FILE" ] || die "PADDOCK_SRC_DIR has no $COMPOSE_FILE"
     mkdir -p "$DIR"
-    cp -R "$PADDOCK_SRC_DIR"/. "$DIR"/
-    return
+    if [ "$(cd "$src" && pwd)" != "$(cd "$DIR" && pwd)" ]; then cp -R "$src"/. "$DIR"/; fi
+    # a release zip keeps the installers at its top level; keep them under scripts/ like a checkout
+    if [ -f "$DIR/install.sh" ]; then
+      mkdir -p "$DIR/scripts"
+      for f in install.sh install.ps1 install.bat; do
+        if [ -f "$DIR/$f" ]; then mv -f "$DIR/$f" "$DIR/scripts/$f"; fi
+      done
+    fi
+    return 0
   fi
   have curl || die "curl is required to download Paddock"
   have tar  || die "tar is required"
@@ -179,13 +384,15 @@ fetch_sources() {
 write_override() {
   # Wires the secrets the lite compose file does not pass through by itself.
   cat >"$DIR/$OVERRIDE_FILE" <<'YAML'
-# Written by scripts/install.sh. Passes the generated secrets to the orchestrator.
+# Written by scripts/install.sh. Passes the generated secrets (and the release
+# version, shown on Settings > System) to the orchestrator.
 services:
   orchestrator:
     environment:
       JWT_SECRET: ${JWT_SECRET:?run scripts/install.sh to generate secrets}
       PADDOCK_SECRET_KEY: ${PADDOCK_SECRET_KEY:?run scripts/install.sh to generate secrets}
       AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:?run scripts/install.sh to generate secrets}
+      PADDOCK_VERSION: ${PADDOCK_VERSION:-}
 YAML
 }
 
@@ -233,8 +440,9 @@ if [ "$UNINSTALL" = 1 ]; then
       read -r ans </dev/tty
       [ "$ans" = "delete" ] || die "aborted"
     fi
-    compose down -v --remove-orphans || true
+    # refuse BEFORE `down -v` destroys the data volume of a folder we would then not remove
     case "$DIR" in ''|/|"${HOME:-/nonexistent}") die "refusing to delete '$DIR'" ;; esac
+    compose down -v --remove-orphans || true
     rm -rf "$DIR"
     say "${G}removed${N} containers, data volume and $DIR"
   else
@@ -247,19 +455,45 @@ fi
 # ---------------------------------------------------------------------------
 # install / re-run
 # ---------------------------------------------------------------------------
+INSTALLED_VERSION="$(env_get PADDOCK_VERSION)"
+resolve_version
+# New release than the one on disk: the compose file may have changed too.
+if [ -n "$VERSION" ] && [ "$VERSION" != "$INSTALLED_VERSION" ] && looks_like_install; then UPGRADE=1; fi
+BUNDLE="$(bundle_dir)"
+
+if [ "$DOCTOR" = 1 ]; then
+  step "checking this computer for Paddock ($DIR)"
+  doctor_docker
+  preflight_system
+  doctor_summary
+  [ "$CHK_FAIL" = 0 ] || exit 1
+  exit 0
+fi
+
 step "checking prerequisites"
 if [ "$DRY_RUN" = 1 ]; then
   plan "check: docker, 'docker compose' v2, reachable daemon, curl, tar"
+  plan "check: memory, free disk space, ports ${PADDOCK_CHECK_PORTS:-3000 8080}, image registry reachable"
 else
   check_docker
+  preflight_system
+  if [ "$CHK_FAIL" -gt 0 ]; then
+    doctor_summary
+    die "this computer is not ready yet (see the [FAIL] lines above); fix them and run the installer again. 'install.sh --doctor' re-runs just these checks."
+  fi
+  [ "$CHK_WARN" = 0 ] || say "   ($CHK_WARN warning(s) above; continuing)"
 fi
 
 step "installing into $DIR"
+if [ -n "$VERSION" ]; then say "   release $VERSION (prebuilt images from ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev})"
+else say "   no release version: images will be built from source"; fi
 if [ "$DRY_RUN" = 1 ]; then
   if [ -f "$DIR/$COMPOSE_FILE" ] && [ "$UPGRADE" = 0 ]; then
     plan "sources already present in $DIR: keep them (use --upgrade to refresh)"
   elif [ -n "${PADDOCK_SRC_DIR:-}" ]; then
     plan "copy sources from $PADDOCK_SRC_DIR to $DIR"
+  elif [ -n "$BUNDLE" ]; then
+    plan "copy the release files from $BUNDLE to $DIR (no download)"
   else
     plan "download https://codeload.github.com/$REPO/tar.gz/$REF and unpack into $DIR"
   fi
@@ -267,12 +501,18 @@ if [ "$DRY_RUN" = 1 ]; then
   for k in POSTGRES_PASSWORD PADDOCK_APP_DB_PASSWORD ADMIN_BOOTSTRAP_PASSWORD SERVICE_API_KEY JWT_SECRET PADDOCK_SECRET_KEY AUDIT_HMAC_KEY; do
     plan "generate $k only if it is not already set"
   done
-  plan "write $DIR/$OVERRIDE_FILE (passes JWT_SECRET, PADDOCK_SECRET_KEY, AUDIT_HMAC_KEY to the orchestrator)"
+  [ -z "$VERSION" ] || plan "set PADDOCK_VERSION=$VERSION in $DIR/.env"
+  plan "write $DIR/$OVERRIDE_FILE (passes JWT_SECRET, PADDOCK_SECRET_KEY, AUDIT_HMAC_KEY, PADDOCK_VERSION to the orchestrator)"
   if [ "$NO_START" = 1 ]; then
     plan "(--no-start) stop here"
   else
     if [ "$ACTIVE" = 1 ]; then prof=" --profile active"; else prof=""; fi
-    plan "docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE$prof up -d --build"
+    if [ -n "$VERSION" ]; then
+      plan "docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE$prof pull"
+      plan "docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE$prof up -d --no-build"
+    else
+      plan "docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE$prof up -d --build"
+    fi
     plan "wait for $API_URL/healthz and $UI_URL/ (up to ${WAIT}s)"
     plan "print the URL and the admin credentials"
   fi
@@ -305,16 +545,34 @@ env_ensure SERVICE_API_KEY rand_key
 env_ensure JWT_SECRET rand_key
 env_ensure PADDOCK_SECRET_KEY rand_key
 env_ensure AUDIT_HMAC_KEY rand_key
+if [ -n "$VERSION" ]; then env_set PADDOCK_VERSION "$VERSION"; say "   PADDOCK_VERSION=$VERSION"; fi
 write_override
 
 if [ "$NO_START" = 1 ]; then
   say "${G}prepared${N} $DIR (not started). Start with:"
-  say "   cd $DIR && docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE up -d --build"
+  if [ -n "$VERSION" ]; then
+    say "   cd $DIR && docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE pull && docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE up -d --no-build"
+  else
+    say "   cd $DIR && docker compose -p $PROJECT -f $COMPOSE_FILE -f $OVERRIDE_FILE up -d --build"
+  fi
   exit 0
 fi
 
-step "starting Paddock (first run builds the images; this can take several minutes)"
-compose up -d --build
+if [ -n "$VERSION" ]; then
+  step "downloading the Paddock images (release $VERSION, about 1-2 minutes)"
+  if compose pull; then
+    step "starting Paddock"
+    compose up -d --no-build
+  elif [ -f "$DIR/orchestrator/Dockerfile" ]; then
+    warn "could not download the prebuilt images; building from source instead (15+ minutes)"
+    compose up -d --build
+  else
+    die "could not download the Paddock images for release $VERSION from ${PADDOCK_REGISTRY:-ghcr.io/brandongraff-dev}. Check your internet connection (and any proxy or firewall), then re-run this installer. If the release is brand new, its images may still be publishing: wait a few minutes and try again."
+  fi
+else
+  step "starting Paddock (first run builds the images; this can take several minutes)"
+  compose up -d --build
+fi
 
 healthy=0
 wait_healthy && healthy=1
@@ -330,6 +588,11 @@ say ""
 say "   The password is stored in $DIR/.env (ADMIN_BOOTSTRAP_PASSWORD). After you sign in, the"
 say "   first-run wizard (/setup) walks you through adding a domain and a first scan."
 say "   Connect your tools:  Integrations > Connect anything  (docs/CONNECT.md)"
-say "   Stop:      sh install.sh --uninstall --dir $DIR"
-say "   Upgrade:   sh install.sh --upgrade --dir $DIR"
+say "   Stop:      sh $DIR/scripts/install.sh --uninstall --dir $DIR"
+if [ -n "$VERSION" ]; then
+  say "   Upgrade:   run the installer from the latest release again:"
+  say "              curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sh -s -- --dir $DIR"
+else
+  say "   Upgrade:   sh $DIR/scripts/install.sh --upgrade --dir $DIR"
+fi
 [ "$healthy" = 1 ] || exit 1

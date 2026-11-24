@@ -89,6 +89,23 @@ export interface AgentOut {
   status: string;
 }
 
+export interface AiCredential {
+  api_key?: string | null;
+}
+
+export interface AiKeyIn {
+  api_key: string;
+}
+
+export interface AiStatus {
+  brain: string;
+  configured: boolean;
+  editable: boolean;
+  hint?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
 export interface AlertDeliveryOut {
   change_id: string | null;
   channel: string;
@@ -3125,6 +3142,11 @@ export const OPERATIONS = {
   getSuppression: ["GET", "/v1/suppressions/{sup_id}", false],
   patchSuppression: ["PATCH", "/v1/suppressions/{sup_id}", false],
   deleteSuppression: ["DELETE", "/v1/suppressions/{sup_id}", false],
+  systemInventory: ["GET", "/v1/system", false],
+  getAi: ["GET", "/v1/system/ai", false],
+  putAi: ["PUT", "/v1/system/ai", false],
+  deleteAi: ["DELETE", "/v1/system/ai", false],
+  getCredential: ["GET", "/v1/system/ai/credential", false],
   servicesStatus: ["GET", "/v1/system/services", false],
   listFeeds: ["GET", "/v1/ti/feeds", false],
   createFeed: ["POST", "/v1/ti/feeds", false],
@@ -5148,6 +5170,45 @@ export abstract class GeneratedOperations {
    */
   deleteSuppression(supId: string, options?: RequestOptions): Promise<void> {
     return this._request<void>("DELETE", "/v1/suppressions/{sup_id}", { pathParams: { sup_id: supId }, options });
+  }
+
+  /**
+   * GET /v1/system — System Inventory
+   *
+   * What this install is made of, and what is healthy right now.
+   */
+  systemInventory(options?: RequestOptions): Promise<Record<string, unknown>> {
+    return this._request<Record<string, unknown>>("GET", "/v1/system", { options });
+  }
+
+  /**
+   * GET /v1/system/ai — Get Ai
+   */
+  getAi(options?: RequestOptions): Promise<AiStatus> {
+    return this._request<AiStatus>("GET", "/v1/system/ai", { options });
+  }
+
+  /**
+   * PUT /v1/system/ai — Put Ai
+   */
+  putAi(body: AiKeyIn, options?: RequestOptions): Promise<AiStatus> {
+    return this._request<AiStatus>("PUT", "/v1/system/ai", { body, options });
+  }
+
+  /**
+   * DELETE /v1/system/ai — Delete Ai
+   */
+  deleteAi(options?: RequestOptions): Promise<AiStatus> {
+    return this._request<AiStatus>("DELETE", "/v1/system/ai", { options });
+  }
+
+  /**
+   * GET /v1/system/ai/credential — Get Credential
+   *
+   * The saved key, for the brain service. Only the fleet service key may call this.
+   */
+  getCredential(options?: RequestOptions): Promise<AiCredential> {
+    return this._request<AiCredential>("GET", "/v1/system/ai/credential", { options });
   }
 
   /**

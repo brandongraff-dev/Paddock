@@ -11,6 +11,7 @@ GitHub-hosted runners and published to GHCR as
 | SBOM — CycloneDX JSON | `syft` | signed in-toto attestation + release asset |
 | SLSA build provenance (v1) | `actions/attest-build-provenance` | registry + GitHub attestation store |
 | `IMAGE_DIGESTS.txt`, `SBOM_SHA256SUMS.txt` | digest/sha256 manifests | release assets, each with a keyless `*.sigstore.json` bundle |
+| `BUNDLE_SHA256SUMS.txt` | sha256 of the install zip and the stamped `install.ps1` / `install.sh` | release asset with a keyless `*.sigstore.json` bundle |
 
 No long-lived signing key exists. Trust is rooted in the GitHub Actions OIDC
 identity of the release workflow **at a tag ref** of this repository.
@@ -71,6 +72,25 @@ cosign verify-blob SBOM_SHA256SUMS.txt \
   --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER"
 sha256sum -c SBOM_SHA256SUMS.txt
 ```
+
+### The Windows setup app and install bundle
+
+`Paddock-Setup.exe`, `paddock-lite-X.Y.Z.zip`, `install.ps1` and `install.sh` are
+attached to each release. The exe is **not code-signed yet** (Windows SmartScreen
+warns on first run); its integrity comes from the signed checksum file below and,
+additionally, `gh attestation verify Paddock-Setup.exe -R "$REPO"` (SLSA build
+provenance). Check them before running anything you downloaded:
+
+```bash
+gh release download "$TAG" -R "$REPO" -p 'BUNDLE_SHA256SUMS.txt*' -p 'Paddock-Setup.exe' -p 'paddock-lite-*.zip' -p 'install.*'
+cosign verify-blob BUNDLE_SHA256SUMS.txt \
+  --bundle BUNDLE_SHA256SUMS.txt.sigstore.json \
+  --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER"
+sha256sum -c BUNDLE_SHA256SUMS.txt
+```
+
+The installers only pull the images of the version they are stamped with, and
+the images are signed as in section 1.
 
 ## 3. SLSA provenance (how and from what it was built)
 

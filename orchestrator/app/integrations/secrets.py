@@ -56,14 +56,19 @@ def has_persistent_key() -> bool:
     return bool(os.environ.get("PADDOCK_SECRET_KEY"))
 
 
-def encrypt_secrets(values: Mapping[str, str]) -> str:
+#: Default additional-authenticated-data. Other features pass their own so a blob
+#: encrypted for one purpose cannot be decrypted (or swapped in) as another.
+INTEGRATION_AAD = b"paddock-integration"
+
+
+def encrypt_secrets(values: Mapping[str, str], aad: bytes = INTEGRATION_AAD) -> str:
     key = _keys()[0]
     nonce = os.urandom(12)
-    ct = AESGCM(key).encrypt(nonce, json.dumps(dict(values)).encode(), b"paddock-integration")
+    ct = AESGCM(key).encrypt(nonce, json.dumps(dict(values)).encode(), aad)
     return f"v1:{_key_id(key)}:{base64.urlsafe_b64encode(nonce + ct).decode()}"
 
 
-def decrypt_secrets(blob: str | None) -> dict[str, str]:
+def decrypt_secrets(blob: str | None, aad: bytes = INTEGRATION_AAD) -> dict[str, str]:
     if not blob:
         return {}
     version, kid, payload = blob.split(":", 2)
@@ -73,7 +78,7 @@ def decrypt_secrets(blob: str | None) -> dict[str, str]:
     nonce, ct = raw[:12], raw[12:]
     for key in _keys():
         if _key_id(key) == kid:
-            return json.loads(AESGCM(key).decrypt(nonce, ct, b"paddock-integration"))
+            return json.loads(AESGCM(key).decrypt(nonce, ct, aad))
     raise ValueError("no configured key can decrypt this secret (rotated away?)")
 
 

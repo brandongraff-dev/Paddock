@@ -1,0 +1,15 @@
+{
+  "name": "paddock-setup",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Paddock Setup: the Windows installer wizard (a thin Tauri shell around scripts/install.ps1)",
+  "scripts": {
+    "resources": "python3 scripts/prepare_resources.py",
+    "icons": "tauri icon src-tauri/icon-source.png",
+    "build": "npm run resources && npm --prefix ui ci && tauri build --no-bundle",
+    "dev": "npm run resources && tauri dev"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.1.0"
+  }
+}

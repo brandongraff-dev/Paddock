@@ -57,6 +57,7 @@ COMPUTE_ROUTES = [
     _r("GET", rf"/v1/assets/{_ID}"),
     _r("PATCH", rf"/v1/findings/{_ID}"),
     _r("POST", r"/v1/chains"),
+    _r("GET", r"/v1/system/ai/credential"),                      # brain: the operator-saved model key
     _r("POST", r"/v1/sensors/enroll"),
     _r("POST", r"/v1/sensors/heartbeat"),
     _r("POST", r"/v1/sensors/ingest/(?:claim|done)"),

@@ -504,6 +504,95 @@
         "title": "AgentOut",
         "type": "object"
       },
+      "AiCredential": {
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          }
+        },
+        "title": "AiCredential",
+        "type": "object"
+      },
+      "AiKeyIn": {
+        "properties": {
+          "api_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Api Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key"
+        ],
+        "title": "AiKeyIn",
+        "type": "object"
+      },
+      "AiStatus": {
+        "properties": {
+          "brain": {
+            "title": "Brain",
+            "type": "string"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          }
+        },
+        "required": [
+          "configured",
+          "editable",
+          "brain"
+        ],
+        "title": "AiStatus",
+        "type": "object"
+      },
       "AlertDeliveryOut": {
         "properties": {
           "change_id": {
@@ -29987,6 +30076,131 @@
         "summary": "Patch Suppression",
         "tags": [
           "lifecycle"
+        ]
+      }
+    },
+    "/v1/system": {
+      "get": {
+        "description": "What this install is made of, and what is healthy right now.",
+        "operationId": "system_inventory_v1_system_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response System Inventory V1 System Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "System Inventory",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/v1/system/ai": {
+      "delete": {
+        "operationId": "delete_ai_v1_system_ai_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Delete Ai",
+        "tags": [
+          "system"
+        ]
+      },
+      "get": {
+        "operationId": "get_ai_v1_system_ai_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ai",
+        "tags": [
+          "system"
+        ]
+      },
+      "put": {
+        "operationId": "put_ai_v1_system_ai_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiKeyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Ai",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/v1/system/ai/credential": {
+      "get": {
+        "description": "The saved key, for the brain service. Only the fleet service key may call this.",
+        "operationId": "get_credential_v1_system_ai_credential_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiCredential"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Credential",
+        "tags": [
+          "system"
         ]
       }
     },

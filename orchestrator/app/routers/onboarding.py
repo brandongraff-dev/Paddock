@@ -244,6 +244,10 @@ def _optional_services() -> dict[str, tuple[str, str]]:
     }
 
 
+# Optional services the lite compose file DOES run. Everything else is reported
+# "not_enabled" in lite without being probed; these are probed like in full mode.
+LITE_INCLUDED = frozenset({"brain"})
+
 _cache: tuple[float, ServicesOut] | None = None
 _CACHE_SEC = 30.0
 
@@ -276,20 +280,20 @@ async def services_status():
     svcs = _optional_services()
     lite = settings.deployment_mode == "lite"
     names = list(svcs)
-    if lite:
-        results = [None] * len(names)
-    else:
-        results = await asyncio.gather(*(_probe(svcs[n][1]) for n in names))
+    # in lite only LITE_INCLUDED are probed; the rest are "not enabled"
+    off = {n for n in names if lite and n not in LITE_INCLUDED}
+    probed = [n for n in names if n not in off]
+    found = dict(zip(probed, await asyncio.gather(*(_probe(svcs[n][1]) for n in probed))))
     out = ServicesOut(
         mode=settings.deployment_mode,
         services=[
             ServiceStatus(
                 name=n,
                 feature=svcs[n][0],
-                enabled=not lite,
-                status="not_enabled" if lite else ("ok" if ok else "down"),
+                enabled=n not in off,
+                status="not_enabled" if n in off else ("ok" if found[n] else "down"),
             )
-            for n, ok in zip(names, results)
+            for n in names
         ],
     )
     _cache = (time.monotonic(), out)

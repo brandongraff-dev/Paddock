@@ -169,8 +169,11 @@ def check_lite(h: dict) -> None:
 
     status, svc = call("GET", f"{API}/v1/system/services", headers=h)
     states = {s["name"]: s["status"] for s in svc.get("services", [])} if isinstance(svc, dict) else {}
-    if status == 200 and states and all(v == "not_enabled" for v in states.values()):
-        ok(f"optional services report not_enabled ({len(states)})")
+    # brain (AI triage + Ask) is part of the lite stack; everything else is left out
+    rest = {k: v for k, v in states.items() if k != "brain"}
+    if status == 200 and rest and all(v == "not_enabled" for v in rest.values()) \
+            and states.get("brain") in ("ok", "down"):
+        ok(f"optional services report not_enabled ({len(rest)}); brain is probed ({states['brain']})")
     else:
         fail(f"services endpoint: HTTP {status} {states}")
 

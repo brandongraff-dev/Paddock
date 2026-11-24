@@ -56,3 +56,8 @@ Thumbs.db
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# installer
+installer/src-tauri/target/
+installer/src-tauri/gen/
+installer/resources/

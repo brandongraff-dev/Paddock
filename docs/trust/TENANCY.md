@@ -199,7 +199,7 @@ keys, scope writes, integrations, audit, MSP, billing, reports, admin, ...):
 |---|---|---|
 | Worker-only (`JOB_ROUTES`) | `POST /v1/scope/check`, `POST /v1/scans` (child scan), `PATCH /v1/scans/{id}`, `POST /v1/scans/{id}/start\|complete\|fail\|status`, `POST /v1/verifications/{id}/result`, `POST /v1/tls-grades/bulk`, `POST /v1/outbound/bulk` | `X-Paddock-Scan` is **mandatory** and must be a scan of the claimed tenant (409 otherwise). Verification results additionally require the verification's own scan id. |
 | Shared writes (`SHARED_WRITE_ROUTES`) | `POST /v1/findings/bulk`, `/v1/assets/bulk`, `/v1/edges/bulk` | A caller that identifies as a worker (`X-Worker-Id`) must carry its job; a compute service has no job, so it may omit it. Any `X-Paddock-Scan` that is sent is verified. |
-| Compute services (`COMPUTE_ROUTES`) | `GET /v1/assets`, `GET /v1/assets/{id}`, `PATCH /v1/findings/{id}`, `POST /v1/chains`, `POST /v1/sensors/enroll\|heartbeat\|ingest/claim\|ingest/done` | none (the sensor routes authenticate the sensor itself) |
+| Compute services (`COMPUTE_ROUTES`) | `GET /v1/assets`, `GET /v1/assets/{id}`, `PATCH /v1/findings/{id}`, `POST /v1/chains`, `GET /v1/system/ai/credential`, `POST /v1/sensors/enroll\|heartbeat\|ingest/claim\|ingest/done` | none (the sensor routes authenticate the sensor itself) |
 
 Outside strict mode nothing changes (single-tenant installs, dev).
 
@@ -213,6 +213,13 @@ Outside strict mode nothing changes (single-tenant installs, dev).
   removes is the rest of the API: it can no longer administer users, keys,
   scope, integrations or audit, and worker-only callbacks need a live job id of
   the tenant (an id an attacker would have to learn from that tenant).
+* `GET /v1/system/ai/credential` returns the operator's **Anthropic API key**
+  (decrypted) to the service key, so the brain can use a key an admin saved in
+  the dashboard. A stolen service key can therefore read that key and spend its
+  budget. It is install-wide (a global table, not a tenant row), is refused for
+  every user and API key, and is never logged or audited with its value. If
+  that is not acceptable, leave the dashboard field empty and set
+  `ANTHROPIC_API_KEY` in `brain`'s environment only.
 * `X-Paddock-Scan` proves the job exists in the claimed tenant, not that the
   caller is the worker that was handed it.
 * The real fix is **per-service keys** (a worker key cannot call compute routes

@@ -1,0 +1,137 @@
+name: Paddock Setup (installer app)
+
+# The Windows setup wizard in installer/: a Rust core (tested here), a React UI that
+# reuses the dashboard's brand and styles, and a thin Tauri shell that is built on
+# windows-latest into ONE .exe. The wizard drives scripts/install.ps1 -Json, which the
+# `installers` workflow tests on real PowerShell.
+
+on:
+  pull_request:
+    paths:
+      - "installer/**"
+      - "dashboard/src/brand/**"
+      - "dashboard/src/styles/**"
+      - "scripts/install.ps1"
+      - "scripts/make_release_bundle.py"
+      - "docker-compose.lite.yml"
+      - ".github/workflows/installer-app.yml"
+  push:
+    branches: [main]
+    paths:
+      - "installer/**"
+      - "scripts/install.ps1"
+      - ".github/workflows/installer-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Rust core (validation, args, URL allow-list)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: installer/core
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  ui:
+    name: Wizard UI (types, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: installer/ui
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: installer/ui/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+      - run: npx vite build
+      - name: A real build ships none of the demo code
+        run: |
+          if grep -rlE "docker-missing|k3J9xQ2mTzP7vW4nLb8sYd1A" dist; then echo "demo code leaked into the production bundle"; exit 1; fi
+
+  resources:
+    name: Embedded installer files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pyyaml
+      - run: python -m pytest -q scripts/tests/test_installer_resources.py scripts/tests/test_release_bundle.py
+
+  windows-exe:
+    name: Build Paddock-Setup.exe (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            installer/src-tauri/target
+          key: setup-exe-${{ runner.os }}-${{ hashFiles('installer/src-tauri/Cargo.lock') }}
+
+      - name: Build
+        shell: pwsh
+        run: |
+          python installer/scripts/prepare_resources.py
+          npm --prefix installer/ui ci
+          npm --prefix installer ci
+          Push-Location installer
+          npx tauri build --no-bundle
+          Pop-Location
+          Copy-Item installer/src-tauri/target/release/paddock-setup.exe Paddock-Setup.exe
+          Get-Item Paddock-Setup.exe | Format-List Name, Length
+
+      - name: Smoke test (it starts, opens its window, stays up)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\Paddock-Setup.exe -PassThru
+          Start-Sleep -Seconds 12
+          $p.Refresh()
+          if ($p.HasExited) { throw "Paddock-Setup.exe exited early with code $($p.ExitCode)" }
+          $title = (Get-Process -Id $p.Id).MainWindowTitle
+          Write-Host "window title: '$title'"
+          if ($title -ne 'Paddock Setup') {
+            # WebView2 creates the window lazily on some runners; the process staying up is the hard requirement
+            Write-Warning "no 'Paddock Setup' window title seen"
+          }
+          Stop-Process -Id $p.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Paddock-Setup-dev
+          path: Paddock-Setup.exe
+          retention-days: 7

@@ -321,9 +321,21 @@ This is an MVP-grade platform with real, un-papered-over gaps:
   secret or default admin credential appears in the compose files.
 - API keys are stored hashed (`sha256`), shown once, revocable.
 - Passwords are stored as bcrypt/argon2 hashes.
-- The `ANTHROPIC_API_KEY` is confined to the `brain` service and must stay out
-  of logs; the FP harness and other tooling never transmit project or user
-  identifiers to third parties.
+- The `ANTHROPIC_API_KEY` is optional and must stay out of logs; the FP harness
+  and other tooling never transmit project or user identifiers to third
+  parties. It can reach `brain` two ways: from `.env` (environment of `brain`
+  only), or pasted by an admin into **Settings > System > AI features**. The
+  dashboard-saved key is stored **encrypted** in the orchestrator database
+  (AES-256-GCM with `PADDOCK_SECRET_KEY`, its own AAD so it cannot be swapped
+  with an integration credential), is **never returned** to a browser (only
+  "configured" and the last four characters), is never written to the audit
+  trail or logs, and is only released to the fleet `SERVICE_API_KEY` over the
+  internal network (`GET /v1/system/ai/credential`, refused for every user and
+  API key, `Cache-Control: no-store`). It is install-wide and only the platform
+  (default) tenant may change it. Consequence to be aware of: the orchestrator
+  now holds this secret (encrypted), and a stolen `SERVICE_API_KEY` can read it;
+  see `docs/trust/TENANCY.md`. A key saved in the dashboard takes priority over
+  the one in `.env`; remove it there to fall back.
 - The audit log and outbound log avoid recording secret values (headers/bodies
   are summarized, not dumped).
 

@@ -68,6 +68,8 @@ from .scheduler import scheduler_loop
 from .billing import gate as billing_gate
 from .billing import router as billing_router
 from .billing import status as billing_status
+from . import ai_settings as ai_settings_router
+from . import system as system_router
 from .growth import exposure as growth_exposure
 from .growth import suppliers as growth_suppliers
 from .growth import trust as growth_trust
@@ -326,6 +328,8 @@ def create_app() -> FastAPI:
     # 402 upgrade body, and the public /status endpoint.
     app.include_router(billing_router.router)
     app.include_router(billing_status.router)
+    app.include_router(system_router.router)
+    app.include_router(ai_settings_router.router)
     app.add_exception_handler(billing_gate.PaymentRequired, billing_gate.payment_required_handler)
     app.include_router(verification_router.router)
     # MSP console (schema 033): customers, switching, rollup, templates, usage

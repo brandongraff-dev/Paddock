@@ -90,9 +90,40 @@ git clone https://github.com/brandongraff-dev/paddock && cd paddock
 make quickstart        # builds the stack, seeds a demo surface, prints the URL + login
 ```
 
+**On Windows** (no `make`, no building, no API keys; Docker Desktop must be installed):
+
+1. Download **`Paddock-Setup.exe`** from the
+   [latest release](https://github.com/brandongraff-dev/paddock/releases/latest) and double-click
+   it. A short wizard checks your PC (with a plain-English fix for anything missing), installs
+   Paddock and hands you the login. See [`installer/`](installer/README.md).
+   *Windows may say "Windows protected your PC" because the file is not yet code-signed: choose
+   More info, then Run anyway. The release lists its SHA-256 and a provenance attestation.*
+2. Prefer a script? Download **`paddock-lite-X.Y.Z.zip`** from the same page, unzip it and
+   double-click **`install.bat`**, or in PowerShell:
+   `irm https://github.com/brandongraff-dev/paddock/releases/latest/download/install.ps1 | iex`
+
+All of them pull ready-made, signed images (about 1-2 minutes), start Docker Desktop if
+it is off, generate secrets, and print the URL and admin login. Script options
+(`-Dir`, `-Active`, `-Uninstall`, `-Doctor`) are listed at the top of
+[`scripts/install.ps1`](scripts/install.ps1). `-Doctor` checks Docker, WSL,
+virtualization, memory, disk and ports and explains each fix;
+how to verify the download is in [`docs/trust/VERIFY.md`](docs/trust/VERIFY.md).
+
+No release yet, or want the latest `main`? This builds from source instead (15+
+minutes):
+
+```powershell
+irm https://raw.githubusercontent.com/brandongraff-dev/paddock/main/scripts/install.ps1 | iex
+```
+
+What's new, and an honest list of what is and is not proven yet, is in [`CHANGELOG.md`](CHANGELOG.md)
+(also under **Settings > About** in the dashboard).
+
 Open **http://localhost:3000** and start on the **Graph** page. Prefer something
-lighter? `make lite` runs a 5-service single node (~150 MB RAM) with the same
-hardening. Production: [Helm chart and operations guide](docs/OPERATIONS.md).
+lighter? `make lite` runs a 6-service single node (about 150 MB RAM for the
+original five; the AI service adds a little more) with the same hardening.
+AI triage and Ask work without any key; to turn on the AI summaries, paste an
+Anthropic key under **Settings > System > AI features**, no `.env` editing. Production: [Helm chart and operations guide](docs/OPERATIONS.md).
 
 **Scan your own repo, no server needed** (the open-source `paddock` CLI):
 

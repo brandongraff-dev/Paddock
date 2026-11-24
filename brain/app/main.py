@@ -44,6 +44,7 @@ class BrainService:
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
         await self.db.connect()
+        await self.llm.refresh_key(force=True)
         self._ready = True
         log.info("brain service started (llm_enabled=%s model=%s)",
                  self.llm.is_enabled(), self.cfg.anthropic_model)
@@ -63,6 +64,8 @@ class BrainService:
     async def triage(self) -> dict[str, Any]:
         """Cluster the tenant a trigger named, else every active tenant (each
         tenant's findings are clustered, and the clusters stored, separately)."""
+        await self.llm.refresh_key()
+
         async def _one() -> dict[str, Any]:
             async with self._triage_lock:
                 return await run_triage(self.db, self.llm)
@@ -103,6 +106,7 @@ class BrainService:
         return web.json_response({"ready": ok}, status=200 if ok else 503)
 
     async def _stats(self, _req: web.Request) -> web.Response:
+        await self.llm.refresh_key()
         try:
             clusters = await self.db.count_clusters()
             queries = await self.db.count_queries()
@@ -142,6 +146,7 @@ class BrainService:
                 {"ok": False, "reason": "question_required"}, status=400
             )
         asked_by = (body or {}).get("asked_by")
+        await self.llm.refresh_key()
         try:
             res = await ask_module.answer(
                 self.db, self.llm, self.cfg, question, asked_by

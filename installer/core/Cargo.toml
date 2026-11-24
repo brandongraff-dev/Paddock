@@ -1,0 +1,9 @@
+[package]
+name = "paddock-installer-core"
+version = "0.1.0"
+edition = "2021"
+description = "Validation and argument building for the Paddock Setup app. No dependencies, so it builds and tests anywhere."
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
