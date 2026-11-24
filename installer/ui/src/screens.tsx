@@ -1,279 +1,204 @@
 import { useState } from "react";
 import { PADDOCK_URL, type AppState } from "./bridge";
+import { CheckTable, CopyRow, Disclosure, Problems, Screen, Spinner } from "./components";
+import { explainError, friendlyStep, friendlyWarning } from "./humanize";
+import { hasBlocker, percent, type RunState } from "./protocol";
 import { CANCELLED } from "./useRun";
-import { CheckList, CopyRow, Panel, Spinner } from "./components";
-import { hasBlocker, percent, PHASES, phaseState, type Check, type RunState } from "./protocol";
 
 type Open = (url: string) => void;
 
-/* ------------------------------ welcome ------------------------------ */
+/* ------------------------------ 1. ready ------------------------------ */
 
-export function Welcome({ onStart }: { onStart: () => void }) {
-  return (
-    <div className="setup-step">
-      <h1 className="setup-title">Install Paddock</h1>
-      <p className="setup-lede">
-        Paddock keeps watch over the websites and servers you put on the internet and tells you what to fix first.
-        This sets it up on this PC in about five minutes. You do not need any accounts or keys.
-      </p>
-      <ul className="setup-list">
-        <li>Runs privately on this PC, inside Docker Desktop. Nothing is sent anywhere.</li>
-        <li>Takes about 1.5 GB of disk space and 2 GB of memory while it is running.</li>
-        <li>Strong passwords are created for you. You will see the login at the end.</li>
-        <li>AI summaries are optional and can be switched on later, in Settings.</li>
-      </ul>
-      <div className="setup-actions">
-        <button type="button" className="primary" onClick={onStart}>Get started</button>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------ PC check ------------------------------ */
-
-export function PcCheck({ run, onOpen, onAgain, onBack, onNext }: {
-  run: RunState | null; onOpen: Open; onAgain: () => void; onBack: () => void; onNext: () => void;
+/** The PC check runs by itself; this only interrupts when something needs fixing. */
+export function Ready({ pc, dir, active, dirError, onDir, onActive, onOpen, onAgain, onInstall, onClose }: {
+  pc: RunState | null; dir: string; active: boolean; dirError: string | null;
+  onDir: (v: string) => void; onActive: (v: boolean) => void; onOpen: Open; onAgain: () => void; onInstall: () => void; onClose: () => void;
 }) {
-  const checking = !run || run.status === "running";
-  const blocked = !!run && hasBlocker(run.checks);
-  const warns = run?.checks.filter((c) => c.status === "warn").length ?? 0;
-  const crashed = !!run && run.status === "failed" && run.checks.length === 0;
+  const checking = !pc || pc.status === "running";
+  const blocked = !!pc && hasBlocker(pc.checks);
+  const crashed = !!pc && pc.status === "failed" && pc.checks.length === 0;
+  const notes = pc ? pc.checks.filter((c) => c.status === "warn").length : 0;
+  const ready = !checking && !blocked && !crashed;
+  const canInstall = ready && dir.trim().length > 0;
+
   return (
-    <div className="setup-step">
-      <h1 className="setup-title">Checking your PC</h1>
-      <p className="setup-lede">
-        {checking
-          ? "Making sure Docker Desktop and your PC are ready. This takes a few seconds."
-          : blocked
-            ? "A few things need your attention before Paddock can run. Each one says how to fix it."
-            : warns > 0
-              ? "You can continue. Keep an eye on the notes below."
-              : "Everything looks good."}
-      </p>
-      {checking && !run?.checks.length && <div className="inst-wait"><Spinner label="Checking" /> Checking…</div>}
-      {run && run.checks.length > 0 && (
-        <Panel title="This PC">
-          <CheckList checks={run.checks} onOpen={onOpen} />
-        </Panel>
-      )}
-      {crashed && run?.error && <div className="setup-error" role="alert">{run.error}</div>}
-      <div className="setup-actions">
-        <button type="button" className="ghost" onClick={onBack}>Back</button>
-        <button type="button" onClick={onAgain} disabled={checking}>Check again</button>
-        <button type="button" className="primary" onClick={onNext} disabled={checking || blocked || crashed}>Continue</button>
-      </div>
-    </div>
+    <Screen
+      title="Install Paddock"
+      lede="Paddock runs privately on this PC, inside Docker Desktop. Setup takes about five minutes."
+      left={<button type="button" onClick={onClose}>Cancel</button>}
+      actions={<button type="submit" form="inst-ready" className="primary" disabled={!canInstall}>Install</button>}
+    >
+      <section className="inst-section" aria-labelledby="inst-pc-h">
+        <h2 id="inst-pc-h" className="inst-h2">Your PC</h2>
+        {checking && <p className="inst-status"><Spinner label="Checking" /> Checking your PC</p>}
+        {ready && (
+          <p className="inst-status" data-tone="ok"><span className="inst-mark" aria-hidden="true">✓</span> {notes > 0 ? `Ready to install, with ${notes === 1 ? "a note" : `${notes} notes`}` : "Your PC is ready"}</p>
+        )}
+        {blocked && <p className="inst-status" data-tone="bad"><span className="inst-mark" aria-hidden="true">✕</span> {pc!.checks.filter((c) => c.status === "fail").length === 1 ? "One thing needs fixing first" : "A few things need fixing first"}</p>}
+        {crashed && pc?.error && <p className="inst-error" role="alert">{explainError(pc.error).headline} {explainError(pc.error).hint}</p>}
+        {pc && <Problems checks={pc.checks} onOpen={onOpen} />}
+        {pc && pc.checks.length > 0 && !checking && (
+          <Disclosure summary="Show all checks"><CheckTable checks={pc.checks} /></Disclosure>
+        )}
+        {!checking && (blocked || crashed) && (
+          <p><button type="button" onClick={onAgain}>Check again</button></p>
+        )}
+      </section>
+
+      <form id="inst-ready" className="inst-section" onSubmit={(e) => { e.preventDefault(); if (canInstall) onInstall(); }}>
+        <label className="inst-h2" htmlFor="inst-dir">Install location</label>
+        <input id="inst-dir" className="inst-input" value={dir} onChange={(e) => onDir(e.target.value)} spellCheck={false} autoComplete="off" aria-invalid={!!dirError} aria-describedby={dirError ? "inst-dir-err" : undefined} />
+        {dirError && <p id="inst-dir-err" className="inst-error" role="alert">{dirError}</p>}
+        <Disclosure summary="More options">
+          <label className="inst-check">
+            <input type="checkbox" checked={active} onChange={(e) => onActive(e.target.checked)} />
+            <span>Include the active scanner
+              <span className="inst-hint">Probes your own sites for open ports and weak TLS. Adds about 3.5 GB; you can add it later.</span>
+            </span>
+          </label>
+        </Disclosure>
+      </form>
+    </Screen>
   );
 }
 
-/* ------------------------------ options ------------------------------ */
+/* ------------------------------ 2. installing ------------------------------ */
 
-export function Options({ dir, active, error, onDir, onActive, onBack, onInstall }: {
-  dir: string; active: boolean; error: string | null;
-  onDir: (v: string) => void; onActive: (v: boolean) => void; onBack: () => void; onInstall: () => void;
-}) {
-  return (
-    <form className="setup-step" onSubmit={(e) => { e.preventDefault(); onInstall(); }}>
-      <h1 className="setup-title">Where should it go?</h1>
-      <p className="setup-lede">
-        Paddock keeps its settings and passwords in one folder. The default is fine for almost everyone.
-      </p>
-      <div className="setup-form">
-        <label className="setup-label" htmlFor="inst-dir">Install folder</label>
-        <input id="inst-dir" className="mono" value={dir} onChange={(e) => onDir(e.target.value)} spellCheck={false} autoComplete="off" />
-        <label className="setup-check">
-          <input type="checkbox" checked={active} onChange={(e) => onActive(e.target.checked)} />
-          <span>
-            Also install the active scanner
-            <span className="setup-muted"> Probes your own sites for open ports and weak TLS. Adds about 3.5 GB. You can add it later.</span>
-          </span>
-        </label>
-      </div>
-      {error && <div className="setup-error" role="alert">{error}</div>}
-      <div className="setup-actions">
-        <button type="button" className="ghost" onClick={onBack}>Back</button>
-        <button type="submit" className="primary" disabled={!dir.trim()}>Install</button>
-      </div>
-    </form>
-  );
-}
-
-/* ------------------------------ installing ------------------------------ */
-
-function Log({ lines }: { lines: string[] }) {
-  return (
-    <details className="inst-details">
-      <summary>Show details</summary>
-      <pre className="inst-log" tabIndex={0} aria-label="Installer output">{lines.slice(-200).join("\n") || "Nothing yet."}</pre>
-    </details>
-  );
-}
-
-export function ProblemList({ checks, onOpen }: { checks: Check[]; onOpen: Open }) {
-  const problems = checks.filter((c) => c.status !== "ok");
-  if (!problems.length) return null;
-  return <Panel title="What to fix"><CheckList checks={problems} onOpen={onOpen} /></Panel>;
-}
-
-export function Installing({ run, onCancel }: { run: RunState; onCancel: () => void }) {
+export function Installing({ run, action = "install", onCancel }: { run: RunState; action?: "install" | "stop" | "remove"; onCancel?: () => void }) {
   const pct = percent(run);
+  const slow = run.warnings.length > 0 ? friendlyWarning(run.warnings[run.warnings.length - 1]) : null;
+  const verb = action === "install" ? "Installing Paddock" : action === "stop" ? "Stopping Paddock" : "Removing Paddock";
   return (
-    <div className="setup-step">
-      <h1 className="setup-title">Installing Paddock</h1>
-      <p className="setup-lede" aria-live="polite">{run.stepText || "Getting ready…"}</p>
-      <div className="inst-progress" role="progressbar" aria-label="Install progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} data-busy={run.step === "images"}>
-        <i style={{ width: `${pct}%` }} />
-      </div>
-      <ol className="inst-phases">
-        {PHASES.map((p) => {
-          const st = phaseState(run, p.id);
-          return (
-            <li key={p.id} data-state={st}>
-              <span className="inst-phase-dot" aria-hidden="true">{st === "done" ? "✓" : ""}</span>
-              <span>{p.label}</span>
-              <span className="sr-only">{st === "done" ? " (done)" : st === "active" ? " (in progress)" : ""}</span>
-            </li>
-          );
-        })}
-      </ol>
-      {run.step === "images" && (
-        <p className="setup-muted">This is the longest part: about 1.5 GB to download, usually one to two minutes. It is safe to leave this window open in the background.</p>
+    <Screen
+      title={verb}
+      lede={<span aria-live="polite">{friendlyStep(run.step, action)}</span>}
+      actions={onCancel ? <button type="button" onClick={onCancel}>Cancel</button> : <span />}
+    >
+      {action === "install" ? (
+        <div className="inst-progress-row">
+          <div className="inst-progress" role="progressbar" aria-label="Install progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} data-busy={run.step === "images"}>
+            <i style={{ width: `${pct}%` }} />
+          </div>
+          <span className="inst-pct">{pct}%</span>
+        </div>
+      ) : (
+        <p className="inst-status"><Spinner label={verb} /> {friendlyStep(run.step, action)}</p>
       )}
-      {run.warnings.length > 0 && <div className="inst-warn" role="status">{run.warnings[run.warnings.length - 1]}</div>}
-      <Log lines={run.log} />
-      <div className="setup-actions">
-        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
-      </div>
-    </div>
+      {run.step === "images" && <p className="inst-hint">This is the longest part. It usually takes one to two minutes, and you can leave this window open in the background.</p>}
+      {slow && <p className="inst-note" role="status">{slow}</p>}
+      <Details run={run} />
+    </Screen>
   );
 }
 
-export function Failed({ title, run, onOpen, onRetry, onBack, backLabel, onCopy }: {
-  title: string; run: RunState; onOpen: Open; onRetry: () => void; onBack?: () => void; backLabel?: string; onCopy: () => void;
+function Details({ run, label = "Details" }: { run: RunState; label?: string }) {
+  return (
+    <Disclosure summary={label}>
+      <pre className="inst-log" tabIndex={0} aria-label="Installer output">{run.log.slice(-200).join("\n") || "Nothing yet."}</pre>
+    </Disclosure>
+  );
+}
+
+/* ------------------------------ failure ------------------------------ */
+
+export function Failed({ run, onOpen, onRetry, onBack, backLabel = "Back", onCopy }: {
+  run: RunState; onOpen: Open; onRetry: () => void; onBack: () => void; backLabel?: string; onCopy: () => void;
 }) {
   const cancelled = run.error === CANCELLED;
+  const e = explainError(run.error ?? "");
   return (
-    <div className="setup-step">
-      <h1 className="setup-title">{cancelled ? "Setup stopped" : title}</h1>
-      <div className={cancelled ? "inst-warn" : "setup-error"} role="alert">{run.error}</div>
-      <ProblemList checks={run.checks} onOpen={onOpen} />
-      {!cancelled && <p className="setup-muted">If Docker Desktop was only just installed, restart your PC and try again. Nothing here is lost: Setup picks up where it left off.</p>}
-      <Log lines={run.log} />
-      <div className="setup-actions">
-        {onBack && <button type="button" className="ghost" onClick={onBack}>{backLabel ?? "Back"}</button>}
-        <button type="button" onClick={onCopy}>Copy details</button>
-        <button type="button" className="primary" onClick={onRetry}>Try again</button>
-      </div>
-    </div>
+    <Screen
+      title={cancelled ? "Setup stopped" : e.headline}
+      lede={cancelled ? "Run it again whenever you like. It picks up where it left off." : e.hint || undefined}
+      left={!cancelled ? <button type="button" onClick={onCopy}>Copy details</button> : undefined}
+      actions={<><button type="button" onClick={onBack}>{backLabel}</button><button type="button" className="primary" onClick={onRetry}>Try again</button></>}
+    >
+      {!cancelled && <Problems checks={run.checks} onOpen={onOpen} />}
+      {!cancelled && (
+        <Disclosure summary="Technical details">
+          <pre className="inst-log" tabIndex={0} aria-label="Technical details">{[run.error, "", ...run.log.slice(-200)].join("\n")}</pre>
+        </Disclosure>
+      )}
+    </Screen>
   );
 }
 
-/* ------------------------------ done ------------------------------ */
+/* ------------------------------ 3. done ------------------------------ */
 
 export function Done({ run, onOpen, onRetry, onClose }: { run: RunState; onOpen: Open; onRetry: () => void; onClose: () => void }) {
   const r = run.result;
   if (!r) return null;
   return (
-    <div className="setup-step">
-      <div className={`inst-badge ${r.healthy ? "ok" : "warn"}`} aria-hidden="true">{r.healthy ? "✓" : "!"}</div>
-      <h1 className="setup-title">{r.healthy ? "Paddock is running" : "Paddock is starting"}</h1>
-      <p className="setup-lede">
-        {r.healthy
-          ? "Open it in your browser and sign in with the login below. A short guide then helps you add your first domain."
-          : "It started, but is not answering yet. Give it a minute, then open it. If it still does not load, choose Check again."}
-      </p>
-      <Panel title="Your login">
-        <div className="inst-creds">
-          <CopyRow label="Address" value={r.url} />
-          <CopyRow label="User" value={r.username} />
-          <CopyRow label="Password" value={r.password} secret />
-        </div>
-        <p className="setup-muted inst-creds-note">
-          Saved in {r.dir ? <code className="mono">{r.dir}\.env</code> : "your install folder"} if you need it again.
-        </p>
-      </Panel>
-      <div className="setup-actions">
-        {!r.healthy && <button type="button" onClick={onRetry}>Check again</button>}
-        <button type="button" onClick={onClose}>Close</button>
-        <button type="button" className="primary" onClick={() => onOpen(r.url || PADDOCK_URL)}>Open Paddock</button>
-      </div>
-    </div>
+    <Screen
+      title={r.healthy ? "Paddock is running" : "Paddock is still starting"}
+      lede={r.healthy
+        ? "Open it in your browser and sign in with the details below."
+        : "It is installed but is not answering yet. Give it a minute, then open it. If it still does not load, choose Check again."}
+      actions={
+        <>
+          {!r.healthy && <button type="button" onClick={onRetry}>Check again</button>}
+          <button type="button" onClick={onClose}>Close</button>
+          <button type="button" className="primary" onClick={() => onOpen(r.url || PADDOCK_URL)}>Open Paddock</button>
+        </>
+      }
+    >
+      <section className="inst-section" aria-label="Sign-in details">
+        <CopyRow label="Address" value={r.url} />
+        <CopyRow label="User" value={r.username} />
+        <CopyRow label="Password" value={r.password} secret />
+        <p className="inst-hint">Saved in {r.dir ? <code>{r.dir}\.env</code> : "your install folder"} if you need it again.</p>
+      </section>
+    </Screen>
   );
 }
 
-/* ------------------------------ manage (already installed) ------------------------------ */
+/* ------------------------------ manage ------------------------------ */
 
 export function Manage({ app, onOpen, onStart, onStop, onRemove, onClose }: {
   app: AppState; onOpen: Open; onStart: () => void; onStop: () => void; onRemove: () => void; onClose: () => void;
 }) {
   const [confirm, setConfirm] = useState(false);
-  return (
-    <div className="setup-step">
-      <h1 className="setup-title">Paddock is installed</h1>
-      <p className="setup-lede">
-        {app.running ? "It is running on this PC." : "It is installed but not running right now."}
-        {app.version ? ` Version ${app.version}.` : ""}
-      </p>
-      <Panel title="This install">
-        <div className="inst-status">
-          <span className="inst-dot" data-on={app.running} aria-hidden="true" />
-          <strong>{app.running ? "Running" : "Stopped"}</strong>
-          <code className="mono inst-dir">{app.dir}</code>
-        </div>
-      </Panel>
-      {!confirm ? (
-        <div className="setup-actions">
-          <button type="button" className="primary" onClick={() => (app.running ? onOpen(PADDOCK_URL) : onStart())}>
-            {app.running ? "Open Paddock" : "Start Paddock"}
-          </button>
-          {app.running && <button type="button" onClick={onStart}>Update or repair</button>}
-          {app.running && <button type="button" onClick={onStop}>Stop</button>}
-          <button type="button" className="danger" onClick={() => setConfirm(true)}>Remove…</button>
-          <button type="button" className="ghost" onClick={onClose}>Close</button>
-        </div>
-      ) : (
-        <div className="inst-confirm" role="alertdialog" aria-labelledby="inst-confirm-h">
-          <h2 id="inst-confirm-h">Remove Paddock and all its data?</h2>
-          <p className="setup-muted">
-            This deletes your findings, scan history, settings and passwords from this PC. It cannot be undone.
-            To keep your data, choose Stop instead.
-          </p>
-          <div className="setup-actions">
-            <button type="button" className="ghost" onClick={() => setConfirm(false)}>Keep it</button>
-            <button type="button" className="danger" onClick={onRemove}>Delete everything</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------ stop / remove ------------------------------ */
-
-export function Work({ action, run, onBack, onRetry, onCopy, onOpen }: {
-  action: "stop" | "remove"; run: RunState; onBack: () => void; onRetry: () => void; onCopy: () => void; onOpen: Open;
-}) {
-  const verb = action === "stop" ? "Stopping" : "Removing";
-  if (run.status === "failed") {
-    return <Failed title={`${verb} did not finish`} run={run} onOpen={onOpen} onRetry={onRetry} onBack={onBack} onCopy={onCopy} />;
-  }
-  if (run.status === "succeeded") {
+  if (confirm) {
     return (
-      <div className="setup-step">
-        <div className="inst-badge ok" aria-hidden="true">✓</div>
-        <h1 className="setup-title">{action === "stop" ? "Paddock is stopped" : "Paddock was removed"}</h1>
-        <p className="setup-lede">
-          {action === "stop" ? "Your data is kept. Start it again any time from this window." : "Its containers, data and folder are gone from this PC."}
-        </p>
-        <div className="setup-actions"><button type="button" className="primary" onClick={onBack}>Done</button></div>
-      </div>
+      <Screen
+        title="Remove Paddock and all its data?"
+        lede="This deletes your findings, scan history, settings and passwords from this PC. It cannot be undone. To keep your data, choose Stop instead."
+        actions={<><button type="button" onClick={() => setConfirm(false)}>Keep it</button><button type="button" className="danger" onClick={onRemove}>Delete everything</button></>}
+      />
     );
   }
   return (
-    <div className="setup-step">
-      <h1 className="setup-title">{verb} Paddock</h1>
-      <p className="setup-lede" aria-live="polite"><Spinner label={verb} /> {run.stepText || "Working…"}</p>
-      <Log lines={run.log} />
-    </div>
+    <Screen
+      title="Paddock is installed"
+      lede={app.version ? `Version ${app.version}.` : undefined}
+      left={<button type="button" className="inst-linkbtn danger" onClick={() => setConfirm(true)}>Remove…</button>}
+      actions={
+        <>
+          <button type="button" onClick={onClose}>Close</button>
+          {app.running && <button type="button" onClick={onStop}>Stop</button>}
+          {app.running && <button type="button" onClick={onStart}>Update or repair</button>}
+          <button type="button" className="primary" onClick={() => (app.running ? onOpen(PADDOCK_URL) : onStart())}>{app.running ? "Open Paddock" : "Start Paddock"}</button>
+        </>
+      }
+    >
+      <section className="inst-section">
+        <p className="inst-status" data-tone={app.running ? "ok" : undefined}>
+          <span className="inst-dot" data-on={app.running} aria-hidden="true" /> {app.running ? "Running" : "Stopped"}
+        </p>
+        <p className="inst-hint">Installed in <code>{app.dir}</code></p>
+      </section>
+    </Screen>
+  );
+}
+
+/* ------------------------------ stop / remove finished ------------------------------ */
+
+export function WorkDone({ action, onBack }: { action: "stop" | "remove"; onBack: () => void }) {
+  return (
+    <Screen
+      title={action === "stop" ? "Paddock is stopped" : "Paddock was removed"}
+      lede={action === "stop" ? "Your data is kept. Start it again any time from this window." : "Its containers, data and folder are gone from this PC."}
+      actions={<button type="button" className="primary" onClick={onBack}>Done</button>}
+    />
   );
 }

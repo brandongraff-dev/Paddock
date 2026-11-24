@@ -11,7 +11,6 @@
     "demo": "VITE_DEMO=1 vite --port 1420 --strictPort"
   },
   "dependencies": {
-    "@fontsource-variable/newsreader": "5.2.5",
     "@fontsource/inter": "5.0.18",
     "@fontsource/jetbrains-mono": "5.0.20",
     "@tauri-apps/api": "2.1.1",

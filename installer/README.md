@@ -4,19 +4,33 @@ The Windows installer: **one `Paddock-Setup.exe`**, double-click, a few friendly
 and Paddock is running. It is a graphical front end for [`scripts/install.ps1`](../scripts/install.ps1),
 so the checks, the secrets and the install itself are the same code the command line uses.
 
-![Welcome](../docs/assets/installer-welcome.webp)
-![PC check](../docs/assets/installer-pc-check.webp)
+![Ready](../docs/assets/installer-ready.webp)
+![A problem, with the fix](../docs/assets/installer-problem.webp)
 ![Done](../docs/assets/installer-done.webp)
 
-*(These are from the demo mode described below, with scripted data.)*
+*(From the demo mode described below, with scripted data.)*
 
 ## What the user sees
 
-Welcome, then **Your PC** (Windows, memory, disk, Docker Desktop, Linux containers, ports, each
-with a plain-English fix and a download link where one helps), then **Options** (install folder,
-optional active scanner), then **Install** (progress, with a details log), then **Done** (the
-login, with Show and Copy, and Open Paddock). If Paddock is already installed the wizard opens
-on a manage screen instead: Open, Update or repair, Stop, Remove (with a confirmation).
+Three screens, in a flat window with a fixed button bar:
+
+1. **Install Paddock.** The PC check starts by itself the moment the window opens, so there is
+   nothing to click through. If everything passes it is one line ("Your PC is ready", with the
+   full list one click away) beside the install folder and an Install button. If something
+   blocks, only that is shown: what is wrong, numbered steps to fix it, and a download link where
+   one helps. Install stays disabled until it is fixed.
+2. **Installing.** One status line, one progress bar with a percentage; the raw output is under
+   Details.
+3. **Done.** Address, user and password (hidden until Show, with Copy) and Open Paddock.
+
+If Paddock is already installed the wizard opens on a manage screen instead: Open or Start,
+Update or repair, Stop, and Remove (with a confirmation). Failures lead with one plain sentence
+about what happened and what to do; the tool output is under Technical details and in Copy
+details.
+
+The script speaks to a console (lowercase log lines, raw megabytes), so `ui/src/humanize.ts`
+translates what it says into what a person should read (16 GB, "Downloading Paddock (about
+1.5 GB)", "Setup could not download Paddock."). The raw text is never thrown away.
 
 ## How it is put together
 
@@ -25,9 +39,10 @@ installer/
   core/        Rust, no dependencies. Decides what may run: validates the install folder,
                builds the PowerShell argument list, allow-lists the pages that may be opened,
                detects an existing install. `cargo test` runs anywhere.
-  ui/          React + TypeScript. The wizard. Reuses the dashboard's brand, tokens, glass
-               panels and the /setup rail layout straight from ../dashboard/src (nothing copied,
-               nothing restyled). `protocol.ts` turns the script's output into screen state.
+  ui/          React + TypeScript. The wizard: flat and solid on purpose. Reuses only the
+               dashboard's wordmark and colour/type tokens straight from ../dashboard/src
+               (nothing copied, nothing restyled). `protocol.ts` turns the script's output
+               into screen state; `humanize.ts` turns it into plain English.
   src-tauri/   The Tauri shell. Deliberately thin: unpack the embedded files, start PowerShell,
                forward its output lines, stop it on cancel or close. Depends on core/.
   scripts/prepare_resources.py   gathers install.ps1, the compose file and schema/ for embedding
@@ -86,7 +101,7 @@ The demo bridge is a build-time option (`VITE_DEMO=1`); a real build contains no
 
 ```bash
 (cd installer/core && cargo test)                  # 12: folder validation, args, URL allow-list, detection
-(cd installer/ui && npm test)                      # 35: the protocol and every screen, with a fake bridge
+(cd installer/ui && npm test)                      # 46: the protocol, the wording, and every screen, with a fake bridge
 python3 -m pytest scripts/tests/test_installer_resources.py
 ```
 

@@ -6,6 +6,7 @@ import PixelField from "../brand/PixelField";
 import FooterScene from "../brand/FooterScene";
 import GitHubStars from "./landing/GitHubStars";
 import CtaBox from "./landing/CtaBox";
+import { DOWNLOAD_URL } from "./landing/download";
 import Faq from "./landing/Faq";
 import GallopTrail from "../brand/GallopTrail";
 import DitherRule from "../brand/DitherRule";
@@ -115,6 +116,9 @@ export default function Landing() {
             <a href="#principles">Principles</a>
             <a href="https://paddock-docs.vercel.app" target="_blank" rel="noreferrer">
               Docs
+            </a>
+            <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer">
+              Download
             </a>
             <GitHubStars />
             <Link to={enter} className="lp-cta">

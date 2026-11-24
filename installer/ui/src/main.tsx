@@ -1,9 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-// The dashboard's own stylesheets, unchanged: tokens, base controls, glass panels, the /setup rail layout.
-import "@dash/styles/global.css";
-import "@dash/styles/theme.css";
-import "@dash/styles/setup.css";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/jetbrains-mono/400.css";
+// Only the dashboard's colour and type tokens: the installer is deliberately flat (no glass, no aurora).
+import "@dash/styles/tokens.css";
 import "./installer.css";
 import App from "./App";
 import { tauriBridge } from "./tauriBridge";

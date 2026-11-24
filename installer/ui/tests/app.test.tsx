@@ -17,113 +17,169 @@ const setup = async (state = {}) => {
   await act(async () => { render(<App bridge={h.bridge} />); });     // lets the initial state load settle
   return { ...h, user };
 };
+type H = Awaited<ReturnType<typeof setup>>;
 
-/** Walk a fresh install up to the install run starting. */
-async function toInstall(h: Awaited<ReturnType<typeof setup>>, opts: { active?: boolean } = {}) {
-  await h.user.click(await screen.findByRole("button", { name: "Get started" }));
+const GOOD = [
+  check("Windows version", "ok", "Windows 11 Home (build 22631)"),
+  check("Memory", "ok", "16384 MB"),
+  check("Disk space", "ok", "212004 MB free on the system drive"),
+  check("Docker engine", "ok", "running (docker 26.1.0), Compose v2, Linux containers"),
+  check("Port 3000", "ok", "free"),
+];
+const finishCheck = (h: H, checks: unknown[] = GOOD, code = 0) => act(() => { checks.forEach((c) => h.runs[0].emit(c)); h.runs[0].finish(code); });
+const installButton = () => screen.getByRole("button", { name: "Install" });
+
+/** Fresh PC, healthy: check passes, Install pressed, the install run is runs[1]. */
+async function toInstall(h: H) {
   await waitFor(() => expect(h.runs).toHaveLength(1));
-  act(() => { h.last().emit(check("Docker engine", "ok", "running")); h.last().emit({ type: "summary", fail: 0, warn: 0 }); h.last().finish(0); });
-  await h.user.click(await screen.findByRole("button", { name: "Continue" }));
-  if (opts.active) await h.user.click(screen.getByRole("checkbox"));
-  await h.user.click(screen.getByRole("button", { name: "Install" }));
+  finishCheck(h);
+  await waitFor(() => expect(installButton()).toBeEnabled());
+  await h.user.click(installButton());
   await waitFor(() => expect(h.runs).toHaveLength(2));
 }
 
-describe("welcome and PC check", () => {
-  it("starts with what will happen, then checks the PC with the chosen folder", async () => {
+describe("ready: the PC check runs by itself", () => {
+  it("starts checking at once, in the default folder, and cannot install until it is done", async () => {
     const h = await setup();
     expect(await screen.findByRole("heading", { name: "Install Paddock" })).toBeInTheDocument();
-    expect(screen.getByText(/do not need any accounts or keys/)).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Setup steps" })).toBeInTheDocument();
-    await h.user.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
-    expect(h.last().action).toBe("doctor");
-    expect(h.last().opts.dir).toBe("C:\\Users\\Ada\\paddock");
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();            // still checking
+    expect(h.runs[0]).toMatchObject({ action: "doctor", opts: { dir: "C:\\Users\\Ada\\paddock" } });
+    expect(screen.getByText("Checking your PC")).toBeInTheDocument();
+    expect(installButton()).toBeDisabled();
+    expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).toBeNull();                     // no step rail any more
   });
 
-  it("a failed check explains the fix, offers the download, and blocks Continue until it passes", async () => {
+  it("when everything passes it says so in one line, and the details are optional and readable", async () => {
     const h = await setup();
-    await h.user.click(await screen.findByRole("button", { name: "Get started" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
-    act(() => {
-      h.last().emit(check("Memory", "ok", "16000 MB"));
-      h.last().emit(check("Docker Desktop", "fail", "is not installed", "1. Install Docker Desktop (free)\n2. Restart Windows"));
-      h.last().emit({ type: "summary", fail: 1, warn: 0 });
-      h.last().finish(1);
-    });
-    expect(await screen.findByText("1. Install Docker Desktop (free)")).toBeInTheDocument();
-    expect(screen.getByText("2. Restart Windows")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Needs fixing" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    finishCheck(h);
+    expect(await screen.findByText("Your PC is ready")).toBeInTheDocument();
+    expect(installButton()).toBeEnabled();
+    expect(screen.queryByRole("list", { name: "Things to fix" })).toBeNull();
+    const table = screen.getByRole("table", { name: "All checks" });
+    expect(within(table).getByText("Docker Desktop")).toBeInTheDocument();
+    expect(within(table).getByText("Running")).toBeInTheDocument();
+    expect(within(table).getByText("16 GB")).toBeInTheDocument();                   // not 16384 MB
+    expect(within(table).getByText("207 GB free on the system drive")).toBeInTheDocument();
+    expect(within(table).getByText("Windows 11 Home")).toBeInTheDocument();         // no "(build 22631)"
+    expect(within(table).getByText("Free")).toBeInTheDocument();                    // capitalised as a table cell
+    expect(document.body.textContent).not.toMatch(/MB|docker 26|Compose v2/);
+  });
+
+  it("a blocker shows what is wrong and how to fix it, offers the download, and keeps Install disabled", async () => {
+    const h = await setup();
+    await waitFor(() => expect(h.runs).toHaveLength(1));
+    finishCheck(h, [
+      check("Memory", "ok", "16384 MB"),
+      check("Docker Desktop", "fail", "is not installed", "1. Install Docker Desktop (free) from https://www.docker.com/products/docker-desktop/ and choose the WSL 2 option\n2. Restart Windows if it asks\n3. Run this installer again"),
+    ], 1);
+    expect(await screen.findByText("One thing needs fixing first")).toBeInTheDocument();
+    const fixes = screen.getByRole("list", { name: "Things to fix" });
+    expect(within(fixes).getByText("is not installed")).toBeInTheDocument();         // reads as a sentence after the name
+    expect(within(fixes).getByText("Install Docker Desktop (free) and choose the WSL 2 option")).toBeInTheDocument();
+    expect(within(fixes).getByText("Run Setup again")).toBeInTheDocument();
+    expect(fixes).not.toHaveTextContent("https://");
+    expect(installButton()).toBeDisabled();
     await h.user.click(screen.getByRole("button", { name: "Get Docker Desktop" }));
     expect(h.bridge.openUrl).toHaveBeenCalledWith(DOCKER_URL);
 
     await h.user.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(h.runs).toHaveLength(2));
-    act(() => { h.last().emit(check("Docker Desktop", "ok", "running")); h.last().finish(0); });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+    act(() => { h.runs[1].emit(check("Docker Desktop", "ok", "running")); h.runs[1].finish(0); });
+    await waitFor(() => expect(installButton()).toBeEnabled());
+    expect(screen.getByText("Your PC is ready")).toBeInTheDocument();
   });
 
-  it("warnings do not block", async () => {
+  it("a note does not block, and its fix is shown", async () => {
     const h = await setup();
-    await h.user.click(await screen.findByRole("button", { name: "Get started" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
-    act(() => { h.last().emit(check("Memory", "warn", "3000 MB", "Close other programs")); h.last().finish(0); });
-    expect(await screen.findByText("Close other programs")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    finishCheck(h, [check("Memory", "warn", "3000 MB", "Close other programs while Paddock starts.")]);
+    expect(await screen.findByText("Ready to install, with a note")).toBeInTheDocument();
+    expect(screen.getByText("Close other programs while Paddock starts.")).toBeInTheDocument();
+    expect(screen.getAllByText("2.9 GB").length).toBeGreaterThan(0);                  // in the note and in the table
+    expect(installButton()).toBeEnabled();
   });
 
-  it("a doctor run that cannot even start says why", async () => {
+  it("a check that cannot even start is explained in plain words", async () => {
     const h = await setup();
-    await h.user.click(await screen.findByRole("button", { name: "Get started" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
-    act(() => h.last().fail("PowerShell was not found on this PC"));
-    expect(await screen.findByRole("alert")).toHaveTextContent("PowerShell was not found");
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    act(() => h.runs[0].fail("PowerShell could not be started: not found"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Windows PowerShell could not be started.");
+    expect(installButton()).toBeDisabled();
+  });
+
+  it("installs into the chosen folder, with the active scanner only if asked", async () => {
+    const h = await setup();
+    await waitFor(() => expect(h.runs).toHaveLength(1));
+    finishCheck(h);
+    const dir = await screen.findByLabelText("Install location");
+    await h.user.clear(dir);
+    expect(installButton()).toBeDisabled();
+    await h.user.type(dir, "D:\\Apps\\Paddock");
+    await h.user.click(screen.getByText("More options"));
+    await h.user.click(screen.getByRole("checkbox", { name: /active scanner/ }));
+    await h.user.click(installButton());
+    await waitFor(() => expect(h.runs).toHaveLength(2));
+    expect(h.runs[1]).toMatchObject({ action: "install", opts: { dir: "D:\\Apps\\Paddock", active: true } });
+  });
+
+  it("a bad folder comes back to the field with the reason, not as an install failure", async () => {
+    const h = await setup();
+    await toInstall(h);
+    act(() => h.last().fail("Choose a folder, not a whole drive."));
+    expect(await screen.findByRole("heading", { name: "Install Paddock" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("not a whole drive");
+    expect(screen.getByLabelText("Install location")).toHaveAttribute("aria-invalid", "true");
   });
 });
 
-describe("options and install", () => {
-  it("installs into the chosen folder, with the active scanner only if asked", async () => {
-    const h = await setup();
-    await h.user.click(await screen.findByRole("button", { name: "Get started" }));
-    await waitFor(() => expect(h.runs).toHaveLength(1));
-    act(() => { h.last().emit(check("Docker engine", "ok")); h.last().finish(0); });
-    await h.user.click(await screen.findByRole("button", { name: "Continue" }));
-    const dir = screen.getByLabelText("Install folder");
-    expect(dir).toHaveValue("C:\\Users\\Ada\\paddock");
-    await h.user.clear(dir);
-    expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
-    await h.user.type(dir, "D:\\Apps\\Paddock");
-    await h.user.click(screen.getByRole("checkbox"));
-    await h.user.click(screen.getByRole("button", { name: "Install" }));
-    await waitFor(() => expect(h.runs).toHaveLength(2));
-    expect(h.last().action).toBe("install");
-    expect(h.last().opts).toEqual({ dir: "D:\\Apps\\Paddock", active: true });
-  });
-
-  it("shows live progress, the current phase and the details log", async () => {
+describe("installing", () => {
+  it("shows a clean status line and percentage, keeps the raw output behind Details", async () => {
     const h = await setup();
     await toInstall(h);
-    act(() => { h.last().emit(step("checks", "checking prerequisites")); h.last().emit(step("files", "installing into C:\\p")); });
+    expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
+    act(() => { h.last().emit(step("files", "installing into C:\\p")); });
     const bar = await screen.findByRole("progressbar", { name: "Install progress" });
     const first = Number(bar.getAttribute("aria-valuenow"));
-    act(() => { h.last().emit(step("images", "downloading the Paddock images")); h.last().emit("postgres Pulling"); });
+    act(() => { h.last().emit(step("images", "downloading the Paddock images (release 1.2.3, about 1-2 minutes)")); h.last().emit("postgres Pulling"); });
     await waitFor(() => expect(Number(screen.getByRole("progressbar").getAttribute("aria-valuenow"))).toBeGreaterThan(first));
-    expect(screen.getByText("downloading the Paddock images")).toBeInTheDocument();
+    expect(screen.getByText("Downloading Paddock (about 1.5 GB)")).toBeInTheDocument();      // not the raw script line
+    expect(screen.getByText(/^\d+%$/)).toBeInTheDocument();
     expect(screen.getByText(/longest part/)).toBeInTheDocument();
-    expect(screen.getByText("Preparing files").closest("li")).toHaveAttribute("data-state", "done");
-    expect(screen.getByText("Downloading Paddock").closest("li")).toHaveAttribute("data-state", "active");
-    await userEvent.click(screen.getByText("Show details"));
+    await userEvent.click(screen.getByText("Details"));
+    expect(screen.getByLabelText("Installer output")).toHaveTextContent("downloading the Paddock images (release 1.2.3");
     expect(screen.getByLabelText("Installer output")).toHaveTextContent("postgres Pulling");
   });
 
-  it("finishes on a Done screen with the login, the password hidden until shown, and copy buttons", async () => {
+  it("softens a slow-start warning", async () => {
+    const h = await setup();
+    await toInstall(h);
+    act(() => { h.last().emit(step("health", "waiting")); h.last().emit({ type: "warn", text: "not healthy after 600s. Inspect with: docker compose -p paddock-lite logs" }); });
+    const note = await screen.findByRole("status");
+    expect(note).toHaveTextContent("Paddock is taking longer than usual to start.");
+    expect(note).not.toHaveTextContent(/docker compose/);                             // the raw line is only in Details
+  });
+
+  it("Cancel stops the run and says it can be resumed", async () => {
+    const h = await setup();
+    await toInstall(h);
+    act(() => h.last().emit(step("images", "x")));
+    await h.user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(h.last().cancelled).toBe(true);
+    expect(await screen.findByRole("heading", { name: "Setup stopped" })).toBeInTheDocument();
+    expect(screen.getByText(/picks up where it left off/)).toBeInTheDocument();
+    expect(CANCELLED).toMatch(/cancelled/);
+  });
+});
+
+describe("done", () => {
+  it("shows the login with the password hidden until shown, and copy / open / close", async () => {
     const h = await setup();
     await toInstall(h);
     act(() => { h.last().emit(step("health", "waiting")); h.last().emit(RESULT); h.last().finish(0); });
     expect(await screen.findByRole("heading", { name: "Paddock is running" })).toBeInTheDocument();
+    expect(screen.getByText("Step 3 of 3")).toBeInTheDocument();
     expect(screen.getByTestId("value-User")).toHaveTextContent("admin");
     expect(screen.getByTestId("value-Password")).not.toHaveTextContent(RESULT.password);
     await h.user.click(screen.getByRole("button", { name: "Show" }));
@@ -137,75 +193,81 @@ describe("options and install", () => {
     expect(h.bridge.quit).toHaveBeenCalled();
   });
 
-  it("an install that started but is not answering yet says so and offers another check", async () => {
+  it("an install that is not answering yet still shows the login, and offers another check", async () => {
     const h = await setup();
     await toInstall(h);
-    act(() => { h.last().emit({ ...RESULT, healthy: false }); h.last().emit({ type: "warn", text: "not healthy after 600s" }); h.last().finish(1); });
-    // the script exits non-zero when unhealthy but did report a result: still show the login
-    expect(await screen.findByRole("heading", { name: "Paddock is starting" })).toBeInTheDocument();
+    act(() => { h.last().emit({ ...RESULT, healthy: false }); h.last().finish(1); });
+    expect(await screen.findByRole("heading", { name: "Paddock is still starting" })).toBeInTheDocument();
+    expect(screen.getByTestId("value-Address")).toHaveTextContent("http://localhost:3000");
+    await h.user.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(h.runs).toHaveLength(3));
   });
+});
 
-  it("a failed install lists what to fix, can be retried, and copies details without the login", async () => {
+describe("failure", () => {
+  it("leads with what happened in one sentence, hides tool output, and can be retried or copied", async () => {
     const h = await setup();
     await toInstall(h);
     act(() => {
-      h.last().emit(step("checks", "checking prerequisites"));
-      h.last().emit(check("Port 3000", "fail", "already in use by node", "Close that program"));
-      h.last().emit({ type: "error", text: "this PC is not ready yet" });
+      h.last().emit(step("images", "downloading"));
+      h.last().emit({ type: "error", text: "docker compose pull failed: could not reach ghcr.io. Check your internet." });
       h.last().finish(1);
     });
-    expect(await screen.findByRole("heading", { name: "Paddock could not be installed" })).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("this PC is not ready yet");
-    expect(screen.getByText("Close that program")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Setup could not download Paddock." })).toBeInTheDocument();
+    expect(screen.getByText(/Check your internet connection, and any VPN, proxy or firewall/)).toBeInTheDocument();
+    expect(screen.queryByText(/docker compose pull failed/)).toBeVisibleOrAbsent();
+    await h.user.click(screen.getByText("Technical details"));
+    expect(screen.getByLabelText("Technical details")).toHaveTextContent("docker compose pull failed: could not reach ghcr.io");
     await h.user.click(screen.getByRole("button", { name: "Copy details" }));
     const copied = String(writeText.mock.calls[0][0]);
-    expect(copied).toContain("Port 3000");
+    expect(copied).toContain("ghcr.io");
     expect(copied).not.toContain(RESULT.password);
     await h.user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(h.runs).toHaveLength(3));
     expect(h.last().action).toBe("install");
   });
 
-  it("a bad folder sends you back to the options with the reason, not to an install failure", async () => {
+  it("lists the blocking checks when the install stops at the PC check, and Check my PC goes back", async () => {
     const h = await setup();
     await toInstall(h);
-    act(() => h.last().fail("Choose a folder, not a whole drive."));
-    expect(await screen.findByRole("heading", { name: "Where should it go?" })).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("not a whole drive");
-    expect(screen.getByLabelText("Install folder")).toBeInTheDocument();
-  });
-
-  it("Cancel stops the run and says it can be resumed", async () => {
-    const h = await setup();
-    await toInstall(h);
-    act(() => h.last().emit(step("images", "downloading")));
-    await h.user.click(await screen.findByRole("button", { name: "Cancel" }));
-    expect(h.last().cancelled).toBe(true);
-    expect(await screen.findByRole("heading", { name: "Setup stopped" })).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent(CANCELLED);
+    act(() => {
+      h.last().emit(check("Port 3000", "fail", "already in use by node", "Close that program."));
+      h.last().emit({ type: "error", text: "this PC is not ready yet (see the [FAIL] lines above)" });
+      h.last().finish(1);
+    });
+    expect(await screen.findByRole("heading", { name: "Your PC needs a few things fixed first." })).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Things to fix" })).getByText("Close that program.")).toBeInTheDocument();
+    await h.user.click(screen.getByRole("button", { name: "Check my PC" }));
+    expect(await screen.findByRole("heading", { name: "Install Paddock" })).toBeInTheDocument();
+    await waitFor(() => expect(h.runs).toHaveLength(3));
+    expect(h.last().action).toBe("doctor");
   });
 
   it("an install that ends cleanly without a result is not reported as success", async () => {
     const h = await setup();
     await toInstall(h);
     act(() => { h.last().emit(step("images", "x")); h.last().finish(0); });
-    expect(await screen.findByRole("alert")).toHaveTextContent("without confirming that Paddock started");
+    expect(await screen.findByRole("heading", { name: "Setup could not finish." })).toBeInTheDocument();
+    expect(screen.getByText("Setup finished without confirming that Paddock started.")).toBeInTheDocument();
   });
 });
 
 describe("an existing install", () => {
-  it("offers to open it when it is running, update it, stop it or remove it", async () => {
+  it("opens on the manage screen without running a PC check, and offers Open / Update / Stop", async () => {
     const h = await setup({ installed: true, running: true, version: "1.2.3" });
     expect(await screen.findByRole("heading", { name: "Paddock is installed" })).toBeInTheDocument();
-    expect(screen.getByText(/Version 1.2.3/)).toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "Setup steps" })).toBeNull();
+    expect(screen.getByText("Version 1.2.3.")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(h.runs).toHaveLength(0);
+    for (const n of ["Stop", "Update or repair", "Open Paddock", "Close"]) expect(screen.getByRole("button", { name: n })).toBeInTheDocument();
     await h.user.click(screen.getByRole("button", { name: "Open Paddock" }));
     expect(h.bridge.openUrl).toHaveBeenCalledWith("http://localhost:3000");
   });
 
-  it("offers Start when it is stopped, and starts it with the existing folder", async () => {
+  it("offers Start when it is stopped, and starts it in the existing folder", async () => {
     const h = await setup({ installed: true, running: false, dir: "E:\\P" });
-    await h.user.click(await screen.findByRole("button", { name: "Start Paddock" }));
+    expect(await screen.findByText("Stopped")).toBeInTheDocument();
+    await h.user.click(screen.getByRole("button", { name: "Start Paddock" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
     expect(h.last()).toMatchObject({ action: "install", opts: { dir: "E:\\P", active: false } });
   });
@@ -215,6 +277,7 @@ describe("an existing install", () => {
     await h.user.click(await screen.findByRole("button", { name: "Stop" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
     expect(h.last().action).toBe("stop");
+    expect(screen.getByRole("heading", { name: "Stopping Paddock" })).toBeInTheDocument();
     h.setState({ running: false });
     act(() => { h.last().emit({ type: "done", action: "stop" }); h.last().finish(0); });
     expect(await screen.findByRole("heading", { name: "Paddock is stopped" })).toBeInTheDocument();
@@ -225,11 +288,11 @@ describe("an existing install", () => {
   it("remove needs an explicit confirmation and can be backed out of", async () => {
     const h = await setup({ installed: true, running: true });
     await h.user.click(await screen.findByRole("button", { name: "Remove…" }));
-    const dialog = screen.getByRole("alertdialog");
-    expect(within(dialog).getByText(/cannot be undone/)).toBeInTheDocument();
-    expect(h.runs).toHaveLength(0);                                              // nothing ran yet
-    await h.user.click(within(dialog).getByRole("button", { name: "Keep it" }));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Remove Paddock and all its data?" })).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/)).toBeInTheDocument();
+    expect(h.runs).toHaveLength(0);                                                // nothing ran yet
+    await h.user.click(screen.getByRole("button", { name: "Keep it" }));
+    expect(screen.getByRole("heading", { name: "Paddock is installed" })).toBeInTheDocument();
     await h.user.click(screen.getByRole("button", { name: "Remove…" }));
     await h.user.click(screen.getByRole("button", { name: "Delete everything" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
@@ -239,14 +302,16 @@ describe("an existing install", () => {
     expect(await screen.findByRole("heading", { name: "Paddock was removed" })).toBeInTheDocument();
     await h.user.click(screen.getByRole("button", { name: "Done" }));
     expect(await screen.findByRole("heading", { name: "Install Paddock" })).toBeInTheDocument();
+    await waitFor(() => expect(h.runs).toHaveLength(2));                            // a fresh PC check starts
+    expect(h.last().action).toBe("doctor");
   });
 
-  it("a failed stop says so and can be retried", async () => {
+  it("a failed stop explains itself and can be retried", async () => {
     const h = await setup({ installed: true, running: true });
     await h.user.click(await screen.findByRole("button", { name: "Stop" }));
     await waitFor(() => expect(h.runs).toHaveLength(1));
     act(() => { h.last().emit({ type: "error", text: "docker not found" }); h.last().finish(1); });
-    expect(await screen.findByRole("heading", { name: "Stopping did not finish" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Docker Desktop is not installed." })).toBeInTheDocument();
     await h.user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(h.runs).toHaveLength(2));
   });
@@ -257,13 +322,15 @@ describe("when Setup itself is broken", () => {
     const h = makeBridge();
     (h.bridge.getState as any).mockRejectedValueOnce(new Error("backend unavailable"));
     await act(async () => { render(<App bridge={h.bridge} />); });
-    expect(await screen.findByRole("alert")).toHaveTextContent("backend unavailable");
+    expect(await screen.findByRole("heading", { name: "Setup could not start" })).toBeInTheDocument();
+    expect(screen.getByText("backend unavailable")).toBeInTheDocument();
   });
 
   it("refuses to run with missing installer files and says how to fix it", async () => {
-    await setup({ resourcesReady: false });
+    const h = await setup({ resourcesReady: false });
     expect(await screen.findByRole("heading", { name: "This copy of Setup is incomplete" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Get started" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    expect(h.runs).toHaveLength(0);
   });
 });
 
@@ -281,4 +348,14 @@ describe("detailsText", () => {
     expect(t).not.toContain("TOPSECRET");
     expect(detailsText(null)).toBe("");
   });
+});
+
+// "visible or absent": the raw tool line may live inside the closed Technical details, never in the headline area
+declare module "vitest" { interface Assertion<T> { toBeVisibleOrAbsent(): T } }
+expect.extend({
+  toBeVisibleOrAbsent(received: HTMLElement | null) {
+    if (!received) return { pass: true, message: () => "absent" };
+    const inDetails = !!received.closest("details");
+    return { pass: inDetails, message: () => `raw text appears outside the Technical details disclosure: ${received.textContent}` };
+  },
 });
