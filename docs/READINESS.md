@@ -101,6 +101,12 @@ from their API docs.
   *Status:* covered by Linux tests with a fake Docker and by a Windows CI job
   (PowerShell 5.1 and 7, fake Docker); **not yet run by a person on a real
   Windows PC with Docker Desktop.**
+- **Setup app** (`installer/`, `Paddock-Setup.exe`): a graphical wizard over
+  `install.ps1 -Json`: PC check with fixes, options, progress, login screen,
+  and open/update/stop/remove for an existing install. *Status:* logic, screens
+  and the Rust core are tested here; the Tauri shell compiles for Windows; the
+  finished exe is built on `windows-latest` but **has not been run by a person
+  on a real PC**, and it is **not code-signed** (SmartScreen warns).
 - **Prebuilt images** (release workflow -> GHCR, signed; the installers pull
   them, 1-2 minutes instead of 15+ building). *Status:* the workflow, the zip
   (`scripts/make_release_bundle.py`) and the version-stamped installers are in

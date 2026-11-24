@@ -21,6 +21,11 @@ name: Release
 #   install.ps1, install.sh  stamped with the version, so
 #                            releases/latest/download/install.ps1 always pulls
 #                            the matching prebuilt images (1-2 min, no build)
+#   Paddock-Setup.exe        the Windows setup wizard (installer/): one file, double-click.
+#                            Built on windows-latest with this tag's version stamped in,
+#                            attested (SLSA provenance) and listed in BUNDLE_SHA256SUMS.txt.
+#                            Not code-signed (no certificate yet): Windows SmartScreen will
+#                            warn on first run; see installer/README.md.
 #   BUNDLE_SHA256SUMS.txt    + keyless signature
 #
 # First publish: pushing the first vX.Y.Z tag creates public packages on GHCR.
@@ -181,6 +186,47 @@ jobs:
             digests/
           retention-days: 7
 
+  setup-exe:
+    name: Paddock Setup (.exe)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write        # build provenance
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build (stamped with this release)
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $v = $env:TAG.TrimStart('v')
+          python installer/scripts/prepare_resources.py --version $v
+          npm --prefix installer/ui ci
+          npm --prefix installer ci
+          Push-Location installer
+          npx tauri build --no-bundle
+          Pop-Location
+          Copy-Item installer/src-tauri/target/release/paddock-setup.exe Paddock-Setup.exe
+      - name: SLSA build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: Paddock-Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-exe
+          path: Paddock-Setup.exe
+          retention-days: 7
+
   verify-pull:
     name: lite images are publicly pullable
     needs: images
@@ -212,7 +258,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [images, verify-pull]
+    needs: [images, verify-pull, setup-exe]
     runs-on: ubuntu-latest
     permissions:
       contents: write        # create the release
@@ -234,6 +280,15 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: setup-exe
+          path: bundle
+
+      - name: List the setup wizard in the signed checksum file
+        working-directory: bundle
+        run: sha256sum Paddock-Setup.exe >> BUNDLE_SHA256SUMS.txt
 
       - uses: sigstore/cosign-installer@v3
 
@@ -258,6 +313,7 @@ jobs:
             bundle/paddock-lite-*.zip
             bundle/install.ps1
             bundle/install.sh
+            bundle/Paddock-Setup.exe
             out/BUNDLE_SHA256SUMS.txt
             out/BUNDLE_SHA256SUMS.txt.sigstore.json
             out/sbom/*.json

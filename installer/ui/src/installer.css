@@ -1,0 +1,114 @@
+/* ------------------------------------------------------------------ *
+ * Paddock Setup: only what the wizard adds on top of the dashboard's  *
+ * own stylesheets (tokens, glass panels, the /setup rail layout).     *
+ * Tokens only. No new surfaces, shadows or glows.                     *
+ * ------------------------------------------------------------------ */
+
+html, body, #root { overflow: hidden; }
+.setup-screen { height: 100vh; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.setup-title { text-shadow: none; }
+
+/* The window: the dashboard's glass panel (blur, edge fringes, hairline) with a darker tint
+   so body text stays readable wherever the aurora is bright. */
+.inst-window {
+  flex: 1;
+  min-height: 0;
+  margin: 4px 22px 22px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  background:
+    linear-gradient(160deg, rgba(255, 246, 232, 0.06) 0%, rgba(255, 246, 232, 0) 40%),
+    rgba(13, 11, 9, 0.62);
+}
+.inst-window.inst-single { grid-template-columns: minmax(0, 1fr); max-width: 680px; width: 100%; align-self: center; }
+.inst-window > * { margin: 0; min-width: 0; }
+.inst-window .setup-rail { padding: 22px 12px; border-right: 1px solid var(--border); overflow-y: auto; }
+.inst-main { padding: 24px 28px 0; overflow-y: auto; max-width: none; }
+.inst-single .inst-main { padding-left: 34px; padding-right: 34px; }
+
+/* the action bar stays in view however long the screen is */
+.inst-main .setup-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 18px -28px 0;
+  padding: 26px 28px 18px;
+  background: linear-gradient(180deg, rgba(13, 11, 9, 0) 0, rgba(13, 11, 9, 0.88) 22px);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.inst-single .inst-main .setup-actions { margin-left: -34px; margin-right: -34px; padding-left: 34px; padding-right: 34px; }
+
+/* cards inside the window are flat: no second layer of blur */
+.inst-window .panel {
+  background: rgba(8, 7, 6, 0.42);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  padding: 4px 6px 10px;
+}
+.inst-window .panel > .panel-h { margin: 0; padding: 10px 12px 4px; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; border-radius: 0; }
+.inst-window .panel > .panel-h h2 { font-size: 12px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); margin: 0; }
+.inst-window .panel > :not(.panel-h) { margin-left: 6px; margin-right: 6px; }
+.inst-window .setup-copy { background: rgba(8, 7, 6, 0.55); }
+.inst-window .setup-main { min-height: 0; }
+
+.inst-rail-row { display: flex; align-items: flex-start; gap: 11px; padding: 8px 10px; color: var(--text-2); border: 1px solid transparent; border-radius: var(--radius-m); }
+.setup-rail-item.on .inst-rail-row { background: var(--bg-3); color: var(--text-0); box-shadow: var(--hl), 0 0 0 1px var(--border); }
+.setup-rail-item.done .inst-rail-row { color: var(--text-1); }
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.inst-wait { display: flex; align-items: center; gap: 10px; color: var(--text-1); font-size: 13px; }
+.inst-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); display: inline-block; animation: inst-spin 0.9s linear infinite; vertical-align: -2px; }
+@keyframes inst-spin { to { transform: rotate(360deg); } }
+
+/* PC checks */
+.inst-checks { list-style: none; margin: 0; padding: 0; }
+.inst-check { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; padding: 11px 4px; border-top: 1px solid var(--border); }
+.inst-check:first-child { border-top: 0; }
+.inst-check-icon { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600; border: 1px solid currentColor; }
+.inst-check[data-status="ok"] .inst-check-icon { color: var(--ok); }
+.inst-check[data-status="warn"] .inst-check-icon { color: var(--warn); }
+.inst-check[data-status="fail"] .inst-check-icon { color: var(--bad); }
+.inst-check-head { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; }
+.inst-check-head strong { color: var(--text-0); font-weight: 500; }
+.inst-check-head span { color: var(--text-1); }
+.inst-fix { margin-top: 6px; font-size: 12.5px; line-height: 1.55; color: var(--text-1); }
+.inst-link { margin-top: 8px; font-size: 12px; padding: 3px 10px; }
+
+/* progress */
+.inst-progress { height: 8px; border-radius: 999px; background: var(--bg-3); border: 1px solid var(--border); overflow: hidden; margin: 4px 0 18px; }
+.inst-progress > i { display: block; height: 100%; border-radius: inherit; background: var(--accent-dim); transition: width 500ms var(--ease); }
+.inst-progress[data-busy="true"] > i { background: linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim)); background-size: 200% 100%; animation: inst-slide 1.8s linear infinite; }
+@keyframes inst-slide { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .inst-progress > i, .inst-spinner { animation: none !important; transition: none; } }
+
+.inst-phases { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.inst-phases li { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-3); }
+.inst-phases li[data-state="active"] { color: var(--text-0); }
+.inst-phases li[data-state="done"] { color: var(--text-1); }
+.inst-phase-dot { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border-strong); display: grid; place-items: center; font-size: 10px; flex: none; }
+.inst-phases li[data-state="active"] .inst-phase-dot { border-color: var(--accent); background: var(--accent-bg); }
+.inst-phases li[data-state="done"] .inst-phase-dot { background: var(--ok); border-color: var(--ok); color: var(--bg-0); }
+
+.inst-details { margin: 10px 0 4px; font-size: 12.5px; color: var(--text-2); }
+.inst-details summary { cursor: pointer; width: fit-content; }
+.inst-log { margin: 8px 0 0; max-height: 170px; overflow: auto; padding: 10px 12px; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--text-1); background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-m); white-space: pre-wrap; word-break: break-word; }
+.inst-warn { font-size: 12.5px; padding: 8px 10px; border-radius: var(--radius-m); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); color: var(--text-1); background: color-mix(in srgb, var(--warn) 7%, transparent); margin: 8px 0; }
+
+/* done + manage */
+.inst-badge { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-size: 22px; margin-bottom: 8px; border: 1px solid currentColor; }
+.inst-badge.ok { color: var(--ok); }
+.inst-badge.warn { color: var(--warn); }
+.inst-creds { display: flex; flex-direction: column; gap: 8px; }
+.inst-creds-note { margin: 10px 0 0; }
+.inst-copy-actions { display: inline-flex; gap: 6px; }
+.setup-copy { grid-template-columns: 64px minmax(0, 1fr) auto; }
+.inst-panel { margin: 0 0 4px; }
+.inst-status { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 4px 2px; flex-wrap: wrap; }
+.inst-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
+.inst-dot[data-on="true"] { background: var(--ok); }
+.inst-dir { color: var(--text-1); font-size: 12px; overflow-wrap: anywhere; }
+.inst-confirm { padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius: var(--radius-l); background: color-mix(in srgb, var(--bad) 7%, transparent); }
+.inst-confirm h2 { margin: 0 0 6px; font-size: 15px; font-weight: 500; color: var(--text-0); }

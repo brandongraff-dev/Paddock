@@ -440,8 +440,9 @@ if [ "$UNINSTALL" = 1 ]; then
       read -r ans </dev/tty
       [ "$ans" = "delete" ] || die "aborted"
     fi
-    compose down -v --remove-orphans || true
+    # refuse BEFORE `down -v` destroys the data volume of a folder we would then not remove
     case "$DIR" in ''|/|"${HOME:-/nonexistent}") die "refusing to delete '$DIR'" ;; esac
+    compose down -v --remove-orphans || true
     rm -rf "$DIR"
     say "${G}removed${N} containers, data volume and $DIR"
   else

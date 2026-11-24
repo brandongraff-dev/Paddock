@@ -92,18 +92,22 @@ make quickstart        # builds the stack, seeds a demo surface, prints the URL 
 
 **On Windows** (no `make`, no building, no API keys; Docker Desktop must be installed):
 
-1. Download **`paddock-lite-X.Y.Z.zip`** from the
-   [latest release](https://github.com/brandongraff-dev/paddock/releases/latest),
-   unzip it and double-click **`install.bat`**.
-2. Or, in PowerShell:
+1. Download **`Paddock-Setup.exe`** from the
+   [latest release](https://github.com/brandongraff-dev/paddock/releases/latest) and double-click
+   it. A short wizard checks your PC (with a plain-English fix for anything missing), installs
+   Paddock and hands you the login. See [`installer/`](installer/README.md).
+   *Windows may say "Windows protected your PC" because the file is not yet code-signed: choose
+   More info, then Run anyway. The release lists its SHA-256 and a provenance attestation.*
+2. Prefer a script? Download **`paddock-lite-X.Y.Z.zip`** from the same page, unzip it and
+   double-click **`install.bat`**, or in PowerShell:
    `irm https://github.com/brandongraff-dev/paddock/releases/latest/download/install.ps1 | iex`
 
-Both pull ready-made, signed images (about 1-2 minutes), start Docker Desktop if
-it is off, generate secrets, and print the URL and admin login. Options
+All of them pull ready-made, signed images (about 1-2 minutes), start Docker Desktop if
+it is off, generate secrets, and print the URL and admin login. Script options
 (`-Dir`, `-Active`, `-Uninstall`, `-Doctor`) are listed at the top of
 [`scripts/install.ps1`](scripts/install.ps1). `-Doctor` checks Docker, WSL,
-virtualization, memory, disk and ports and explains each fix; how to verify the download is in
-[`docs/trust/VERIFY.md`](docs/trust/VERIFY.md).
+virtualization, memory, disk and ports and explains each fix;
+how to verify the download is in [`docs/trust/VERIFY.md`](docs/trust/VERIFY.md).
 
 No release yet, or want the latest `main`? This builds from source instead (15+
 minutes):

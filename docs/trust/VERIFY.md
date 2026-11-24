@@ -73,13 +73,16 @@ cosign verify-blob SBOM_SHA256SUMS.txt \
 sha256sum -c SBOM_SHA256SUMS.txt
 ```
 
-### The Windows / one-click install bundle
+### The Windows setup app and install bundle
 
-`paddock-lite-X.Y.Z.zip`, `install.ps1` and `install.sh` are attached to each
-release. Check them before running anything you downloaded:
+`Paddock-Setup.exe`, `paddock-lite-X.Y.Z.zip`, `install.ps1` and `install.sh` are
+attached to each release. The exe is **not code-signed yet** (Windows SmartScreen
+warns on first run); its integrity comes from the signed checksum file below and,
+additionally, `gh attestation verify Paddock-Setup.exe -R "$REPO"` (SLSA build
+provenance). Check them before running anything you downloaded:
 
 ```bash
-gh release download "$TAG" -R "$REPO" -p 'BUNDLE_SHA256SUMS.txt*' -p 'paddock-lite-*.zip' -p 'install.*'
+gh release download "$TAG" -R "$REPO" -p 'BUNDLE_SHA256SUMS.txt*' -p 'Paddock-Setup.exe' -p 'paddock-lite-*.zip' -p 'install.*'
 cosign verify-blob BUNDLE_SHA256SUMS.txt \
   --bundle BUNDLE_SHA256SUMS.txt.sigstore.json \
   --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER"

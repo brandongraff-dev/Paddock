@@ -129,6 +129,39 @@ jobs:
             if ($r.Ok -or $r.Out -notmatch "\[FAIL\] Port $port") { Write-Host $r.Out; throw 'a busy port must fail' }
           } finally { $l.Stop() }
 
+      - name: -Json mode prints only JSON events (this is what the Setup app reads)
+        run: |
+          $exe = (Get-Process -Id $PID).Path     # the same PowerShell that is running this step
+          function Run-Json([string[]]$extra) {
+            $raw = & $exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Json @extra 2>$null
+            $events = @()
+            foreach ($l in @($raw)) {
+              if (-not "$l".Trim()) { continue }
+              try { $events += ($l | ConvertFrom-Json) } catch { throw "not JSON: $l" }
+            }
+            return $events
+          }
+          # Doctor: only check + summary events, ends with a summary
+          $d = Run-Json @('-Doctor', '-Dir', "$env:RUNNER_TEMP\json-doc")
+          $types = $d | ForEach-Object { $_.type } | Sort-Object -Unique
+          if (($types | Where-Object { $_ -notin 'step', 'check', 'summary', 'log', 'warn' })) { throw "unexpected event types: $types" }
+          if (-not ($d | Where-Object { $_.type -eq 'check' -and $_.name -eq 'Docker engine' -and $_.status -eq 'ok' })) { throw 'no Docker engine check' }
+          if (($d | Select-Object -Last 1).type -ne 'summary') { throw 'summary must be last' }
+          # Install (release mode, fake docker): steps in order, then a result with the login
+          $env:PADDOCK_SRC_DIR = "$PWD"
+          $i = Run-Json @('-Yes', '-Dir', "$env:RUNNER_TEMP\json-mode", '-Version', '1.2.3', '-Wait', '30')
+          $ids = @($i | Where-Object { $_.type -eq 'step' } | ForEach-Object { $_.id })
+          $want = 'checks', 'files', 'secrets', 'images', 'start', 'health'
+          if (($ids -join ',') -ne ($want -join ',')) { throw "step order was: $($ids -join ',')" }
+          $r = @($i | Where-Object { $_.type -eq 'result' })
+          if ($r.Count -ne 1 -or -not $r[0].healthy -or $r[0].username -ne 'admin' -or $r[0].password.Length -lt 20) { throw 'bad result event' }
+          if (-not ($i | Where-Object { $_.type -eq 'check' })) { throw 'install must report its checks' }
+          # Stop / remove report done
+          $s = Run-Json @('-Uninstall', '-Dir', "$env:RUNNER_TEMP\json-mode")
+          if (-not ($s | Where-Object { $_.type -eq 'done' -and $_.action -eq 'stop' })) { throw 'stop must report done' }
+          $x = Run-Json @('-Uninstall', '-Purge', '-Yes', '-Dir', "$env:RUNNER_TEMP\json-mode")
+          if (-not ($x | Where-Object { $_.type -eq 'done' -and $_.action -eq 'remove' })) { throw 'remove must report done' }
+
       - name: Full install from source mode (no version)
         run: |
           $env:PADDOCK_SRC_DIR = "$PWD"

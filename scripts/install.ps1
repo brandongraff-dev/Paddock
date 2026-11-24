@@ -37,6 +37,9 @@
 #   -Uninstall      stop and remove the containers (data volume and .env are kept)
 #   -Purge          with -Uninstall: also delete the data volume and the install directory
 #   -Yes            do not ask for confirmation (required for -Purge without a terminal)
+#   -Json           machine-readable output for the Paddock Setup app (installer/): one JSON
+#                   object per line on stdout. Events: step, check, summary, log, warn, error,
+#                   result, done. See installer/README.md for the exact shapes.
 #
 # Environment for testing / air-gapped use: PADDOCK_SRC_DIR (copy sources from a
 # local directory instead of downloading), PADDOCK_API_URL, PADDOCK_UI_URL,
@@ -62,10 +65,13 @@ param(
     [switch]$Doctor,
     [switch]$Uninstall,
     [switch]$Purge,
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Json
 )
 
 $ErrorActionPreference = 'Stop'
+# -Json: UTF-8 without a BOM so the Setup app can read paths and messages exactly.
+if ($Json) { try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { } }
 $ProgressPreference    = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
@@ -80,11 +86,21 @@ $ComposeFile  = 'docker-compose.lite.yml'
 $OverrideFile = 'docker-compose.install.yml'
 $Project      = 'paddock-lite'
 
-function Say($m)  { Write-Host $m }
-function Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
-function Warn($m) { Write-Host "warning: $m" -ForegroundColor Yellow }
-function Plan($m) { Write-Host "[dry-run] $m" }
-function Die($m)  { Write-Host "error: $m" -ForegroundColor Red; throw "paddock-install: $m" }
+# One JSON object per line (-Json), for the Setup app. Never mixed with other output.
+function Emit([hashtable]$o) {
+    [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress -Depth 6))
+    [Console]::Out.Flush()
+}
+function Say($m)  { if ($Json) { Emit @{ type = 'log'; text = [string]$m } } else { Write-Host $m } }
+function Step($m, [string]$Id = '') {
+    if ($Json) { Emit @{ type = 'step'; id = $Id; text = [string]$m } } else { Write-Host "==> $m" -ForegroundColor Cyan }
+}
+function Warn($m) { if ($Json) { Emit @{ type = 'warn'; text = [string]$m } } else { Write-Host "warning: $m" -ForegroundColor Yellow } }
+function Plan($m) { if ($Json) { Emit @{ type = 'log'; text = "[dry-run] $m" } } else { Write-Host "[dry-run] $m" } }
+function Die($m) {
+    if ($Json) { Emit @{ type = 'error'; text = [string]$m } } else { Write-Host "error: $m" -ForegroundColor Red }
+    throw "paddock-install: $m"
+}
 
 # ---------------------------------------------------------------------------
 # argument checks
@@ -105,7 +121,9 @@ function Native([scriptblock]$Cmd, [switch]$Quiet) {
     try {
         # Out-Host keeps the command's output on screen and OUT of this function's
         # return value, which must be the exit code and nothing else.
-        if ($Quiet) { $script:Out = & $Cmd 2>&1 | Out-String } else { & $Cmd | Out-Host }
+        if ($Quiet) { $script:Out = & $Cmd 2>&1 | Out-String }
+        elseif ($Json) { & $Cmd 2>&1 | ForEach-Object { $t = [string]$_; if ($t.Trim()) { Emit @{ type = 'log'; text = $t.TrimEnd() } } } }
+        else { & $Cmd | Out-Host }
         return $LASTEXITCODE
     } finally { $ErrorActionPreference = $prev }
 }
@@ -239,6 +257,13 @@ function Get-CheckCount([string]$Status) {
 }
 
 function Show-Checks {
+    if ($Json) {
+        foreach ($c in $script:Checks) {
+            Emit @{ type = 'check'; name = $c.Name; status = $c.Status; detail = $c.Detail; fix = $c.Fix }
+        }
+        Emit @{ type = 'summary'; fail = (Get-CheckCount 'fail'); warn = (Get-CheckCount 'warn') }
+        return
+    }
     Say ''
     foreach ($c in $script:Checks) {
         if     ($c.Status -eq 'ok')   { $tag = '[ OK ]'; $color = 'Green' }
@@ -480,7 +505,7 @@ services:
 }
 
 function Wait-Healthy {
-    Step "waiting for Paddock to become healthy (up to ${Wait}s)"
+    Step "waiting for Paddock to become healthy (up to ${Wait}s)" 'health'
     $i = 0
     while ($i -lt $Wait) {
         try {
@@ -499,7 +524,7 @@ function Wait-Healthy {
 # uninstall
 # ---------------------------------------------------------------------------
 if ($Uninstall) {
-    Step "uninstalling Paddock from $Dir"
+    Step "uninstalling Paddock from $Dir" 'remove'
     if ($DryRun) {
         if ($Purge) {
             Plan "docker compose -p $Project down -v (deletes the database volume)"
@@ -521,14 +546,17 @@ if ($Uninstall) {
             $ans = Read-Host "This permanently deletes the Paddock database volume and $Dir. Type 'delete' to continue"
             if ($ans -ne 'delete') { Die 'aborted' }
         }
-        [void](Compose down -v --remove-orphans)
+        # refuse BEFORE `down -v` destroys the data volume of a folder we would then not remove
         $full = [IO.Path]::GetFullPath($Dir).TrimEnd('\')
         if ($full -eq [IO.Path]::GetPathRoot($full).TrimEnd('\') -or $full -eq $env:USERPROFILE.TrimEnd('\')) { Die "refusing to delete '$Dir'" }
+        [void](Compose down -v --remove-orphans)
         Remove-Item -Recurse -Force -Path $Dir
         Say "removed containers, data volume and $Dir"
+        if ($Json) { Emit @{ type = 'done'; action = 'remove' } }
     } else {
         [void](Compose down --remove-orphans)
         Say "stopped. Data volume and $Dir\.env are kept; re-run the installer to start again."
+        if ($Json) { Emit @{ type = 'done'; action = 'stop' } }
     }
     return
 }
@@ -543,14 +571,14 @@ if ($Version -and $Version -ne $InstalledVersion -and (Test-Install)) { $Upgrade
 $Bundle = Get-BundleDir
 
 if ($Doctor) {
-    Step "checking this PC for Paddock ($Dir)"
+    Step "checking this PC for Paddock ($Dir)" 'checks'
     Invoke-Preflight $false      # read-only: never starts Docker Desktop
     Show-Checks
     if ((Get-CheckCount 'fail') -gt 0) { throw 'paddock-doctor: problems found (see the [FAIL] lines above)' }
     return
 }
 
-Step 'checking prerequisites'
+Step 'checking prerequisites' 'checks'
 if ($DryRun) {
     Plan "check: Windows version, memory, free disk space, Docker Desktop (starts it if it is off), Compose v2, Linux-containers mode"
     Plan "check: ports 3000 and 8080 are free, image registry reachable (release mode), and on a Docker failure: virtualization and WSL"
@@ -560,7 +588,7 @@ if ($DryRun) {
     if ((Get-CheckCount 'fail') -gt 0) { Die "this PC is not ready yet (see the [FAIL] lines above). Fix them and run the installer again; '-Doctor' re-runs just these checks." }
 }
 
-Step "installing into $Dir"
+Step "installing into $Dir" 'files'
 if ($Version) { Say "   release $Version (prebuilt images from $Registry)" } else { Say '   no release version: images will be built from source' }
 if ($DryRun) {
     if ((Test-Path (Join-Path $Dir $ComposeFile)) -and -not $Upgrade) {
@@ -609,7 +637,7 @@ if (-not (Test-Path $EnvPath)) {
     }
 }
 
-Step 'generating secrets (existing values are never overwritten)'
+Step 'generating secrets (existing values are never overwritten)' 'secrets'
 if (-not (Test-Path $EnvPath)) {
     $example = Join-Path $Dir '.env.example'
     if (Test-Path $example) { Write-EnvLines ([IO.File]::ReadAllText($example) -split "`r?`n") } else { Write-EnvLines @() }
@@ -635,9 +663,9 @@ if ($NoStart) {
 }
 
 if ($Version) {
-    Step "downloading the Paddock images (release $Version, about 1-2 minutes)"
+    Step "downloading the Paddock images (release $Version, about 1-2 minutes)" 'images'
     if ((Compose pull) -eq 0) {
-        Step 'starting Paddock'
+        Step 'starting Paddock' 'start'
         if ((Compose up -d --no-build) -ne 0) { Die 'docker compose up failed (see the output above)' }
     } elseif (Test-Path (Join-Path $Dir 'orchestrator\Dockerfile')) {
         Warn 'could not download the prebuilt images; building from source instead (15+ minutes)'
@@ -646,12 +674,17 @@ if ($Version) {
         Die "could not download the Paddock images for release $Version from $Registry. Check your internet connection (and any proxy or firewall), then re-run this installer. If the release is brand new, its images may still be publishing: wait a few minutes and try again."
     }
 } else {
-    Step 'starting Paddock (first run builds the images; this can take several minutes)'
+    Step 'starting Paddock (first run builds the images; this can take several minutes)' 'start'
     if ((Compose up -d --build) -ne 0) { Die 'docker compose up failed (see the output above)' }
 }
 
 $healthy = Wait-Healthy
 $adminPw = Get-EnvValue 'ADMIN_BOOTSTRAP_PASSWORD'
+if ($Json) {
+    Emit @{ type = 'result'; healthy = [bool]$healthy; url = $UiUrl; username = 'admin'; password = $adminPw; dir = $Dir; version = $Version }
+    if (-not $healthy) { throw 'paddock-install: not healthy' }
+    return
+}
 Say ''
 if ($healthy) { Write-Host 'Paddock is running.' -ForegroundColor Green } else { Write-Host 'Paddock started but is not healthy yet.' -ForegroundColor Yellow }
 Say ''

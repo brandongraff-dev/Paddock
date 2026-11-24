@@ -241,6 +241,8 @@ def test_purge_never_deletes_home_or_root(sandbox):
     (sandbox["home"] / "docker-compose.lite.yml").write_text("services: {}\n")
     r = run(sandbox, "--uninstall", "--purge", "--yes", "--dir", str(sandbox["home"]))
     assert r.returncode != 0 and "refusing" in r.stderr and sandbox["home"].exists()
+    # the guard runs BEFORE `compose down -v`: a refused purge must not have destroyed the data volume
+    assert not [c for c in calls(sandbox) if " down" in f" {c}"]
 
 
 def test_download_path_is_pinned_to_https_codeload(sandbox):
