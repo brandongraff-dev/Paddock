@@ -181,6 +181,7 @@ jobs:
 
       - name: Full install from source mode (no version)
         run: |
+          Remove-Item $env:FAKE_DOCKER_LOG -ErrorAction SilentlyContinue   # earlier steps (doctor, -Json) logged calls too
           $env:PADDOCK_SRC_DIR = "$PWD"
           .\scripts\install.ps1 -Dir "$env:RUNNER_TEMP\src-mode" -Wait 30
           if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { exit 1 }
