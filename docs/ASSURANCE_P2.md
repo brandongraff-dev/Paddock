@@ -96,7 +96,7 @@ Fleet page but are only accepted from non-legacy agents and are marked `unsigned
   `rotated`. Admin revoke sets `revoked` immediately; nothing is cached.
 * Enrollment `proof_b64` = signature by the new key over `b"paddock-enroll/v1\n" + token_prefix + "\n" + hostname`.
 
-## 3. Schema (`schema/040_agent_v2.sql`)
+## 3. Schema (`schema/041_agent_v2.sql`)
 
 Declare `tenant_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'` and put it in every UNIQUE
 (099 then fixes default/FK/RLS). Sweep-generator traps: no NOT NULL column without a default that carries a
@@ -316,7 +316,7 @@ One owner per file. Frozen after P1 verification: P1 files change only through t
 
 | WP | Owns | Needs first |
 |---|---|---|
-| WP1 SCHEMA + TOKENS | `schema/040_agent_v2.sql`, `app/fleet_enroll.py`, `tests/test_fleet_enroll.py`, one-line edits to `tests/test_isolation_sweep.py` (`EXTRA_POLICIES`) and `tests/test_isolation_keys.py` (`GLOBAL_UNIQUE_OK`) | nothing |
+| WP1 SCHEMA + TOKENS | `schema/041_agent_v2.sql`, `app/fleet_enroll.py`, `tests/test_fleet_enroll.py`, one-line edits to `tests/test_isolation_sweep.py` (`EXTRA_POLICIES`) and `tests/test_isolation_keys.py` (`GLOBAL_UNIQUE_OK`) | nothing |
 | WP2a AGENT CORE | `agent/paddock_agent/{signing,ed25519_pure,state,client,agent,cli,config,envelope,actions,platform_block}.py`, `agent/pyproject.toml`, `agent/tests/` (non-collector) | wire contract (section 2) |
 | WP2b COLLECTORS | `agent/paddock_agent/{collectors/*,runner.py}`, `agent/tests/collectors/`, `agent/tests/fixtures/` | none (pure) |
 | WP3 SERVER INGEST | `app/routers/fleet.py`, `app/fleet_posture.py`, `app/auth.py` (agent principal + rules; **sole owner**), `app/retention.py`, monitor loop, `tests/test_fleet.py` (adapted), `tests/test_fleet_posture.py` | WP1 |
