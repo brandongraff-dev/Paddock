@@ -7,6 +7,7 @@ fs.mkdirSync(out, { recursive: true });
   p.on('pageerror', e => console.log('ERR', e.message));
   await p.goto(`http://localhost:${port}/edit.html?v=${variant}`); await p.waitForFunction('window.READY===true', null, { timeout: 30000 });
   for (let f = +from; f < +to; f++) {
+    await p.evaluate(async ({ f, v }) => { window.PLATEIMG = null; await new Promise(res => { const im = new Image(); im.onload = () => { window.PLATEIMG = im; res(); }; im.onerror = () => res(); im.src = `build/plate-${v}/f${String(f).padStart(4, '0')}.jpg`; }); }, { f, v: variant });
     await p.evaluate(t => window.render(t), f / 30);
     await p.screenshot({ path: `${out}/f${String(f).padStart(4, '0')}.jpg`, type: 'jpeg', quality: 92 });
   }
