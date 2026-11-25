@@ -18,10 +18,17 @@ the two device kinds. Plain ``ipv4``/``ipv6`` assets are *not* mapped; they are 
 
 Managed hosts (docs/ASSURANCE_P2.md E3): a ``fleet_agents`` row is an identity too, with
 ``kind == "agent"`` and the addresses the agent CLAIMS in ``identity.ips`` (its specific bind
-addresses). It maps to ``agent:<uuid>``. A claim is only a claim: an address that an asset also owns
-is ambiguous (``resolve_all`` then returns the asset, the agent AND ``ip:``, so no path is lost),
-and an agent already merged into a cloud instance (``node_ref`` ``asset:...``) adds nothing, its
-addresses are the asset's. Revoked and legacy agents never reach the map (the SQL excludes them).
+addresses). It maps to ``agent:<uuid>``. A claim is only a claim, so it NEVER owns an address and never
+makes one ambiguous (review findings hostfw-5 and wire-5): ownership, ``unique``, ``ambiguous``,
+``resolve``, ``is_ambiguous`` and ``ips_of`` come from assets alone, so a host that claims a victim's
+public or private address cannot withdraw the victim's coverage or take it over. The claimant is only an
+extra CANDIDATE for edges (``resolve_all`` adds ``agent:<uuid>`` to what the address could be, so no path
+is lost; more candidates only add edges). An agent already merged into a cloud instance (``node_ref``
+``asset:...``) adds nothing: its addresses are the asset's. Revoked and legacy agents never reach the map
+(the SQL excludes them).
+
+The corroboration decision (:func:`corroborate`) lives here too, so the ingest (``fleet_posture``) and the
+builder (``host_fw``) run ONE function and the graph and ``fleet_agents.node_ref`` cannot diverge.
 """
 from __future__ import annotations
 
@@ -172,6 +179,7 @@ class IpMap:
     ambiguous: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # ip -> sorted refs (>1)
     kinds: Mapping[str, str] = field(default_factory=dict)              # asset ref -> node kind
     ips: Mapping[str, tuple[str, ...]] = field(default_factory=dict)    # asset ref -> all its ips
+    claims: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # ip -> agent refs CLAIMING it (hints)
 
     def resolve(self, ip: str) -> str:
         """``asset:<uuid>`` when exactly one asset owns ``ip``, else ``ip:<addr>``.
@@ -185,15 +193,17 @@ class IpMap:
 
     def resolve_all(self, ip: str) -> tuple[str, ...]:
         """Every ref this address could be: unique -> that asset; unknown -> ``ip:``; ambiguous ->
-        all candidate assets **and** ``ip:`` (so no path is lost by guessing one owner)."""
+        all candidate assets **and** ``ip:`` (so no path is lost by guessing one owner). Agents that merely
+        CLAIM the address are added as further candidates (an over-approximation, never an owner)."""
         n = norm_ip(ip)
         if n is None:
             raise refs.RefError(f"bad ip {ip!r}")
+        extra = self.claims.get(n, ())          # agent claimants: candidates for edges, never owners
         if n in self.unique:
-            return (self.unique[n],)
+            return tuple(sorted({self.unique[n], *extra}))
         if n in self.ambiguous:
-            return tuple(sorted({*self.ambiguous[n], refs.ip_ref(n)}))
-        return (refs.ip_ref(n),)
+            return tuple(sorted({*self.ambiguous[n], refs.ip_ref(n), *extra}))
+        return tuple(sorted({refs.ip_ref(n), *extra}))
 
     def is_ambiguous(self, ip: str) -> bool:
         n = norm_ip(ip)
@@ -223,24 +233,28 @@ class IpMap:
 
 
 def build_ip_map(rows: Iterable[Mapping[str, Any]]) -> IpMap:
-    """Build the map from asset rows. Order of ``rows`` never changes the result."""
+    """Build the map from asset rows. Order of ``rows`` never changes the result.
+
+    Agent rows (``kind == "agent"``) only fill ``IpMap.claims``: they never own an address."""
     owners: dict[str, set[str]] = {}
     kinds: dict[str, str] = {}
     ips_by_ref: dict[str, tuple[str, ...]] = {}
+    claims: dict[str, set[str]] = {}
     for row in rows:
         kind = row.get("kind")
         if kind == AGENT_KIND:
-            ref, md = _agent_identity(row)
-            if ref is None:
-                continue
-        elif kind in IDENTITY_KINDS:
-            try:
-                ref = refs.asset_ref(row["id"])
-            except (refs.RefError, KeyError):
-                continue
-            md = _md(row)
-        else:
+            aref, amd = _agent_identity(row)
+            if aref is not None:
+                for ip in _ips_in({"ips": amd.get("ips")}):
+                    claims.setdefault(ip, set()).add(aref)
             continue
+        if kind not in IDENTITY_KINDS:
+            continue
+        try:
+            ref = refs.asset_ref(row["id"])
+        except (refs.RefError, KeyError):
+            continue
+        md = _md(row)
         ips = _ips_in(md)
         if not ips:
             continue
@@ -251,7 +265,131 @@ def build_ip_map(rows: Iterable[Mapping[str, Any]]) -> IpMap:
     unique = {ip: next(iter(rs)) for ip, rs in owners.items() if len(rs) == 1}
     ambiguous = {ip: tuple(sorted(rs)) for ip, rs in owners.items() if len(rs) > 1}
     return IpMap(unique=dict(sorted(unique.items())), ambiguous=dict(sorted(ambiguous.items())),
-                 kinds=dict(sorted(kinds.items())), ips=dict(sorted(ips_by_ref.items())))
+                 kinds=dict(sorted(kinds.items())), ips=dict(sorted(ips_by_ref.items())),
+                 claims={ip: tuple(sorted(rs)) for ip, rs in sorted(claims.items())})
+
+
+# --------------------------------------------------------------------------- #
+# corroboration of an agent with a cloud instance (E3): ONE decision for ingest and builder
+# --------------------------------------------------------------------------------------------
+
+#: the node kind (``node_kind``) of a cloud VM, the only asset that can absorb an agent.
+INSTANCE_KIND = "cloud_instance"
+_MAX_CLAIMED_IPS = 32
+
+
+@dataclass(frozen=True)
+class Claim:
+    """What one live agent says about itself (``identity.ips``, claimed) and what the server saw of it
+    (``peer_ip``, the strict client address)."""
+
+    agent_id: str
+    ips: tuple[str, ...]
+    peer: Optional[str]
+    #: False when the server could not tell the peer address from that of a forwarding hop (``auth.ClientAddr.proxied``).
+    direct: bool = True
+
+
+@dataclass(frozen=True)
+class Decision:
+    """``ref`` is the ``asset:<uuid>`` the agent is merged into, or ``None`` (it stays ``agent:<uuid>``,
+    ``claimed``). ``note`` says why not (``""`` when merged or nothing to say)."""
+
+    ref: Optional[str]
+    note: str = ""
+
+
+def claimed_ips(identity: Any) -> list[str]:
+    """The agent's claimed bind addresses, canonical, without loopback/unspecified/multicast/link-local, capped."""
+    out: set[str] = set()
+    raw = identity.get("ips") if isinstance(identity, Mapping) else None
+    for v in raw if isinstance(raw, list) else []:
+        n = norm_ip(v)
+        if n is None:
+            continue
+        ip = ipaddress.ip_address(n)
+        if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_link_local:
+            continue
+        out.add(n)
+        if len(out) >= _MAX_CLAIMED_IPS:
+            break
+    return sorted(out)
+
+
+def claim_of(agent_id: Any, identity: Any) -> Claim:
+    """A :class:`Claim` from a ``fleet_agents`` row's id and identity JSON (decoded)."""
+    ident = identity if isinstance(identity, Mapping) else {}
+    peer = ident.get("peer_ip")
+    return Claim(str(agent_id), tuple(claimed_ips(ident)), norm_ip(peer) if isinstance(peer, str) else None,
+                 direct=ident.get("peer_proxied") is not True)
+
+
+def corroborate(claims: Iterable[Claim], amap: IpMap) -> dict[str, Decision]:
+    """Decide, for every claim, whether the agent is merged into a cloud instance. ``amap`` holds ASSETS only.
+
+    An agent is merged into instance ``X`` only when ALL hold:
+
+    1. its claimed addresses are a non-empty subset of the PRIVATE addresses of exactly one cloud instance ``X``
+       that owns them uniquely (not ambiguous with another asset);
+    2. the address the server saw it connect from is one of ``X``'s PRIVATE addresses, and that address is a direct
+       peer (``Claim.direct``): a request that carried forwarding headers the server does not trust, or came from
+       a trusted proxy that reported nothing usable, shows the PROXY's address (a single agent behind the
+       ingress node would otherwise corroborate as that node). A public peer address is NOT proof either: every
+       host behind a NAT instance, proxy or bastion shares that instance's public address (review finding
+       hostfw-2). A private source address cannot be forged from another network, and a host cannot borrow it
+       unless it is routed through ``X`` itself, which the next rule catches when another enrolled agent shares
+       it. A header-less NAT that rewrites the source to ``X``'s private address with only ONE enrolled agent
+       behind it is NOT detectable here (it needs an instance-identity proof; docs/ASSURANCE_P2.md section 11);
+    3. no OTHER enrolled agent presents the same peer address (shared egress: the address says nothing about
+       which machine it is). Every agent counts, whatever it claims;
+    4. no other agent that passed rules 1 and 2 for the same instance exists (two agents on one cloud node merge
+       NEITHER).
+
+    Only an agent that itself passed 1 and 2 takes part in rule 4: a claim that never passed cannot demote or
+    clash with a corroborated agent (review findings hostfw-5 and wire-5); it only stays ``claimed``. Rule 3
+    counts the OTHER agents' observed peer, which is server-observed evidence, not a claim. Pure and
+    deterministic; input order never changes the result."""
+    claims = sorted(claims, key=lambda c: c.agent_id)
+    by_peer: dict[str, set[str]] = {}
+    for c in claims:
+        if c.peer:
+            by_peer.setdefault(c.peer, set()).add(c.agent_id)
+    out: dict[str, Decision] = {}
+    passed: dict[str, str] = {}
+    for c in claims:
+        out[c.agent_id] = Decision(None, "")
+        if not c.ips:
+            continue
+        owners = {amap.unique.get(ip) for ip in c.ips}
+        if len(owners) != 1 or None in owners or any(amap.is_ambiguous(ip) for ip in c.ips):
+            if any(amap.is_ambiguous(ip) or amap.unique.get(ip) for ip in c.ips):
+                out[c.agent_id] = Decision(None, "ambiguous_cloud_node")
+            continue
+        ref = next(iter(owners))
+        if amap.node_kind(ref) != INSTANCE_KIND:
+            continue
+        private = {ip for ip in amap.ips_of(ref) if not is_public_ip(ip)}
+        if not set(c.ips) <= private:
+            continue
+        if c.peer is None or c.peer not in private:
+            out[c.agent_id] = Decision(None, "peer_address_not_instance")
+            continue
+        if not c.direct:
+            out[c.agent_id] = Decision(None, "peer_not_direct")
+            continue
+        passed[c.agent_id] = ref
+    by_ref: dict[str, list[str]] = {}
+    for aid, ref in passed.items():
+        by_ref.setdefault(ref, []).append(aid)
+    peer_of = {c.agent_id: c.peer for c in claims}
+    for aid, ref in sorted(passed.items()):
+        if len(by_peer.get(peer_of[aid], ())) > 1:
+            out[aid] = Decision(None, "shared_peer_address")
+        elif len(by_ref[ref]) > 1:
+            out[aid] = Decision(None, "ambiguous_cloud_node")
+        else:
+            out[aid] = Decision(ref, "")
+    return out
 
 
 def resolve(ip_map: IpMap, ip: str) -> str:

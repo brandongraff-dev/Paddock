@@ -75,6 +75,17 @@ _SEV_RANK_SQL = (
 )
 
 # Paddock Sentry behaviour detectors + the OT exposure policies (docs/SENTRY.md).
+# "Reporting" (compliance internal_visibility, executive coverage) means an agent that CAN and DOES send signed
+# evidence inside the window: not revoked, not a v1 (legacy) row, online, an ACTIVE key that has signed at least one
+# accepted envelope (``last_seq > 0``; enrollment and re-keying set ``last_seen`` without any signature), and a
+# signed posture or heartbeat inside the window. ``{win}`` is a SQL timestamp expression. Enrolled is not reporting.
+REPORTING_AGENT_SQL = (
+    "(a.status <> 'revoked' AND a.legacy = FALSE AND a.online = TRUE "
+    "AND EXISTS (SELECT 1 FROM fleet_agent_keys k WHERE k.agent_id = a.id AND k.status = 'active' "
+    "AND k.last_seq > 0) "
+    "AND (a.last_posture_at >= {win} OR a.last_seen >= {win}))"
+)
+
 SENTRY_RULES: dict[str, str] = {
     "device_lateral_scan": "Device scanning laterally",
     "ot_internet_egress": "OT device reaching the internet",
@@ -671,10 +682,11 @@ async def _coverage(con, w: Window, cr: int) -> Coverage:
     tls = await con.fetchrow(
         "SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE grade NOT IN ('A+','A','B')) AS bad FROM tls_grades"
     )
+    reporting = REPORTING_AGENT_SQL.format(win="($1::timestamptz - interval '1 day')")
     fleet = await con.fetchrow(
-        """SELECT COUNT(*) FILTER (WHERE status <> 'revoked') AS n,
-                  COUNT(*) FILTER (WHERE status <> 'revoked' AND last_seen >= $1::timestamptz - interval '1 day') AS recent
-             FROM fleet_agents""",
+        f"""SELECT COUNT(*) FILTER (WHERE a.status <> 'revoked') AS n,
+                   COUNT(*) FILTER (WHERE {reporting}) AS recent
+              FROM fleet_agents a""",
         w.end,
     )
     rows = [

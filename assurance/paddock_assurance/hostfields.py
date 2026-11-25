@@ -23,7 +23,7 @@ import ipaddress
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Union
 
-from .hostfacts import Fact, HostFacts
+from .hostfacts import Fact, HostFacts, tombstone
 from .kleene import Tri, k_all, k_any, k_not
 from .tier import Tier
 
@@ -31,8 +31,9 @@ FUTURE_SLACK = dt.timedelta(minutes=5)
 TYPES = ("bool", "int", "str", "set<str>", "set<cidr>")
 
 # Blind-spot reasons, most fundamental first. A host with several reasons reports the first.
-REASON_ORDER = ("no_agent", "no_sensor", "unavailable", "collector_error", "unsigned",
-                "evidence_conflict", "approximate", "partial", "match_override", "no_value",
+REASON_ORDER = ("no_agent", "agent_revoked", "no_sensor", "unavailable", "collector_error",
+                "unsigned", "evidence_conflict", "approximate", "reload_pending", "daemon_differs",
+                "partial", "unlisted_listener", "match_override", "unrestricted", "no_value",
                 "tier_below_min", "future_timestamp", "stale")
 
 
@@ -49,11 +50,20 @@ class Known:
     # Other facts the value rests on (a corroborating collector): they expire too, so the verdict's
     # tier and valid_until must account for them.
     also: tuple = ()
+    # A limit of the evidence a HOLDS resting on this value must state (``basis:<name>``).
+    note: str = ""
 
 
 @dataclass(frozen=True)
 class Unknown:
     reason: str
+    # A key a Match block changes has no single value, but a leaf can still be decided per variant:
+    # the value in the base config and in every probed variant, in order, de-duplicated; ``None`` is
+    # a variant whose value cannot be read. Empty for every other kind of unknown.
+    variants: tuple = ()
+    # The fact that made the value unknown when it is not the field's own collector (a corroborating
+    # listener table that is future-dated turns usable five minutes before its timestamp).
+    blame: Optional[Fact] = None
 
 
 Outcome = Union[Known, Unknown]
@@ -77,6 +87,9 @@ class FieldSpec:
     param: Optional[ParamSpec] = None  # the parameter sits right after segment ``param_after``
     param_after: int = 1
     absent: str = "unknown"           # what a missing key means: "unknown" or "empty" (set fields)
+    # Collectors whose facts the accessor also reads (a corroboration): listed in ``Plan.collectors``
+    # so a reader learns that a stale or unsigned fact of theirs changes the verdict.
+    also_collectors: tuple = ()
     derived: bool = False
     choices: Optional[frozenset] = None   # str fields: the closed vocabulary a literal may use
     aliases: Mapping[str, str] = None  # type: ignore[assignment]  # literal spellings folded to a choice
@@ -123,16 +136,79 @@ def _is_seq(v: Any) -> bool:
 
 _YESNO = frozenset(["yes", "no"])
 _ROOT_LOGIN = frozenset(["yes", "no", "prohibit-password", "forced-commands-only"])
-_SSHD_COMMS = frozenset(["sshd", "sshd-session", "dropbear"])
+# What the collector cuts (agent/paddock_agent/collectors/sshd.py: MAX_LIST_ITEMS, clean_str(.., 200)).
+# A list of exactly this many names, or a string of exactly this many characters, may have been cut by
+# an agent that did not say so: it is never read as the whole value.
+_MAX_LIST_ITEMS = 50
+_MAX_STR_CUT = 200
+
+# A process whose name (or executable) contains one of these may be an SSH server (the agent's
+# ``SSH_NAME_HINTS``; any case).
+_SSH_NAME_HINTS = ("ssh", "dropbear")
+# Programs known NOT to be (or front) an SSH server: the agent's ``NON_SSH_COMMS``. A public TCP
+# listener of any other program (a proxy such as docker-proxy, gitea, teleport, nginx, ...) or of none
+# we can name keeps "no SSH server" unproven. Deliberately short.
+NON_SSH_COMMS = frozenset([
+    "postgres", "postmaster", "mysqld", "mariadbd", "mongod", "redis-server", "valkey-server",
+    "memcached", "named", "unbound", "dnsmasq", "chronyd", "ntpd", "cupsd", "smbd", "nmbd",
+    "master", "dovecot", "exim4", "cockroach",
+])
+ABSENCE_NOTE = "basis:sshd_absence_from_listener_table"
 
 
-def _sshd_state(fact: Fact) -> Union[tuple[Mapping[str, Any], list[Mapping[str, Any]], list[Mapping[str, Any]]], Unknown]:
-    """``(base config, deltas, variants)`` of an exact ``sshd -T`` fact, or ``Unknown``.
+def _truncated(d: Mapping[str, Any]) -> Union[frozenset, "Unknown"]:
+    """The config keys the collector says it cut (``v.truncated``; absent when nothing was cut). A
+    marker that is present but unreadable makes the whole fact unusable for config claims."""
+    if "truncated" not in d:
+        return frozenset()
+    t = d["truncated"]
+    if not _is_seq(t) or not all(isinstance(x, str) and x for x in t):
+        return Unknown("approximate")
+    return frozenset(x.lower() for x in t)       # the agent writes lower-case keys; be liberal here
+
+
+def _daemon_problem(d: Mapping[str, Any]) -> Optional["Unknown"]:
+    """``sshd -T`` describes the files on disk; ``v.daemon`` is the only evidence about the running
+    daemon. A config claim needs POSITIVE evidence that the daemon runs those files. A flag the agent
+    could not read (null) is not evidence: with an unreadable command line the agent still computes
+    ``reload_pending`` from file times alone, and a daemon started with ``-f /other`` or extra ``-o``
+    options would hide behind that. So, for a running master daemon: exactly one master, the default
+    config file, no extra options, the expected binary, and no reload pending. With no master daemon
+    only socket activation qualifies (``found`` false, ``masters`` 0, ``reload_pending`` false: sshd
+    reads the files for every connection). Anything else is unknown."""
+    daemon = d.get("daemon")
+    if not _is_map(daemon):
+        return Unknown("approximate")
+    rp = daemon.get("reload_pending")
+    if rp is True:
+        return Unknown("reload_pending")
+    if rp is not False:
+        return Unknown("approximate")
+    masters = daemon.get("masters")
+    found = daemon.get("found")
+    if type(masters) is not int or type(found) is not bool:
+        return Unknown("approximate")
+    if (daemon.get("binary_matches") is False or daemon.get("config_default") is False
+            or daemon.get("options_override") is True or masters > 1):
+        return Unknown("daemon_differs")
+    if not found:
+        return None if masters == 0 else Unknown("approximate")
+    if (masters != 1 or daemon.get("config_default") is not True
+            or daemon.get("options_override") is not False
+            or daemon.get("binary_matches") is not True):
+        return Unknown("approximate")
+    return None
+
+
+def _sshd_state(fact: Fact) -> Union[tuple[Mapping[str, Any], list[Mapping[str, Any]],
+                                           list[Mapping[str, Any]], frozenset], Unknown]:
+    """``(base config, deltas, variants, truncated keys)`` of an exact ``sshd -T`` fact, or ``Unknown``.
 
     ``variants`` is the base config plus the base with each probe delta applied (a delta is a
-    Match block's effect for one probed user and address). Exact means every Match criterion was
-    probed (``match.unprobed is False``): anything else (absent, true, a text-parsed config) is
-    approximate and the caller must not conclude anything from it."""
+    Match block's effect for one probed user and address), with every key the collector says it cut
+    removed. Exact means every Match criterion was probed (``match.unprobed is False``) and the
+    running daemon is known to run these files: anything else (absent, true, a text-parsed config,
+    a reload pending) is approximate and the caller must not conclude anything from it."""
     d = fact.data
     cfg = d.get("config")
     match = d.get("match")
@@ -141,24 +217,41 @@ def _sshd_state(fact: Fact) -> Union[tuple[Mapping[str, Any], list[Mapping[str, 
         return Unknown("approximate")
     if d.get("source") == "text" or not _is_map(probes) or not _is_seq(probes.get("deltas")):
         return Unknown("approximate")
+    trunc = _truncated(d)
+    if isinstance(trunc, Unknown):
+        return trunc
+    pending = _daemon_problem(d)
+    if pending is not None:
+        return pending
     deltas: list[Mapping[str, Any]] = []
     for item in probes["deltas"]:
         if not _is_map(item) or not _is_map(item.get("delta")):
             return Unknown("approximate")
         deltas.append(item["delta"])
-    variants: list[Mapping[str, Any]] = [cfg]
+    base = {k: v for k, v in cfg.items() if k not in trunc}
+    variants: list[Mapping[str, Any]] = [base]
     for dl in deltas:
-        c = dict(cfg)
+        c = dict(base)
         for k, v in dl.items():
+            if k in trunc:
+                continue
             if v is None:
                 c.pop(k, None)
             else:
                 c[k] = v
         variants.append(c)
-    return cfg, deltas, variants
+    return cfg, deltas, variants, trunc
 
 
-def _sshd_scalar(key: str, allowed: Optional[frozenset]) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
+def _dedupe(values: list) -> tuple:
+    return tuple(dict.fromkeys(values))
+
+
+def _sshd_scalar_acc(key: str, parse: Callable[[Any], Any]) \
+        -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
+    """A single-valued key. ``parse`` turns a raw value into the field's value or ``None``. A key a
+    Match block changes has no single value (``match_override``) but carries its per-variant values
+    so a leaf can still be decided (see ``hostconfig``): a variant that violates is a violation."""
     def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
         bad = _need(fact, exact=True)
         if bad:
@@ -166,41 +259,47 @@ def _sshd_scalar(key: str, allowed: Optional[frozenset]) -> Callable[[Fact, tupl
         st = _sshd_state(fact)
         if isinstance(st, Unknown):
             return st
-        cfg, deltas, _variants = st
-        if any(key in dl for dl in deltas):
-            return Unknown("match_override")       # no single effective value: it varies by user/address
-        v = cfg.get(key)
-        if not isinstance(v, str) or not v or len(v) > 200:
-            return Unknown("no_value")
+        cfg, deltas, variants, trunc = st
+        if key in trunc:
+            return Unknown("approximate")                 # a cut value is a prefix, not the truth
+        vals = [parse(c.get(key)) for c in variants]
+        if not any(key in dl for dl in deltas):
+            return Known(vals[0]) if vals[0] is not None else Unknown("no_value")
+        if all(v is None for v in vals):
+            return Unknown("match_override")
+        return Unknown("match_override", variants=_dedupe(vals))
+    return acc
+
+
+def _sshd_scalar(key: str, allowed: Optional[frozenset]) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
+    def parse(v: Any) -> Optional[str]:
+        if not isinstance(v, str) or not v or len(v) >= _MAX_STR_CUT:
+            return None
         v = v.lower()
         if key == "permitrootlogin" and v == "without-password":
             v = "prohibit-password"
         if allowed is not None and v not in allowed:
-            return Unknown("no_value")
-        return Known(v)
-    return acc
+            return None
+        return v
+    return _sshd_scalar_acc(key, parse)
 
 
 def _sshd_int(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
-    def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
-        bad = _need(fact, exact=True)
-        if bad:
-            return bad
-        st = _sshd_state(fact)
-        if isinstance(st, Unknown):
-            return st
-        cfg, deltas, _variants = st
-        if any(key in dl for dl in deltas):
-            return Unknown("match_override")
-        v = cfg.get(key)
-        if type(v) is not int or v < 0 or v > 10**9:
-            return Unknown("no_value")
-        return Known(v)
-    return acc
+    def parse(v: Any) -> Optional[int]:
+        return v if type(v) is int and 0 <= v <= 10**9 else None
+    return _sshd_scalar_acc(key, parse)
+
+
+def _is_cut_list(v: Any) -> bool:
+    return len(v) >= _MAX_LIST_ITEMS
 
 
 def _sshd_list(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
-    """A set of names; absent means "not configured" (the empty set) in an exact ``sshd -T`` fact."""
+    """A set of names. **An absent key is not the empty set**: no AllowUsers / AllowGroups means every
+    account may log in, and ``subset_of`` / ``count()`` over "nobody" would pass the least restricted
+    host. So it has no value (``unrestricted``); ``allowusers_set`` / ``allowgroups_set`` say whether
+    the key is configured. A list the collector cut (named in ``v.truncated``, or exactly as long as
+    its cap) is unknown too: it is a prefix of the truth."""
     def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
         bad = _need(fact, exact=True)
         if bad:
@@ -208,15 +307,45 @@ def _sshd_list(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
         st = _sshd_state(fact)
         if isinstance(st, Unknown):
             return st
-        cfg, deltas, _variants = st
+        cfg, deltas, _variants, trunc = st
+        if key in trunc:
+            return Unknown("approximate")
         if any(key in dl for dl in deltas):
             return Unknown("match_override")
         v = cfg.get(key)
-        if v is None:
-            return Known(frozenset())
+        if v is None or (_is_seq(v) and not v):
+            return Unknown("unrestricted")
         if not _is_seq(v) or not all(isinstance(x, str) for x in v):
             return Unknown("no_value")
+        if _is_cut_list(v):
+            return Unknown("approximate")
         return Known(frozenset(v))
+    return acc
+
+
+def _sshd_listset(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
+    """Is ``key`` (AllowUsers / AllowGroups) configured, for every probed user and address? False
+    when some variant has none (everyone may log in there)."""
+    def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
+        bad = _need(fact, exact=True)
+        if bad:
+            return bad
+        st = _sshd_state(fact)
+        if isinstance(st, Unknown):
+            return st
+        _cfg, _deltas, variants, trunc = st
+        if key in trunc:
+            return Unknown("approximate")
+
+        def one(c: Mapping[str, Any]) -> Tri:
+            v = c.get(key)
+            if v is None:
+                return False
+            if not _is_seq(v) or not all(isinstance(x, str) for x in v):
+                return None
+            return len(v) > 0
+        v = k_all([one(c) for c in variants])
+        return Unknown("no_value") if v is None else Known(v)
     return acc
 
 
@@ -233,12 +362,15 @@ def _yes(c: Mapping[str, Any], key: str) -> Tri:
 
 def _pubkey_only(c: Mapping[str, Any]) -> Tri:
     """True when AuthenticationMethods demands public keys only; False for ``any`` and anything
-    that lets another method in; None when it is absent or unreadable."""
+    that lets another method in; None when it is absent or unreadable (or as long as the collector's
+    cap, so possibly cut: a prefix that looks all-publickey proves nothing)."""
     v = c.get("authenticationmethods")
     if not isinstance(v, str):
         return None
+    if len(v) >= _MAX_STR_CUT:
+        return None
     v = v.strip().lower()
-    if not v or len(v) > 200:
+    if not v:
         return None
     if v == "any":
         return False
@@ -275,7 +407,7 @@ def _sshd_derived(fn: Callable[[Mapping[str, Any]], Tri]) -> Callable[[Fact, tup
         st = _sshd_state(fact)
         if isinstance(st, Unknown):
             return st
-        _cfg, _deltas, variants = st
+        _cfg, _deltas, variants, _trunc = st      # cut keys are already gone from every variant
         v = k_any([fn(c) for c in variants])      # any probed user/address that can: possible
         return Unknown("no_value") if v is None else Known(v)
     return acc
@@ -286,6 +418,15 @@ def _listener_rows(lf: Fact) -> Optional[list]:
     if not _is_seq(rows):
         return None
     return list(rows)
+
+
+def _name_is_ssh(name: Any) -> bool:
+    """Does a process name (or an executable path's basename) look like an SSH server? Any case:
+    ``sshd``, ``SSHD``, ``gitlab-sshd``, ``tinyssh``, ``dropbear``, ``sshd-session``."""
+    if not isinstance(name, str):
+        return False
+    low = name.rsplit("/", 1)[-1].lower()
+    return any(h in low for h in _SSH_NAME_HINTS)
 
 
 def _sshd_seen_elsewhere(host: HostFacts) -> bool:
@@ -300,7 +441,29 @@ def _sshd_seen_elsewhere(host: HostFacts) -> bool:
     for r in rows:
         if not _is_map(r):
             return True
-        if r.get("port") == 22 or r.get("comm") in _SSHD_COMMS:
+        port = r.get("port")
+        if type(port) is not int or port == 22:      # a port we cannot read cannot clear port 22
+            return True
+        if _name_is_ssh(r.get("comm")) or _name_is_ssh(r.get("exe")):
+            return True
+    return False
+
+
+def _unlisted_listener(rows: list) -> bool:
+    """Is there a non-loopback TCP listener that is not a program known to be no SSH server (nor
+    front one)? Unattributed ones, proxies (docker-proxy, rootlessport, kube-proxy, nginx, ...),
+    other SSH servers (gitea, teleport, sftpgo, ...) and every name not on ``NON_SSH_COMMS`` count:
+    an SSH server on port 2222 behind any of them would otherwise read as "no SSH server"."""
+    for r in rows:
+        if not _is_map(r):
+            return True
+        proto = r.get("proto")
+        if isinstance(proto, str) and proto.lower().startswith("udp"):
+            continue                                  # SSH is TCP (port 22 on any protocol is vetoed above)
+        if r.get("bind_class") == "loopback":
+            continue
+        comm = r.get("comm")
+        if not isinstance(comm, str) or comm.lower() not in NON_SSH_COMMS:
             return True
     return False
 
@@ -308,10 +471,12 @@ def _sshd_seen_elsewhere(host: HostFacts) -> bool:
 def _absence_corroborated(ctx: "HostCtx") -> Optional[str]:
     """Why "no sshd" cannot be believed, else ``None``.
 
-    ``tool_missing`` only says no ``sshd`` was found in the usual places; a daemon in an unusual
-    path, or dropbear, would be missed. So the claim also needs a *usable* (signed, fresh, no
-    conflict) listener table that is complete, fully attributed to processes and shows nothing
-    on port 22 or named like an SSH server. Anything less is UNKNOWN, never "not installed"."""
+    ``tool_missing`` only says no trusted OpenSSH ``sshd`` was found in the usual places; a daemon
+    in an unusual path, dropbear, or any other SSH server (gitea, teleport, a container behind
+    docker-proxy) would be missed. So the claim also needs a *usable* (signed, fresh, no conflict)
+    listener table that is complete, fully attributed to processes, shows nothing on port 22 or named
+    like an SSH server, and in which every public TCP listener belongs to a program known to be no
+    SSH server. Anything less is UNKNOWN, never "not installed"."""
     if ctx.host.get("listeners") is None:
         return "no_sensor"
     lf = ctx.usable("listeners")
@@ -325,6 +490,8 @@ def _absence_corroborated(ctx: "HostCtx") -> Optional[str]:
     att = lf.data.get("attribution")
     if not _is_map(att) or att.get("status") != "ok":
         return "partial"
+    if _unlisted_listener(rows):
+        return "unlisted_listener"
     return None
 
 
@@ -341,15 +508,16 @@ def _sshd_installed(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
         return Unknown("unavailable")
     else:
         return Unknown("collector_error")
-    # "no sshd binary was found": a claim of absence. A listener that looks like sshd contradicts
-    # it, and without a usable, complete listener table it cannot be corroborated.
+    # "no sshd binary was found": a claim of absence, and ``tool_missing`` is only a weak "nothing
+    # seen" signal. A listener that looks like sshd contradicts it, and without a usable, complete
+    # listener table whose public listeners are all known non-SSH programs it cannot be corroborated.
     if _sshd_seen_elsewhere(ctx.host):
         return Unknown("evidence_conflict")
     why = _absence_corroborated(ctx)
     if why:
-        return Unknown(why)
+        return Unknown(why, blame=ctx.host.get("listeners"))
     lf = ctx.usable("listeners")
-    return Known(False, also=(lf,) if lf is not None else ())
+    return Known(False, also=(lf,) if lf is not None else (), note=ABSENCE_NOTE)
 
 
 # --------------------------------------------------------------------------------------------
@@ -532,15 +700,18 @@ CFG = Tier.configured
 def _specs() -> list[FieldSpec]:
     s = [
         FieldSpec("host.sshd.installed", "bool", "sshd", CFG, _sshd_installed,
-                  "an SSH server is installed (false: no sshd binary, and no listener looks like one)"),
+                  "an SSH server is installed (false: no trusted OpenSSH sshd was found AND a usable, "
+                  "complete, attributed listener table shows no public TCP listener except known "
+                  "non-SSH programs: a weaker claim than it sounds, so a HOLDS resting on it says so)",
+                  also_collectors=("listeners",)),
         FieldSpec("host.sshd.password_login_possible", "bool", "sshd", CFG,
                   _sshd_derived(_password_possible),
                   "any probed user/address can log in with a password: PasswordAuthentication yes, or "
                   "KbdInteractiveAuthentication yes with UsePAM yes and no public-key-only "
                   "AuthenticationMethods", derived=True),
         FieldSpec("host.sshd.root_login_possible", "bool", "sshd", CFG, _sshd_derived(_root_possible),
-                  "any probed user/address allows PermitRootLogin yes (key-only root login, "
-                  "prohibit-password, is not counted)", derived=True),
+                  "any probed user/address allows PermitRootLogin yes (root login with a key only, "
+                  "prohibit-password or forced-commands-only, is not counted)", derived=True),
         FieldSpec("host.sshd.passwordauthentication", "str", "sshd", CFG,
                   _sshd_scalar("passwordauthentication", _YESNO), "sshd -T passwordauthentication",
                   choices=_YESNO),
@@ -564,9 +735,15 @@ def _specs() -> list[FieldSpec]:
         FieldSpec("host.sshd.maxauthtries", "int", "sshd", CFG, _sshd_int("maxauthtries"),
                   "sshd -T maxauthtries"),
         FieldSpec("host.sshd.allowusers", "set<str>", "sshd", CFG, _sshd_list("allowusers"),
-                  "sshd -T allowusers (empty: not configured)", absent="empty"),
+                  "sshd -T allowusers (no value when it is not configured: every account may log "
+                  "in; see allowusers_set)"),
         FieldSpec("host.sshd.allowgroups", "set<str>", "sshd", CFG, _sshd_list("allowgroups"),
-                  "sshd -T allowgroups (empty: not configured)", absent="empty"),
+                  "sshd -T allowgroups (no value when it is not configured: every account may log "
+                  "in; see allowgroups_set)"),
+        FieldSpec("host.sshd.allowusers_set", "bool", "sshd", CFG, _sshd_listset("allowusers"),
+                  "AllowUsers is configured (non-empty) for every probed user/address", derived=True),
+        FieldSpec("host.sshd.allowgroups_set", "bool", "sshd", CFG, _sshd_listset("allowgroups"),
+                  "AllowGroups is configured (non-empty) for every probed user/address", derived=True),
         FieldSpec("host.fw.default_inbound_all_families", "str", "firewall", CFG, _fw_default_all,
                   "deny: every enabled family drops or rejects inbound by default (exact model); "
                   "allow: some family accepts; otherwise unknown", derived=True,
@@ -614,6 +791,8 @@ class Resolved:
     fact: Optional[Fact] = None
     tier: Optional[Tier] = None       # effective tier: the fact's, capped at the field's max_tier
     also: tuple = ()                  # corroborating facts the value rests on (see ``Known.also``)
+    notes: tuple = ()                 # limits of the evidence a HOLDS must state (``Known.note``)
+    variants: tuple = ()              # per-variant values of a key Match blocks change (``Unknown``)
 
 
 def trust_problem(fact: Fact, tier: Tier, now: dt.datetime, min_tier: Tier,
@@ -674,6 +853,10 @@ def resolve(spec: FieldSpec, params: tuple, host: Optional[HostFacts], now: dt.d
     """The value of ``spec(params)`` on ``host``, or why there is none. Never raises."""
     if host is None:
         return Resolved(False, reason="no_agent")
+    if tombstone(host):
+        # the agent is revoked / legacy / re-keyed: whatever it signed is not relied on, and the
+        # host reads UNKNOWN until an operator closes the finding or a new agent decides it
+        return Resolved(False, reason="agent_revoked")
     fact = host.get(spec.collector)
     if fact is None:
         return Resolved(False, reason="no_sensor")
@@ -686,7 +869,11 @@ def resolve(spec: FieldSpec, params: tuple, host: Optional[HostFacts], now: dt.d
     except Exception:                       # noqa: BLE001 - an accessor bug must read as UNKNOWN
         return Resolved(False, reason="no_value", fact=fact, tier=tier)
     if isinstance(out, Known) and _type_ok(spec.type, out.value):
-        return Resolved(True, out.value, "", fact, tier, tuple(out.also))
+        return Resolved(True, out.value, "", fact, tier, tuple(out.also),
+                        (out.note,) if out.note else ())
     if isinstance(out, Unknown):
-        return Resolved(False, reason=out.reason, fact=fact, tier=tier)
+        if out.blame is not None:
+            bt = out.blame.tier if out.blame.tier.rank <= CFG.rank else CFG
+            return Resolved(False, reason=out.reason, fact=out.blame, tier=bt)
+        return Resolved(False, reason=out.reason, fact=fact, tier=tier, variants=tuple(out.variants))
     return Resolved(False, reason="no_value", fact=fact, tier=tier)

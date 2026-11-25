@@ -69,9 +69,11 @@ MAX_LABELS = 20
 
 GENERIC_ENROLL_DETAIL = "invalid, expired or already-used enrollment token"
 
-_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._:-]{1,253}$")
-_LABEL_RE = re.compile(r"^[A-Za-z0-9_.:/=-]{1,64}$")
-_CAP_RE = re.compile(r"^[a-z_]{1,32}$")
+# Matched with ``fullmatch``: ``$`` also matches before a trailing newline, which made "web1\n" a distinct, valid
+# name that displays as "web1".
+_HOSTNAME_RE = re.compile(r"[A-Za-z0-9._:-]{1,253}")
+_LABEL_RE = re.compile(r"[A-Za-z0-9_.:/=-]{1,64}")
+_CAP_RE = re.compile(r"[a-z_]{1,32}")
 _PLATFORMS = frozenset({"linux", "windows", "macos"})
 _NODE_REF_PREFIX = "agent:"
 
@@ -81,6 +83,33 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name) or default)
     except ValueError:
         return default
+
+
+#: ACTIVE (not revoked) agents per tenant. Re-keying an existing agent is not a new agent. A refusal rolls the
+#: transaction back, so it does not spend a use of the token.
+MAX_AGENTS_PER_TENANT = _env_int("FLEET_MAX_AGENTS_PER_TENANT", 10000)
+#: ALL agent rows per tenant, revoked tombstones included. A revoked host stays in the graph as a tombstone (it
+#: reads UNKNOWN until an operator closes it), and nothing deletes it, so the tombstones need their own, larger
+#: bound: an autoscaling fleet must not exhaust a lifetime counter, and an admin must not grow the table forever.
+MAX_AGENT_ROWS_PER_TENANT = _env_int("FLEET_MAX_AGENT_ROWS_PER_TENANT", 10 * MAX_AGENTS_PER_TENANT)
+
+#: deadlocks retried (not a failure): a counter for the tests and for operators reading the module.
+deadlock_retries = 0
+DEADLOCK_ATTEMPTS = 3
+
+
+async def retry_on_deadlock(fn: Any) -> Any:
+    """Run ``await fn()`` (one whole transaction) again when Postgres picked it as a deadlock victim. The lock
+    order is fixed (enrollment tokens, then the agent row, then its keys), so this is defence in depth, not the
+    mechanism. Bounded; the last error is re-raised."""
+    global deadlock_retries
+    for attempt in range(DEADLOCK_ATTEMPTS):
+        try:
+            return await fn()
+        except asyncpg.DeadlockDetectedError:
+            if attempt == DEADLOCK_ATTEMPTS - 1:
+                raise
+            deadlock_retries += 1
 
 
 # --------------------------------------------------------------------------- #
@@ -97,12 +126,20 @@ def reset_limiters() -> None:
     enroll_fail_limiter.reset()
 
 
-def _limit_key(ip: str | None) -> str:
-    """Canonical limiter key. Idempotent on an already-canonical ``x::/64`` key."""
+def _limit_key(ip: str | None, prefix: str | None = None) -> str:
+    """Canonical limiter key. Idempotent on an already-canonical ``x::/64`` key.
+
+    ``ip`` is the STRICT peer (``auth.client_ip_strict``): the forgeable leftmost ``X-Forwarded-For`` entry must
+    never reach here. When there is no peer address at all (a unix socket), every caller would share one bucket,
+    so five junk requests would lock everybody out: the key then carries the token prefix instead, which limits
+    guessing against one token without letting a caller who does not know a prefix touch another token's bucket."""
     text = (ip or "").strip()
     if ":" in text and text.endswith("/64"):
         text = text[:-3]
-    return client_key(text or None)
+    key = client_key(text or None)
+    if key == "unknown" and prefix:
+        return f"unknown|{prefix}"
+    return key
 
 
 # --------------------------------------------------------------------------- #
@@ -339,7 +376,7 @@ def _clean_labels(labels: Any) -> list[str]:
         raise TokenPolicyError("labels must be a list of strings")
     out = []
     for item in labels:
-        if not isinstance(item, str) or not _LABEL_RE.match(item.strip()):
+        if not isinstance(item, str) or not _LABEL_RE.fullmatch(item.strip()):
             raise TokenPolicyError("a label must be 1-64 chars of [A-Za-z0-9_.:/=-]")
         out.append(item.strip())
     out = sorted(set(out))
@@ -441,8 +478,10 @@ def _clean_caps(capabilities: Any) -> list[str]:
         return ["inventory"]
     if not isinstance(capabilities, (list, tuple)):
         raise EnrollError(400, "capabilities must be a list of strings")
+    if any(not isinstance(c, str) for c in capabilities):
+        raise EnrollError(400, "invalid capabilities")
     caps = sorted({c for c in capabilities if c})
-    if len(caps) > 16 or any(not isinstance(c, str) or not _CAP_RE.match(c) for c in caps):
+    if len(caps) > 16 or any(not _CAP_RE.fullmatch(c) for c in caps):
         raise EnrollError(400, "invalid capabilities")
     return caps or ["inventory"]
 
@@ -465,14 +504,15 @@ async def enroll_agent(pool: Any, *, token: str, hostname: str, public_key_b64: 
     * 409 ``hostname already enrolled`` or ``public key already registered``. A 409 rolls the whole
       transaction back, so it does NOT spend a use of the token.
     """
-    key = _limit_key(client_ip)
+    key = _limit_key(client_ip, split_enroll_token(token))
     if enroll_fail_limiter.blocked(key) or not enroll_limiter.hit(key):
         raise EnrollError(429, "too many enrollment attempts; wait and retry", retry_after=60,
                           counts_failure=False)
     try:
-        return await _enroll(pool, token=token, hostname=hostname, public_key_b64=public_key_b64,
-                             proof_b64=proof_b64, agent_version=agent_version, platform=platform,
-                             capabilities=capabilities, client_ip=client_ip)
+        return await retry_on_deadlock(lambda: _enroll(
+            pool, token=token, hostname=hostname, public_key_b64=public_key_b64,
+            proof_b64=proof_b64, agent_version=agent_version, platform=platform,
+            capabilities=capabilities, client_ip=client_ip))
     except EnrollError as exc:
         if exc.counts_failure:
             enroll_fail_limiter.hit(key)
@@ -491,9 +531,14 @@ async def _enroll(pool: Any, *, token: str, hostname: str, public_key_b64: str, 
         raise _bad()
     # Everything below up to the token lookup depends only on the caller's own input, never on token state,
     # so a failure here is not an oracle for which tokens exist.
-    if not isinstance(hostname, str) or not _HOSTNAME_RE.match(hostname):
+    if (not isinstance(hostname, str) or hostname != hostname.strip()
+            or not _HOSTNAME_RE.fullmatch(hostname)):
         raise EnrollError(400, "invalid hostname")
     host = hostname.lower()
+    if host.endswith("."):                  # the DNS root dot: "web1." and "web1" are one host
+        host = host[:-1]
+    if not host or host.endswith(".") or not _HOSTNAME_RE.fullmatch(host):
+        raise EnrollError(400, "invalid hostname")
     try:
         pub = parse_public_key_b64(public_key_b64)
     except KeyFormatError as exc:
@@ -547,9 +592,22 @@ async def _enroll(pool: Any, *, token: str, hostname: str, public_key_b64: str, 
                     cred = retired["cred"]
                     revoked_keys = retired["revoked_keys"]
                 else:
+                    # Lock order, everywhere: token row, then (this) per-tenant agent-count lock, then the agent
+                    # row, then its keys. The count is serialised so concurrent enrollments cannot overshoot.
+                    await con.execute("SELECT pg_advisory_xact_lock(hashtext($1))", "fleet-agents:" + tenant_id)
+                    counts = await con.fetchrow(
+                        "SELECT count(*) FILTER (WHERE status <> 'revoked' AND revoked_at IS NULL) AS active, "
+                        "count(*) AS total FROM fleet_agents WHERE tenant_id = $1", trow["tenant_id"])
+                    if counts["active"] >= MAX_AGENTS_PER_TENANT:
+                        raise EnrollError(403, "this tenant has reached its limit of active agents "
+                                               "(FLEET_MAX_AGENTS_PER_TENANT); revoke unused ones",
+                                          counts_failure=False)
+                    if counts["total"] >= MAX_AGENT_ROWS_PER_TENANT:
+                        raise EnrollError(403, "this tenant has reached its limit of agent records, revoked ones "
+                                               "included (FLEET_MAX_AGENT_ROWS_PER_TENANT)", counts_failure=False)
                     agent_id, cred = await _insert_agent(
                         con, host=host, platform=plat, version=version, labels=labels, caps=caps,
-                        actor=actor, identity=identity)
+                        actor=actor, identity=identity, token_id=claimed["id"])
                     revoked_keys = []
                 inserted = await con.fetchrow(
                     """INSERT INTO fleet_agent_keys (agent_id, key_id, public_key)
@@ -572,7 +630,8 @@ async def _enroll(pool: Any, *, token: str, hostname: str, public_key_b64: str, 
 
 
 async def _insert_agent(con: Any, *, host: str, platform: str, version: str | None, labels: list[str],
-                        caps: list[str], actor: str, identity: str) -> tuple[uuid.UUID, tuple[str, str, str]]:
+                        caps: list[str], actor: str, identity: str,
+                        token_id: uuid.UUID | None = None) -> tuple[uuid.UUID, tuple[str, str, str]]:
     """Insert a NEW agent row. An existing hostname is a 409 (never a silent credential replacement)."""
     agent_id = uuid.uuid4()
     for _ in range(3):
@@ -582,11 +641,11 @@ async def _insert_agent(con: Any, *, host: str, platform: str, version: str | No
                 row = await con.fetchrow(
                     """INSERT INTO fleet_agents
                            (id, hostname, platform, agent_version, labels, capabilities, status, token_prefix,
-                            token_hash, enrolled_by, last_seen, identity, node_ref)
-                       VALUES ($1,$2,$3,$4,$5::text[],$6::text[],'enrolled',$7,$8,$9,NOW(),$10::jsonb,$11)
+                            token_hash, enrolled_by, last_seen, identity, node_ref, enroll_token_id)
+                       VALUES ($1,$2,$3,$4,$5::text[],$6::text[],'enrolled',$7,$8,$9,NOW(),$10::jsonb,$11,$12)
                        ON CONFLICT (tenant_id, hostname) DO NOTHING RETURNING id""",
                     agent_id, host, platform, version, labels, caps, cred[1], cred[2], actor, identity,
-                    _NODE_REF_PREFIX + str(agent_id))
+                    _NODE_REF_PREFIX + str(agent_id), token_id)
         except asyncpg.UniqueViolationError:
             continue                                # token_prefix collision: retry with a new credential
         if row is None:

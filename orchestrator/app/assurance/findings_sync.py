@@ -34,6 +34,11 @@ Rules, and why they are what they are:
   ``UNKNOWN`` (no agent, silent, stale, unsigned, approximate, in conflict) keeps its open
   finding, both under a VIOLATED verdict (``unproven_targets``) and under a HOLDS that a lower
   coverage floor let stand with unknown hosts (those hosts are not closed by the HOLDS).
+  A ``host-config`` finding never closes by ABSENCE (review finding hostfw-4): a host that left the
+  graph (revoked, legacy, re-keyed, re-labelled) is in none of the library's lists, so it closes only
+  when its target is named in ``passing_targets`` (the hosts the evaluation found definitely passing;
+  an absent, malformed or capped list closes nothing), under HOLDS and under VIOLATED alike. The
+  ``host_fw`` builder keeps such a host in scope as an UNKNOWN tombstone while its finding is open.
 * The evidence has a **constant key set** (the upsert merges evidence with ``||``, so a varying
   key set would leave stale keys behind) and never carries ``url`` / ``matched_at`` / a CVE-like
   string: those keys steer verification jobs and CVE de-duplication, which are meaningless here.
@@ -396,6 +401,7 @@ WITH due AS (
        AND (rule_id = $1::text OR starts_with(rule_id, $2::text))
        AND status IN ('open', 'triaged') AND suppressed_by IS NULL
        AND NOT COALESCE((evidence->>'target_ref') = ANY($7::text[]), false)
+       AND ($8::text[] IS NULL OR COALESCE((evidence->>'target_ref') = ANY($8::text[]), false))
      FOR UPDATE
 )
 UPDATE findings f
@@ -409,10 +415,14 @@ RETURNING f.id, due.status AS from_status
 #: ``$7`` (``_CLOSE_SQL``) = targets the HOLDS must leave open: for ``host-config``, the hosts a
 #: lower coverage floor let the verdict stand over without being proven (no agent, silent, stale,
 #: unsigned, approximate, in conflict). Empty for every other assertion: HOLDS closes all, as in P1.
+#: ``$8`` = ``NULL`` (no restriction, the P1 assertions) or, for ``host-config``, the ONLY targets that
+#: may close: the hosts the evaluation positively found passing (``passing_targets``). A host that is in no
+#: list at all (revoked, legacy, re-keyed, re-labelled, oversized: gone from the graph) is not "fixed".
 
 #: Like ``_CLOSE_SQL`` but only for findings whose target is provably no longer violating:
 #: ``$7`` = every target the evaluator still finds violating, ``$8`` = targets it cannot see into.
 #: A finding without a recorded target (``evidence.target_ref``) is never closed this way.
+#: ``$9`` = ``NULL`` (P1 assertions) or, for ``host-config``, the ONLY targets that may close (``passing_targets``).
 _CLOSE_RESOLVED_SQL = """
 WITH due AS (
     SELECT id, status FROM findings
@@ -422,6 +432,7 @@ WITH due AS (
        AND evidence->>'target_ref' IS NOT NULL
        AND NOT ((evidence->>'target_ref') = ANY($7::text[]))
        AND NOT ((evidence->>'target_ref') = ANY($8::text[]))
+       AND ($9::text[] IS NULL OR (evidence->>'target_ref') = ANY($9::text[]))
      FOR UPDATE
 )
 UPDATE findings f
@@ -463,10 +474,14 @@ async def _after_close(pool, redis: Any, rows: list[Any], verified: bool, tier: 
 
 async def _close_all(pool, redis: Any, invariant_id: str, tier: Optional[str], graph_version: int,
                      now: datetime, rep: SyncReport, lease_owner: Optional[str] = None,
-                     keep: Sequence[str] = ()) -> None:
+                     keep: Sequence[str] = (), only: Optional[Sequence[str]] = None) -> None:
     verified = tier in VERIFYING_TIERS
-    reason = (f"invariant holds at graph version {graph_version}"
-              f" (evidence: {tier or 'none'}{'' if verified else ', not enough to verify'})")
+    if only is not None:
+        reason = (f"host evaluated as passing at graph version {graph_version}"
+                  f" (evidence: {tier or 'none'}{'' if verified else ', not enough to verify'})")
+    else:
+        reason = (f"invariant holds at graph version {graph_version}"
+                  f" (evidence: {tier or 'none'}{'' if verified else ', not enough to verify'})")
     if keep:
         reason += f"; {len(keep)} undecided target(s) left open"
     base = f"{RULE_PREFIX}{invariant_id}"
@@ -474,7 +489,8 @@ async def _close_all(pool, redis: Any, invariant_id: str, tier: Optional[str], g
         async with con.transaction():
             if not await _fenced(con, lease_owner, graph_version, rep):
                 return
-            rows = await con.fetch(_CLOSE_SQL, base, base + "@", reason, ACTOR, now, verified, list(keep))
+            rows = await con.fetch(_CLOSE_SQL, base, base + "@", reason, ACTOR, now, verified, list(keep),
+                                   None if only is None else list(only))
             for r in rows:
                 await lifecycle.record_history(con, r["id"], r["from_status"], "fixed", reason, None, ACTOR)
     await _after_close(pool, redis, rows, verified, tier, "invariant_holds", rep)
@@ -505,6 +521,18 @@ def _undecided_hosts(result: dict[str, Any]) -> Optional[list[str]]:
     return sorted(set(unproven) | set(_blind_targets(result)))
 
 
+def _passing_hosts(result: dict[str, Any]) -> Optional[list[str]]:
+    """The hosts a ``host-config`` verdict positively evaluated as passing (``passing_targets``), or
+    ``None`` when that list cannot be trusted (absent: an older library; malformed; capped). A finding of
+    a host closes only if it is named here, never because it is missing from the violating / unproven
+    lists (a host that left the graph is in none of them)."""
+    passing = result.get("passing_targets")
+    if (not isinstance(passing, list) or not all(isinstance(t, str) for t in passing)
+            or result.get("passing_truncated") is not False):
+        return None
+    return sorted(set(passing))
+
+
 async def _close_resolved(pool, redis: Any, invariant_id: str, result: dict[str, Any], graph_version: int,
                           now: datetime, rep: SyncReport, lease_owner: Optional[str]) -> None:
     """While the verdict is still ``VIOLATED``: close findings of targets that no longer violate
@@ -518,6 +546,13 @@ async def _close_resolved(pool, redis: Any, invariant_id: str, result: dict[str,
     if result.get("violating_truncated"):
         rep.close_skipped = "truncated"               # the list is not the whole set: close nothing
         return
+    only: Optional[list[str]] = None
+    if str(result.get("assertion", "")) == "host-config":
+        # absence is not proof: only a host evaluated as passing closes
+        only = _passing_hosts(result)
+        if only is None:
+            rep.close_skipped = "no_target_list"
+            return
     tier = result.get("evidence_tier")
     verified = tier in VERIFYING_TIERS
     reason = (f"no longer violating at graph version {graph_version}; the invariant still has "
@@ -529,7 +564,7 @@ async def _close_resolved(pool, redis: Any, invariant_id: str, result: dict[str,
             if not await _fenced(con, lease_owner, graph_version, rep):
                 return
             rows = await con.fetch(_CLOSE_RESOLVED_SQL, base, base + "@", reason, ACTOR, now, verified,
-                                   targets, sorted(set(_blind_targets(result)) | set(unproven)))
+                                   targets, sorted(set(_blind_targets(result)) | set(unproven)), only)
             for r in rows:
                 await lifecycle.record_history(con, r["id"], r["from_status"], "fixed", reason, None, ACTOR)
     await _after_close(pool, redis, rows, verified, tier, "invariant_target_resolved", rep)
@@ -561,7 +596,15 @@ async def sync_findings(
             if held is None:
                 rep.close_skipped = "no_target_list" if not result.get("violating_truncated") else "truncated"
                 return rep
+            passing = _passing_hosts(result)
+            if passing is None:
+                rep.close_skipped = "truncated" if result.get("passing_truncated") else "no_target_list"
+                return rep
             keep = held
+            skip = set(held)
+            await _close_all(pool, redis, invariant_id, result.get("evidence_tier"), graph_version, now, rep,
+                             lease_owner, keep, only=[t for t in passing if t not in skip])
+            return rep
         await _close_all(pool, redis, invariant_id, result.get("evidence_tier"), graph_version, now, rep,
                          lease_owner, keep)
         return rep

@@ -125,6 +125,12 @@ class Result:
     # reads "absent from violating_targets" as "proven safe". Capped like violating_targets (past the
     # cap ``violating_truncated`` is set, so a consumer that needs the whole picture stops trusting it).
     unproven_targets: list[str] = field(default_factory=list)
+    # host-config only: the selected targets that evaluated definitely True (sorted, capped at
+    # MAX_VIOLATING_TARGETS; ``passing_truncated`` says when the cap bit). A consumer that closes a
+    # finding on "the host now passes" must find the target here, never infer it from absence from
+    # ``violating_targets``; past the cap it must not close on this list.
+    passing_targets: list[str] = field(default_factory=list)
+    passing_truncated: bool = False
     evidence_tier: Optional[Tier] = None
     valid_until: Optional[dt.datetime] = None
     coverage_universe: int = 0
@@ -191,6 +197,9 @@ class Result:
         }
         if self.hosts:
             out["hosts"] = dict(self.hosts)
+        if self.assertion == "host-config":      # additive: absent for every P1 result
+            out["passing_targets"] = list(self.passing_targets)
+            out["passing_truncated"] = self.passing_truncated
         return out
 
 
@@ -766,7 +775,8 @@ def _host_blind_spots(unknown: list[tuple[str, HC.Ev]]) -> list[BlindSpot]:
     for nid, ev in unknown:
         best: dict[Optional[str], str] = {}
         for le in HC.unknown_leaves(ev):
-            col: Optional[str] = None if le.res.reason == "no_agent" else le.spec.collector
+            col: Optional[str] = (None if le.res.reason in ("no_agent", "agent_revoked")
+                                  else le.spec.collector)
             r = le.res.reason or "no_value"
             cur = best.get(col)
             if cur is None or HF.reason_rank(r) < HF.reason_rank(cur):
@@ -803,6 +813,9 @@ def _eval_hostconfig(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     res.blind_spots = _host_blind_spots(unknown)[:MAX_HOST_BLIND_SPOTS]
     unknown_ids = [nid for nid, _ in unknown]
     res.unproven_targets = unknown_ids[:MAX_VIOLATING_TARGETS]
+    passing_ids = [nid for nid, _ in passing]
+    res.passing_targets = passing_ids[:MAX_VIOLATING_TARGETS]
+    res.passing_truncated = len(passing_ids) > MAX_VIOLATING_TARGETS
     unknown_truncated = len(unknown_ids) > MAX_VIOLATING_TARGETS
     res.violating_truncated = unknown_truncated
 
@@ -831,6 +844,8 @@ def _eval_hostconfig(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     else:
         res.reasons = ["no_counterexample"]
     res.verdict = Verdict.HOLDS
+    # limits of the evidence the HOLDS rests on (e.g. an absence concluded from a listener table)
+    res.reasons += sorted({n for _, ev in passing for n in ev.notes})
     relied = HC.union_rel(ev.rel for _, ev in passing)
     horizon: list[dt.datetime] = []
     if relied:

@@ -36,13 +36,32 @@ def sshd_config(**over: Any) -> dict[str, Any]:
     return cfg
 
 
+def sshd_daemon(**over: Any) -> dict[str, Any]:
+    """``v.daemon`` of a current agent: every key always present; ``reload_pending: false`` is the
+    positive evidence that the files on disk are what the running daemon loaded."""
+    d: dict[str, Any] = {
+        "found": True, "masters": 1, "pid": 812, "start_epoch": 1780000000, "reexec_epoch": None,
+        "config_path": None, "config_default": True, "options_override": False,
+        "binary_matches": True, "config_mtime": 1770000000, "reload_pending": False}
+    d.update(over)
+    return d
+
+
 def sshd(deltas: Optional[list] = None, unprobed: bool = False, source: str = "sshd_T",
-         **over: Any) -> dict[str, Any]:
-    """The ``data`` of an sshd fact (the collector's ``v``)."""
-    return {"installed": True, "source": source, "config": sshd_config(**over),
-            "probes": {"deltas": [{"user": "root", "addr": "203.0.113.7", "delta": d}
-                                  for d in (deltas or [])]},
-            "match": {"blocks": 1 if deltas else 0, "unprobed": unprobed}}
+         daemon: Any = True, truncated: Optional[list] = None, **over: Any) -> dict[str, Any]:
+    """The ``data`` of an sshd fact (the collector's ``v``). ``daemon``: ``True`` = a current agent
+    with nothing pending, a dict = overrides on that, ``None`` = no ``daemon`` key (an old agent).
+    ``truncated`` = the ``v.truncated`` key list (absent when ``None``)."""
+    v: dict[str, Any] = {
+        "installed": True, "source": source, "config": sshd_config(**over),
+        "probes": {"deltas": [{"user": "root", "addr": "203.0.113.7", "delta": d}
+                              for d in (deltas or [])]},
+        "match": {"blocks": 1 if deltas else 0, "unprobed": unprobed}}
+    if daemon is not None:
+        v["daemon"] = sshd_daemon(**(daemon if isinstance(daemon, dict) else {}))
+    if truncated is not None:
+        v["truncated"] = truncated
+    return v
 
 
 def firewall(ip4: str = "drop", ip6: str = "drop", *, ipv6: bool = True, confidence: str = "exact",

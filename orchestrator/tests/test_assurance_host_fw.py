@@ -101,7 +101,12 @@ def sshd_section(password="no", *, tries=3, conf="exact", unprobed=False, source
         "probes": {"addrs": ["10.255.255.1", "203.0.113.7"], "users_probed": 1, "users_total": 1,
                    "planned": 4, "done": 4, "deltas": []},
         "match": {"blocks": 0, "criteria": [], "known": True, "unprobed": unprobed, "unprobed_reasons": []},
-        "files": [{"path": "/etc/ssh/sshd_config", "sha256": "b" * 64, "size": 10}]}}
+        "files": [{"path": "/etc/ssh/sshd_config", "sha256": "b" * 64, "size": 10}],
+        # what a current agent reports about the RUNNING daemon: the library accepts a config claim only on
+        # this positive evidence (one master, default config, no -o, same binary, no reload pending)
+        "daemon": {"found": True, "masters": 1, "pid": 812, "start_epoch": 1780000000, "reexec_epoch": None,
+                   "config_path": None, "config_default": True, "options_override": False,
+                   "binary_matches": True, "config_mtime": 1770000000, "reload_pending": False}}}
 
 
 def patch_section(security=2, reboot=False):
@@ -191,7 +196,9 @@ def test_default_deny_host_edges_coverage_and_facts():
         ("internet", "tcp", 443, 443, 100)]
     assert not any(e.port_lo == 5432 for e in out.edges)           # loopback-bound: not reachable
     (n,) = [n for n in out.nodes if n.ref == me]
-    assert n.kind == "host" and n.attrs["ips"] == ["10.0.0.5"] and n.label == "host1"
+    # review finding hostfw-1: an uncorroborated host is known by NO address (the claim is only a hint), so the
+    # loader puts it in every CIDR expansion and derives no zone from what the host says about itself
+    assert n.kind == "host" and n.attrs["ips"] == [] and n.attrs["claimed_ips"] == ["10.0.0.5"] and n.label == "host1"
     (cov,) = out.coverage
     assert (cov.node_ref, cov.direction, cov.tier, cov.source) == (me, "in", "configured", "host_fw")
     assert cov.observed_at == NOW - 2 * MIN                       # LEAST(collected_at, received_at)
@@ -590,12 +597,16 @@ def _iso(t):
     return t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def test_conflict_is_by_scan_time_against_posture_collection_time():
+def test_conflict_is_sticky_for_as_long_as_the_observation_is_in_the_graph():
+    """Rewritten for review finding hostfw-3. It used to say that a scan observation counts only when it is
+    newer than ``posture.collected_at - 5 min``, so one later signed 'closed' posture erased the conflict while the
+    observed edge was still in the graph (and docs 13.4 item 7 said the opposite). Now the posture's collection time
+    does not matter: the conflict stays until a later full scan clears it (tests/test_p2x_lifecycle.py)."""
     p = posture_row(collected=NOW - 10 * MIN, received=NOW - 10 * MIN)
-    for seen, expect in ((NOW - 15 * MIN + dt.timedelta(seconds=1), True), (NOW - 15 * MIN, False),
-                         (NOW - H, False), (NOW, True)):
+    for seen in (NOW - 15 * MIN + dt.timedelta(seconds=1), NOW - 15 * MIN, NOW - H, NOW - 100 * H, NOW):
         out = hf.build(rows_of((agent_row(), p), scans=[scan_edge(8080, seen=seen)]), NOW)
-        assert bool(out.coverage) is (not expect), seen
+        assert out.coverage == [], seen
+        assert out.facts[0].facts["firewall"]["conflict"][0]["scan_seen_at"] == _iso(seen)
 
 
 def test_scan_of_a_port_the_agent_does_not_call_closed_is_no_conflict():
@@ -688,7 +699,9 @@ def test_an_agent_is_not_merged_without_every_corroboration(what, kw):
 
 
 def test_two_agents_on_one_cloud_node_merge_neither():
-    b = agent_row(2, ips=("10.0.0.5",), peer="10.0.0.5", hostname="host2")
+    # (the second agent now has its OWN private peer address: two agents presenting one peer address are the
+    # separate ``shared_peer_address`` case, covered in test_node_identity_a1)
+    b = agent_row(2, ips=("10.0.0.5",), peer="10.0.0.6", hostname="host2")
     rows, inst = corroborated_rows(extra_agents=[b])
     out = hf.build(rows, NOW)
     assert sorted(f.node_ref for f in out.facts) == sorted([ref1(1), ref1(2)])
@@ -697,11 +710,14 @@ def test_two_agents_on_one_cloud_node_merge_neither():
     assert {f.facts["host_agent"]["data"]["identity_note"] for f in out.facts} == {"ambiguous_cloud_node"}
 
 
-def test_overlapping_claims_also_clash_even_if_the_second_is_not_itself_a_candidate():
+def test_overlapping_claims_from_an_agent_that_never_passed_do_not_clash():
+    """(Rewritten for review findings hostfw-5 and wire-5. It used to assert the opposite: that a second agent's
+    CLAIM alone demoted the first. A claim from a host the server never saw at the instance's address is only a
+    claim; letting it demote a corroborated agent let any enrolled host reset another host's findings.)"""
     b = agent_row(2, ips=("10.0.0.6",), peer="198.51.100.1", hostname="host2")
     rows, inst = corroborated_rows(extra_agents=[b])
     out = hf.build(rows, NOW)
-    assert sorted(f.node_ref for f in out.facts) == sorted([ref1(1), ref1(2)])
+    assert sorted(f.node_ref for f in out.facts) == sorted([refs.asset_ref(inst["id"]), ref1(2)])
 
 
 def test_an_address_two_assets_own_is_never_a_merge():
@@ -716,14 +732,19 @@ def test_only_cloud_instances_absorb_an_agent():
 
 
 def test_ipmap_resolves_agent_claims_and_defers_to_assets():
+    """(Rewritten for review findings hostfw-5 and wire-5: agent claims never OWN an address and never make an
+    asset's address ambiguous; they are extra edge candidates only.)"""
     agents = [{"id": aid(1), "kind": "agent", "node_ref": f"agent:{aid(1)}", "identity": {"ips": ["10.1.1.1"]}},
               {"id": aid(2), "kind": "agent", "node_ref": f"asset:{aid(100)}", "identity": {"ips": ["10.0.0.5"]}},
               {"id": aid(3), "kind": "agent", "node_ref": None, "identity": {"ips": ["10.0.0.6"]}}]
     m = _ipmap.build_ip_map(agents + [cloud(100, priv=["10.0.0.5", "10.0.0.6"])])
-    assert m.resolve("10.1.1.1") == refs.agent_ref(aid(1))
+    assert m.resolve("10.1.1.1") == "ip:10.1.1.1"                   # a claim owns nothing
+    assert set(m.resolve_all("10.1.1.1")) == {"ip:10.1.1.1", refs.agent_ref(aid(1))}
     assert m.resolve("10.0.0.5") == refs.asset_ref(aid(100))        # the corroborated agent adds nothing
-    assert m.is_ambiguous("10.0.0.6")                                # an uncorroborated claim is only a claim
-    assert set(m.resolve_all("10.0.0.6")) == {refs.asset_ref(aid(100)), refs.agent_ref(aid(3)), "ip:10.0.0.6"}
+    assert set(m.resolve_all("10.0.0.5")) == {refs.asset_ref(aid(100))}
+    assert not m.is_ambiguous("10.0.0.6")                           # an uncorroborated claim is only a claim
+    assert m.resolve("10.0.0.6") == refs.asset_ref(aid(100))
+    assert set(m.resolve_all("10.0.0.6")) == {refs.asset_ref(aid(100)), refs.agent_ref(aid(3))}
     assert m.node_kind(refs.agent_ref(aid(1))) == "host"
 
 
@@ -746,6 +767,8 @@ def test_facts_are_compact_and_leak_nothing_the_agent_marked_private():
     fw = out.facts[0].facts["firewall"]["data"]
     assert "chains" not in json.dumps(fw) and fw["families"]["ip4"] == {"read": True, "effective_default": "drop"}
     assert len(blob) < 12_000
+    # the library needs the program NAME of a listener (an sshd on another port, behind another comm), not its path
+    assert {r["exe"] for r in out.facts[0].facts["listeners"]["data"]["listeners"]} == {"x"}
 
 
 def test_collector_states_map_to_fact_statuses():

@@ -9,8 +9,10 @@ An envelope proves "enrolled key K sent exactly these payload bytes, once, in or
      "collectors":{...},"payload_b64":"<b64url of the exact payload bytes>","sig":"<b64url 64B>"}
 
 Signing input = ``b"paddock-agent-envelope/v1\\n" + canon(header)`` where ``header`` is every field
-except ``payload_b64`` and ``sig``. ``canon`` is the stdlib form that equals RFC 8785 because **no
-floats appear anywhere**. The payload is bound by ``payload_sha256`` over the decoded bytes; the
+except ``payload_b64`` and ``sig``. ``canon`` is the stdlib form (sorted keys, compact, UTF-8). It equals RFC 8785 only for the inputs this
+module lets through: **no floats anywhere**, ``seq`` and ``payload_len`` at most 2^53-1 (the largest integer an
+IEEE double prints exactly), and ``collectors`` keys restricted to ``[a-z0-9_.-]{1,64}`` (ASCII, so code-point
+and UTF-16 key order agree). The payload is bound by ``payload_sha256`` over the decoded bytes; the
 server never re-serialises it, and neither does this module (it signs the bytes it is handed).
 
 Encoding conventions: every base64 field is URL-safe and unpadded (the server accepts both).
@@ -49,11 +51,13 @@ MAX_BODY_INFLATED_BYTES = 4 * 1024 * 1024
 MAX_BODY_GZIP_BYTES = 1024 * 1024
 MAX_JSON_DEPTH = 16
 GZIP_THRESHOLD = 4096
+MAX_SEQ = 2 ** 53 - 1          # RFC 8785 prints numbers as IEEE doubles: above this an int is not exact
 
 _HEADER_FIELDS = ("v", "alg", "kid", "agent_id", "tenant_id", "kind", "seq", "issued_at", "nonce",
                   "payload_type", "payload_sha256", "payload_len", "collectors")
 _TOKEN_RE = re.compile(r"^fet_([0-9a-f]{12})_[A-Za-z0-9_-]{20,128}$")
 _ISSUED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_COLLECTOR_KEY_RE = re.compile(r"^[a-z0-9_.-]{1,64}$")
 
 
 class EnvelopeError(ValueError):
@@ -138,8 +142,8 @@ def build_header(*, kid, agent_id, tenant_id, kind, seq, issued_at, nonce, paylo
     """The signed header dict for ``payload`` (bytes). ``issued_at`` is an int epoch or the ISO string."""
     if kind not in KINDS:
         raise EnvelopeError("unknown kind %r" % (kind,))
-    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
-        raise EnvelopeError("seq must be an integer >= 1")
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1 or seq > MAX_SEQ:
+        raise EnvelopeError("seq must be an integer in 1..%d" % MAX_SEQ)
     if not isinstance(payload, (bytes, bytearray)):
         raise EnvelopeError("payload must be bytes")
     if len(payload) > MAX_PAYLOAD_BYTES:
@@ -153,6 +157,9 @@ def build_header(*, kid, agent_id, tenant_id, kind, seq, issued_at, nonce, paylo
     if not isinstance(collectors, dict) or not all(
             isinstance(k, str) and isinstance(v, str) for k, v in collectors.items()):
         raise EnvelopeError("collectors must map str to str")
+    for key in collectors:
+        if not _COLLECTOR_KEY_RE.fullmatch(key):
+            raise EnvelopeError("collectors key %r must match [a-z0-9_.-]{1,64}" % (key[:40],))
     header = {
         "v": VERSION,
         "alg": ALG,

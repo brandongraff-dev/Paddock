@@ -235,3 +235,70 @@ def test_mutation_default_deny_ignores_ipv6(monkeypatch):
         spec.name, spec.type, spec.collector, spec.max_tier, v4_only, spec.doc, derived=True,
         choices=spec.choices))
     assert detects()
+
+
+# ---- P2 review (hostcfg-1..8): each new rule is pinned by a mutation the oracle must notice -------
+
+def test_mutation_ignore_a_pending_reload(monkeypatch):
+    """sshd -T describes the files on disk: the running daemon must be known to run them."""
+    monkeypatch.setattr(HF, "_daemon_problem", lambda d: None)
+    assert detects()
+
+
+def test_mutation_any_listener_corroborates_an_absence(monkeypatch):
+    """A proxy or an unlisted program may front an SSH server."""
+    monkeypatch.setattr(HF, "_unlisted_listener", lambda rows: False)
+    assert detects()
+
+
+def test_mutation_a_tombstoned_host_is_read_normally(monkeypatch):
+    monkeypatch.setattr(HF, "tombstone", lambda host: "")
+    assert detects()
+
+
+def test_mutation_a_varying_key_is_judged_even_under_not(monkeypatch):
+    """not(x == "yes") over a key that varies per user must not read as "no variant has yes"."""
+    real = HC.HostEvaluator.evaluate
+
+    def always_plain(self, node, under_not=False):
+        return real(self, node, False)
+    monkeypatch.setattr(HC.HostEvaluator, "evaluate", always_plain)
+    assert detects()
+
+
+def test_mutation_a_varying_key_needs_only_one_satisfying_variant(monkeypatch):
+    """Per variant it is a universal claim: one weakened variant is a violation."""
+    real = HC.HostEvaluator._per_variant
+
+    def lenient(self, node, spec, res):
+        out = real(self, node, spec, res)
+        if out.tv is False:
+            return HC.Ev(node, None, leaf=HC.LeafEval(node, spec, res))
+        return out
+    monkeypatch.setattr(HC.HostEvaluator, "_per_variant", lenient)
+    assert detects()
+
+
+def test_mutation_read_only_reload_pending_as_daemon_evidence(monkeypatch):
+    """A daemon whose command line or binary could not be read (null flags) is not positive evidence
+    that it runs the default config: only reload_pending was checked before the rework."""
+    real = HF._daemon_problem
+
+    def weak(d):
+        daemon = d.get("daemon")
+        if hasattr(daemon, "get") and daemon.get("reload_pending") is False:
+            return None
+        return real(d)
+    monkeypatch.setattr(HF, "_daemon_problem", weak)
+    assert detects()
+
+
+def test_mutation_a_false_per_variant_leaf_under_any_is_a_witness(monkeypatch):
+    """Two leaves that each fail for SOME variant do not make an ``any`` fail in one variant."""
+    real_ev = HC.Ev
+
+    def no_wit(*a, **k):
+        k["wit"] = False
+        return real_ev(*a, **k)
+    monkeypatch.setattr(HC, "Ev", no_wit)
+    assert detects()

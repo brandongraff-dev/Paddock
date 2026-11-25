@@ -69,6 +69,14 @@ class LoadDiagnostics:
     cidr_overflow: bool = False
     #: node id -> zone names its addresses resolved into (a multi-homed node in two zones).
     zone_conflicts: dict[str, list[str]] = field(default_factory=dict)
+    #: ``agent:<uuid>`` nodes whose zone rests ONLY on the addresses the host claims about itself (no declared
+    #: label, no address the server observed): an unverified placement, see :func:`_agent_zone`.
+    zone_from_claim: list[str] = field(default_factory=list)
+    #: ``agent:<uuid>`` nodes with NO zone at all (no declared label, no usable observed address, a claim that
+    #: matches no zone). A zone selector cannot see them, so a verdict that selects by zone can be a false HOLDS for
+    #: such a host: the library has no "zone unknown" state yet (docs/ASSURANCE_P2.md 13.2), a runner may read this
+    #: list and answer UNKNOWN for zone-selected invariants (review finding hostfw-1).
+    zone_unplaced: list[str] = field(default_factory=list)
     #: host-fact entries (or whole rows) left out of the document because they were invalid; the
     #: affected collectors read as unknown. ``fact_issues`` keeps the first few reasons.
     facts_dropped: int = 0
@@ -160,18 +168,14 @@ def doc_sha(doc: dict[str, Any]) -> str:
     both change on every refresh without changing what the graph says, and re-evaluating on each
     would make the loop spin. A refreshed ``observed_at`` can only make evidence fresher; the
     freshness limit itself is tracked by ``valid_until`` and the backstop. Host facts follow the
-    same rule (``store.FACT_DIGEST_SKIP``: ``observed_at``, ``seq`` and ``evidence_ref`` of each
-    entry, ``*_at`` inside a conflict record); every other part of a fact is in the hash, so a
+    same rule (``store.digest_view``: ``observed_at``, ``seq`` and ``evidence_ref`` of each
+    entry, ``*_at`` inside a conflict record, and the provenance the ``host_agent`` summary repeats in its
+    ``data``); every other part of a fact is in the hash, so a
     changed value, ``signed``, ``key_id``, ``conf``, ``partial``, ``status``, ``conflict`` or tier
     re-evaluates.
     """
-    def strip_fact(f: Any) -> Any:
-        if not isinstance(f, dict):
-            return f
-        out = {k: v for k, v in f.items() if k not in store.FACT_DIGEST_SKIP}
-        if "conflict" in out:
-            out["conflict"] = store._strip_timestamps(out["conflict"])
-        return out
+    def strip_fact(name: str, f: Any) -> Any:
+        return store.digest_view(name, f)
 
     def strip(node: Any) -> Any:
         if not isinstance(node, dict) or ("coverage" not in node and "facts" not in node):
@@ -186,7 +190,7 @@ def doc_sha(doc: dict[str, Any]) -> str:
                 cov = {k: v for k, v in cov.items() if k != "observed_at"}
             node["coverage"] = cov
         if isinstance(node.get("facts"), dict):
-            node["facts"] = {name: strip_fact(f) for name, f in node["facts"].items()}
+            node["facts"] = {name: strip_fact(name, f) for name, f in node["facts"].items()}
         return node
 
     canon = {k: v for k, v in doc.items() if k != "now"}
@@ -266,6 +270,43 @@ def _node_doc(ref: str, kind: str, labels: dict[str, tuple[int, str]], md: dict[
     return doc
 
 
+def _hint_ips(attrs: Any, key: str) -> list[str]:
+    """Textual addresses under ``attrs[key]`` (a list the builder wrote), nothing else."""
+    raw = attrs.get(key) if isinstance(attrs, dict) else None
+    return [v for v in raw if isinstance(v, str)][:64] if isinstance(raw, list) else []
+
+
+def _agent_zone(ref: str, attrs: Any, zone_index: ZoneIndex, diag: "LoadDiagnostics") -> Optional[str]:
+    """Zone of an uncorroborated ``agent:<uuid>`` node, from what is NOT the host's own word first.
+
+    ``attrs.ips`` is empty for these nodes on purpose (the host is "address unknown": it is inside every CIDR
+    expansion, D6). A host can write any address into its own listener table, so its CLAIMED addresses are the
+    weakest hint (review finding hostfw-1): the address the SERVER observed (``observed_ips``: the connection's
+    private source, unique to this agent) is tried first, and when the two disagree the observation wins and the
+    conflict is reported. Only when nothing else exists does the claim place the node, and then it is reported in
+    ``diag.zone_from_claim`` (an unverified placement; a declared zone label always overrides, and the label
+    check happened before this). A zone the library cannot yet call "unknown" is the reason a claim is still
+    used at all: dropping an honest host out of every zone selector would turn a real violation into a HOLDS."""
+    observed = _hint_ips(attrs, "observed_ips")
+    claimed = _hint_ips(attrs, "claimed_ips")
+    if observed:
+        zone, _ = zone_index.resolve(observed)
+        if zone is not None:
+            theirs, _ = zone_index.resolve(claimed) if claimed else (None, [])
+            if theirs is not None and theirs != zone:
+                diag.zone_conflicts[ref] = sorted({zone, theirs})
+            return zone
+    if claimed:
+        zone, conflict = zone_index.resolve(claimed)
+        if conflict:
+            diag.zone_conflicts[ref] = conflict
+        if zone is not None:
+            diag.zone_from_claim.append(ref)
+            return zone
+    diag.zone_unplaced.append(ref)
+    return None
+
+
 def _declared_zone_label(labels: dict[str, tuple[int, str]]) -> tuple[Optional[str], Optional[str]]:
     """``(declared zone, weaker non-declared zone)`` from the node's labels."""
     rank, value = labels.get("zone", (0, ""))
@@ -276,6 +317,8 @@ def _declared_zone_label(labels: dict[str, tuple[int, str]]) -> tuple[Optional[s
 
 def _node_addrs(ref: str, attrs: Any, md: Any) -> list[Any]:
     """The addresses a node is known by (``[]`` = unknown, which may be anywhere)."""
+    if ref.startswith("agent:"):
+        return []         # a managed host is known by no address it claims (hostfw-1): possibly in any CIDR (D6)
     raw = [ref.partition(":")[2]] if ref.startswith("ip:") else _ips_of(attrs, md)
     out: list[Any] = []
     for v in raw:
@@ -527,15 +570,20 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
             declared, weak = _declared_zone_label(lab)
             zone = declared
             if zone is None:
-                if ref.startswith("ip:") or ref.startswith("cidr:"):
-                    addrs = [ref.partition(":")[2]]
+                if ref.startswith("agent:"):
+                    zone = _agent_zone(ref, attrs.get(ref), zone_index, diag)
                 else:
-                    addrs = _ips_of(attrs.get(ref), md)
-                zone, conflict = zone_index.resolve(addrs)
-                if conflict:
-                    diag.zone_conflicts[ref] = conflict
+                    if ref.startswith("ip:") or ref.startswith("cidr:"):
+                        addrs = [ref.partition(":")[2]]
+                    else:
+                        addrs = _ips_of(attrs.get(ref), md)
+                    zone, conflict = zone_index.resolve(addrs)
+                    if conflict:
+                        diag.zone_conflicts[ref] = conflict
                 if zone is None:
                     zone = weak
+                    if zone is not None and ref in diag.zone_unplaced:
+                        diag.zone_unplaced.remove(ref)       # a weaker (non-declared) label did place it
         nodes.append(_node_doc(ref, kinds[ref], lab, md, zone,
                                sorted(cov_by.get(ref, []), key=lambda c: (c["direction"], c["source"], c["tier"]))
                                if ref != INTERNET else [],

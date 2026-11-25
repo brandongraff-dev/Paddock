@@ -21,9 +21,22 @@ name: Release
 # verifies exactly these.
 #
 # Hardening notes: least-privilege `permissions` per job; no secrets other than
-# the ephemeral GITHUB_TOKEN / OIDC token; third-party actions are pinned to a
-# major version tag -- pin them to full commit SHAs (e.g. with Dependabot or
-# `pinact`) before relying on this for a regulated release.
+# the ephemeral GITHUB_TOKEN / OIDC token; every third-party action is pinned to a
+# full commit SHA (the trailing comment names the tag it was taken from; refresh
+# them with Dependabot or `pinact`) and cosign to an exact version.
+#
+# Trust root: a valid signature from this workflow only proves that THIS file ran at refs/tags/<tag>. The
+# `gate` job runs first and every other job needs it, and it catches honest mistakes:
+#   * it fails unless the tagged commit is reachable from the default branch (a tag cut from a stray
+#     branch is refused), and
+#   * it runs in the `release` environment, which you configure in the repository settings with required
+#     reviewers and a deployment-tag rule for `v*.*.*`.
+# What the gate cannot do: the workflow that runs is the file in the tagged commit, so the same commit that
+# is tagged can delete `gate` (and the environment line): someone who may push a tag still gets a valid keyless
+# signature.
+# The controls that stop that are repository settings, not code: a tag ruleset that restricts who may create
+# `v*.*.*` tags, the environment's deployment rules, and branch protection on the default branch. Cosign
+# proves which workflow signed; it cannot prove the tagged commit was reviewed.
 
 on:
   push:
@@ -41,8 +54,33 @@ env:
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/paddock
 
 jobs:
+  gate:
+    name: tag is on the default branch (release environment)
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0          # every branch, so the ancestry test below sees the default branch
+          persist-credentials: false
+
+      - name: The tagged commit must be reachable from the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF_NAME" in v[0-9]*.[0-9]*.[0-9]*) : ;; *) echo "::error::unexpected tag $GITHUB_REF_NAME"; exit 1 ;; esac
+          git rev-parse --verify --quiet "refs/remotes/origin/${DEFAULT_BRANCH}^{commit}" >/dev/null \
+            || { echo "::error::cannot find origin/${DEFAULT_BRANCH}"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/${DEFAULT_BRANCH}" \
+            || { echo "::error::$GITHUB_REF_NAME (${GITHUB_SHA}) is not on ${DEFAULT_BRANCH}: refusing to release it"; exit 1; }
+
   images:
     name: image ${{ matrix.service }}
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -78,15 +116,15 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/paddock-${{ matrix.service }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -94,7 +132,7 @@ jobs:
 
       - name: Image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -107,7 +145,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.context }}
           # the orchestrator builds from the repo root (it ships schema/)
@@ -124,7 +162,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: SBOM (SPDX JSON)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: spdx-json
@@ -133,7 +171,7 @@ jobs:
           upload-release-assets: false
 
       - name: SBOM (CycloneDX JSON)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: cyclonedx-json
@@ -141,7 +179,9 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        with:
+          cosign-release: 'v2.5.2'
 
       - name: Sign image + attest SBOMs (cosign keyless)
         env:
@@ -155,7 +195,7 @@ jobs:
             --predicate "sbom/paddock-${{ matrix.service }}.cdx.json" "$REF"
 
       - name: SLSA build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -166,7 +206,7 @@ jobs:
           mkdir -p digests
           echo "${{ steps.build.outputs.digest }}  ${{ env.IMAGE }}" > "digests/${{ matrix.service }}.txt"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.service }}
           path: |
@@ -176,17 +216,18 @@ jobs:
 
   agent:
     name: agent zipapp + installer
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write        # keyless signing (Fulcio)
       attestations: write    # GitHub attestation store
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
@@ -199,7 +240,9 @@ jobs:
           sed "s/^PINNED_TAG=.*/PINNED_TAG=\"${GITHUB_REF_NAME}\"/" scripts/install-agent.sh > agent-dist/install-agent.sh
           chmod 0755 agent-dist/install-agent.sh
           grep -q "^PINNED_TAG=\"${GITHUB_REF_NAME}\"\$" agent-dist/install-agent.sh
-          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" python agent/packaging/build_zipapp.py \
+          # a CONSTANT epoch (1980-01-01, the zip minimum), so anyone can rebuild these bytes from the tag
+          # (docs/AGENT_V2.md section 2): the commit time would be one more thing a rebuilder must reproduce
+          SOURCE_DATE_EPOCH=315532800 python agent/packaging/build_zipapp.py \
             --out agent-dist/paddock-agent.pyz --sums agent-dist/SHA256SUMS --also agent-dist/install-agent.sh
           cat agent-dist/SHA256SUMS
 
@@ -213,7 +256,9 @@ jobs:
             --base-url "file://$PWD/agent-dist" --python "$(command -v python3)" --no-enroll
           test -x "$RUNNER_TEMP/stage/usr/local/lib/paddock-agent/paddock-agent.pyz"
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        with:
+          cosign-release: 'v2.5.2'
 
       - name: Sign SHA256SUMS (cosign keyless)
         run: |
@@ -225,11 +270,11 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com agent-dist/SHA256SUMS
 
       - name: SLSA build provenance for the archive
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: agent-dist/paddock-agent.pyz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-agent-pyz
           path: |
@@ -241,19 +286,21 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [images, agent]
+    needs: [gate, images, agent]
     runs-on: ubuntu-latest
     permissions:
       contents: write        # create the release
       id-token: write        # keyless-sign the manifest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
           merge-multiple: true
           path: out
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        with:
+          cosign-release: 'v2.5.2'
 
       - name: Digest manifest + keyless signature
         working-directory: out
@@ -264,10 +311,28 @@ jobs:
           cosign sign-blob --yes --bundle IMAGE_DIGESTS.txt.sigstore.json IMAGE_DIGESTS.txt
           cosign sign-blob --yes --bundle SBOM_SHA256SUMS.txt.sigstore.json SBOM_SHA256SUMS.txt
 
+      - name: Release notes with the host agent digests
+        run: |
+          set -euo pipefail
+          {
+            echo "## Host agent"
+            echo
+            echo "sha256 of the host agent files attached to this release (the same lines as \`SHA256SUMS\`):"
+            echo
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+            echo
+            echo "These digests come from this same release, so on their own they do not authenticate it: verify"
+            echo "\`SHA256SUMS.sigstore.json\` with cosign 2.4 or newer, or rebuild the archive from this tag"
+            echo "(docs/AGENT_V2.md, section 2) and compare."
+          } > release-body.md
+
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
+          body_path: release-body.md
           files: |
             out/sbom/*.json
             out/IMAGE_DIGESTS.txt

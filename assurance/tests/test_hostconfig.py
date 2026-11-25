@@ -462,4 +462,5 @@ def test_observed_values_in_witnesses_are_printable_and_capped():
     (w,) = r.witnesses
     obs = w.detail["observed"]
     assert "\x1b" not in obs and "\n" not in obs and "‮" not in obs
-    assert len(obs) <= 200 and obs.startswith("evil?[31m?name?")
+    # restricted alphabet [A-Za-z0-9._:/@,-]: everything else is "?" (hostcfg-7), capped at 120
+    assert len(obs) <= 120 and obs.startswith("evil??31m?name?")

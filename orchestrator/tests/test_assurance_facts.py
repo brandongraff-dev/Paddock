@@ -57,7 +57,11 @@ def sshd_data(password="no", max_tries=3):
                        "permitrootlogin": "no", "pubkeyauthentication": "yes", "permitemptypasswords": "no",
                        "usepam": "yes", "maxauthtries": max_tries, "authenticationmethods": "any",
                        "port": [22]},
-            "probes": {"deltas": []}, "match": {"blocks": 0, "unprobed": False}}
+            "probes": {"deltas": []}, "match": {"blocks": 0, "unprobed": False},
+            # the running daemon, as a current agent reports it: a config claim needs this positive evidence
+            "daemon": {"found": True, "masters": 1, "pid": 812, "start_epoch": 1780000000, "reexec_epoch": None,
+                       "config_path": None, "config_default": True, "options_override": False,
+                       "binary_matches": True, "config_mtime": 1770000000, "reload_pending": False}}
 
 
 def fw_data(default="drop"):
@@ -498,13 +502,24 @@ async def test_a_node_known_only_from_facts_appears_in_the_document(app_pool):
 
 
 async def test_zone_resolution_works_for_agent_nodes(app_pool):
+    """(Rewritten for review finding hostfw-1: what the host SAYS about its addresses does not place it.)
+    ``attrs.ips`` of an agent node is ignored; the address the server observed places it; the host's own claim
+    only places it as a last, reported resort."""
     async with conn_for(app_pool) as con:
         await store.upsert_zone(con, "dmz", ["10.20.0.0/24"], set_by="t", justification="j")
     f = host(AG1)
     await persist(app_pool, BuildOutput(source=SRC, mode="replace", facts=[f],
                                         nodes=[NodeOut(AG1, "host", attrs={"ips": ["10.20.0.7"]})]))
-    doc, _ = await load(app_pool)
-    assert node_of(doc, AG1)["zone"] == "dmz"
+    doc, diag = await load(app_pool)
+    assert "zone" not in node_of(doc, AG1) and diag.zone_from_claim == []
+    await persist(app_pool, BuildOutput(source=SRC, mode="replace", facts=[f],
+                                        nodes=[NodeOut(AG1, "host", attrs={"ips": [], "observed_ips": ["10.20.0.7"]})]))
+    doc, diag = await load(app_pool)
+    assert node_of(doc, AG1)["zone"] == "dmz" and diag.zone_from_claim == []
+    await persist(app_pool, BuildOutput(source=SRC, mode="replace", facts=[f],
+                                        nodes=[NodeOut(AG1, "host", attrs={"ips": [], "claimed_ips": ["10.20.0.7"]})]))
+    doc, diag = await load(app_pool)
+    assert node_of(doc, AG1)["zone"] == "dmz" and diag.zone_from_claim == [AG1]
 
 
 async def test_cidr_rules_include_agent_hosts_by_their_addresses(app_pool):

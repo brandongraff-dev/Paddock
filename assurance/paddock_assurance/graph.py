@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -27,6 +28,9 @@ from .model import Selector, Tier
 PROTOS = ("icmp", "tcp", "udp", "any")
 MAX_NODES = 200_000
 MAX_EDGES = 2_000_000
+MAX_JSON_BYTES = 256 * 1024 * 1024    # a graph file or text larger than this is refused before parsing
+MAX_JSON_DEPTH = 64                   # bracket nesting (a real document is ~25 levels at most)
+MAX_JSON_INT_DIGITS = 20              # nothing in a graph needs an integer longer than this
 
 
 class GraphError(ValueError):
@@ -152,14 +156,97 @@ class ReachGraph:
 
     @classmethod
     def from_json(cls, text: str) -> "ReachGraph":
-        try:
-            return cls.from_dict(json.loads(text))
-        except json.JSONDecodeError as exc:
-            raise GraphError(f"invalid JSON: {exc.msg}") from exc
+        """Parse a graph document. Anything but a ``GraphError`` never leaves: too large, nested too
+        deeply, a duplicate key (which a parser would resolve silently, last wins), a non-finite or
+        huge number, bad JSON."""
+        return cls.from_dict(_load_json(text))
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ReachGraph":
-        return cls.from_json(Path(path).read_text(encoding="utf-8"))
+        p = Path(path)
+        if p.stat().st_size > MAX_JSON_BYTES:
+            raise GraphError(f"graph document larger than {MAX_JSON_BYTES} bytes")
+        try:
+            text = p.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise GraphError("graph document is not valid UTF-8") from exc
+        return cls.from_json(text)
+
+
+# The depth scan must be linear on a hostile text. A string is matched with an unrolled loop (no
+# alternation to backtrack into) at the one position a quote was found, and an unterminated string
+# ends the scan at once (it is invalid JSON), so no quote is ever scanned twice.
+_JSON_SPECIAL = re.compile(r'[\[\]{}"]')
+_JSON_STRING = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"', re.DOTALL)
+
+
+def _check_json_depth(text: str) -> None:
+    depth = 0
+    pos = 0
+    search, string = _JSON_SPECIAL.search, _JSON_STRING.match
+    while True:
+        m = search(text, pos)
+        if m is None:
+            return
+        c = m.group()
+        if c == '"':
+            s = string(text, m.start())
+            if s is None:
+                raise GraphError("invalid JSON: unterminated string")
+            pos = s.end()
+            continue
+        pos = m.end()
+        if c == "[" or c == "{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise GraphError(f"graph document nested deeper than {MAX_JSON_DEPTH} levels")
+        else:
+            depth -= 1
+
+
+def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in pairs:
+        if k in out:
+            raise GraphError(f"duplicate key {k!r} in the graph document")
+        out[k] = v
+    return out
+
+
+def _refuse_constant(name: str) -> Any:
+    raise GraphError(f"{name} is not allowed in a graph document")
+
+
+def _finite_float(text: str) -> float:
+    v = float(text)
+    if v != v or v in (float("inf"), float("-inf")):
+        raise GraphError("number out of range in the graph document")
+    return v
+
+
+def _small_int(text: str) -> int:
+    if len(text.lstrip("-")) > MAX_JSON_INT_DIGITS:
+        raise GraphError("number too long in the graph document")
+    return int(text)
+
+
+def _load_json(text: Any) -> Any:
+    if not isinstance(text, str):
+        raise GraphError("graph document must be text")
+    if len(text) > MAX_JSON_BYTES or len(text.encode("utf-8", "replace")) > MAX_JSON_BYTES:
+        raise GraphError(f"graph document larger than {MAX_JSON_BYTES} bytes")
+    _check_json_depth(text)
+    try:
+        return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_refuse_constant,
+                          parse_int=_small_int, parse_float=_finite_float)
+    except GraphError:
+        raise
+    except json.JSONDecodeError as exc:
+        raise GraphError(f"invalid JSON: {exc.msg}") from exc
+    except RecursionError as exc:
+        raise GraphError("graph document nested too deeply") from exc
+    except ValueError as exc:
+        raise GraphError("invalid JSON: unreadable value") from exc
 
 
 def matches(sel: Selector, node: Node) -> bool:

@@ -20,7 +20,7 @@ FW = "std:server-default-deny-inbound"
 # The std baseline is digest-bound: changing the text of either file is a new version, so the
 # digest is pinned. If this fails you changed a shipped invariant; ship it under a new id instead.
 PINNED = {
-    SSH: "sha256:5604713d69137e7bbe84f589c6c042fece4de75fdeb9b734d0e5428560448737",
+    SSH: "sha256:e118308d1eb364979bffb1609cb40171c11006d38d4b6087b73cafdd5b2bb0f1",   # P2 review hostcfg-6/8: the text now says what is checked (re-pinned)
     FW: "sha256:d6cff000f1f14abac09b5f5099ab66a12ba894f44932cd1174ec731116fb7ec1",
 }
 P1_PINNED = {      # unchanged by P2: the structured form only applies to host-config
@@ -121,8 +121,12 @@ def test_text_parsed_or_unprobed_sshd_never_holds():
 
 def test_a_host_without_sshd_passes_only_when_a_listener_table_agrees():
     gone = fact({}, status="unavailable", reason="tool_missing")
-    ok = hgraph(good_host("a", sshd=gone, listeners=fact(listeners(ports=(443,)))))
+    # postgres, not nginx: a web server or proxy can front an SSH server (hostcfg-2)
+    ok = hgraph(good_host("a", sshd=gone,
+                          listeners=fact(listeners(ports=(443,), comms={443: "postgres"}))))
     assert verdicts(ok)[SSH].verdict is Verdict.HOLDS
+    proxied = hgraph(good_host("a", sshd=gone, listeners=fact(listeners(ports=(443,)))))
+    assert verdicts(proxied)[SSH].verdict is Verdict.UNKNOWN
     lonely = good_facts(sshd=gone)
     del lonely["listeners"]
     assert verdicts(hgraph(hnode("a", lonely)))[SSH].verdict is Verdict.UNKNOWN
@@ -132,7 +136,8 @@ def test_a_host_without_sshd_passes_only_when_a_listener_table_agrees():
 
 def test_validity_of_a_sshd_absence_also_ends_with_the_listener_table():
     gone = fact({}, status="unavailable", reason="tool_missing", seen="2026-12-01T08:55:00Z")
-    lst = fact(listeners(ports=(443,)), seen="2026-12-01T05:00:00Z")      # older: expires first
+    lst = fact(listeners(ports=(443,), comms={443: "postgres"}),
+               seen="2026-12-01T05:00:00Z")                                    # older: expires first
     r = verdicts(hgraph(good_host("a", sshd=gone, listeners=lst)))[SSH]
     assert r.verdict is Verdict.HOLDS
     assert r.valid_until == dt.datetime(2026, 12, 1, 11, 0, tzinfo=dt.timezone.utc)   # 05:00 + 6h
@@ -203,7 +208,7 @@ def test_json_output_carries_host_witness_details(capsys):
 
 def test_lint_and_std_and_fields_and_explain(capsys):
     code, out, _ = run(capsys, "lint", SSH, FW)
-    assert code == 0 and "host-config: any(" in out and "reads facts from: sshd" in out
+    assert code == 0 and "host-config: any(" in out and "reads facts from: listeners, sshd" in out
     code, out, _ = run(capsys, "std")
     assert SSH in out and FW in out
     code, out, _ = run(capsys, "fields")

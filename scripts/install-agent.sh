@@ -1,44 +1,54 @@
 #!/bin/sh
 # Paddock fleet host agent installer (docs/AGENT_V2.md, docs/ASSURANCE_P2.md E7 and section 8).
 #
-#   sudo ./install-agent.sh --server https://paddock.example.com
-#   printf %s "$TOKEN" | sudo ./install-agent.sh --server https://paddock.example.com
-#   ./install-agent.sh --server https://paddock.example.com --dry-run
-#   sudo ./install-agent.sh --uninstall [--purge --yes]
+#   sudo sh ./install-agent.sh --server https://paddock.example.com
+#   printf %s "$TOKEN" | sudo sh ./install-agent.sh --server https://paddock.example.com
+#   sh ./install-agent.sh --server https://paddock.example.com --dry-run
+#   sudo sh ./install-agent.sh --uninstall [--purge --yes]
+#
+# Run it with `sh ./install-agent.sh`: a file fetched with curl or wget is not executable.
 #
 # What it does, in this order, and stops at the first thing that does not check out:
 #   1. checks it runs as root on a systemd Linux with Python >= 3.8 (a dry run needs none of that),
 #   2. downloads the PINNED release's paddock-agent.pyz and SHA256SUMS (never "latest"),
 #   3. verifies the cosign (sigstore) bundle over SHA256SUMS when `cosign` is installed (or always, with
 #      --require-cosign), then the archive's sha256 against it (and against --sha256 when given),
-#   4. installs the archive root-owned, writes /etc/paddock-agent/agent.env (the server URL, mode 0600)
-#      and the hardened systemd unit (one root process, docs/ASSURANCE_P2.md section 8),
-#   5. enrolls the host with a ONE-TIME token, then enables and starts the service.
+#   4. installs the archive root-owned, sets PADDOCK_SERVER in /etc/paddock-agent/agent.env (mode 0600; any other
+#      line you put there is kept) and writes the hardened systemd unit (one root process, docs/ASSURANCE_P2.md
+#      section 8),
+#   5. enrolls the host with a ONE-TIME token, then enables and (re)starts the service and checks it is active.
 #
 # The enrollment token is a secret and is NEVER an argument (argv is readable by every local user in
 # `ps` and /proc): it is read from $PADDOCK_ENROLL_TOKEN, from stdin, or from a hidden prompt, and is
-# handed to the agent on stdin. This script refuses --token. It is never written to a file or a log.
+# handed to the agent on stdin. It is read first, before anything is downloaded or installed, and taken out of
+# the environment before any other program runs. This script refuses --token. It is never written to a file or
+# a log. Do not use `sudo PADDOCK_ENROLL_TOKEN=...`: that puts the token in sudo's argv.
 #
 # Signature check: without `cosign` only the sha256 from the same release is checked, which detects a
-# corrupt or swapped archive but NOT a compromised release. Install cosign (or pass --require-cosign to
-# make its absence an error) and/or pin the digest out of band with --sha256.
+# corrupt or swapped archive but NOT a compromised release. Install cosign 2.4 or newer (the release is signed
+# with 2.5.2; an older cosign may not read the bundle, and then the install is refused) and pass
+# --require-cosign to make its absence an error, and/or pin the digest out of band with --sha256.
 #
 # Options:
 #   --server URL       Paddock orchestrator base URL (https://; http:// only for loopback). Required to install.
 #   --version TAG      release tag to install (default: the tag this script is pinned to, see PINNED_TAG)
 #   --repo OWNER/NAME  GitHub repository to download from (default brandongraff-dev/paddock)
 #   --base-url URL     download directory instead of the GitHub release (https://, or file:// for a mirror/tests)
-#   --sha256 HEX       also require the archive to have exactly this sha256 (pin it from the release notes)
+#   --sha256 HEX       also require the archive to have exactly this sha256. Take it from a source independent of
+#                      the download (your own build, docs/AGENT_V2.md section 2, or a host that verified the
+#                      signature): the digest in the release notes comes from the same release and proves nothing.
 #   --require-cosign   fail unless cosign is installed and its verification passes
 #   --no-enroll        install only; enroll later with `paddock enroll`
-#   --no-start         do not enable/start the service
+#   --no-start         do not enable/start/restart the service
 #   --reenroll         enroll even though this host already holds credentials (needs a re-key token)
 #   --hostname NAME    hostname to enroll as (default: this host's name)
-#   --prefix DIR       install prefix (default /usr/local): archive in DIR/lib/paddock-agent, symlink DIR/bin/paddock
+#   --prefix DIR       install prefix (default /usr/local): archive in DIR/lib/paddock-agent, command DIR/bin/paddock
+#                      (a small wrapper that runs the archive with the interpreter this installer verified; an
+#                      existing DIR/bin/paddock that is not ours, such as the Paddock CLI, is never overwritten)
 #   --root DIR         staging root: prefix every path with DIR and never touch systemd (packaging, tests)
 #   --python PATH      interpreter to run the agent with (default: python3 from PATH; must be >= 3.8)
 #   --dry-run          print what would happen; change nothing, use no network, read no token
-#   --uninstall        stop and remove the service, unit and archive (credentials/keys are kept)
+#   --uninstall        stop and remove the service, unit, archive and our own command (credentials/keys are kept)
 #   --purge            with --uninstall: also delete /var/lib/paddock-agent (the key!) and /etc/paddock-agent
 #   --yes              do not ask for confirmation (required for --purge without a terminal)
 #   -h, --help         this text
@@ -46,6 +56,12 @@
 # Uninstalling does NOT revoke the agent on the server: revoke it in Paddock (docs/AGENT_V2.md).
 set -eu
 umask 022
+
+# The token may be handed over in the environment. Take it out of the environment before ANY other command
+# runs, so curl, cosign, sha256sum and the downloaded archive never inherit it. It is passed to the agent on
+# stdin, once, at the end. (An inherited, exported TOKEN is dropped too, so a later TOKEN= cannot export it.)
+ENV_TOKEN="${PADDOCK_ENROLL_TOKEN:-}"
+unset PADDOCK_ENROLL_TOKEN TOKEN
 
 # Rewritten to the release's own tag in the copy that is attached to a release (release.yml), so a
 # downloaded installer installs the archive it was published with. A checkout pins to the tag below.
@@ -178,6 +194,57 @@ UNIT_ABS="$UNIT_DIR_ABS/$SERVICE.service"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Test-only: with --root (which never touches systemd) this names a stand-in for `systemctl`, so the service
+# steps can be exercised against a recording fake. Without --root, or without this variable, the real systemctl.
+SYSTEMCTL=systemctl
+SYSTEMD_MANAGED=0
+if [ -z "$ROOT" ]; then
+  SYSTEMD_MANAGED=1
+elif [ -n "${PADDOCK_INSTALL_TEST_SYSTEMCTL:-}" ]; then
+  case "$PADDOCK_INSTALL_TEST_SYSTEMCTL" in /*) : ;; *) die "PADDOCK_INSTALL_TEST_SYSTEMCTL must be an absolute path" ;; esac
+  SYSTEMCTL="$PADDOCK_INSTALL_TEST_SYSTEMCTL"
+  SYSTEMD_MANAGED=1
+fi
+SETTLE_SECS="${PADDOCK_INSTALL_SETTLE_SECS:-3}"
+case "$SETTLE_SECS" in ''|*[!0-9]*) die "PADDOCK_INSTALL_SETTLE_SECS must be a whole number of seconds" ;; esac
+
+# The `paddock` command is a tiny wrapper (not a symlink to the archive, whose #! line would pick whatever
+# python3 is first on PATH instead of the interpreter this installer verified). The marker line is how we
+# recognise our own file later: we never replace, or on uninstall delete, a `paddock` that is not ours.
+WRAPPER_MARK="# paddock-agent wrapper written by install-agent.sh"
+link_present() { p="$(P "$LINK_ABS")"; [ -e "$p" ] || [ -L "$p" ]; }
+link_is_ours() { # a wrapper carrying our marker, or the symlink to our archive that older installers made
+  p="$(P "$LINK_ABS")"
+  if [ -L "$p" ]; then
+    [ "$(readlink "$p" 2>/dev/null || true)" = "$PYZ_ABS" ]
+  elif [ -f "$p" ]; then
+    n=0
+    l=""
+    while [ "$n" -lt 4 ] && { IFS= read -r l || [ -n "$l" ]; }; do
+      [ "$l" != "$WRAPPER_MARK" ] || return 0
+      n=$((n + 1))
+    done <"$p"
+    return 1
+  else
+    return 1
+  fi
+}
+
+# Refuse to install through a symlink, into a directory somebody else owns, or into one that others can write.
+# strict also refuses group-writable (the directories this installer creates for itself); shared directories such
+# as /usr/local/bin are group-writable on some distributions, so only world-writable is refused there.
+check_dir() { # check_dir PATH strict|shared
+  d="$(P "$1")"
+  [ ! -L "$d" ] || die "$d is a symlink: refusing to install through it"
+  [ -d "$d" ] || die "$d is not a directory"
+  me="$(id -u)"
+  [ -n "$(find "$d" -prune -user "$me" 2>/dev/null)" ] || die "$d is not owned by uid $me: refusing to install into it"
+  [ -z "$(find "$d" -prune -perm -0002 2>/dev/null)" ] || die "$d is world-writable: refusing to install into it"
+  if [ "$2" = strict ] && [ -n "$(find "$d" -prune -perm -0020 2>/dev/null)" ]; then
+    die "$d is group-writable: refusing to install into it"
+  fi
+}
+
 # The unit is written here, not downloaded: it is the file whose directives are the safety story.
 # agent/systemd/paddock-agent.service is the same text with the default paths (a test enforces it).
 emit_unit() { # emit_unit PYTHON PYZ
@@ -211,6 +278,9 @@ ReadWritePaths=$STATE_DIR_ABS
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ProtectKernelTunables=yes
 SystemCallFilter=@system-service
+# DAC_READ_SEARCH and SYS_PTRACE read root-only host state; NET_ADMIN reaches nft and iptables-nft over netlink.
+# NOT CAP_NET_RAW: legacy iptables (iptables-legacy) opens a raw socket, so on a host whose firewall is legacy
+# iptables the firewall facts read UNKNOWN and block_ip fails under this unit (docs/AGENT_V2.md section 3).
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_ADMIN
 
 [Install]
@@ -263,30 +333,32 @@ confirm() { # confirm "question" -> 0 on yes
   case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
-# The enrollment token: environment, else stdin, else a hidden prompt. Never argv, never echoed.
+# The enrollment token: environment (already moved to ENV_TOKEN above), else stdin, else a hidden prompt. Never
+# argv, never echoed. `read` returns 1 on a last line with no newline (what `printf %s "$TOKEN" |` sends) but
+# still fills the variable, so a non-empty value is kept.
 TOKEN=""
 read_token() {
-  if [ -n "${PADDOCK_ENROLL_TOKEN:-}" ]; then
-    TOKEN="$PADDOCK_ENROLL_TOKEN"
-    unset PADDOCK_ENROLL_TOKEN
+  if [ -n "$ENV_TOKEN" ]; then
+    TOKEN="$ENV_TOKEN"
+    ENV_TOKEN=""
   elif [ ! -f "$0" ]; then
     # `curl ... | sh`: stdin IS the script, so it cannot also carry the token
-    die "when the installer is piped into sh, give the token in PADDOCK_ENROLL_TOKEN (or download the script and run it)"
+    die "when the installer is piped into sh, stdin is the script and cannot also carry the token: download the script and run it from the file with the token on stdin (printf %s \"\$TOKEN\" | sudo sh ./install-agent.sh --server URL). Never put the token in a command line or after 'sudo VAR=': both end up in argv, which every local user can read"
   elif [ -t 0 ]; then
     printf 'Enrollment token (input hidden): ' >&2
     old="$(stty -g 2>/dev/null || true)"
     stty -echo 2>/dev/null || true
-    IFS= read -r TOKEN || TOKEN=""
+    IFS= read -r TOKEN || [ -n "$TOKEN" ] || TOKEN=""
     if [ -n "$old" ]; then stty "$old" 2>/dev/null || true; fi
     printf '\n' >&2
   else
-    IFS= read -r TOKEN || TOKEN=""
+    IFS= read -r TOKEN || [ -n "$TOKEN" ] || TOKEN=""
   fi
   # strip whitespace, then require the documented shape (fet_<12 hex>_<secret>) without ever printing it
   TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
   case "$TOKEN" in
     fet_????????????_*) : ;;
-    '') die "no enrollment token: set PADDOCK_ENROLL_TOKEN or pipe it on stdin (mint one in Paddock: Fleet > Enrollment tokens)" ;;
+    '') die "no enrollment token: pipe it on stdin or set PADDOCK_ENROLL_TOKEN (mint one with POST /v1/fleet/enroll-tokens, docs/AGENT_V2.md)" ;;
     *)  TOKEN=""; die "that does not look like a Paddock enrollment token (expected fet_<12 hex>_<secret>)" ;;
   esac
   case "$TOKEN" in *[!A-Za-z0-9_-]*) TOKEN=""; die "the enrollment token contains unexpected characters" ;; esac
@@ -299,7 +371,7 @@ do_uninstall() {
   step "Uninstalling the Paddock agent"
   if [ "$DRY_RUN" = 1 ]; then
     [ -n "$ROOT" ] || plan "systemctl disable --now $SERVICE"
-    plan "remove $(P "$UNIT_ABS"), $(P "$LINK_ABS") and $(P "$LIB_DIR")"
+    plan "remove $(P "$UNIT_ABS") and $(P "$LIB_DIR"), and $(P "$LINK_ABS") only if it is this agent's own command"
     plan "keep $(P "$STATE_DIR_ABS") (the signing key and credentials) and $(P "$CONF_DIR_ABS")"
     if [ "$PURGE" = 1 ]; then plan "PURGE: delete $(P "$STATE_DIR_ABS") and $(P "$CONF_DIR_ABS")"; fi
     plan "the agent is NOT revoked on the server: revoke it in Paddock (docs/AGENT_V2.md)"
@@ -314,7 +386,12 @@ do_uninstall() {
       systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
     fi
   fi
-  rm -f "$(P "$UNIT_ABS")" "$(P "$LINK_ABS")"
+  rm -f "$(P "$UNIT_ABS")"
+  if link_is_ours; then
+    rm -f "$(P "$LINK_ABS")"
+  elif link_present; then
+    warn "kept $(P "$LINK_ABS"): it is not this agent's command"
+  fi
   rm -rf "$(P "$LIB_DIR")"
   if [ -z "$ROOT" ] && have systemctl; then systemctl daemon-reload >/dev/null 2>&1 || true; fi
   if [ "$PURGE" = 1 ]; then
@@ -356,23 +433,23 @@ if [ "$DRY_RUN" = 1 ]; then
   [ -z "$EXPECT_SHA" ] || plan "require the archive sha256 to equal the pinned $EXPECT_SHA"
   plan "verify         : sha256 of paddock-agent.pyz against SHA256SUMS; abort on any mismatch"
   plan "interpreter    : ${PYTHON:-python3 (not found on this machine)} (must be >= 3.8)"
-  plan "install        : $(P "$PYZ_ABS") (root, 0755) and symlink $(P "$LINK_ABS")"
-  plan "write          : $(P "$ENV_FILE_ABS") (mode 0600) with PADDOCK_SERVER=$SERVER"
+  plan "install        : $(P "$PYZ_ABS") (root, 0755) and the wrapper command $(P "$LINK_ABS") (only if nothing else is there)"
+  plan "write          : $(P "$ENV_FILE_ABS") (mode 0600) with PADDOCK_SERVER=$SERVER; other lines already in it are kept"
   plan "write          : $(P "$UNIT_ABS") with exactly these contents:"
   emit_unit "$UNIT_TEXT_PYTHON" "$PYZ_ABS" | sed 's/^/[dry-run]     | /'
   if [ "$NO_ENROLL" = 1 ]; then
     plan "enroll         : skipped (--no-enroll); run \`paddock enroll\` later"
   else
-    if [ -n "${PADDOCK_ENROLL_TOKEN:-}" ]; then
+    if [ -n "$ENV_TOKEN" ]; then
       plan "enroll         : with the token in \$PADDOCK_ENROLL_TOKEN (not shown), handed to the agent on stdin"
     else
       plan "enroll         : read a one-time token from stdin or a hidden prompt; it is never an argument"
     fi
   fi
-  if [ "$NO_START" = 1 ] || [ -n "$ROOT" ]; then
+  if [ "$NO_START" = 1 ] || [ "$SYSTEMD_MANAGED" = 0 ]; then
     plan "service        : not started"
   else
-    plan "service        : systemctl daemon-reload; systemctl enable --now $SERVICE"
+    plan "service        : systemctl daemon-reload; systemctl enable $SERVICE; systemctl restart $SERVICE; check it is active"
   fi
   say "dry run complete: no changes made."
   exit 0
@@ -380,16 +457,34 @@ fi
 
 # ---- real run ----
 if [ -z "$ROOT" ]; then
-  [ "$(id -u)" = 0 ] || die "run as root (sudo ./install-agent.sh ...): the agent reads root-only host state"
+  [ "$(id -u)" = 0 ] || die "run as root (sudo sh ./install-agent.sh ...): the agent reads root-only host state"
   [ "$(uname -s)" = Linux ] || die "the agent supports Linux only"
   [ -d /run/systemd/system ] || die "systemd is required (no /run/systemd/system); use --no-start with --root to stage files only"
 fi
 [ -n "$PYTHON" ] || die "python3 not found (the agent needs Python >= 3.8; on RHEL 8 install the python39 module)"
+# the interpreter goes into the unit and into the paddock wrapper, so it must be a plain path
+case "$PYTHON" in *[!A-Za-z0-9._/+-]*) die "the interpreter path $PYTHON contains unexpected characters (letters, digits and . _ / + - only)" ;; esac
 python_ok "$PYTHON" || die "$PYTHON is older than Python 3.8; install a newer interpreter and pass --python"
 have cosign || [ "$REQUIRE_COSIGN" = 0 ] || die "--require-cosign was given but cosign is not installed"
+have find || die "need find to check the install directories"
+
+# Decide about enrollment and read the token NOW, before anything is downloaded or written: a missing or
+# malformed token must not leave a half-installed host behind.
+enrolled=0
+if [ -f "$(P "$STATE_DIR_ABS")/credentials.json" ] && [ "$REENROLL" = 0 ]; then
+  enrolled=1
+fi
+if [ "$NO_ENROLL" = 0 ] && [ "$enrolled" = 0 ]; then
+  step "Reading the enrollment token"
+  read_token
+fi
+ENV_TOKEN=""
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/paddock-agent-install.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT INT TERM
+# exit on a signal (a plain cleanup handler would let the script carry on); the EXIT trap removes $WORK
+trap 'rm -rf "$WORK"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 step "Downloading $REPO $TAG"
 fetch "$BASE_URL/paddock-agent.pyz" "$WORK/paddock-agent.pyz" || die "could not download $BASE_URL/paddock-agent.pyz"
@@ -402,10 +497,10 @@ if have cosign; then
     --bundle "$WORK/SHA256SUMS.sigstore.json" \
     --certificate-identity "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$TAG" \
     --certificate-oidc-issuer "$OIDC_ISSUER" \
-    "$WORK/SHA256SUMS" >/dev/null 2>"$WORK/cosign.err" || { cat "$WORK/cosign.err" >&2; die "the signature on SHA256SUMS did not verify: not installing"; }
+    "$WORK/SHA256SUMS" >/dev/null 2>"$WORK/cosign.err" || { cat "$WORK/cosign.err" >&2; die "the signature on SHA256SUMS did not verify: not installing (cosign 2.4 or newer is expected; an older one may not read the bundle)"; }
   say "   signature OK (signed by the $REPO release workflow for $TAG)"
 else
-  warn "cosign is not installed: the signature was NOT checked. Only the sha256 from the same release will be verified, which does not protect against a compromised release. Install cosign, or pin the digest with --sha256."
+  warn "cosign is not installed: the signature was NOT checked. Only the sha256 from the same release will be verified, which does not protect against a compromised release. Install cosign (2.4 or newer) and use --require-cosign, or pin the digest with --sha256."
 fi
 
 step "Verifying the archive checksum"
@@ -425,39 +520,76 @@ step "Checking the archive runs"
 "$PYTHON" "$WORK/paddock-agent.pyz" --version >/dev/null 2>&1 || die "the downloaded archive does not run under $PYTHON"
 
 step "Installing"
-mkdir -p "$(P "$LIB_DIR")" "$(P "$PREFIX/bin")" "$(P "$CONF_DIR_ABS")" "$(P "$UNIT_DIR_ABS")"
+mkdir -p "$(P "$PREFIX/lib")"
+check_dir "$PREFIX/lib" shared           # the parent too, before anything is created inside it: whoever owns it could swap the archive dir
+mkdir -p "$(P "$LIB_DIR")" "$(P "$PREFIX/bin")" "$(P "$CONF_DIR_ABS")" "$(P "$UNIT_DIR_ABS")" "$(P "$STATE_DIR_ABS")"
+check_dir "$LIB_DIR" strict
+check_dir "$PREFIX/bin" shared
+check_dir "$CONF_DIR_ABS" strict
+check_dir "$UNIT_DIR_ABS" shared
+check_dir "$STATE_DIR_ABS" strict
 chmod 0755 "$(P "$LIB_DIR")"
+rm -f "$(P "$PYZ_ABS").new"
 cp "$WORK/paddock-agent.pyz" "$(P "$PYZ_ABS").new"
 chmod 0755 "$(P "$PYZ_ABS").new"
 mv "$(P "$PYZ_ABS").new" "$(P "$PYZ_ABS")"
-ln -sf "$PYZ_ABS" "$(P "$LINK_ABS")"
 say "   $(P "$PYZ_ABS")"
 
+LINK_P="$(P "$LINK_ABS")"
+if link_present && ! link_is_ours; then
+  warn "not overwriting $LINK_P: it is not this agent's command (the Paddock CLI uses the same name). Run the agent with: $PYTHON $PYZ_ABS <command>"
+else
+  rm -f "$LINK_P.new"
+  # shellcheck disable=SC2016  # the "$@" is meant to be written literally into the wrapper
+  { printf '#!/bin/sh\n%s\n' "$WRAPPER_MARK"; printf 'exec %s %s "$@"\n' "'$PYTHON'" "'$PYZ_ABS'"; } >"$LINK_P.new"
+  chmod 0755 "$LINK_P.new"
+  mv -f "$LINK_P.new" "$LINK_P"
+  say "   $LINK_P"
+fi
+
 chmod 0700 "$(P "$CONF_DIR_ABS")"
-ENV_TMP="$(P "$ENV_FILE_ABS").new"
-( umask 077; printf '# written by install-agent.sh; no secrets belong here\nPADDOCK_SERVER=%s\n' "$SERVER" >"$ENV_TMP" )
-mv "$ENV_TMP" "$(P "$ENV_FILE_ABS")"
-chmod 0600 "$(P "$ENV_FILE_ABS")"
-say "   $(P "$ENV_FILE_ABS")"
+chmod 0700 "$(P "$STATE_DIR_ABS")"
+# agent.env: set PADDOCK_SERVER, keep every other line (PADDOCK_CA_FILE, PADDOCK_ENABLE_IMDS, intervals, ...)
+ENV_DST="$(P "$ENV_FILE_ABS")"
+ENV_TMP="$ENV_DST.new"
+(
+  umask 077
+  printf '# written by install-agent.sh; no secrets belong here\nPADDOCK_SERVER=%s\n' "$SERVER" >"$ENV_TMP"
+  if [ -f "$ENV_DST" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        "# written by install-agent.sh; no secrets belong here") : ;;
+        PADDOCK_SERVER=*|[[:space:]]*PADDOCK_SERVER=*) : ;;
+        *) printf '%s\n' "$line" >>"$ENV_TMP" ;;
+      esac
+    done <"$ENV_DST"
+  fi
+)
+mv "$ENV_TMP" "$ENV_DST"
+chmod 0600 "$ENV_DST"
+say "   $ENV_DST"
 
 emit_unit "$PYTHON" "$PYZ_ABS" >"$(P "$UNIT_ABS").new"
 chmod 0644 "$(P "$UNIT_ABS").new"
 mv "$(P "$UNIT_ABS").new" "$(P "$UNIT_ABS")"
 say "   $(P "$UNIT_ABS")"
-if [ -z "$ROOT" ]; then systemctl daemon-reload; fi
+if [ "$SYSTEMD_MANAGED" = 1 ]; then "$SYSTEMCTL" daemon-reload; fi
 
-mkdir -p "$(P "$STATE_DIR_ABS")"
-chmod 0700 "$(P "$STATE_DIR_ABS")"
-
-enrolled=0
-if [ -f "$(P "$STATE_DIR_ABS")/credentials.json" ] && [ "$REENROLL" = 0 ]; then
-  enrolled=1
+if [ "$enrolled" = 1 ]; then
   say "   this host is already enrolled (credentials found); keeping them (use --reenroll with a re-key token to replace)"
 fi
 
+# the archive was replaced under a possibly running agent: say so when we are not about to restart it
+warn_if_still_running() {
+  if "$SYSTEMCTL" is-active --quiet "$SERVICE" >/dev/null 2>&1; then
+    warn "$SERVICE is still running the previous archive and unit (it was not restarted): run: systemctl restart $SERVICE"
+  fi
+}
+
 if [ "$NO_ENROLL" = 0 ] && [ "$enrolled" = 0 ]; then
   step "Enrolling this host"
-  read_token
+  # a running agent holds the state directory, and `enroll --force` refuses while it does
+  if [ "$REENROLL" = 1 ] && [ "$SYSTEMD_MANAGED" = 1 ]; then "$SYSTEMCTL" stop "$SERVICE" >/dev/null 2>&1 || true; fi
   set -- enroll --token-stdin
   [ "$REENROLL" = 0 ] || set -- "$@" --force
   [ -z "$HOSTNAME_OVERRIDE" ] || set -- "$@" --hostname "$HOSTNAME_OVERRIDE"
@@ -471,15 +603,24 @@ if [ "$NO_ENROLL" = 0 ] && [ "$enrolled" = 0 ]; then
   enrolled=1
 fi
 
-if [ -n "$ROOT" ]; then
+if [ "$SYSTEMD_MANAGED" = 0 ]; then
   say "staged under $ROOT: systemd was not touched"
 elif [ "$NO_START" = 1 ]; then
   say "installed; not started (--no-start). Start with: systemctl enable --now $SERVICE"
+  warn_if_still_running
 elif [ "$enrolled" = 0 ]; then
   say "installed; not started because the host is not enrolled. Run: paddock enroll, then: systemctl enable --now $SERVICE"
+  warn_if_still_running
 else
   step "Starting the service"
-  systemctl enable --now "$SERVICE"
+  # restart, not `enable --now`: that leaves an already running agent on the old archive and unit
+  "$SYSTEMCTL" enable "$SERVICE"
+  "$SYSTEMCTL" restart "$SERVICE"
+  sleep "$SETTLE_SECS"
+  if ! "$SYSTEMCTL" is-active --quiet "$SERVICE"; then
+    state="$("$SYSTEMCTL" is-active "$SERVICE" 2>/dev/null || true)"
+    die "$SERVICE is not running after the restart (state: ${state:-unknown}); the files are installed. See: journalctl -u $SERVICE -n 50"
+  fi
   say "   $SERVICE is running; check it with: systemctl status $SERVICE && paddock status"
 fi
 say "done."

@@ -29,12 +29,22 @@ leaves the previous accepted posture and the seq counter exactly as they were: t
 idempotent 200 (the answer was lost); the same ``(kid, seq)`` with a different digest is **equivocation** (two
 payloads signed under one seq: a cloned or stolen key) and is a 409 with its own audit reason.
 
-Locking: every transaction takes the agent row ``FOR UPDATE`` FIRST, then touches the key rows. Enrollment
-re-keying and the admin revokes take them in the same order, so there is no lock-order deadlock.
+Locking, ONE global order everywhere: enrollment-token rows, then the agent row ``FOR UPDATE``, then the key rows.
+Ingest takes no token row; enrollment (re-key) claims its token before the agent row; ``revoke_agent`` locks the
+agent's re-key tokens (and the token it enrolled with) BEFORE the agent row. A deadlock victim is retried anyway
+(``fleet_enroll.retry_on_deadlock``).
 
-Posture history (E8): the agent row is refreshed on every accepted envelope, but a posture row is stored only
-when the content digest changed or at most hourly. The digest ignores timing counters (``ms``, uptime, seq,
-payload size, clock skew, key id, package list presence, metadata age).
+Posture history (E8): the agent row is refreshed on every accepted envelope, but a posture is written only when
+the content digest changed or at most hourly. The digest ignores timing counters (``ms``, uptime, seq, payload
+size, clock skew, key id, package list presence, metadata age). Storage is bounded for a HOSTILE sender too (a valid
+key can change one signed field on every post): within ``MIN_STORE_INTERVAL_S`` of the last INSERT a changed posture
+OVERWRITES the newest row (the newest evidence is never delayed or dropped, the row count is bounded), and
+``AGENT_POSTURE_MAX_BYTES`` / ``TENANT_POSTURE_MAX_BYTES`` evict oldest-first, never an agent's newest row.
+
+Rate limits: the per-agent budget (``rate_limited``) is charged only AFTER the signature verified, so a holder of the
+bearer alone cannot exhaust it. Before that a cheap limiter keyed by (agent, strict peer) counts FAILED envelopes.
+Audit growth is bounded: ``fleet.evidence.rejected`` rows are sampled per agent and reason (``rejected_total`` stays
+exact) and throttled requests write one aggregate row per agent per minute.
 
 Not here: the ``reach_node_facts`` write (the ``host_fw`` builder's job) and any evaluation.
 """
@@ -49,6 +59,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 import zlib
 from dataclasses import dataclass, field
@@ -66,7 +77,7 @@ from pydantic import (
 )
 
 from . import audit, fleet_enroll, tenancy
-from .netkey import SlidingWindowLimiter
+from .netkey import SlidingWindowLimiter, client_key
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +100,29 @@ MAX_PAYLOAD_BYTES = 2 * 1024 * 1024     # decoded payload
 MAX_HEADER_BYTES = 2048                 # canon(header)
 MAX_JSON_DEPTH = 16                     # envelope
 CLOCK_WINDOW_S = 600
-MAX_SEQ = 2 ** 62
+MAX_SEQ = 2 ** 53 - 1                   # the largest integer RFC 8785 (IEEE-754 doubles) prints exactly
 HOURLY_S = 3600
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name) or default)
+    except ValueError:
+        return default
+
+
+#: a changed posture within this long of the last INSERT overwrites the newest row instead of adding one
+MIN_STORE_INTERVAL_S = _env_int("FLEET_POSTURE_MIN_STORE_S", 300)
+#: stored payload bytes per agent / per tenant; oldest rows go first, an agent's newest row is never evicted
+AGENT_POSTURE_MAX_BYTES = _env_int("FLEET_POSTURE_AGENT_MAX_MB", 128) * 1024 * 1024
+TENANT_POSTURE_MAX_BYTES = _env_int("FLEET_POSTURE_TENANT_MAX_MB", 2048) * 1024 * 1024
+#: v1 inventory bytes per tenant (an agent's newest inventory is never evicted)
+INVENTORY_TENANT_MAX_BYTES = _env_int("FLEET_INVENTORY_TENANT_MAX_MB", 512) * 1024 * 1024
+#: the tenant-wide byte SUM is O(all of the tenant's rows): run it at most once per tenant per this many seconds per
+#: process, not on every store. The caps are soft by one interval of writes, which the per-agent caps and the
+#: per-agent rate limits already bound.
+TENANT_EVICT_EVERY_S = _env_int("FLEET_TENANT_EVICT_EVERY_S", 60)
+_tenant_checked: dict[str, float] = {}
 
 _HEADER_FIELDS = ("v", "alg", "kid", "agent_id", "tenant_id", "kind", "seq", "issued_at", "nonce",
                   "payload_type", "payload_sha256", "payload_len", "collectors")
@@ -99,17 +131,13 @@ _ISSUED_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}\Z")
 _KID_TEXT_RE = re.compile(r"^[\x21-\x7e]{1,64}\Z")
 _B64U_RE = re.compile(r"^[A-Za-z0-9_-]*\Z")
-_CTL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# control characters AND lone surrogates (a JSON "\ud800" escape parses to a str that cannot be UTF-8 encoded: it
+# would crash canon() and the JSONB write)
+_CTL_RE = re.compile("[\x00-\x1f\x7f\ud800-\udfff]")
+_COLLECTOR_KEY_RE = re.compile(r"[a-z0-9_.-]{1,64}")
 # Linear depth scan (no regex backtracking over a whole string: an unterminated string just ends the scan).
 _STRUCT_RE = re.compile(rb'["\[\]{}]')
 _STR_END_RE = re.compile(rb'[^"\\]*(?:\\.[^"\\]*)*"')
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name) or default)
-    except ValueError:
-        return default
 
 
 # Per-agent request limits (in-process, like the sensors'; with N replicas the effective limit is N times).
@@ -121,14 +149,122 @@ _LIMITERS = {"heartbeat": heartbeat_limiter, "posture": posture_limiter, "rotate
              "inventory": inventory_limiter}
 
 
+# Pre-auth: FAILED envelopes per (agent, strict peer address). A bearer-only holder (no key) burns only its own
+# bucket; it can never reach the per-agent budget above, which is charged after the signature verified.
+preauth_limiter = SlidingWindowLimiter(limit=_env_int("FLEET_PREAUTH_FAILS_PER_MIN", 30), window_s=60)
+
+
+class _Gate:
+    """At most ``burst`` passes per key per ``window_s``; the refusals in between are COUNTED and handed to the next
+    pass, so a sampled audit row can say how many it stands for. Memory is bounded (stale keys are swept)."""
+
+    def __init__(self, burst: int, window_s: float = 60.0, max_keys: int = 10_000) -> None:
+        self.burst, self.window_s, self.max_keys = burst, window_s, max_keys
+        self.state: dict[str, list[float]] = {}          # key -> [window start, passes used, refusals pending]
+
+    def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
+        now = time.monotonic() if now is None else now
+        st = self.state.get(key)
+        if st is None or now - st[0] >= self.window_s:
+            if st is None and len(self.state) >= self.max_keys:
+                self._sweep(now)
+            st = self.state[key] = [now, 0, st[2] if st else 0]
+        if st[1] < self.burst:
+            st[1] += 1
+            carried, st[2] = int(st[2]), 0
+            return True, carried
+        st[2] += 1
+        return False, 0
+
+    def give_back(self, key: str, carried: int) -> None:
+        st = self.state.get(key)
+        if st is not None:
+            st[1] = max(0, st[1] - 1)
+            st[2] += carried
+
+    def _sweep(self, now: float) -> None:
+        for k in [k for k, v in self.state.items() if now - v[0] >= self.window_s and not v[2]]:
+            self.state.pop(k, None)
+        if len(self.state) >= self.max_keys:
+            for k in sorted(self.state, key=lambda k: self.state[k][0])[: max(1, self.max_keys // 10)]:
+                self.state.pop(k, None)
+
+    def reset(self) -> None:
+        self.state.clear()
+
+
+_reason_gate = _Gate(burst=_env_int("FLEET_REJECT_AUDIT_PER_REASON_PER_MIN", 3))
+_agent_gate = _Gate(burst=_env_int("FLEET_REJECT_AUDIT_PER_AGENT_PER_MIN", 10))
+_throttle_gate = _Gate(burst=1)
+
+
+def tenant_check_due(kind: str, tenant_id: Any, now: float | None = None) -> bool:
+    """True (and the interval restarts) when the O(tenant rows) byte check for ``kind`` is due for this tenant."""
+    now = time.monotonic() if now is None else now
+    key = f"{kind}|{tenant_id}"
+    last = _tenant_checked.get(key)
+    if last is not None and now - last < TENANT_EVICT_EVERY_S:
+        return False
+    if key not in _tenant_checked and len(_tenant_checked) >= 10_000:
+        for k in sorted(_tenant_checked, key=_tenant_checked.__getitem__)[:1000]:
+            _tenant_checked.pop(k, None)
+    _tenant_checked[key] = now
+    return True
+
+
+#: One agent may ask for an assurance rebuild because its CONTENT changed at most once per this many seconds (review
+#: finding hostfw-9: a hostile host changing one field on every post re-queued a rebuild, and with a very large
+#: ruleset a multi-second walk, within every tick). The posture is still stored and verified; only the request to
+#: rebuild is spaced, and the periodic rebuild picks the rest up. A change of IDENTITY (node_ref/basis), a key
+#: change and an agent coming back online are never delayed.
+REBUILD_REQUEST_MIN_INTERVAL_S = 10.0
+_rebuild_asked: Dict[str, float] = {}
+_REBUILD_ASKED_MAX = 20000
+
+
+def rebuild_request_allowed(agent_id: Any, *, now: float | None = None) -> bool:
+    """Record a content-triggered rebuild request of ``agent_id`` and say whether it may proceed."""
+    t = time.monotonic() if now is None else now
+    key = str(agent_id)
+    last = _rebuild_asked.get(key)
+    if last is not None and 0 <= t - last < REBUILD_REQUEST_MIN_INTERVAL_S:
+        return False
+    if len(_rebuild_asked) >= _REBUILD_ASKED_MAX:
+        for k in [k for k, v in _rebuild_asked.items() if t - v >= REBUILD_REQUEST_MIN_INTERVAL_S]:
+            del _rebuild_asked[k]
+        if len(_rebuild_asked) >= _REBUILD_ASKED_MAX:
+            return True                       # full of recent askers: fail OPEN (a rebuild is cheap, a missed one is not)
+    _rebuild_asked[key] = t
+    return True
+
+
 def reset_limiters() -> None:
+    _rebuild_asked.clear()
+    _tenant_checked.clear()
     for lim in _LIMITERS.values():
         lim.reset()
+    preauth_limiter.reset()
+    for gate in (_reason_gate, _agent_gate, _throttle_gate):
+        gate.reset()
 
 
 def rate_limited(route: str, agent_id: Any) -> bool:
-    """Record a hit for ``agent_id`` on ``route`` and say whether the agent is now OVER its limit."""
+    """Record a hit for ``agent_id`` on ``route`` and say whether the agent is now OVER its limit. Called only for
+    envelopes whose signature verified."""
     return not _LIMITERS[route].hit(str(agent_id))
+
+
+def _preauth_key(agent_id: Any, ip: str | None) -> str:
+    return f"{agent_id}|{client_key(ip)}"
+
+
+def preauth_blocked(agent_id: Any, ip: str | None) -> bool:
+    """Has this (agent, peer address) already failed too often this minute? Cheap: no body is read."""
+    return preauth_limiter.blocked(_preauth_key(agent_id, ip))
+
+
+def preauth_failed(agent_id: Any, ip: str | None) -> None:
+    preauth_limiter.hit(_preauth_key(agent_id, ip))
 
 
 # --------------------------------------------------------------------------- #
@@ -149,6 +285,11 @@ class Rejection(Exception):
         self.key_id: str | None = None
         self.seq: int | None = None
         self.extra: dict[str, Any] = {}
+        #: True once the envelope's signature verified (the failure then is not an unauthenticated one)
+        self.verified = False
+        #: False once :func:`record_rejection` decided NOT to write a ``fleet.evidence.rejected`` row for it (sampled
+        #: out, or a 429): the per-request audit middleware may then skip its own row too (``audit_aggregated``)
+        self.audit_row = True
 
     def response_body(self) -> dict[str, Any]:
         return {**self.body, "detail": self.detail, "reason": self.reason}
@@ -338,7 +479,7 @@ def parse_envelope(raw: bytes, expected_kind: str) -> Envelope:
         if not isinstance(env[name], str):
             raise _bad(f"{name} must be a string")
     if not _is_int(env["seq"]) or not 1 <= env["seq"] <= MAX_SEQ:
-        raise _bad("seq must be an integer >= 1")
+        raise _bad(f"seq must be an integer between 1 and {MAX_SEQ}")
     if not _is_int(env["payload_len"]) or env["payload_len"] < 0:
         raise _bad("payload_len must be a non-negative integer")
     coll = env["collectors"]
@@ -347,12 +488,23 @@ def parse_envelope(raw: bytes, expected_kind: str) -> Envelope:
                    for k, v in coll.items())):
         raise _bad("collectors must map at most 32 short strings to strings")
     if any(_CTL_RE.search(k) or _CTL_RE.search(v) for k, v in coll.items()):
-        # the header is stored as JSONB, which cannot hold U+0000: refuse control characters up front
-        raise _bad("collectors must not contain control characters")
+        # the header is stored as JSONB, which cannot hold U+0000, and canon() cannot encode a lone surrogate:
+        # refuse both up front
+        raise _bad("collectors must not contain control characters or lone surrogates")
+    if any(not _COLLECTOR_KEY_RE.fullmatch(k) for k in coll):
+        # keys are sorted by code point here and by UTF-16 code unit in RFC 8785: ASCII identifiers only
+        raise _bad("collector names must match [a-z0-9_.-]{1,64}")
     # kid reaches SQL (a NUL byte in a text parameter is a database error, i.e. a 500) and the signed header:
     # printable ASCII only, so a malformed one is a clean 400 and never an unaudited crash.
     if not _KID_TEXT_RE.match(env["kid"]):
         raise _bad("kid is malformed")
+    if _CTL_RE.search(env["alg"]) or len(env["alg"]) > 32:
+        raise _bad("alg is malformed")
+    if env["alg"] != ALG:
+        # step 4's answer, given before anything is encoded or looked up (the contract allows only ed25519)
+        rej = Rejection(401, "alg_not_allowed", "only ed25519 is accepted")
+        rej.key_id, rej.seq = env["kid"], env["seq"]
+        raise rej
     for name in ("agent_id", "tenant_id"):
         try:
             if str(uuid.UUID(env[name])) != env[name]:
@@ -378,7 +530,11 @@ def parse_envelope(raw: bytes, expected_kind: str) -> Envelope:
     except (ValueError, OverflowError):
         raise _bad("issued_at must be YYYY-MM-DDTHH:MM:SSZ") from None
     header = {k: env[k] for k in _HEADER_FIELDS}
-    if len(canon(header)) > MAX_HEADER_BYTES:
+    try:
+        header_len = len(canon(header))
+    except (UnicodeError, ValueError, TypeError):
+        raise _bad("the header cannot be canonically encoded") from None
+    if header_len > MAX_HEADER_BYTES:
         raise Rejection(413, "header_too_large", f"the signed header exceeds {MAX_HEADER_BYTES} bytes")
     if env["payload_len"] > MAX_PAYLOAD_BYTES:
         raise Rejection(413, "payload_too_large", f"the payload exceeds {MAX_PAYLOAD_BYTES} bytes")
@@ -1011,23 +1167,76 @@ async def invalidate_assurance(con: Any) -> None:
 async def record_rejection(pool: Any, *, tenant_id: str, agent_id: Any, rej: Rejection,
                            request_id: str | None, client_ip: str | None, kind: str | None,
                            actor: str | None = None) -> None:
-    """``fleet.evidence.rejected`` in the agent's tenant chain, plus ``rejected_total += 1``. Best effort: a
-    failure to record never turns a refusal into an acceptance (the caller re-raises ``rej`` regardless)."""
+    """``fleet.evidence.rejected`` in the agent's tenant chain, plus ``rejected_total += 1`` (the counter is exact:
+    one per processed rejection). Best effort: a failure to record never turns a refusal into an acceptance (the
+    caller re-raises ``rej`` regardless).
+
+    The audit ROWS are bounded, so flooding cannot grow the append-only chain without limit: per agent and reason at
+    most a few per minute, and per agent a few more; the rest only bump the counter, and the next written row says
+    how many it stands for (``suppressed_before``). A 429 is not an evidence rejection at all: it is counted into
+    one aggregate ``fleet.evidence.throttled`` row per agent per minute (:func:`record_throttled`)."""
+    if rej.status == 429:
+        rej.audit_row = False
+        await record_throttled(pool, tenant_id=tenant_id, agent_id=agent_id, request_id=request_id,
+                               client_ip=client_ip, kind=kind, actor=actor)
+        return
+    rkey = f"{agent_id}|{rej.reason}"
+    if rej.verified:
+        # A rejection of an envelope whose SIGNATURE verified is evidence about the key holder (equivocation = a
+        # cloned key, replays, a stale clock...), not noise: it is never sampled out, or a bearer-only flood
+        # from another address could burn the sampler and hide it. Its rate is bounded anyway: the per-agent budget
+        # (60 heartbeats, 20 postures, 10 rotations per window) is charged right after the signature verified, and
+        # every verified rejection that is not a 429 comes after that point.
+        write, carried = True, 0
+    else:
+        write, carried = _reason_gate.allow(rkey)
+        if write:
+            write, carried_a = _agent_gate.allow(str(agent_id))
+            if write:
+                carried += carried_a
+            else:
+                _reason_gate.give_back(rkey, carried)
+                carried = 0
+    rej.audit_row = write
     try:
         with tenancy.tenant_context(tenant_id):
             async with pool.acquire() as con:
+                if not write:
+                    await con.execute(
+                        "UPDATE fleet_agents SET rejected_total = rejected_total + 1 WHERE id = $1", agent_id)
+                    return
                 async with con.transaction():
                     await con.execute(
                         "UPDATE fleet_agents SET rejected_total = rejected_total + 1 WHERE id = $1", agent_id)
+                    details = {"reason": rej.reason, "key_id": rej.key_id, "seq": rej.seq, "kind": kind,
+                               "http_status": rej.status, **rej.extra}
+                    if carried:
+                        details["suppressed_before"] = carried
                     await audit.record(
                         pool, action="fleet.evidence.rejected", actor=actor or f"agent:{agent_id}", actor_role="agent",
                         resource_type="fleet_agent", resource_id=str(agent_id), ip=client_ip,
-                        request_id=request_id, status=rej.status,
-                        details={"reason": rej.reason, "key_id": rej.key_id, "seq": rej.seq, "kind": kind,
-                                 "http_status": rej.status, **rej.extra},
+                        request_id=request_id, status=rej.status, details=details,
                         con=con, tenant_id=tenant_id)
     except Exception:  # noqa: BLE001
         logger.exception("fleet_rejection_audit_failed", extra={"agent": str(agent_id)})
+
+
+async def record_throttled(pool: Any, *, tenant_id: str, agent_id: Any, request_id: str | None,
+                           client_ip: str | None, kind: str | None, actor: str | None = None) -> None:
+    """Count a rate-limited request. At most ONE ``fleet.evidence.throttled`` row per agent per minute, carrying the
+    number of throttled requests since the previous row; nothing else is written for a 429."""
+    write, carried = _throttle_gate.allow(str(agent_id))
+    if not write:
+        return
+    try:
+        with tenancy.tenant_context(tenant_id):
+            await audit.record(
+                pool, action="fleet.evidence.throttled", actor=actor or f"agent:{agent_id}", actor_role="agent",
+                resource_type="fleet_agent", resource_id=str(agent_id), ip=client_ip, request_id=request_id,
+                status=429, details={"kind": kind, "throttled": 1 + carried, "window_s": 60},
+                tenant_id=tenant_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("fleet_throttle_audit_failed", extra={"agent": str(agent_id)})
 
 
 async def _pending_actions(con: Any, agent_id: Any) -> list[dict[str, Any]]:
@@ -1061,11 +1270,15 @@ class IngestResult:
 async def ingest_envelope(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str, body: bytes,
                           content_encoding: str | None, client_ip: str | None = None,
                           request_id: str | None = None, now: dt.datetime | None = None,
-                          actor: str | None = None) -> IngestResult:
+                          actor: str | None = None, budget: Any = None) -> IngestResult:
     """Run the section-2 checks on a request body for ``kind`` and, if all pass, persist. Must be called with
     the agent's tenant bound (the router does; ``tenant_id`` is re-bound here anyway).
 
-    Raises :class:`Rejection` (already audited as ``fleet.evidence.rejected``).
+    ``budget`` (optional, no arguments) is called once the signature verified and returns False when the agent is
+    over its per-agent rate limit (a 429, nothing written): an unauthenticated request never spends it.
+
+    Raises :class:`Rejection` (already audited as ``fleet.evidence.rejected``; ``rej.verified`` says whether the
+    signature had verified when it was raised). Any other exception propagates unchanged: the router audits it.
     """
     if kind not in KINDS:
         raise ValueError(kind)
@@ -1074,8 +1287,9 @@ async def ingest_envelope(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kin
     try:
         with tenancy.tenant_context(tenant_id):
             return await _ingest(pool, agent_id=agent_id, tenant_id=tenant_id, kind=kind, body=body,
-                                 encoding=content_encoding, client_ip=client_ip, now=now, ctx=ctx)
+                                 encoding=content_encoding, client_ip=client_ip, now=now, ctx=ctx, budget=budget)
     except Rejection as rej:
+        rej.verified = bool(ctx.get("verified"))
         rej.key_id = rej.key_id or ctx["key_id"]
         rej.seq = rej.seq if rej.seq is not None else ctx["seq"]
         await record_rejection(pool, tenant_id=tenant_id, agent_id=agent_id, rej=rej, request_id=request_id,
@@ -1085,7 +1299,7 @@ async def ingest_envelope(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kin
 
 async def _ingest(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str, body: bytes,
                   encoding: str | None, client_ip: str | None, now: dt.datetime,
-                  ctx: dict[str, Any]) -> IngestResult:
+                  ctx: dict[str, Any], budget: Any = None) -> IngestResult:
     # ---- 1-2: size caps, strict parse, field set -------------------------------------------------
     raw = inflate_body(body, encoding)
     env = parse_envelope(raw, kind)
@@ -1113,6 +1327,10 @@ async def _ingest(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str, 
     payload = decode_payload(env)
     if not verify_signature(key["public_key"], env):
         raise Rejection(401, "bad_signature", "the signature does not verify")
+    ctx["verified"] = True
+    if budget is not None and not budget():
+        # charged only now: a holder of the bearer without the key never reaches this line
+        raise Rejection(429, "rate_limited", "too many requests from this agent; slow down")
     skew = abs((now - env.issued).total_seconds())
     if skew > CLOCK_WINDOW_S:
         raise Rejection(422, "clock_skew", f"issued_at is {int(skew)} s away from the server clock "
@@ -1216,7 +1434,10 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
 
     if kind == "posture":
         assert parsed is not None
-        digest = content_digest(parsed)
+        try:
+            digest = content_digest(parsed)
+        except (UnicodeError, ValueError, TypeError) as exc:     # text canon() cannot encode: a clean 422
+            raise Rejection(422, "payload_schema", "the payload holds text that cannot be encoded") from exc
         claimed_id = posture_identity(parsed)
         old_digest = ingest.get("digest")
         stored_at = _parse_stored(ingest.get("stored_at"))
@@ -1228,25 +1449,50 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
         key_changed = ingest.get("stored_kid") != kid
         res.changed = changed
         res.stored = changed or due or key_changed
+        # ``peer_proxied``: the strict peer may be the address of a forwarding hop, not of the host (auth.ClientAddr):
+        # such a peer never corroborates the agent with an instance and never places it (review finding hostfw-2)
         new_identity.update({"ips": claimed_id["ips"], "machine_id_hash": claimed_id["machine_id_hash"],
-                             "boot_id": claimed_id["boot_id"], "peer_ip": client_ip})
+                             "boot_id": claimed_id["boot_id"],
+                             "peer_ip": str(client_ip) if client_ip is not None else None,
+                             "peer_proxied": bool(getattr(client_ip, "proxied", False))})
         new_identity.setdefault("hostname", agent["hostname"])
         new_identity.setdefault("basis", "claimed")
         if res.stored:
             collected = parse_collected(parsed["collected_at"]) or env.issued
             collected = min(collected, env.issued)     # a claimed collection time can only make data OLDER
-            await con.execute(
-                """INSERT INTO agent_posture
-                       (agent_id, key_id, seq, schema_version, collected_at, received_at, header, payload_raw,
-                        payload_sha256, signature, signed, size_bytes)
-                   VALUES ($1,$2,$3,2,$4,$5,$6::jsonb,$7,$8,$9,TRUE,$10)
-                   ON CONFLICT (tenant_id, agent_id, key_id, seq) DO NOTHING""",
-                agent_id, kid, seq, collected, now, json.dumps(env.header), payload, sha,
-                b64u_decode(env.sig_b64), len(payload))
+            row_at = _parse_stored(ingest.get("row_at") or ingest.get("stored_at"))
+            if row_at is not None and stored_at is not None:
+                row_at = min(row_at, stored_at)         # the row is never younger than its last write
+            new_row = (key_changed or row_at is None or ingest.get("stored_seq") is None
+                       or (now - row_at).total_seconds() >= MIN_STORE_INTERVAL_S)
+            wrote = False
+            if not new_row:
+                # Coalesce: a changed posture inside the interval REPLACES the newest row (same signed evidence
+                # model, one row), so a host that changes one field on every post cannot add a row per post.
+                wrote = (await con.execute(
+                    """UPDATE agent_posture SET seq = $4, schema_version = 2, collected_at = $5, received_at = $6,
+                              header = $7::jsonb, payload_raw = $8, payload_sha256 = $9, signature = $10,
+                              signed = TRUE, size_bytes = $11
+                        WHERE agent_id = $1 AND key_id = $2 AND seq = $3""",
+                    agent_id, ingest.get("stored_kid"), ingest.get("stored_seq"), seq, collected, now,
+                    json.dumps(env.header), payload, sha, b64u_decode(env.sig_b64), len(payload))
+                    ).endswith(" 1")
+            if not wrote:
+                await con.execute(
+                    """INSERT INTO agent_posture
+                           (agent_id, key_id, seq, schema_version, collected_at, received_at, header, payload_raw,
+                            payload_sha256, signature, signed, size_bytes)
+                       VALUES ($1,$2,$3,2,$4,$5,$6::jsonb,$7,$8,$9,TRUE,$10)
+                       ON CONFLICT (tenant_id, agent_id, key_id, seq) DO NOTHING""",
+                    agent_id, kid, seq, collected, now, json.dumps(env.header), payload, sha,
+                    b64u_decode(env.sig_b64), len(payload))
+                ingest["row_at"] = iso(now)
+            await _evict_postures(con, agent_id, agent["tenant_id"])
             ingest.update({"digest": digest, "stored_at": iso(now), "stored_seq": seq, "stored_kid": kid})
             node_ref, new_identity, ident_changed = await _resolve_node(
                 con, agent_id, new_identity, node_ref, client_ip)
-            invalidate = changed or ident_changed or key_changed
+            asked = changed and rebuild_request_allowed(agent_id)       # always recorded: it spaces the NEXT request
+            invalidate = ident_changed or key_changed or asked
     elif kind == "heartbeat":
         pass
     else:   # rotate: retire the old key BEFORE the new one becomes active (one active key per agent)
@@ -1256,9 +1502,9 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
             "UPDATE fleet_agent_keys SET status = 'rotated', retired_at = NOW() "
             "WHERE agent_id = $1 AND key_id = $2 AND status = 'active'", agent_id, kid)
         ins = await con.fetchrow(
-            """INSERT INTO fleet_agent_keys (agent_id, key_id, public_key)
-               VALUES ($1,$2,$3) ON CONFLICT (tenant_id, key_id) DO NOTHING RETURNING id""",
-            agent_id, new_kid, new_pub)
+            """INSERT INTO fleet_agent_keys (agent_id, key_id, public_key, rotated_from)
+               VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id, key_id) DO NOTHING RETURNING id""",
+            agent_id, new_kid, new_pub, kid)
         if ins is None:
             raise Rejection(409, "key_exists", "that public key is already registered")
         res.new_key_id = new_kid
@@ -1284,6 +1530,53 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
     res.agent = {"id": agent_id, "status": "online", "last_seen": now, "node_ref": node_ref,
                  "hostname": agent["hostname"]}
     return res
+
+
+async def _evict_postures(con: Any, agent_id: uuid.UUID, tenant_id: Any) -> None:
+    """Enforce the byte caps, oldest first. An agent's NEWEST row is never evicted (it is the evidence in use), so a
+    cap smaller than one posture still keeps that one."""
+    await con.execute(
+        """DELETE FROM agent_posture WHERE id IN (
+             SELECT id FROM (
+               SELECT id, row_number() OVER w AS rn, sum(size_bytes) OVER w AS cum
+                 FROM agent_posture WHERE agent_id = $1
+               WINDOW w AS (ORDER BY received_at DESC, seq DESC, id)) s
+              WHERE rn > 1 AND cum > $2)""", agent_id, AGENT_POSTURE_MAX_BYTES)
+    if not tenant_check_due("posture", tenant_id):
+        return
+    total = await con.fetchval("SELECT COALESCE(SUM(size_bytes), 0) FROM agent_posture WHERE tenant_id = $1",
+                               tenant_id)
+    if total > TENANT_POSTURE_MAX_BYTES:
+        await con.execute(
+            """DELETE FROM agent_posture WHERE id IN (
+                 SELECT id FROM (
+                   SELECT id, row_number() OVER (PARTITION BY agent_id ORDER BY received_at DESC, seq DESC, id) AS rn,
+                          sum(size_bytes) OVER (ORDER BY received_at DESC, seq DESC, id) AS cum
+                     FROM agent_posture WHERE tenant_id = $1) s
+                  WHERE rn > 1 AND cum > $2)""", tenant_id, TENANT_POSTURE_MAX_BYTES)
+
+
+_INVENTORY_SIZE_SQL = ("pg_column_size(i.os_info) + pg_column_size(i.packages) + pg_column_size(i.listeners)"
+                       " + pg_column_size(i.posture)")
+
+
+async def evict_inventory(con: Any, tenant_id: Any) -> None:
+    """Hold the tenant's v1 inventory under ``INVENTORY_TENANT_MAX_BYTES``, oldest first; an agent's newest inventory
+    is never evicted. Throttled like the posture check (the SUM is O(the tenant's inventory rows))."""
+    if not tenant_check_due("inventory", tenant_id):
+        return
+    total = await con.fetchval(
+        f"SELECT COALESCE(SUM({_INVENTORY_SIZE_SQL}), 0) FROM agent_inventory i "
+        "JOIN fleet_agents a ON a.id = i.agent_id WHERE a.tenant_id = $1", tenant_id)
+    if total > INVENTORY_TENANT_MAX_BYTES:
+        await con.execute(
+            f"""DELETE FROM agent_inventory WHERE id IN (
+                  SELECT id FROM (
+                    SELECT i.id, row_number() OVER (PARTITION BY i.agent_id ORDER BY i.collected_at DESC, i.id) AS rn,
+                           sum({_INVENTORY_SIZE_SQL}) OVER (ORDER BY i.collected_at DESC, i.id) AS cum
+                      FROM agent_inventory i JOIN fleet_agents a ON a.id = i.agent_id
+                     WHERE a.tenant_id = $1) s
+                   WHERE rn > 1 AND cum > $2)""", tenant_id, INVENTORY_TENANT_MAX_BYTES)
 
 
 async def _maybe_thread(size: int, fn: Any, arg: Any) -> Any:
@@ -1315,7 +1608,18 @@ def _agent_version(collectors: dict[str, str], parsed: Any, kind: str) -> str | 
 # node identity (E3): claimed unless corroborated by something the host cannot forge
 # --------------------------------------------------------------------------- #
 
-_INSTANCE_TYPES = ("instance", "virtual_machine", "vm", "compute_instance")
+_IDENTITY_ASSETS_SQL = """
+SELECT id, kind, value, canonical, metadata FROM assets
+ WHERE kind IN ('cloud_resource', 'iot_device', 'ot_device')
+   AND (metadata->'private_ips' ?| $1::text[] OR metadata->'public_ips' ?| $1::text[]
+        OR metadata->'ips' ?| $1::text[] OR metadata->'ip' ?| $1::text[])
+"""
+_LIVE_AGENT_SQL = ("SELECT id, node_ref, identity FROM fleet_agents "
+                   "WHERE id <> $1 AND status <> 'revoked' AND revoked_at IS NULL AND legacy = FALSE AND ")
+#: every other live agent whose claimed addresses overlap the given ones
+_AGENTS_BY_IPS_SQL = _LIVE_AGENT_SQL + "(identity->'ips') ?| $2::text[]"
+#: other live agents presenting the same peer address; three are enough to know the address is shared
+_AGENTS_BY_PEER_SQL = _LIVE_AGENT_SQL + "identity->>'peer_ip' = $2 ORDER BY id LIMIT 3"
 
 
 def _norm_ips(values: Any) -> set[str]:
@@ -1334,68 +1638,72 @@ def _norm_ips(values: Any) -> set[str]:
 async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any], node_ref: str,
                         peer_ip: str | None) -> tuple[str, dict[str, Any], bool]:
     """Decide ``node_ref`` and ``identity.basis`` for this agent. Default and fallback: ``agent:<uuid>`` /
-    ``claimed``. An agent is MERGED into a cloud instance node (``asset:<uuid>``, ``corroborated``) only when ALL hold:
+    ``claimed``. The decision itself is :func:`app.assurance.builders._ipmap.corroborate`, THE function the
+    ``host_fw`` builder runs over the same claims, so the graph and ``fleet_agents.node_ref`` cannot diverge
+    (review findings hostfw-5 and wire-5). Its rules, in short: the claimed bind addresses are a subset of ONE
+    cloud instance's PRIVATE addresses; the address the SERVER saw the request come from (strict, see
+    ``auth.client_ip_strict``) is one of those private addresses, never a public one (a shared egress address
+    proves nothing, hostfw-2); no other enrolled agent presents the same peer address; and no other agent that
+    passed the same checks claims the instance. A claim that never passed cannot demote or clash with anyone.
 
-    * its claimed bind addresses are a non-empty subset of the private IPs of exactly ONE cloud instance asset;
-    * the address the SERVER saw the request come from (trusted-proxy aware) is one of that instance's private or
-      public IPs. This is the part a compromised host cannot forge from another machine: without it any enrolled
-      host could claim a victim instance's addresses and have its own "all closed" facts attached to the victim;
-    * no other live agent claims that instance (by ``node_ref`` or by overlapping claimed addresses). Two agents
-      claiming one cloud node merge NEITHER: the other one is demoted too, and the ambiguity is recorded.
+    Besides this agent, other agents whose decision flips to "claimed" because of it are demoted in their row
+    (never promoted: a promotion waits for their own posture, the graph is re-derived at every build either
+    way). Findings of a host whose node changes follow it (``assurance.finding_follow``).
 
-    Returns ``(node_ref, identity, changed)``.
-    """
+    Returns ``(node_ref, identity, changed)``."""
+    from .assurance import finding_follow
+    from .assurance.builders import _ipmap
+
     own = f"agent:{agent_id}"
-    ips = sorted(_norm_ips(identity.get("ips")))
-    peer = sorted(_norm_ips([peer_ip])) if peer_ip else []
-    target: str | None = None
-    note: str | None = None
-    if ips:
-        rows = await con.fetch(
-            """SELECT id, metadata FROM assets
-                WHERE kind = 'cloud_resource' AND (metadata->'private_ips') ?| $1::text[]""", ips)
-        cands = []
-        for r in rows:
-            md = _loads(r["metadata"], {})
-            if not isinstance(md, dict):
-                continue
-            if str(md.get("resource_type") or "").lower() not in _INSTANCE_TYPES:
-                continue
-            priv = _norm_ips(md.get("private_ips"))
-            if set(ips) <= priv:
-                cands.append((str(r["id"]), priv, _norm_ips(md.get("public_ips"))))
-        if len(cands) == 1:
-            aid, priv, pub = cands[0]
-            if peer and peer[0] in (priv | pub):
-                others = await con.fetch(
-                    """SELECT id, node_ref, identity FROM fleet_agents
-                        WHERE id <> $1 AND status <> 'revoked' AND legacy = FALSE""", agent_id)
-                clash = []
-                for o in others:
-                    oi = _loads(o["identity"], {})
-                    if o["node_ref"] == f"asset:{aid}" or (_norm_ips(oi.get("ips")) & priv):
-                        clash.append(o["id"])
-                if not clash:
-                    target = f"asset:{aid}"
-                else:
-                    note = "ambiguous_cloud_node"
-                    for oid in clash:       # neither merges
-                        await con.execute(
-                            "UPDATE fleet_agents SET node_ref = 'agent:' || id::text, "
-                            "identity = jsonb_set(identity, '{basis}', '\"claimed\"') WHERE id = $1 "
-                            "AND node_ref = $2", oid, f"asset:{aid}")
-            else:
-                note = "peer_address_not_instance"
-        elif len(cands) > 1:
-            note = "ambiguous_cloud_node"
+    me = _ipmap.claim_of(str(agent_id), {**identity, "peer_ip": peer_ip,
+                                         "peer_proxied": bool(getattr(peer_ip, "proxied", False))})
+    others: dict[str, Any] = {}
+    if me.ips:
+        # every address of the instance(s) this agent could be: another agent claiming ANY of them is a rival
+        first = _ipmap.build_ip_map([dict(r) for r in await con.fetch(_IDENTITY_ASSETS_SQL, list(me.ips))])
+        reach = set(me.ips)
+        for ip in me.ips:
+            owner = first.unique.get(ip)
+            if owner is not None and first.node_kind(owner) == _ipmap.INSTANCE_KIND:
+                reach.update(first.ips_of(owner))
+        for o in await con.fetch(_AGENTS_BY_IPS_SQL, agent_id, sorted(reach)):
+            others[str(o["id"])] = o
+    if me.peer:
+        for o in await con.fetch(_AGENTS_BY_PEER_SQL, agent_id, me.peer):
+            others.setdefault(str(o["id"]), o)
+    claims = [me]
+    for oid, o in sorted(others.items()):
+        claims.append(_ipmap.claim_of(oid, _loads(o["identity"], {})))
+    decided: dict[str, Any] = {}
+    if any(c.ips for c in claims):
+        ips = sorted({ip for c in claims for ip in c.ips})
+        rows = [dict(r) for r in await con.fetch(_IDENTITY_ASSETS_SQL, ips)]
+        decided = _ipmap.corroborate(claims, _ipmap.build_ip_map(rows))
+    mine = decided.get(str(agent_id), _ipmap.Decision(None, ""))
+    moves: dict[str, str] = {}
+    for oid, o in others.items():
+        d = decided.get(oid)
+        if d is None or d.ref is not None or o["node_ref"] == f"agent:{oid}" or not o["node_ref"]:
+            continue                                     # only a DEMOTION of another agent is applied here
+        oi = dict(_loads(o["identity"], {}))
+        oi["basis"] = "claimed"
+        if d.note:
+            oi["note"] = d.note
+        await con.execute("UPDATE fleet_agents SET node_ref = $2, identity = $3::jsonb WHERE id = $1",
+                          o["id"], f"agent:{oid}", json.dumps(oi))
+        moves.setdefault(o["node_ref"], f"agent:{oid}")
     new = dict(identity)
-    new["basis"] = "corroborated" if target else "claimed"
-    if note:
-        new["note"] = note
+    new["basis"] = "corroborated" if mine.ref else "claimed"
+    if mine.note:
+        new["note"] = mine.note
     else:
         new.pop("note", None)
-    new_ref = target or own
+    new_ref = mine.ref or own
     changed = new_ref != node_ref or new.get("basis") != identity.get("basis")
+    if new_ref != node_ref and node_ref:
+        moves.setdefault(node_ref, new_ref)
+    if moves:
+        await finding_follow.migrate_targets(con, moves)
     return new_ref, new, changed
 
 
@@ -1443,65 +1751,139 @@ async def list_keys(pool: Any, agent_id: uuid.UUID) -> list[dict[str, Any]]:
 
 async def revoke_agent(pool: Any, agent_id: uuid.UUID, *, actor: str, actor_role: str | None,
                        reason: str, client_ip: str | None = None,
-                       request_id: str | None = None) -> str:
+                       request_id: str | None = None, revoke_enroll_token: bool = True,
+                       info: dict[str, Any] | None = None) -> str:
     """Revoke an agent NOW: ``status='revoked'``, ``revoked_at``, every active key revoked, its pending
     re-key tokens revoked, the assurance graph invalidated. The next call with its credential is a 403 (nothing
-    is cached). Returns ``"revoked"``, ``"not_found"`` or ``"already_revoked"``."""
-    async with pool.acquire() as con:
-        async with con.transaction():
-            row = await con.fetchrow(
-                "SELECT id, hostname, status, revoked_at FROM fleet_agents WHERE id = $1 FOR UPDATE", agent_id)
-            if row is None:
-                return "not_found"
-            if row["status"] == "revoked" or row["revoked_at"] is not None:
-                return "already_revoked"
-            await con.execute(
-                """UPDATE fleet_agents SET status = 'revoked', revoked_at = NOW(), revoked_by = $2,
-                          online = FALSE WHERE id = $1""", agent_id, actor)
-            keys = await con.fetch(
-                """UPDATE fleet_agent_keys SET status = 'revoked', revoked_at = NOW(), revoke_reason = $2
-                    WHERE agent_id = $1 AND status = 'active' RETURNING key_id""",
-                agent_id, (reason or "agent revoked")[:512])
-            toks = await con.fetch(
-                """UPDATE fleet_enroll_tokens SET revoked_at = NOW(), revoked_by = $2
-                    WHERE for_agent = $1 AND revoked_at IS NULL AND uses < max_uses RETURNING token_prefix""",
-                agent_id, actor)
-            await invalidate_assurance(con)
-            await audit.record(
-                pool, action="fleet.agent.revoke", actor=actor, actor_role=actor_role,
-                resource_type="fleet_agent", resource_id=str(agent_id), ip=client_ip, request_id=request_id,
-                details={"hostname": row["hostname"], "reason": reason,
-                         "revoked_keys": sorted(k["key_id"] for k in keys),
-                         "revoked_rekey_tokens": sorted(t["token_prefix"] for t in toks)},
-                con=con)
-    return "revoked"
+    is cached). Returns ``"revoked"``, ``"not_found"`` or ``"already_revoked"``.
+
+    ``revoke_enroll_token`` (default True, the safe choice) also revokes the multi-use fleet token the agent was
+    first enrolled with, if it still has uses left: otherwise a revoked, compromised host that can read that token
+    (cloud-init user data) re-enrolls under a new hostname as a fresh agent. Pass False to keep the fleet token for
+    the hosts that have not enrolled yet. Re-enrolling THIS host honestly goes through a new re-key token. ``info``
+    (optional dict) receives ``enroll_token_prefix`` and ``enroll_token_revoked``.
+
+    Lock order (global, see the module docstring): token rows, THEN the agent row, then its keys. Re-key enrollment
+    claims its token before it locks the agent, so locking the agent first here deadlocked against it."""
+
+    async def run() -> str:
+        async with pool.acquire() as con:
+            async with con.transaction():
+                origin = await con.fetchval("SELECT enroll_token_id FROM fleet_agents WHERE id = $1", agent_id)
+                locked = await con.fetch(
+                    """SELECT id, token_prefix, for_agent FROM fleet_enroll_tokens
+                        WHERE (for_agent = $1 OR id = $2) AND revoked_at IS NULL ORDER BY id FOR UPDATE""",
+                    agent_id, origin)
+                row = await con.fetchrow(
+                    "SELECT id, hostname, status, revoked_at FROM fleet_agents WHERE id = $1 FOR UPDATE", agent_id)
+                if row is None:
+                    return "not_found"
+                if row["status"] == "revoked" or row["revoked_at"] is not None:
+                    return "already_revoked"
+                await con.execute(
+                    """UPDATE fleet_agents SET status = 'revoked', revoked_at = NOW(), revoked_by = $2,
+                              online = FALSE WHERE id = $1""", agent_id, actor)
+                keys = await con.fetch(
+                    """UPDATE fleet_agent_keys SET status = 'revoked', revoked_at = NOW(), revoke_reason = $2
+                        WHERE agent_id = $1 AND status = 'active' RETURNING key_id""",
+                    agent_id, (reason or "agent revoked")[:512])
+                rekey_ids = [t["id"] for t in locked if t["for_agent"] == agent_id]
+                toks = await con.fetch(
+                    """UPDATE fleet_enroll_tokens SET revoked_at = NOW(), revoked_by = $2
+                        WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL AND uses < max_uses
+                    RETURNING token_prefix""", rekey_ids, actor)
+                origin_prefix = None
+                origin_revoked = False
+                if origin is not None:
+                    origin_prefix = await con.fetchval(
+                        "SELECT token_prefix FROM fleet_enroll_tokens WHERE id = $1", origin)
+                    if revoke_enroll_token and origin not in rekey_ids:
+                        origin_revoked = await con.fetchval(
+                            """UPDATE fleet_enroll_tokens SET revoked_at = NOW(), revoked_by = $2
+                                WHERE id = $1 AND revoked_at IS NULL AND uses < max_uses AND expires_at > NOW()
+                            RETURNING TRUE""", origin, actor) is True
+                await invalidate_assurance(con)
+                await audit.record(
+                    pool, action="fleet.agent.revoke", actor=actor, actor_role=actor_role,
+                    resource_type="fleet_agent", resource_id=str(agent_id), ip=client_ip, request_id=request_id,
+                    details={"hostname": row["hostname"], "reason": reason,
+                             "revoked_keys": sorted(k["key_id"] for k in keys),
+                             "revoked_rekey_tokens": sorted(t["token_prefix"] for t in toks),
+                             "enroll_token_prefix": origin_prefix, "enroll_token_revoked": origin_revoked,
+                             "revoke_enroll_token": bool(revoke_enroll_token)},
+                    con=con)
+                if info is not None:
+                    info.update(enroll_token_prefix=origin_prefix, enroll_token_revoked=origin_revoked)
+                return "revoked"
+
+    return await fleet_enroll.retry_on_deadlock(run)
 
 
 async def revoke_key(pool: Any, agent_id: uuid.UUID, key_id: str, *, actor: str, actor_role: str | None,
-                     reason: str, client_ip: str | None = None, request_id: str | None = None) -> str:
-    """Revoke one key of an agent (an active or a rotated one). Returns ``"revoked"``, ``"not_found"`` or
-    ``"already_revoked"``. Revoking the active key leaves the agent unable to post until it is re-keyed."""
-    async with pool.acquire() as con:
-        async with con.transaction():
-            ag = await con.fetchrow("SELECT id FROM fleet_agents WHERE id = $1 FOR UPDATE", agent_id)
-            if ag is None:
-                return "not_found"
-            cur = await con.fetchrow(
-                "SELECT status FROM fleet_agent_keys WHERE agent_id = $1 AND key_id = $2 FOR UPDATE",
-                agent_id, key_id)
-            if cur is None:
-                return "not_found"
-            if cur["status"] == "revoked":
-                return "already_revoked"
-            await con.execute(
-                """UPDATE fleet_agent_keys SET status = 'revoked', revoked_at = NOW(), revoke_reason = $3
-                    WHERE agent_id = $1 AND key_id = $2""", agent_id, key_id, (reason or "key revoked")[:512])
-            await invalidate_assurance(con)
-            await audit.record(
-                pool, action="fleet.agent.key_revoke", actor=actor, actor_role=actor_role,
-                resource_type="fleet_agent", resource_id=str(agent_id), ip=client_ip, request_id=request_id,
-                details={"key_id": key_id, "was": cur["status"], "reason": reason}, con=con)
-    return "revoked"
+                     reason: str, client_ip: str | None = None, request_id: str | None = None,
+                     successors: str | None = None, info: dict[str, Any] | None = None) -> str:
+    """Revoke one key of an agent (an active or a rotated one). Returns ``"revoked"``, ``"not_found"``,
+    ``"already_revoked"`` or ``"successor_active"``. Revoking the active key leaves the agent unable to post until it
+    is re-keyed.
+
+    A key that was ROTATED has a successor (``rotated_from``). If the stolen key signed a rotate envelope first, its
+    attacker-chosen successor is the live key, and revoking only the old one leaves the attacker in. So when the key
+    has an ACTIVE descendant the caller must choose: ``successors="revoke"`` revokes the whole chain,
+    ``"keep"`` revokes only this key (routine cleanup after a legitimate rotation); without a choice nothing changes
+    and ``"successor_active"`` is returned with ``info["active_successors"]``. The incident action for a stolen key is
+    still revoking the AGENT (:func:`revoke_agent`), which closes every key and the bearer."""
+    if successors not in (None, "revoke", "keep"):
+        raise ValueError(successors)
+
+    async def run() -> str:
+        async with pool.acquire() as con:
+            async with con.transaction():
+                ag = await con.fetchrow("SELECT id FROM fleet_agents WHERE id = $1 FOR UPDATE", agent_id)
+                if ag is None:
+                    return "not_found"
+                cur = await con.fetchrow(
+                    "SELECT status FROM fleet_agent_keys WHERE agent_id = $1 AND key_id = $2 FOR UPDATE",
+                    agent_id, key_id)
+                if cur is None:
+                    return "not_found"
+                desc = [r["key_id"] for r in await con.fetch(
+                    """WITH RECURSIVE d(key_id) AS (
+                           SELECT key_id FROM fleet_agent_keys WHERE agent_id = $1 AND rotated_from = $2
+                           UNION
+                           SELECT k.key_id FROM fleet_agent_keys k JOIN d ON k.rotated_from = d.key_id
+                            WHERE k.agent_id = $1)
+                       SELECT k.key_id FROM fleet_agent_keys k JOIN d ON d.key_id = k.key_id
+                        WHERE k.agent_id = $1 AND k.status = 'active' ORDER BY k.key_id""", agent_id, key_id)]
+                if info is not None:
+                    info["active_successors"] = desc
+                    info["revoked_successors"] = []
+                if desc and successors is None:
+                    return "successor_active"
+                cascade = bool(desc) and successors == "revoke"
+                if cur["status"] == "revoked" and not cascade:
+                    return "already_revoked"
+                why = (reason or "key revoked")[:512]
+                if cur["status"] != "revoked":
+                    await con.execute(
+                        """UPDATE fleet_agent_keys SET status = 'revoked', revoked_at = NOW(), revoke_reason = $3
+                            WHERE agent_id = $1 AND key_id = $2""", agent_id, key_id, why)
+                gone: list[str] = []
+                if cascade:
+                    gone = [r["key_id"] for r in await con.fetch(
+                        """UPDATE fleet_agent_keys SET status = 'revoked', revoked_at = NOW(), revoke_reason = $3
+                            WHERE agent_id = $1 AND key_id = ANY($2::text[]) AND status = 'active'
+                        RETURNING key_id""", agent_id, desc, ("successor of revoked key " + key_id + ": " + why)[:512])]
+                if info is not None:
+                    info["revoked_successors"] = sorted(gone)
+                await invalidate_assurance(con)
+                await audit.record(
+                    pool, action="fleet.agent.key_revoke", actor=actor, actor_role=actor_role,
+                    resource_type="fleet_agent", resource_id=str(agent_id), ip=client_ip, request_id=request_id,
+                    details={"key_id": key_id, "was": cur["status"], "reason": reason,
+                             "successors": successors, "revoked_successors": sorted(gone)}, con=con)
+                return "revoked"
+
+    return await fleet_enroll.retry_on_deadlock(run)
 
 
 __all__ = [
@@ -1509,5 +1891,5 @@ __all__ = [
     "validate_posture", "validate_heartbeat", "validate_rotate", "content_digest", "posture_identity",
     "inflate_body", "parse_envelope", "decode_payload", "verify_signature", "signing_input", "canon",
     "latest_posture", "list_keys", "revoke_agent", "revoke_key", "invalidate_assurance", "rate_limited",
-    "reset_limiters",
+    "reset_limiters", "record_throttled", "preauth_blocked", "preauth_failed",
 ]

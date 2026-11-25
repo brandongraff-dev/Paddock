@@ -110,7 +110,16 @@ config:
   authMode: enforce          # never "dev" outside a laptop
   logLevel: INFO
   corsOrigins: ""            # default: https://<ingress host>
-  trustedProxyCidrs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  # Addresses of the ingress / load balancer that connect to the orchestrator, e.g. "10.42.0.0/16" (the ingress
+  # controller pods). EMPTY by default and it must stay narrow: a peer inside this list is believed about the client
+  # address in X-Forwarded-For, so listing all of RFC1918 lets any private host choose the address it is seen from
+  # (it feeds cloud-instance corroboration and audit). Empty means every client is seen as the ingress address, and a
+  # host is then never corroborated with a cloud instance (a request that carries X-Forwarded-For from an untrusted
+  # peer shows a proxy, not the host). The ingress or load balancer MUST add X-Forwarded-For; one that rewrites the
+  # source address without any header cannot be seen as a proxy.
+  trustedProxyCidrs: ""
+  # Number of proxies in front of the app that APPEND to X-Forwarded-For (the ingress alone: 1; LB + ingress: 2).
+  trustedProxyHops: 1
   retention:
     enabled: true
     scopeDecisionsDays: 180

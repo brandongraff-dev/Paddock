@@ -1,7 +1,10 @@
 """HTTP client for the orchestrator fleet API: standard library (``urllib``) only.
 
-* **Every** transport problem (DNS, refused, reset, timeout, TLS, malformed reply, bad URL) becomes a
-  :class:`FleetClientError`; nothing else escapes, so one network blip can never kill the run loop.
+* **Every** transport problem (DNS, refused, reset, timeout, TLS, malformed reply, bad URL, a reply nested
+  deeper than the JSON parser can take) becomes a :class:`FleetClientError`; nothing else escapes, so one
+  network blip can never kill the run loop. A request also has a TOTAL deadline (the socket timeout alone is
+  per operation, so a server dribbling one byte at a time could otherwise hold the single-threaded loop for
+  hours); past it the connection is torn down and the call fails like any other transport error.
 * ``http://`` is refused unless the server is loopback (enrollment tokens and ``X-Agent-Token`` must not
   cross a network in clear text). Redirects are never followed (a redirect must not carry credentials to
   another host or downgrade to http).
@@ -13,11 +16,15 @@ Agent-authenticated calls use ``X-Agent-Token`` (never ``Authorization: Bearer``
 reserves for JWTs and ``pak_`` keys).
 """
 import email.utils
+import functools
+import http.client
 import ipaddress
 import json
 import random
 import re
+import socket
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -35,16 +42,33 @@ _TRANSIENT_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 class FleetClientError(RuntimeError):
     """A failed call. ``status`` is None for transport errors (no HTTP answer at all)."""
 
-    def __init__(self, message, status=None, body=None, retry_after=None):
+    def __init__(self, message, status=None, body=None, retry_after=None, local=False):
         super(FleetClientError, self).__init__(message)
         self.status = status
         self.body = body
         self.retry_after = retry_after
+        # ``local``: refused before anything was sent (a malformed id, an envelope the contract forbids).
+        # Retrying the same input can never succeed, so it is permanent, never "transient".
+        self.local = bool(local)
 
     @property
     def transient(self):
         """True when retrying the same request may succeed (no answer, 5xx, 408/425/429)."""
+        if self.local:
+            return False
         return self.status is None or self.status in _TRANSIENT_STATUSES or self.status >= 500
+
+    def structured_codes(self):
+        """The machine-readable verdict codes of a JSON-object body (``error`` / ``reason``), lower-cased.
+
+        Only a structured body counts: an HTML error page that happens to mention a code proves nothing."""
+        out = set()
+        if isinstance(self.body, dict):
+            for key in ("error", "reason"):
+                val = self.body.get(key)
+                if isinstance(val, str):
+                    out.add(val.strip().lower())
+        return out
 
     @property
     def auth_failure(self):
@@ -87,6 +111,11 @@ def normalize_server(server):
     if "://" not in s:
         s = "https://" + s
     s = s.rstrip("/")
+    # scheme and host are case-insensitive: normalise them so every later "is it https?" check is exact
+    if "://" in s:
+        scheme, rest = s.split("://", 1)
+        netloc, sep, path = rest.partition("/")
+        s = scheme.lower() + "://" + netloc.lower() + sep + path
     try:
         parts = urlsplit(s)
         host = parts.hostname
@@ -111,8 +140,61 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _default_transport(opener):
-    def send(method, url, headers, body, timeout):
+_TLS = threading.local()
+
+
+def _track(sock):
+    holder = getattr(_TLS, "holder", None)
+    if holder is not None:
+        holder.append(sock)
+    return sock
+
+
+class _TrackedMixin(object):
+    """Hands every socket a request opens to the caller's ``holder`` so a total deadline can close them."""
+
+    def __init__(self, *args, **kwargs):
+        super(_TrackedMixin, self).__init__(*args, **kwargs)
+        create = self._create_connection
+
+        def tracked(*a, **k):
+            return _track(create(*a, **k))
+        self._create_connection = tracked
+
+    def connect(self):
+        super(_TrackedMixin, self).connect()
+        _track(self.sock)
+
+
+class _TrackedHTTPConnection(_TrackedMixin, http.client.HTTPConnection):
+    pass
+
+
+class _TrackedHTTPSConnection(_TrackedMixin, http.client.HTTPSConnection):
+    pass
+
+
+class _TrackedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_TrackedHTTPConnection, req)
+
+
+class _TrackedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(functools.partial(_TrackedHTTPSConnection, context=self._context), req)
+
+
+def _abort(sock):
+    for fn in (lambda: sock.shutdown(socket.SHUT_RDWR), sock.close):
+        try:
+            fn()
+        except (OSError, ValueError):
+            pass
+
+
+def _default_transport(opener, deadline):
+    """``deadline`` is a callable returning the total seconds one request may take."""
+    def one(method, url, headers, body, timeout):
         req = urllib.request.Request(url, data=body, method=method)
         for k, v in headers.items():
             req.add_header(k, v)
@@ -127,27 +209,52 @@ def _default_transport(opener):
                 data = b""
             hdrs = dict((k.lower(), v) for k, v in (exc.headers.items() if exc.headers else []))
             return exc.code, hdrs, data
+
+    def send(method, url, headers, body, timeout):
+        limit = float(deadline())
+        holder, box = [], {}
+
+        def work():
+            _TLS.holder = holder
+            try:
+                box["ok"] = one(method, url, headers, body, timeout)
+            except BaseException as exc:  # noqa: BLE001 - re-raised in the caller's thread
+                box["err"] = exc
+
+        worker = threading.Thread(target=work, name="paddock-http", daemon=True)
+        worker.start()
+        worker.join(limit)
+        if worker.is_alive():
+            for sock in list(holder):          # tear the connection down; the worker then fails fast
+                _abort(sock)
+            worker.join(5.0)
+            raise FleetClientError("%s %s exceeded the %.0f s total request deadline" % (method, url, limit))
+        if "err" in box:
+            raise box["err"]
+        return box["ok"]
     return send
 
 
 class FleetClient(object):
     def __init__(self, server, *, agent_id=None, agent_token=None, timeout_s=20, transport=None,
-                 ca_file=None, user_agent=None):
+                 ca_file=None, user_agent=None, deadline_s=None):
         self.base = normalize_server(server)
         self.agent_id = _check_agent_id(agent_id) if agent_id else None
         self.agent_token = agent_token
         self._timeout = float(timeout_s)
+        # total seconds one request may take (the socket timeout is per operation; see the module docstring)
+        self._deadline = float(deadline_s) if deadline_s else max(30.0, 3.0 * self._timeout)
         self.clock_skew_ms = None
         self._ua = user_agent or "paddock-agent/%s" % __version__
         if transport is None:
             host = urlsplit(self.base).hostname or ""
-            handlers = [_NoRedirect()]
+            handlers = [_NoRedirect(), _TrackedHTTPHandler()]
             if _is_loopback(host):
                 handlers.append(urllib.request.ProxyHandler({}))
             if self.base.startswith("https://"):
                 ctx = ssl.create_default_context(cafile=ca_file) if ca_file else ssl.create_default_context()
-                handlers.append(urllib.request.HTTPSHandler(context=ctx))
-            transport = _default_transport(urllib.request.build_opener(*handlers))
+                handlers.append(_TrackedHTTPSHandler(context=ctx))
+            transport = _default_transport(urllib.request.build_opener(*handlers), lambda: self._deadline)
         self._transport = transport
 
     # -- low level ----------------------------------------------------------- #
@@ -197,7 +304,7 @@ class FleetClient(object):
         if data:
             try:
                 parsed = json.loads(data.decode("utf-8"))
-            except (ValueError, UnicodeError):
+            except (ValueError, UnicodeError, RecursionError):   # RecursionError: a hostile, deeply nested reply
                 parsed = None if status < 400 else data[:512].decode("utf-8", "replace")
                 if status < 400:
                     raise FleetClientError("%s: the server answered %d with a body that is not JSON"
@@ -231,7 +338,7 @@ class FleetClient(object):
         try:
             body, enc = envelope.encode_body(env)
         except envelope.EnvelopeError as exc:
-            raise FleetClientError("refusing to send: %s" % exc)
+            raise FleetClientError("refusing to send: %s" % exc, local=True)
         return self._req("POST", "/v1/fleet/%s/%s" % (self.agent_id, route), body=body,
                          content_encoding=enc, headers=self._agent_headers(),
                          idempotency_key=env.get("seq"))
@@ -285,7 +392,7 @@ def _check_agent_id(value):
     try:
         return str(uuid.UUID(str(value)))
     except (ValueError, TypeError, AttributeError):
-        raise FleetClientError("%r is not a valid id" % (value,))
+        raise FleetClientError("%r is not a valid id" % (value,), local=True)
 
 
 def _retry_after(value):

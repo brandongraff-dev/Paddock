@@ -185,6 +185,14 @@ def _reset_limiters():
 
 
 @pytest.fixture
+def unsampled(monkeypatch):
+    """Switch the rejection-audit sampling off (``fleet.evidence.rejected`` rows are bounded per agent and reason, so a
+    flood cannot grow the chain): the tests that count one row per rejection need every row."""
+    monkeypatch.setattr(fp._reason_gate, "burst", 10 ** 6)
+    monkeypatch.setattr(fp._agent_gate, "burst", 10 ** 6)
+
+
+@pytest.fixture
 def enforce():
     prev = settings.auth_mode
     settings.auth_mode = "enforce"
@@ -761,7 +769,7 @@ async def test_step1_a_payload_of_exactly_2mib_passes_the_size_checks(world):
 # step 2: strict JSON, fields, types
 # =========================================================================== #
 
-async def test_step2_malformed_envelopes_are_400(world):
+async def test_step2_malformed_envelopes_are_400(world, unsampled):
     c = world.client
     fp.posture_limiter.limit = 1000
     host = await enroll_host(c, world.admin_a)
@@ -987,7 +995,7 @@ async def test_step6_signature_by_another_enrolled_agents_key_is_401(world):
 # step 7: clock
 # =========================================================================== #
 
-async def test_step7_clock_window(world):
+async def test_step7_clock_window(world, unsampled):
     c = world.client
     host = await enroll_host(c, world.admin_a)
     for off, code in ((-599, 200), (599, 200), (-601, 422), (601, 422), (-86400, 422), (86400 * 400, 422)):
@@ -1130,7 +1138,13 @@ async def test_step9_floats_and_deep_nesting_in_the_payload_are_refused(world):
 # persistence: digest change detection, hourly refresh, assurance invalidation
 # =========================================================================== #
 
-async def test_unchanged_content_is_not_stored_again_but_the_agent_stays_alive(world):
+async def test_unchanged_content_is_not_stored_again_but_the_agent_stays_alive(world, monkeypatch):
+    # this test is about the DIGEST rule (store on change); the coalescing interval (a changed posture inside it
+    # overwrites the newest row, tests/test_fleet_p2x_wire.py) is switched off so each change is its own row
+    monkeypatch.setattr(fp, "MIN_STORE_INTERVAL_S", 0)
+    # ... and so is the per-agent spacing of rebuild REQUESTS (review finding hostfw-9, covered in
+    # tests/test_node_identity_a1.py): here the second change comes right after the first and must invalidate
+    monkeypatch.setattr(fp, "REBUILD_REQUEST_MIN_INTERVAL_S", 0)
     c = world.client
     host = await enroll_host(c, world.admin_a)
     assert (await ps(c, host, good_posture(ms=5, uptime=100))).json()["stored"] is True
@@ -1475,11 +1489,13 @@ async def test_corroboration_needs_the_server_to_see_the_instances_address(world
     assert (await ps(world.client, host, good_posture(ips=["10.0.1.5"]))).status_code == 200
     a = await agent_row(world.db, host.agent_id)
     assert a["node_ref"] == f"agent:{host.agent_id}" and jd(a["identity"])["note"] == "peer_address_not_instance"
-    # a second agent that really is at the instance's address still cannot merge while ANOTHER agent claims the
-    # same addresses (two agents claiming one cloud node merge neither)
+    # (rewritten for review findings hostfw-5 and wire-5: it used to assert that a second agent at the instance's
+    # address could NOT merge because the first, uncorroborated agent merely CLAIMED the same addresses. A claim
+    # that never passed the peer check must not clash with anyone, so the agent really at the address merges.)
     host2 = await enroll_host(client_from_10, world.admin_a, "web-2")
     assert (await ps(client_from_10, host2, good_posture(ips=["10.0.1.5"]))).status_code == 200
-    assert (await agent_row(world.db, host2.agent_id))["node_ref"] == f"agent:{host2.agent_id}"
+    assert (await agent_row(world.db, host2.agent_id))["node_ref"] == f"asset:{inst}"
+    assert (await agent_row(world.db, host.agent_id))["node_ref"] == f"agent:{host.agent_id}"
 
 
 async def test_an_agent_at_the_instances_address_is_corroborated(world, client_from_10):
@@ -1516,7 +1532,9 @@ async def test_two_agents_claiming_one_cloud_node_merge_neither(world, client_fr
     assert (await ps(client_from_10, h2, good_posture(ips=["10.0.1.5"]))).status_code == 200
     r1, r2 = await agent_row(world.db, h1.agent_id), await agent_row(world.db, h2.agent_id)
     assert r1["node_ref"] == f"agent:{h1.agent_id}" and r2["node_ref"] == f"agent:{h2.agent_id}"   # BOTH demoted
-    assert jd(r1["identity"])["basis"] == "claimed" and jd(r2["identity"])["note"] == "ambiguous_cloud_node"
+    # (both hosts connect from the same address here: that is the ``shared_peer_address`` refusal; two agents at
+    # DIFFERENT private addresses of one instance are the ``ambiguous_cloud_node`` case, see test_node_identity_a1)
+    assert jd(r1["identity"])["basis"] == "claimed" and jd(r2["identity"])["note"] == "shared_peer_address"
 
 
 async def test_two_instances_with_the_same_private_address_are_ambiguous(world, client_from_10):
@@ -1576,7 +1594,7 @@ def test_gunzip_capped_is_bounded():
 # hardening found in review: nothing malformed may reach SQL or JSONB as a 500, nothing unsigned may be malleable
 # =========================================================================== #
 
-async def test_step2_control_characters_in_kid_and_collectors_are_a_clean_400_not_a_500(world):
+async def test_step2_control_characters_in_kid_and_collectors_are_a_clean_400_not_a_500(world, unsampled):
     """A NUL in `kid` (a SQL text parameter) or in `collectors` (stored as JSONB, which cannot hold U+0000) used to
     be a database error, i.e. an unaudited 500 after the claim. They are refused as malformed, audited, and the
     seq never moves."""

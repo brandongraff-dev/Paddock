@@ -46,6 +46,8 @@ MAX_EXPAND = 8
 MAX_SET_ELEMS = 512
 MAX_FLAT_RULES = 200
 COVER_BUDGET = 60000
+WALK_BUDGET = 400000        # rule visits across the whole model build; beyond it FwTooLarge (coll-6)
+OUTCOME_STATE_CAP = 200000  # packet-walk states before ``chain_outcomes`` gives up (both outcomes)
 IIF_EXTERNAL = "<external>"
 CT_STATES = ("established", "invalid", "new", "related", "untracked")
 PORT_PROTOS = ("dccp", "sctp", "tcp", "udp", "udplite")
@@ -106,7 +108,29 @@ class FwModelError(Exception):
 
 
 class FwTooLarge(Exception):
-    """Raised when the modelled rule count exceeds ``MAX_RULES``."""
+    """Raised when the modelled rule count exceeds ``MAX_RULES`` or the walk budget is spent."""
+
+
+class _Budget(object):
+    """Step counter for the graph walks: a layered ruleset must never stall the agent.
+
+    ``tick`` raises ``FwTooLarge`` past ``WALK_BUDGET`` and calls the optional ``check`` callback
+    (the collector's cooperative deadline) every 1024 steps.
+    """
+
+    def __init__(self, check=None):
+        self.left = WALK_BUDGET
+        self.n = 0
+        self.check = check
+
+    def tick(self, n=1):
+        self.left -= n
+        if self.left < 0:
+            raise FwTooLarge("firewall walk budget exceeded")
+        self.n += n
+        if self.check is not None and self.n >= 1024:
+            self.n = 0
+            self.check()
 
 
 # --------------------------------------------------------------------- intervals
@@ -213,6 +237,9 @@ class _RuleB(object):
         self.oif = None
         self.icmp = None
         self.dtype = None
+        self.th_sport = None
+        self.th_dport = None
+        self.nexthdr6 = False
         self.opaque = []
 
     def restrict_fam(self, fam):
@@ -239,12 +266,30 @@ class _RuleB(object):
             raise _Never()
         setattr(self, attr, new)
 
+    def add_th(self, attr, ivs):
+        """``th sport/dport``: bytes 0-1 / 2-3 of ANY transport header, resolved in ``finish``."""
+        cur = getattr(self, attr)
+        new = _norm_iv(ivs) if cur is None else _inter_iv(cur, _norm_iv(ivs))
+        if not new:
+            raise _Never()
+        setattr(self, attr, new)
+
     def add_addr(self, attr, fam, ivs):
         self.restrict_fam(fam)
         self.add_ivs(attr, ivs)
 
     def finish(self):
         """Apply implicit constraints; return a list of canonical rule match dicts (expanded)."""
+        # `th dport N` is a port match only for protocols that carry ports; for every other protocol
+        # it reads whatever bytes sit there. It is modelled as a port match only when an earlier
+        # l4proto match already limits the rule to port protocols, else it is an opaque condition.
+        for attr, th in (("sport", self.th_sport), ("dport", self.th_dport)):
+            if th is None:
+                continue
+            if self.proto is not None and self.proto <= frozenset(PORT_PROTOS):
+                self.add_ivs(attr, th)
+            else:
+                self.note("payload_th_" + attr)
         if (self.sport is not None or self.dport is not None):
             allowed = frozenset(PORT_PROTOS)
             self.add_set("proto", allowed if self.proto is None else self.proto & allowed)
@@ -597,6 +642,8 @@ def _nft_payload(b, pl, op, right, sets, tkey, positive, negative, ranged):
         b.add_addr(attr, fam, ivs)
     elif (proto, field) in (("ip", "protocol"), ("ip6", "nexthdr")):
         b.restrict_fam(4 if proto == "ip" else 6)
+        if proto == "ip6":
+            b.nexthdr6 = True
         if not positive:
             b.note("negated_proto")
             return
@@ -610,7 +657,7 @@ def _nft_payload(b, pl, op, right, sets, tkey, positive, negative, ranged):
     elif proto in PORT_PROTOS + ("th",) and field in ("sport", "dport"):
         if proto != "th":
             b.add_set("proto", [proto])
-        attr = field
+        attr = field if proto != "th" else "th_" + field
         if ranged:
             n = _port_value(right)
             if n is None:
@@ -626,7 +673,10 @@ def _nft_payload(b, pl, op, right, sets, tkey, positive, negative, ranged):
             return
         if not ivs:
             raise _Never()
-        b.add_ivs(attr, ivs)
+        if proto == "th":
+            b.add_th(attr, ivs)
+        else:
+            b.add_ivs(attr, ivs)
     elif proto in ("icmp", "icmpv6") and field == "type":
         fam = 4 if proto == "icmp" else 6
         b.restrict_fam(fam)
@@ -676,6 +726,18 @@ def _nft_rule(expr, sets, tkey, prefix_table, rule_fam):
                 verdict = k
             elif k == "reject":
                 verdict = "reject"
+                # `nft -j` drops the implicit nfproto dependency of `reject with icmp|icmpv6`
+                rtype = val.get("type") if isinstance(val, dict) else None
+                if rtype in (None, "icmpx"):
+                    pass
+                elif rtype == "icmp":
+                    b.restrict_fam(4)
+                elif rtype == "icmpv6":
+                    b.restrict_fam(6)
+                elif rtype == "tcp reset":
+                    b.add_set("proto", ["tcp"])
+                else:
+                    b.note("reject_type")
             elif k in ("jump", "goto"):
                 verdict = "%s:%s.%s" % (k, prefix_table, val.get("target"))
             elif k in _NOOP_STMTS:
@@ -703,6 +765,10 @@ def _nft_rule(expr, sets, tkey, prefix_table, rule_fam):
                 action_opaque = action_opaque or ("act:stmt_" + clean_reason(k))
         if verdict is None and action_opaque is None:
             return [], nat, features
+        if b.nexthdr6 and verdict != "accept":
+            # `ip6 nexthdr tcp` matches only when TCP is the immediate next header: folding it into
+            # l4proto would over-state a drop/reject/jump (packets with extension headers bypass it)
+            b.note("ip6_nexthdr")
         rule_combos = b.finish()
     except _Never:
         return [], nat, features
@@ -1361,18 +1427,74 @@ def _box_intersect(a, b):
     return out
 
 
-def _accept_boxes(chains, base, cover, limit=5000):
-    """Boxes of every plain accept rule reachable from ``base``, each narrowed by the
-    conditions of the jumps leading to it (order and shadowing are ignored: an over-approximation
-    of what the chain can accept). ``None`` when there are too many."""
-    out = []
+def _always_terminates(chains, name, memo, visiting):
+    """True when control can never come back to the caller of ``name``: no ``return`` (conditional
+    or not), no goto into a chain that may return, and an unconditional accept/drop/reject (or an
+    unconditional jump/goto into such a chain) closes the chain. A chain that may return or fall off
+    its end hands the packet back to the caller, so it is never "terminating"."""
+    if name in memo:
+        return memo[name]
+    if name in visiting or name not in chains:
+        return False
+    visiting = visiting | set([name])
+    res = False
+    for r in chains[name]["rules"]:
+        v = r["v"]
+        cond = _is_conditional(r)
+        if v == "return":
+            break                              # may (or will) hand control back to the caller
+        if v.startswith("goto:"):
+            if not _always_terminates(chains, v[5:], memo, visiting):
+                break                          # the goto target may return to our caller
+            if not cond:
+                res = True
+                break
+        elif v.startswith("jump:"):
+            # a jump comes back here: only an unconditional jump into a never-returning chain closes us
+            if not cond and _always_terminates(chains, v[5:], memo, visiting):
+                res = True
+                break
+        elif v in ("accept", "drop", "reject") and not cond:
+            res = True
+            break
+    memo[name] = res
+    return res
 
-    def walk(name, acc, trail):
+
+def _box_key(box):
+    return tuple(sorted((d, tuple(tuple(x) for x in ivs)) for d, ivs in box.items()))
+
+
+def _accept_boxes(chains, base, cover, limit=5000, budget=None):
+    """Boxes of every way the chain can accept, each narrowed by the conditions of the jumps leading
+    to it (order and shadowing are ignored: an over-approximation of what the chain can accept).
+
+    Besides plain ``accept`` rules this counts, when the base policy is accept, every way control
+    reaches the policy: a conditional ``return`` (or a chain reached only through ``goto`` from the
+    base that returns or falls off its end) hands the packet to the accept policy. ``None`` when
+    there are too many boxes."""
+    budget = budget or _Budget()
+    policy_accept = chains[base]["policy"] != "drop"
+    out = []
+    seen = set()
+    term_memo = {}
+
+    def walk(name, acc, trail, direct):
+        key = (name, _box_key(acc), direct)
+        if key in seen:
+            return
+        seen.add(key)
+        terminal = False
         for r in chains[name]["rules"]:
+            budget.tick()
             if len(out) > limit:
                 return
             v = r["v"]
             if v == "accept" and not _cond_opaque(r):
+                b = _box_intersect(acc, cover.box(r["m"]))
+                if b is not None:
+                    out.append(b)
+            elif v == "return" and direct and policy_accept and not _cond_opaque(r):
                 b = _box_intersect(acc, cover.box(r["m"]))
                 if b is not None:
                     out.append(b)
@@ -1381,13 +1503,20 @@ def _accept_boxes(chains, base, cover, limit=5000):
                 if tgt in chains and tgt not in trail:
                     b = _box_intersect(acc, cover.box(r["m"]))
                     if b is not None:
-                        walk(tgt, b, trail + (name,))
+                        walk(tgt, b, trail + (name,), direct and v.startswith("goto:"))
+            if not _is_conditional(r):
+                if v in ("accept", "drop", "reject", "return") or v.startswith("goto:"):
+                    terminal = True
+                elif v.startswith("jump:") and _always_terminates(chains, v[5:], term_memo, frozenset()):
+                    terminal = True
+        if direct and policy_accept and not terminal and len(out) <= limit:
+            out.append(acc)      # falls off the end: the accept policy takes the packet
 
-    walk(base, {}, ())
+    walk(base, {}, (), True)
     return None if len(out) > limit else out
 
 
-def _chain_effective(chains, base, fam):
+def _chain_effective(chains, base, fam, budget=None):
     """Yield for one base chain after the residual, non-vacuity and accept-all checks."""
     y, enc = _residual_walk(chains, base)
     if y not in ("drop", "reject"):
@@ -1398,7 +1527,7 @@ def _chain_effective(chains, base, fam):
         return "unknown"
     closure = _closure(chains, [base])
     cover2 = _Cover(fam, [r for k in sorted(closure) for r in chains[k]["rules"]])
-    abox = _accept_boxes(chains, base, cover2)
+    abox = _accept_boxes(chains, base, cover2, budget=budget)
     if abox is None:
         return "unknown"
     iif_atoms = [n for n in cover2.maps["iif"] if n != "lo"] + [None]
@@ -1415,7 +1544,7 @@ def _chain_effective(chains, base, fam):
     return y
 
 
-def effective_default(chains, fam):
+def effective_default(chains, fam, budget=None):
     """Combine the input base chains of one family into accept|drop|reject|unknown.
 
     ``chains`` maps chain name to chain dict (as in ``families[..]['chains']`` keyed by name).
@@ -1423,8 +1552,9 @@ def effective_default(chains, fam):
     bases = sorted(k for k, c in chains.items() if c["base"])
     if not bases:
         return "accept"
+    budget = budget or _Budget()
     chains = _simplified(chains, fam)
-    ys = [_chain_effective(chains, b, fam) for b in bases]
+    ys = [_chain_effective(chains, b, fam, budget) for b in bases]
     if "drop" in ys:
         return "drop"
     if "reject" in ys:
@@ -1521,6 +1651,8 @@ def chain_outcomes(chains, base, pkt):
             work.append(st)
 
     while work:
+        if len(seen) > OUTCOME_STATE_CAP:
+            return both          # too many call paths: say "anything may happen"
         name, i, stack = work.pop()
         ch = chains.get(name)
         if ch is None:
@@ -1627,8 +1759,9 @@ def src_partition(family, fam):
 
 
 # --------------------------------------------------------------------- confidence
-def _unsafe_rules(chains):
+def _unsafe_rules(chains, budget=None):
     """Names of reasons why the walk over ``chains`` is not exact (empty list = exact)."""
+    budget = budget or _Budget()
     reasons = []
     accepting = {}
 
@@ -1640,6 +1773,7 @@ def _unsafe_rules(chains):
         visiting = visiting | set([key])
         res = False
         for r in chains[key]["rules"]:
+            budget.tick()
             v = r["v"]
             if v in ("accept", "opaque"):
                 res = True
@@ -1652,6 +1786,7 @@ def _unsafe_rules(chains):
 
     for k in sorted(chains):
         for r in chains[k]["rules"]:
+            budget.tick()
             v = r["v"]
             reason = _cond_opaque(r)
             if v == "opaque":
@@ -1664,35 +1799,66 @@ def _unsafe_rules(chains):
                     reasons.append("opaque_jump")
             elif reason and v == "accept":
                 reasons.append("opaque_accept")
-    # jump depth / cycles
-    depth_bad = False
+    # an opaque conditional ``return`` that reaches an accept policy is an opaque accept
+    for base in sorted(k for k, c in chains.items() if c["base"] and c["policy"] != "drop"):
+        direct, work = set(), [base]
+        while work:
+            name = work.pop()
+            if name in direct or name not in chains:
+                continue
+            direct.add(name)
+            for r in chains[name]["rules"]:
+                budget.tick()
+                if r["v"] == "return" and _cond_opaque(r):
+                    reasons.append("opaque_return")
+                elif r["v"].startswith("goto:"):
+                    work.append(r["v"][5:])
+    # jump depth / cycles: the longest jump path, memoised per chain (a cycle counts as too deep)
+    cap = MAX_DEPTH + 2
+    memo = {}
+    path = set()
 
-    def depth(key, stack):
-        if key in stack:
-            return 99
+    def depth(key):
+        if key in path:
+            return cap
+        if key in memo:
+            return memo[key]
+        path.add(key)
         best = 1
         for r in chains.get(key, {"rules": []})["rules"]:
+            budget.tick()
             v = r["v"]
             if v.startswith(("jump:", "goto:")):
                 tgt = v.split(":", 1)[1]
                 if tgt in chains:
-                    best = max(best, 1 + depth(tgt, stack | frozenset([key])))
-        return best
+                    best = max(best, 1 + depth(tgt))
+        path.discard(key)
+        memo[key] = min(best, cap)
+        return memo[key]
 
+    depth_bad = False
     for k in sorted(chains):
-        if chains[k]["base"] and depth(k, frozenset()) > MAX_DEPTH + 1:
+        if not chains[k]["base"]:
+            continue
+        try:
+            if depth(k) > MAX_DEPTH + 1:
+                depth_bad = True
+        except RecursionError:
             depth_bad = True
+            path.clear()
     if depth_bad:
         reasons.append("jump_depth")
     return sorted(set(reasons))
 
 
-def assess(dump_flags, families, ipv6_enabled, readable):
+def assess(dump_flags, families, ipv6_enabled, readable, ipv6_known=True, budget=None):
     """Return ``(confidence, reasons)``; confidence is exact|approximate|unknown."""
     reasons = []
     if dump_flags["dataplane"]:
         return "unknown", ["dataplane_" + d for d in sorted(dump_flags["dataplane"])]
     needed = ["ip4"] + (["ip6"] if ipv6_enabled else [])
+    if not ipv6_known:
+        reasons.append("ipv6_state_unknown")
     for fam in needed:
         if not readable.get(fam, False):
             reasons.append("unreadable_" + fam)
@@ -1706,7 +1872,7 @@ def assess(dump_flags, families, ipv6_enabled, readable):
         reasons.append(f)
     for fam in needed:
         chains = dict((c["name"], c) for c in families[fam]["chains"])
-        reasons.extend(_unsafe_rules(chains))
+        reasons.extend(_unsafe_rules(chains, budget))
     reasons = sorted(set(reasons))
     # the DNAT-assumption marker is informational once nothing rewrites
     hard = [r for r in reasons if r != "assumes_no_dnat_without_rule"]
@@ -1724,12 +1890,16 @@ def _combine_defaults(defaults):
     return "drop" if "drop" in defaults else "reject"
 
 
-def build_model(dump, backend, frontends, ipv6_enabled, readable=None):
+def build_model(dump, backend, frontends, ipv6_enabled, readable=None, ipv6_known=True, check=None):
     """Assemble the canonical model from a merged chain dump.
 
     ``readable`` is ``{"ip4": bool, "ip6": bool}``: whether that family's rules could be read.
-    Raises ``FwTooLarge`` when more than ``MAX_RULES`` rules are modelled.
+    ``ipv6_known`` False means whether IPv6 reaches the host could not be determined: the caller
+    passes ``ipv6_enabled=True`` (in scope) and the confidence becomes ``unknown``. ``check`` is an
+    optional cooperative deadline callback. Raises ``FwTooLarge`` when more than ``MAX_RULES`` rules
+    are modelled or the walk budget is spent.
     """
+    budget = _Budget(check)
     readable = dict({"ip4": True, "ip6": True}, **(readable or {}))
     resolve_ct_status(dump)
     fams = {}
@@ -1743,13 +1913,13 @@ def build_model(dump, backend, frontends, ipv6_enabled, readable=None):
         raise FwTooLarge("more than %d modelled rules" % MAX_RULES)
     flags = {"dataplane": dump["dataplane"], "problems": dump["problems"],
              "nat_rewrite": dump["nat_rewrite"], "features": dump["features"]}
-    confidence, reasons = assess(flags, fams, bool(ipv6_enabled), readable)
+    confidence, reasons = assess(flags, fams, bool(ipv6_enabled), readable, ipv6_known, budget)
     defaults = {}
     for name, f in (("ip4", 4), ("ip6", 6)):
         if not readable[name] or confidence == "unknown":
             d = "unknown"
         else:
-            d = effective_default(dict((c["name"], c) for c in fams[name]["chains"]), f)
+            d = effective_default(dict((c["name"], c) for c in fams[name]["chains"]), f, budget)
         fams[name]["effective_default"] = d
         defaults[name] = d
     enabled = ["ip4"] + (["ip6"] if ipv6_enabled else [])

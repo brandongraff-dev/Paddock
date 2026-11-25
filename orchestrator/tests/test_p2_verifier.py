@@ -178,16 +178,26 @@ def _req(peer: str, xff: str):
 
 
 def test_client_ip_strict_reads_x_forwarded_for_from_the_right(monkeypatch):
-    """auth.client_ip_strict: the leftmost entry is whatever the client sent; only what the trusted proxy appended counts."""
+    """auth.client_ip_strict: the leftmost entry is whatever the client sent; only what the trusted proxy appended counts.
+
+    Rewritten for review finding wire-1: the old assertions ("two trusted hops" skipped an entry because it lay inside
+    10.0.0.0/8, and a lone private entry fell back to the proxy) encoded the unsafe rule that let a private host's own
+    appended address be skipped so that its forged left-hand entry won. The entry is now chosen by POSITION (the Nth
+    from the right, N = trusted_proxy_hops), never by CIDR membership."""
     from app import auth
     from app.config import settings as cfg
 
     monkeypatch.setattr(cfg, "trusted_proxy_cidrs", "127.0.0.1/32,10.0.0.0/8")
+    monkeypatch.setattr(cfg, "trusted_proxy_hops", 1, raising=False)
     assert auth.client_ip_strict(_req("203.0.113.9", "198.51.100.77")) == "203.0.113.9"          # untrusted peer: XFF ignored
     assert auth.client_ip_strict(_req("127.0.0.1", "198.51.100.77, 203.0.113.9")) == "203.0.113.9"  # forged first entry
     assert auth.client_ip_strict(_req("127.0.0.1", "203.0.113.9")) == "203.0.113.9"
-    assert auth.client_ip_strict(_req("127.0.0.1", "198.51.100.77, 203.0.113.9, 10.1.2.3")) == "203.0.113.9"  # two trusted hops
-    assert auth.client_ip_strict(_req("127.0.0.1", "10.1.2.3")) == "127.0.0.1"                    # only trusted hops
+    assert auth.client_ip_strict(_req("127.0.0.1", "198.51.100.77, 203.0.113.9, 10.1.2.3")) == "10.1.2.3"   # the rightmost
+    assert auth.client_ip_strict(_req("127.0.0.1", "10.1.2.3")) == "10.1.2.3"          # a private client is a client
+    monkeypatch.setattr(cfg, "trusted_proxy_hops", 2, raising=False)
+    assert auth.client_ip_strict(_req("127.0.0.1", "198.51.100.77, 203.0.113.9, 10.1.2.3")) == "203.0.113.9"  # two hops
+    assert auth.client_ip_strict(_req("127.0.0.1", "10.1.2.3")) == "127.0.0.1"          # shorter than the chain: fail closed
+    monkeypatch.setattr(cfg, "trusted_proxy_hops", 1, raising=False)
     assert auth.client_ip_strict(_req("127.0.0.1", "198.51.100.77, <script>")) == "127.0.0.1"     # garbage fails closed
     assert auth.client_ip_strict(_req("127.0.0.1", "")) == "127.0.0.1"
 
@@ -227,9 +237,16 @@ async def test_a_host_cannot_forge_the_address_it_is_corroborated_from(world, mo
     ident = json.loads(row["identity"]) if isinstance(row["identity"], str) else row["identity"]
     assert row["node_ref"] == f"agent:{aid}", row["node_ref"]
     assert ident["basis"] == "claimed" and ident["peer_ip"] == "203.0.113.9"
-    # control: when the proxy really saw the instance's address, the same host IS corroborated
+    # (rewritten for review finding hostfw-2) the instance's PUBLIC address as the peer is no longer enough: a host
+    # behind a NAT or proxy instance shares it. The proxy really seeing one of the instance's PRIVATE addresses is.
     rt.bridge.interceptor = via_proxy(f"203.0.113.9, {victim_public}")
     rt.host.password_auth = "no"
     await rt.posture()
     row = await w.db.fetchrow("SELECT node_ref FROM fleet_agents WHERE id=$1", aid)
-    assert row["node_ref"] == f"asset:{asset}", row["node_ref"]
+    assert row["node_ref"] == f"agent:{aid}", row["node_ref"]
+    rt.bridge.interceptor = via_proxy(f"203.0.113.9, {ips[0]}")
+    await rt.posture()
+    row = await w.db.fetchrow("SELECT node_ref FROM fleet_agents WHERE id=$1", aid)
+    from app.assurance.builders import _ipmap
+    want = f"agent:{aid}" if _ipmap.is_public_ip(ips[0]) else f"asset:{asset}"
+    assert row["node_ref"] == want, row["node_ref"]

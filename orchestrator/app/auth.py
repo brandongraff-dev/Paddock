@@ -1168,40 +1168,99 @@ def client_ip(request: Request) -> str | None:
     return peer
 
 
-def client_ip_strict(request: Request) -> str | None:
+def _trusted_hops() -> int:
+    """The configured number of appending proxies in front of the app (>= 1; anything else means 1)."""
+    try:
+        n = int(getattr(settings, "trusted_proxy_hops", 1))
+    except (TypeError, ValueError):
+        return 1
+    return n if 1 <= n <= 8 else 1
+
+
+class ClientAddr(str):
+    """The text of a client address plus ``proxied``: True when it is NOT proven to be the address of the host that
+    opened the connection (the peer sent forwarding headers this server does not trust, the peer is itself a trusted
+    proxy, or the entry a trusted proxy reported lies inside the trusted range, so it is another proxy). It stays a
+    plain ``str`` everywhere (limiters, audit, JSON); only the corroboration of an agent with a cloud instance reads
+    the flag (docs/ASSURANCE_P2.md E3, review finding hostfw-2)."""
+
+    proxied: bool = False
+
+    def __new__(cls, value: str, proxied: bool = False) -> "ClientAddr":
+        obj = super().__new__(cls, value)
+        obj.proxied = bool(proxied)
+        return obj
+
+
+#: request headers that show a forwarding hop was in the path (an endpoint host sends none of them)
+_FORWARDING_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "via", "x-forwarded-proto",
+                       "x-forwarded-host", "x-forwarded-port")
+
+
+def _header_lines(request: Request, name: str) -> list[str]:
+    """Every line of header ``name``, in order (``Headers.get`` returns only the FIRST line)."""
+    headers = request.headers
+    getlist = getattr(headers, "getlist", None)
+    if getlist is not None:
+        return list(getlist(name))
+    one = headers.get(name)
+    return [] if one is None else [one]
+
+
+def client_ip_strict(request: Request) -> ClientAddr | None:
     """The address that really connected, for decisions an attacker must not be able to steer.
 
     ``client_ip`` takes the LEFTMOST ``X-Forwarded-For`` entry from a trusted proxy. A proxy that APPENDS (nginx
     ``$proxy_add_x_forwarded_for``, an AWS ALB) leaves whatever the client sent in front of it, so the leftmost
-    entry is attacker-chosen. Here the entries are read from the RIGHT, skipping trusted proxies: the first one a
-    trusted proxy did not itself add is the client as that proxy saw it. A malformed entry fails closed to the
-    socket peer. docs/ASSURANCE_P2.md E3 uses this for the address a host must connect from to be corroborated
-    as a cloud instance."""
+    entry is attacker-chosen. Here the socket peer must be a trusted proxy and the entry used is the Nth one from
+    the RIGHT, N = ``TRUSTED_PROXY_HOPS`` (default 1: the address the proxy on the socket saw). It is NEVER chosen
+    by skipping entries that merely lie inside a trusted CIDR: when the trusted range is RFC1918 the client's own
+    private address, the one the proxy appended, would be skipped and the attacker-written entry to its left
+    returned (docs/ASSURANCE_P2.md E3; review finding wire-1). All ``X-Forwarded-For`` LINES count, joined in order:
+    a proxy that adds its own line instead of appending to the client's leaves the client-written line FIRST, and
+    reading only that one would believe it. With N > 1 the N-1 entries to the right of the chosen one are the
+    inner proxies and must all be trusted, otherwise the chain is not what the operator configured (a proxy
+    fewer) and the answer would be client-written: fail closed. A chain shorter than N, a malformed or empty entry
+    and an untrusted peer all fail closed to the socket peer. ``client_ip_strict`` feeds the corroboration of an
+    agent with a cloud instance (E3) and the enrollment limiters.
+
+    The result is a :class:`ClientAddr`: ``proxied`` says the address may be that of a forwarding hop and not of
+    the host (an untrusted peer that sends forwarding headers, a trusted proxy that reported nothing usable, a
+    reported client inside the trusted range). Such an address is never evidence of WHERE the host is."""
     import ipaddress
 
     peer = request.client.host if request.client else None
-    fwd = request.headers.get("x-forwarded-for")
-    if not (peer and fwd):
-        return peer
+    if not peer:
+        return None
+    lines = _header_lines(request, "x-forwarded-for")
+    forwarded = bool(lines) or any(request.headers.get(h) is not None for h in _FORWARDING_HEADERS)
     try:
         peer_ip = ipaddress.ip_address(peer)
     except ValueError:
-        return peer
+        return ClientAddr(peer, forwarded)
     trusted = _trusted_proxies()
 
     def is_trusted(ip: Any) -> bool:
         return any(ip.version == n.version and ip in n for n in trusted)
 
     if not is_trusted(peer_ip):
-        return peer
-    for part in reversed(fwd.split(",")):
+        return ClientAddr(peer, forwarded)
+    # the socket peer is a trusted proxy: it is a hop, so ``peer`` itself is never the host; only a usable chain is
+    if not lines:
+        return ClientAddr(peer, True)
+    hops = _trusted_hops()
+    parts = [p.strip() for p in ",".join(lines).split(",")]
+    if len(parts) < hops:
+        return ClientAddr(peer, True)
+    addrs = []
+    for part in parts[-hops:]:                  # leftmost of these is the client as the outermost proxy saw it
         try:
-            ip = ipaddress.ip_address(part.strip())
+            addrs.append(ipaddress.ip_address(part))
         except ValueError:
-            return peer
-        if not is_trusted(ip):
-            return str(ip)
-    return peer
+            return ClientAddr(peer, True)
+    if not all(is_trusted(a) for a in addrs[1:]):
+        return ClientAddr(peer, True)
+    return ClientAddr(str(addrs[0]), is_trusted(addrs[0]))
 
 
 # --------------------------------------------------------------------------- #

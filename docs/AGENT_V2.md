@@ -31,22 +31,41 @@ A token is single use by default. A cloud-init fleet can use `"max_uses": 20, "t
 in this release: use the API.
 
 **2. Install on the host** (root, Linux with systemd, Python 3.8 or newer). The installer is attached to every
-release, pinned to that release's tag, and checked against a signed checksum list:
+release, pinned to that release's tag, and checked against a signed checksum list. A downloaded file is not
+executable, so run it through `sh` as below, not by executing the file directly:
 
 ```bash
 TAG=v0.2.0
 BASE=https://github.com/brandongraff-dev/paddock/releases/download/$TAG
 curl -fsSLO $BASE/install-agent.sh && curl -fsSLO $BASE/SHA256SUMS && curl -fsSLO $BASE/SHA256SUMS.sigstore.json
-# verify the installer itself (needs cosign; otherwise compare the digest with the release notes)
+# verify the installer itself (needs cosign 2.4 or newer)
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-identity "https://github.com/brandongraff-dev/paddock/.github/workflows/release.yml@refs/tags/$TAG" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-./install-agent.sh --server https://paddock.example.com --dry-run          # read what it will do
-printf %s "$TOKEN" | sudo ./install-agent.sh --server https://paddock.example.com
+sh ./install-agent.sh --server https://paddock.example.com --dry-run          # read what it will do
+printf %s "$TOKEN" | sudo sh ./install-agent.sh --server https://paddock.example.com --require-cosign
 ```
 
-(`printf` is a shell builtin, so the token is not in any process list. Never put it after a command name.)
+(`printf` is a shell builtin, so the token is not in any process list. Never put it after a command name, and do
+not write `sudo PADDOCK_ENROLL_TOKEN=... sh ...`: sudo's own command line is visible to every local user.)
+
+**Without cosign on the host** the checksums are only as trustworthy as the download: `SHA256SUMS` comes from
+the same release as the archive, and so do the digests printed in the release notes, so neither proves the
+release is genuine. `--require-cosign` (used above) is the documented default for that reason: it refuses to
+install when cosign is missing. If a host cannot have cosign, either run the `cosign verify-blob` command above
+on a machine that has it and pass the digest it vouched for to the host with `--sha256 <hex>`, or rebuild the
+archive yourself from the tag (end of section 2) and pin that digest. The release was signed with cosign
+2.5.2; use 2.4 or newer to verify (older versions may not read the bundle, and the installer then refuses to
+continue rather than skipping the check).
+
+**What the release signature does not prove.** The keyless signature says the `release.yml` of this repository ran
+at `refs/tags/<tag>`. It does not prove the tagged commit was reviewed: the workflow that runs is the file in the
+tagged commit, so someone who can push a tag could tag a commit that removes the workflow's own `gate` job (it
+checks that the tag is on the default branch and runs in the `release` environment). The controls that stop that live in the repository
+settings, not in the workflow: a tag ruleset restricting who may create `v*.*.*` tags, required reviewers and a
+deployment-tag rule on the `release` environment, and branch protection on the default branch. Until those are
+configured, treat a release as trusted only as far as you trust everyone who can push tags.
 
 **3. Check it.** `sudo paddock status` shows the agent id, key id and sequence. In Paddock,
 `GET /v1/fleet/agents` lists the host; enable the two standard invariants
@@ -65,13 +84,29 @@ evaluation reports one verdict per host. A violation opens a finding titled with
    the checksum from the same release was checked, which does **not** protect against a compromised release.
    `--require-cosign` turns that warning into an error, and `--sha256 <hex>` pins the archive's digest out of band.
 4. Checks the archive's sha256, runs `--version` on it, then installs it root-owned to
-   `/usr/local/lib/paddock-agent/paddock-agent.pyz` with a `paddock` symlink in `/usr/local/bin`.
-5. Writes `/etc/paddock-agent/agent.env` (mode 0600, only `PADDOCK_SERVER=...`) and the systemd unit.
+   `/usr/local/lib/paddock-agent/paddock-agent.pyz`, after checking that the directories it writes into are
+   real directories, owned by the installing user and not world-writable (the ones it creates for itself also
+   not group-writable). `/usr/local/bin/paddock` becomes a small wrapper that runs the archive with the
+   interpreter the installer verified (not whatever `python3` is first on `PATH`). An existing `paddock` that is
+   not ours, such as the Paddock CLI, is **never overwritten**: the installer warns and skips the wrapper, and
+   `--uninstall` removes only a `paddock` that is our own wrapper (or the symlink an older installer made).
+5. Sets `PADDOCK_SERVER` in `/etc/paddock-agent/agent.env` (mode 0600) and writes the systemd unit. Every other
+   line already in `agent.env` (`PADDOCK_CA_FILE`, `PADDOCK_ENABLE_IMDS`, intervals, `PADDOCK_DRY_RUN`, ...) is
+   kept, so a re-run does not discard your settings; edit that file, not the unit, to configure the agent.
 6. Enrolls with the token from `$PADDOCK_ENROLL_TOKEN`, stdin or a hidden prompt, **never from an argument**
-   (`--token` is refused and the value is never echoed), and hands it to the agent on stdin.
-7. `systemctl enable --now paddock-agent`.
+   (`--token` is refused and the value is never echoed), and hands it to the agent on stdin. The token is read
+   first, before anything is downloaded or written, so a missing or malformed token leaves the host untouched; a
+   token in the environment is removed from it before any other program runs. A token piped without a trailing
+   newline (`printf %s`) works.
+7. `systemctl enable` then `systemctl restart paddock-agent`, so a re-run is also the upgrade: the running agent
+   is restarted onto the new archive and unit (replacing the archive under a live process is never relied on).
+   After a short wait the installer checks `systemctl is-active` and exits non-zero, pointing at
+   `journalctl -u paddock-agent`, if the service is not up. A crash after that wait is not caught here: look at
+   `systemctl status`. With `--no-start`, or when the host is not enrolled, nothing is restarted, and the
+   installer warns if an agent is still running the previous version.
 
-Other options: `--no-enroll`, `--no-start`, `--hostname`, `--reenroll` (with a re-key token), `--prefix`,
+Other options: `--no-enroll`, `--no-start`, `--hostname`, `--reenroll` (with a re-key token; the installer stops
+the service first, because `enroll --force` refuses while a daemon holds the state directory), `--prefix`,
 `--python`, `--base-url` (a mirror; `https://` or `file://`), `--root DIR` (stage into a directory, touch no
 system state). Re-running the installer on an enrolled host keeps its credentials.
 
@@ -79,8 +114,21 @@ system state). Re-running the installer on an enrolled host keeps its credential
 `--uninstall --purge --yes` deletes those too. Uninstalling does not revoke the agent on the server: see
 section 5.
 
-If you build the archive yourself: `python agent/packaging/build_zipapp.py --out dist/paddock-agent.pyz`
-produces byte-identical output on every Python from 3.8 to 3.13.
+**Rebuild a release yourself** (the check that does not depend on GitHub's copy, or on cosign). The archive is
+byte-for-byte reproducible: the same sources give the same bytes on every Python from 3.8 to 3.13, whatever the
+time zone, umask or checkout path. The release builds with the constant epoch 1980-01-01 (`315532800`), so from
+a checkout of the tag:
+
+```bash
+git checkout "$TAG"
+SOURCE_DATE_EPOCH=315532800 python3 agent/packaging/build_zipapp.py --out dist/paddock-agent.pyz
+sha256sum dist/paddock-agent.pyz                  # must equal the paddock-agent.pyz line of SHA256SUMS
+sed "s/^PINNED_TAG=.*/PINNED_TAG=\"$TAG\"/" scripts/install-agent.sh | sha256sum   # the install-agent.sh line
+```
+
+Use a clean checkout: the build packs every `.py` under `paddock_agent/`, tracked or not, so an untracked or
+generated file changes the digest. Without `SOURCE_DATE_EPOCH=315532800` the build falls back to `$SOURCE_DATE_EPOCH` from your environment if one
+is set, so state it explicitly.
 
 ## 3. What runs on the host
 
@@ -95,24 +143,69 @@ SystemCallFilter=@system-service
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_ADMIN
 ```
 
+What the capability set means, exactly: `CAP_DAC_READ_SEARCH` and `CAP_SYS_PTRACE` read root-only host state
+(`sshd -T`, other processes' sockets); `CAP_NET_ADMIN` lets the agent talk to **nftables over netlink**, which is
+all that `nft` and `iptables-nft` need. `CAP_NET_RAW` is deliberately **not** in the set, and the set is the
+maximum the process can ever hold. **Legacy iptables (`iptables-legacy`) opens a raw socket and so cannot run
+under this unit**: on a host whose firewall lives in legacy iptables tables, the firewall collector cannot read
+them, reports the facts as partial and approximate, and `std:server-default-deny-inbound` reads `UNKNOWN` for
+that host (never `HOLDS`). `block_ip` and `firewall_rule` fail there too, and a legacy `iptables` that has to
+create `/run/xtables.lock` also fails because `/run` is read-only under `ProtectSystem=strict`. The fix on such a
+host is to move its firewall to nft. If you accept the wider surface (a compromised agent could then open raw
+sockets) you can add `CAP_NET_RAW` in a systemd drop-in
+(`/etc/systemd/system/paddock-agent.service.d/legacy-iptables.conf` with `CapabilityBoundingSet=` followed by the
+four capabilities, and, for the lock file, `ReadWritePaths=/run/xtables.lock` (that path must already exist or the
+unit fails to start; create it with `touch` first), then `systemctl daemon-reload && systemctl restart paddock-agent`); that is your decision and
+is not tested by this project. Upgrading with the installer rewrites the unit file but not a drop-in.
+
 * **Collectors** (read-only, pure parsers over command output): `sshd -T` plus a probe matrix for `Match` blocks,
-  `/proc/net/*` listeners with process attribution, the firewall (`nft -j list ruleset`, legacy `iptables-save`,
-  ufw/firewalld recorded as hints only), package manifest and pending security updates, and the agent's own
+  `/proc/net/*` listeners with process attribution, the firewall (`nft -j list ruleset`; legacy `iptables-save`
+  only where the unit allows it, see above; ufw/firewalld recorded as hints only), package manifest and pending security updates, and the agent's own
   health. Fingerprints, counts and unit names only: **never** command lines, environment, key material or file
   contents. The cloud metadata request is off unless you set `PADDOCK_ENABLE_IMDS=true`.
 * **Cadence**: a signed heartbeat every 30 s, a signed posture every 300 s (both configurable). The server
   stores a new posture only when its content changed or at least hourly.
 * **State** in `/var/lib/paddock-agent` (0700): the key, the credential, a write-ahead sequence counter and a
   bounded on-disk outbox for when the network is down. Secrets are written atomically, mode 0600, and refused on
-  read if anyone else could read or replace them.
-* **Exit status 7** means the server told this agent to re-enroll (or refused it ten times in a row). systemd does
-  not restart it; see section 5.
+  read if anyone else could read or replace them. Two lock files there (`.instance.lock`, one daemon per state
+  directory; `.state.lock`, every read-modify-write of the counter, keys and ledger) let a CLI command such as
+  `paddock status` or `rotate-key` run beside the daemon without reusing a sequence number.
+  The installer refuses to install through a symlink at `/var/lib/paddock-agent` (and at the archive and config
+  directories), because whoever controls the link controls what a root service reads. To keep state on another
+  disk use a bind mount (`mount --bind`, or a mount unit) on the real directory instead of a symlink.
+* **Exit status 7** means the server said, explicitly, that this agent may not talk to it any more: a JSON answer
+  carrying `agent_revoked` or `re_enroll_required`. systemd does not restart it; see section 5. A bare
+  401/403/404 (a proxy, WAF or gateway in the way) never ends the agent: it keeps retrying at the capped backoff
+  (300 s) and recovers by itself when the server answers again. The other side of that: an agent whose row was
+  deleted on the server, behind something that answers a bare 404, never exits by itself and logs an error every
+  few minutes until an operator runs `systemctl disable --now paddock-agent`. A host whose agent exited 7 or went
+  silent stays in the graph as a tombstone that reads `UNKNOWN`, and its open finding stays open until an
+  operator closes it or the host is evaluated `HOLDS` again.
 
 Because `ProtectSystem=strict` makes everything but the state directory read-only, the optional enforcement
 actions `block_domain` (writes `/etc/hosts`) and `quarantine_file` fail with a read-only error under this unit and
-are reported as failed. Firewall actions use netlink. Widen `ReadWritePaths=` only deliberately: it widens what a
-compromised agent can write. Enforcement is unchanged from before: dry-run by default, propose then approve then
-apply, reversible, audited ([FLEET_WIRING.md](FLEET_WIRING.md)).
+are reported as failed. The firewall actions `block_ip` and `firewall_rule` reach nftables and `iptables-nft` over
+netlink (`CAP_NET_ADMIN`) and fail under legacy iptables, see above. Widen `ReadWritePaths=` only deliberately: it
+widens what a compromised agent can write. Enforcement is unchanged from before: dry-run by default
+(`PADDOCK_DRY_RUN`, true unless you set it to false), propose then approve then apply, reversible, audited
+([FLEET_WIRING.md](FLEET_WIRING.md)).
+
+Safety rails the agent applies on the host, whatever the server says:
+
+* **Self-lockout**: `block_ip` is refused for loopback, the unspecified and broadcast addresses and any address
+  the server's name resolves to (or if it cannot resolve it); `block_domain` for the server's own host name;
+  `firewall_rule` for outbound traffic to the server's port, and to port 53 when the server is a name. The action
+  fails with `self_lockout` and nothing is applied.
+* **Dead-man timer**: a `block_ip` or `firewall_rule` that is not followed by one successful round trip to the
+  server within `PADDOCK_NETBLOCK_DEADMAN_MIN` minutes (default 10, `0` turns it off) is removed by the agent
+  itself, so a block that cut the host off cannot last for good. `block_domain` and `quarantine_file` are not
+  covered. The removal is local only: the server is not told, so its record of the action can be stale until the
+  next report. The agent logs an error line when it does this.
+* **Reverts are bound to a local ledger**: the agent reverts only a rule it recorded as applied and not yet
+  reverted, and its iptables rules carry a `paddock:<action id>` tag that is probed with `-C` before every insert
+  or delete. A revert of a block applied by an older agent uses the stored revert plan as the fallback record. If
+  `handled.json` in the state directory is lost, the agent cannot revert its blocks: remove them by hand.
+  `quarantine_file` needs a real, symlink-free path (`/usr/bin/x`, not `/bin/x` on a merged-usr host).
 
 ## 4. How the evidence is used
 
@@ -142,6 +235,10 @@ Rejected envelopes are audit rows `fleet.evidence.rejected` with the reason; liv
 **Rotate the key** (routinely, or on any suspicion the key file was read): `sudo paddock rotate-key`. The new key
 signs a proof of possession, the current key signs the hand-over, the old key becomes `rotated` and is refused
 from then on. If the reply is lost the new key stays pending on disk and the next start settles it.
+It is safe to run while the service is up: it changes the key under the state-directory lock and signals the
+running daemon (SIGHUP), which reloads the new key at once; a daemon that was not signalled reloads it anyway
+when its next request is refused with 401, and retries before counting a failure. `paddock enroll --force`
+needs the service stopped (`systemctl stop paddock-agent`): it refuses while a daemon holds the state directory.
 
 **A host lost its state** (reinstall, deleted `/var/lib/paddock-agent`): it cannot prove it is the same host, and
 a plain token cannot take its hostname over (409, token not spent). An admin mints a **re-key token** for that
@@ -246,7 +343,8 @@ There is no single switch that disables only the `host_fw` builder.
 
 The full list is in [ASSURANCE_P2.md](ASSURANCE_P2.md) (sections 11 and 13). The ones that matter operationally:
 no distro advisory data and no KEV matching (patch state is collected, not judged); Linux only; Debian and RPM
-families only for patches; a firewall using ipset, marks, DNAT or Docker publishing stays `UNKNOWN`; a host
+families only for patches; a firewall using ipset, marks, DNAT or Docker publishing stays `UNKNOWN`, and so does
+one held in legacy iptables tables (the shipped unit has no `CAP_NET_RAW`, section 3); a host
 without root or without `sshd -T` is `UNKNOWN`; AWS instance identity is matched by address overlap, not verified
 cryptographically; RHEL 8's default Python 3.6 is unsupported (install the `python39` module); the rate limits are
 per process; and the installer, the unit and a real release have not been run on a live host or a real GitHub

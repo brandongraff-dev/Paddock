@@ -182,7 +182,9 @@ def test_exact_collection_without_match_blocks(tmp_path):
     assert v["match"] == {"blocks": 0, "criteria": [], "known": True, "unprobed": False,
                           "unprobed_reasons": []}
     p = v["probes"]
-    assert p["users_total"] == 3 and p["users_probed"] == 4  # root + postgres, ubuntu, alice
+    # users_total counts the login-shell row dropped for its unprobeable name ("Bad User") too (P2
+    # review coll-1: it was 3 and silently omitted that row); probed = root + postgres, ubuntu, alice
+    assert p["users_total"] == 4 and p["users_probed"] == 4
     assert p["planned"] == p["done"] == 5 * 2 and p["deltas"] == []
     assert p["addrs"] == ["10.255.255.1", "203.0.113.7"]
     assert all(len(f["sha256"]) == 64 for f in v["files"])

@@ -208,14 +208,18 @@ def test_missing_udp_table_is_partial(tmp_path):
     assert sec["s"] == "ok" and sec["partial"] is True
 
 
-def test_cap_over_2000_is_truncated_error_not_a_silent_cut(tmp_path):
+def test_cap_over_2000_is_a_marked_partial_sample_not_a_silent_cut(tmp_path):
+    # P2 review coll-9: was error(truncated), which let a local user blind the whole table by
+    # opening ports. The cut is now explicit (partial + dropped) and prioritised (see test_p2x_listeners).
     tcp = "  sl  local_address rem_address   st\n" + "".join(
         line4(i, "00000000", 1 + i, 1000 + i) for i in range(2001))
     sec = listeners.collect(fake_proc(tmp_path, tcp=tcp))
-    assert sec["s"] == "error" and sec["reason"] == "truncated"
+    assert sec["s"] == "ok" and sec["partial"] is True
+    assert sec["v"]["count"] == 2000 and sec["v"]["dropped"] == 1
     tcp = "  sl  local_address rem_address   st\n" + "".join(
         line4(i, "00000000", 1 + i, 1000 + i) for i in range(2000))
-    assert listeners.collect(fake_proc(tmp_path / "ok", tcp=tcp))["v"]["count"] == 2000
+    ok = listeners.collect(fake_proc(tmp_path / "ok", tcp=tcp))
+    assert ok["v"]["count"] == 2000 and ok["partial"] is False and "dropped" not in ok["v"]
 
 
 def test_containerised_agent_is_unavailable(tmp_path):

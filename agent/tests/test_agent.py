@@ -43,6 +43,14 @@ class Clock:
         self.t += s
 
 
+SERVER_IP = "192.0.2.10"
+
+
+def fake_resolver(host, port, *args, **kwargs):
+    """The fake server's name resolves to a documentation address (the self-lockout guard resolves it)."""
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (SERVER_IP, port))]
+
+
 def collect_stub(ctx):
     return {"schema": 2, "collected_at": envelope.issued_at_iso(1_790_000_000),
             "sections": {"self": {"s": "ok", "conf": "exact", "partial": False,
@@ -70,7 +78,7 @@ class Rig:
 
         self.agent = Agent(self.cfg, client=self.client, enforcer=enforcer, collect_fn=collect,
                            encode_fn=envelope.canon, ctx_factory=ctx_factory, clock=self.clock.time,
-                           monotonic=self.clock.mono, rand=lambda: 0.5)
+                           monotonic=self.clock.mono, rand=lambda: 0.5, resolver=fake_resolver)
 
     @property
     def state(self):
@@ -85,7 +93,8 @@ class Rig:
                   collect_fn=collect_stub, encode_fn=envelope.canon,
                   ctx_factory=lambda seq, key_id: types.SimpleNamespace(
                       seq=seq, key_id=key_id, known_manifest_sha=None, force_full_manifest=False),
-                  clock=self.clock.time, monotonic=self.clock.mono, rand=lambda: 0.5, **kw)
+                  clock=self.clock.time, monotonic=self.clock.mono, rand=lambda: 0.5,
+                  resolver=fake_resolver, **kw)
         return a
 
 
@@ -404,9 +413,13 @@ def test_a_tampered_envelope_is_rejected_by_the_server_and_changes_nothing(rig):
     assert len(rig.fleet.accepted) == 1
 
 
-def test_an_unknown_agent_id_404_counts_like_an_auth_failure(rig):
-    rig.fleet.fail.extend([404] * MAX_AUTH_FAILURES)
-    assert rig.agent.run(max_iterations=MAX_AUTH_FAILURES + 3, sleep=rig.clock.sleep) == EXIT_RE_ENROLL
+def test_an_unknown_agent_id_404_is_retried_and_never_terminal(rig):
+    """Rewritten for P2 review agent-2/pkg-11: ten bare 404s used to end the daemon with exit 7 (and systemd
+    does not restart exit 7), so one ingress mistake silenced the fleet. Only the server's explicit
+    structured verdict (agent_revoked / re_enroll_required) is terminal now."""
+    rig.fleet.fail.extend([404] * (MAX_AUTH_FAILURES + 2))
+    assert rig.agent.run(max_iterations=MAX_AUTH_FAILURES + 3, sleep=rig.clock.sleep) == EXIT_OK
+    assert rig.fleet.accepted                                  # and the next answer from the server is used
 
 
 def test_reenroll_required_ends_the_loop_with_exit_7_immediately(rig):
@@ -415,14 +428,16 @@ def test_reenroll_required_ends_the_loop_with_exit_7_immediately(rig):
     assert rig.clock.slept == []                               # no hot retry, no backoff dance
 
 
-def test_repeated_auth_failures_end_the_loop_but_a_success_resets_the_count(rig):
+def test_repeated_auth_failures_never_end_the_loop_and_a_success_resets_the_count(rig):
+    """Rewritten for P2 review agent-2/pkg-11 (it used to expect exit 7 after ten 403s)."""
     rig.fleet.fail.extend([401] * (MAX_AUTH_FAILURES - 1))
     assert rig.agent.run(max_iterations=MAX_AUTH_FAILURES - 1, sleep=rig.clock.sleep) == EXIT_OK
+    assert rig.agent._auth_failures == MAX_AUTH_FAILURES - 1
     rig.agent.heartbeat()                                      # one success resets the streak
-    rig.fleet.fail.extend([401] * (MAX_AUTH_FAILURES - 1))
-    assert rig.agent.run(max_iterations=MAX_AUTH_FAILURES - 1, sleep=rig.clock.sleep) == EXIT_OK
-    rig.fleet.fail.extend([403] * MAX_AUTH_FAILURES)
-    assert rig.agent.run(max_iterations=MAX_AUTH_FAILURES + 5, sleep=rig.clock.sleep) == EXIT_RE_ENROLL
+    assert rig.agent._auth_failures == 0
+    rig.fleet.fail.extend([403] * (MAX_AUTH_FAILURES + 5))
+    assert rig.agent.run(max_iterations=MAX_AUTH_FAILURES + 5, sleep=rig.clock.sleep) == EXIT_OK
+    assert rig.agent._auth_failures == MAX_AUTH_FAILURES + 5   # counted (and logged loudly), never terminal
 
 
 def test_posture_cadence_is_slower_than_heartbeat_cadence(rig):

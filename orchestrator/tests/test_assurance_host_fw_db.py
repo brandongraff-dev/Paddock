@@ -345,11 +345,20 @@ async def test_a_port_the_scan_saw_open_and_the_agent_calls_closed_is_a_conflict
     assert out.coverage == []
     c = out.facts[0].facts["firewall"]["conflict"]
     assert [(x["kind"], x["proto"], x["port"]) for x in c] == [("agent_closed_scan_open", "tcp", 8080)]
-    # an older scan than the posture does not count
+    # an OLDER scan than the posture still counts (review finding hostfw-3: the conflict is sticky for the whole
+    # external window; it used to vanish when the next posture repeated the claim)
     async with conn_for(app_pool) as con:
         await con.execute("DELETE FROM reach_edges WHERE source = 'external_scan'")
     await _persist_scan_edge(app_pool, "ip:10.0.0.5", 8080, t - 30 * MIN)
     _, out = await load_build(app_pool, now=now)
+    assert out.coverage == []
+    # ... and so does one that is days old, up to the external max age
+    async with conn_for(app_pool) as con:
+        await con.execute("DELETE FROM reach_edges WHERE source = 'external_scan'")
+    await _persist_scan_edge(app_pool, "ip:10.0.0.5", 8080, t - 100 * H)
+    _, out = await load_build(app_pool, now=now)
+    assert out.coverage == []
+    _, out = await load_build(app_pool, now=now, max_age=dt.timedelta(hours=24))        # the setting is honoured
     assert len(out.coverage) == 1
 
 
@@ -380,12 +389,14 @@ async def test_ip_rows_carry_live_agents_only_and_resolve_to_agent_refs(app_pool
     agents = [r for r in rows if r["kind"] == "agent"]
     assert {str(r["id"]) for r in agents} == {str(h1.id), str(h2.id)}
     m = _ipmap.build_ip_map(rows)
-    assert m.resolve("10.8.8.8") == h2.ref and m.resolve("10.0.0.5") == "ip:10.0.0.5"
+    # (review findings hostfw-5 and wire-5: a claim never OWNS an address; the claimant is one more edge candidate)
+    assert m.resolve("10.8.8.8") == "ip:10.8.8.8" and h2.ref in m.resolve_all("10.8.8.8")
+    assert m.resolve("10.0.0.5") == "ip:10.0.0.5"
     async with db_pool.acquire() as con:
         await con.execute("UPDATE fleet_agents SET status = 'revoked', revoked_at = NOW() WHERE id = $1", h2.id)
     async with conn_for(app_pool) as con:
         rows = await _ipmap.load_ip_rows(con)
-    assert _ipmap.build_ip_map(rows).resolve("10.8.8.8") == "ip:10.8.8.8"
+    assert _ipmap.build_ip_map(rows).resolve_all("10.8.8.8") == ("ip:10.8.8.8",)
 
 
 # --------------------------------------------------------------------------- #
@@ -504,13 +515,16 @@ async def test_every_edge_shape_the_builder_emits_survives_the_store_the_loader_
 
 
 async def test_an_agent_node_resolves_into_a_declared_zone_by_its_addresses(app_pool):
-    """``NodeOut.attrs.ips`` is what lets the loader put a managed host in a zone (and expand cidr sources)."""
+    """(Rewritten for review finding hostfw-1.) ``NodeOut.attrs.ips`` stays EMPTY for a managed host (the loader reads
+    it as "address unknown": inside every CIDR expansion); what the host claims is ``claimed_ips``, and only when
+    nothing independent places it does the claim place it in a zone, which the loader reports as unverified."""
     h = await seed_host(app_pool)
     t = now_()
     await post(app_pool, h, healthy(collected=t, seq=1, ips=["10.20.0.7"]), now=t)
     now = t + 5 * dt.timedelta(seconds=1)
     _, out = await load_build(app_pool, now=now)
-    assert next(n for n in out.nodes if n.ref == h.ref).attrs["ips"] == ["10.20.0.7"]
+    node = next(n for n in out.nodes if n.ref == h.ref)
+    assert node.attrs["ips"] == [] and node.attrs["claimed_ips"] == ["10.20.0.7"]
     await persist(app_pool, out, now)
     async with conn_for(app_pool) as con:
         await store.upsert_zone(con, "servers", ["10.20.0.0/16"], set_by="t", justification="the server VLAN")

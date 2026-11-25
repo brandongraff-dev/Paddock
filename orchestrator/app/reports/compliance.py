@@ -29,7 +29,7 @@ from typing import Any, Awaitable, Callable
 from .. import audit
 from ..auth import classification_rank_sql
 from .config import report_settings
-from .metrics import SENTRY_RULES, build_report, clearance_rank_of
+from .metrics import REPORTING_AGENT_SQL, SENTRY_RULES, build_report, clearance_rank_of
 from .models import (
     CompliancePack,
     ControlOut,
@@ -327,7 +327,7 @@ async def _external_scanning(con, ctx: Ctx) -> EvidenceOut:
 @provider("internal_visibility", "Internal visibility (Sentry, fleet agents)")
 async def _internal_visibility(con, ctx: Ctx) -> EvidenceOut:
     r = await con.fetchrow(
-        f"""SELECT (SELECT COUNT(*) FROM fleet_agents WHERE status <> 'revoked' AND last_seen >= $1) AS agents,
+        f"""SELECT (SELECT COUNT(*) FROM fleet_agents a WHERE {REPORTING_AGENT_SQL.format(win='$1')}) AS agents,
                    (SELECT COUNT(*) FROM assets a WHERE kind IN ('iot_device','ot_device')
                        AND last_seen >= $1 AND {_abac("a.classification")} <= $2) AS devices,
                    (SELECT COUNT(*) FROM findings f JOIN assets a ON a.id = f.asset_id

@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # audit log records the socket peer otherwise, so a client can't forge
     # the IP an action is attributed to.
     trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+    # How many proxies sit in front of the app and APPEND to X-Forwarded-For (the one on the socket included).
+    # ``auth.client_ip_strict`` takes the Nth entry from the RIGHT; everything left of it is client-written.
+    trusted_proxy_hops: int = 1
 
     # Login throttling: max failed attempts per (username) and per (client
     # ip) inside the window before 429s.

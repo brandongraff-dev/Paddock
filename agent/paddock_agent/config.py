@@ -7,6 +7,7 @@ user in ``ps`` and ``/proc``.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -15,6 +16,11 @@ from .state import DEFAULT_STATE_DIR
 
 MIN_HEARTBEAT_S = 5
 MIN_POSTURE_S = 60
+DEFAULT_DEADMAN_MIN = 10
+
+log = logging.getLogger("paddock-agent.config")
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"0", "false", "no", "off"})
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -23,10 +29,20 @@ def _env(name: str, default: Optional[str] = None) -> Optional[str]:
 
 
 def _env_bool(name: str, default: bool) -> bool:
+    """A boolean switch. Only an explicit true/false word changes ``default``; anything else is logged and
+    keeps ``default``. Every safety switch here defaults to its SAFE value (dry-run on, IMDS off), so a typo
+    (``y``, ``enabled``, ``ture``) can never turn enforcement or an optional egress on."""
     v = os.environ.get(name)
-    if v is None or v == "":
+    if v is None or v.strip() == "":
         return default
-    return v.strip().lower() in {"1", "true", "yes", "on"}
+    word = v.strip().lower()
+    if word in _TRUE:
+        return True
+    if word in _FALSE:
+        return False
+    log.error("%s=%r is not a recognised value (use true/false, 1/0, yes/no, on/off); keeping the safe "
+              "default %s", name, v, "on" if default else "off")
+    return default
 
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
@@ -61,6 +77,12 @@ class AgentConfig:
     timeout_s: int = field(default_factory=lambda: _env_int("PADDOCK_HTTP_TIMEOUT", 20, 1))
     outbox_max_bytes: int = field(
         default_factory=lambda: _env_int("PADDOCK_OUTBOX_MAX_MB", 64, 1) * 1024 * 1024)
+    # Dead-man timer: a network block (block_ip / firewall_rule) the server never heard about again within this
+    # many minutes of applying it is removed, so a block that cut the agent off from its server cannot strand
+    # the host (the revert would have to arrive over the channel just cut). A block confirmed by any later
+    # successful round trip stays. 0 disables it.
+    deadman_minutes: int = field(
+        default_factory=lambda: _env_int("PADDOCK_NETBLOCK_DEADMAN_MIN", DEFAULT_DEADMAN_MIN, 0))
     # The cloud metadata (IMDS) request is OFF by default (docs/ASSURANCE_P2.md E6).
     enable_imds: bool = field(default_factory=lambda: _env_bool("PADDOCK_ENABLE_IMDS", False))
     ca_file: Optional[str] = field(default_factory=lambda: _env("PADDOCK_CA_FILE"))

@@ -65,13 +65,21 @@ def parse_ipt_flavour(text):
 
 
 def ipv6_enabled(ctx):
-    """True when IPv6 can reach this host (a non-loopback v6 address and not disabled)."""
-    st, text = ctx.read_text("/proc/sys/net/ipv6/conf/all/disable_ipv6", 16)
-    if st == "ok" and text.strip() == "1":
-        return False
+    """True/False from ``/proc/net/if_inet6`` (the truth), ``None`` when it cannot be told.
+
+    A non-loopback IPv6 address means IPv6 reaches this host, whatever ``all/disable_ipv6`` says
+    (a later per-interface ``disable_ipv6=0`` re-enables it). The file is absent only when the host
+    has no IPv6 stack; if the stack is visibly there (tcp6, /proc/sys/net/ipv6) or the file cannot be
+    read in full the answer is unknown, never "disabled".
+    """
     st, text = ctx.read_text("/proc/net/if_inet6", 1 << 20)
-    if st != "ok":
+    if st == "missing":
+        for p in ("/proc/net/tcp6", "/proc/net/udp6", "/proc/sys/net/ipv6"):
+            if ctx.exists(p):
+                return None
         return False
+    if st != "ok":
+        return None
     for line in text.splitlines():
         parts = line.split()
         if len(parts) >= 6 and parts[5] != "lo":
@@ -212,6 +220,9 @@ def collect(ctx):
         return base.unavailable("tool_missing")
 
     v6 = ipv6_enabled(ctx)
+    v6_known = v6 is not None
+    if v6 is None:
+        v6 = True          # unknown is modelled as in scope; build_model makes the confidence unknown
     try:
         merged = fwmodel.merge_dumps(dumps)
     except fwmodel.FwModelError:
@@ -229,9 +240,9 @@ def collect(ctx):
     else:
         backend = "legacy"
     try:
-        model = fwmodel.build_model(merged, backend, _frontends(ctx), v6, readable)
-    except fwmodel.FwTooLarge:
-        return base.error("truncated", "more than %d firewall rules" % fwmodel.MAX_RULES)
+        model = fwmodel.build_model(merged, backend, _frontends(ctx), v6, readable, v6_known, ctx.check)
+    except fwmodel.FwTooLarge as exc:
+        return base.error("truncated", clean_str(str(exc) or "firewall ruleset too large", 100))
     except PARSE_ERRORS as exc:
         return base.error("parse_error", clean_str("model: %s" % type(exc).__name__, 100))
     if model["rule_count"] == 0 and not merged["chains"] and nft_state == "ok" and not legacy_used:

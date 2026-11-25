@@ -70,6 +70,10 @@ MAX_FACT_ROW_BYTES = 256 * 1024   # one (node, source) row, serialised
 #: re-signed posture with the same content (a new ``seq``, a new ``observed_at``) is a refresh, not
 #: a change, and must not bump the graph version (the runner would re-evaluate every hour).
 FACT_DIGEST_SKIP = frozenset({"observed_at", "seq", "evidence_ref"})
+#: The same provenance, repeated INSIDE the builder's ``host_agent`` summary (``data``): the posture's sequence number,
+#: its payload digest and its collection time change with every re-signed posture and say nothing about the host
+#: (review finding hostfw-6: they bumped the graph version at least hourly per agent).
+HOST_AGENT_DATA_DIGEST_SKIP = frozenset({"seq", "payload_sha256", "collected_at"})
 _FACT_KEYS = frozenset({"status", "signed", "key_id", "seq", "evidence_ref", "conf", "partial", "reason",
                         "conflict", "tier", "observed_at", "data"})
 
@@ -614,19 +618,67 @@ def _strip_timestamps(value: Any) -> Any:
     return value
 
 
+def digest_view(name: str, entry: Any) -> Any:
+    """What of one collector entry counts as its MEANING (the fact digest and ``graph_loader.doc_sha`` both read it):
+    every key except the top-level provenance (``FACT_DIGEST_SKIP``), ``*_at`` inside the conflict records, and for
+    the ``host_agent`` summary the provenance copied into ``data`` (``HOST_AGENT_DATA_DIGEST_SKIP``)."""
+    if not isinstance(entry, dict):
+        return entry
+    d = {k: v for k, v in entry.items() if k not in FACT_DIGEST_SKIP}
+    if "conflict" in d:
+        d["conflict"] = _strip_timestamps(d["conflict"])
+    if name == "host_agent" and isinstance(d.get("data"), dict):
+        data = {k: v for k, v in d["data"].items() if k not in HOST_AGENT_DATA_DIGEST_SKIP}
+        if "conflicts" in data:
+            data["conflicts"] = _strip_timestamps(data["conflicts"])
+        d["data"] = data
+    return d
+
+
 def fact_row_digest(tier: str, entries: dict[str, dict[str, Any]]) -> str:
     """sha256 over a fact row's MEANING: tier, collectors and every entry field except
-    ``observed_at`` / ``seq`` / ``evidence_ref`` (and ``*_at`` inside a conflict record). A pure
+    ``observed_at`` / ``seq`` / ``evidence_ref`` (and ``*_at`` inside a conflict record, and the ``host_agent``
+    summary's own copy of seq / payload digest / collection time: :func:`digest_view`). A pure
     refresh therefore keeps the digest; a changed value, ``signed``, ``key_id`` (a different
     trust root), ``conf``, ``partial``, ``status``, ``conflict`` or tier changes it."""
     stripped: dict[str, Any] = {}
     for name in sorted(entries):
-        d = {k: v for k, v in entries[name].items() if k not in FACT_DIGEST_SKIP}
-        if "conflict" in d:
-            d["conflict"] = _strip_timestamps(d["conflict"])
-        stripped[name] = d
+        stripped[name] = digest_view(name, entries[name])
     blob = _json({"tier": tier, "facts": stripped}) or ""
     return hashlib.sha256(blob.encode()).hexdigest()
+
+
+HOST_AGENT = "host_agent"
+
+
+def _error_entry(name: str, reason: str) -> dict[str, Any]:
+    """What replaces a collector entry that cannot be stored: an unsigned, approximate, partial ``error`` entry
+    with no data. A host with such an entry is in scope and that collector is UNKNOWN on it (never a pass)."""
+    return normalise_fact_entry(name, {"status": "error", "signed": False, "conf": "approximate", "partial": True,
+                                       "reason": reason, "data": {}})
+
+
+def _fit_row(ref: str, entries: dict[str, dict[str, Any]], rep: BuildReport) -> tuple[dict[str, dict[str, Any]], str]:
+    """The serialised row, within ``MAX_FACT_ROW_BYTES``. A row that is too big is NEVER dropped (the host would
+    leave every host-config invariant without a trace and read as passing, review finding hostfw-7): the largest
+    entries are replaced by an ``error`` entry (reason ``facts_too_large``, that collector is UNKNOWN) until the row
+    fits, so the node keeps its facts, its ``agent`` tag and its UNKNOWN."""
+    text = _json(entries)
+    if text is None:
+        raise ValueError("facts are not serialisable")
+    if len(text) <= MAX_FACT_ROW_BYTES:
+        return entries, text
+    entries = dict(entries)
+    sizes = {n: len(_json(e) or "") for n, e in entries.items()}
+    for name in sorted(entries, key=lambda n: (-sizes[n], n)):
+        entries[name] = _error_entry(name, "facts_too_large")
+        rep.skipped += 1
+        rep.notes.append(f"facts {ref!r} {name!r}: larger than the row allows, replaced by an error entry "
+                         f"(facts_too_large)")
+        text = _json(entries)
+        if text is not None and len(text) <= MAX_FACT_ROW_BYTES:
+            return entries, text
+    raise ValueError(f"facts larger than {MAX_FACT_ROW_BYTES} bytes")
 
 
 def _clean_facts(out: BuildOutput, rep: BuildReport) -> dict[str, dict[str, Any]]:
@@ -661,9 +713,10 @@ def _clean_facts(out: BuildOutput, rep: BuildReport) -> dict[str, dict[str, Any]
                 except FactInvalid as exc:
                     rep.skipped += 1
                     rep.notes.append(f"dropped fact {ref!r} {str(name)[:40]!r}: {exc}")
-            text = _json(entries)
-            if text is None or len(text) > MAX_FACT_ROW_BYTES:
-                raise ValueError(f"facts larger than {MAX_FACT_ROW_BYTES} bytes")
+            if not entries and f.facts:
+                # every entry was invalid: the host must still be in scope (and unknown), not silently gone
+                entries[HOST_AGENT] = _error_entry(HOST_AGENT, "facts_invalid")
+            entries, text = _fit_row(ref, entries, rep)
             if f.node_ref in clashed or f.node_ref in rows:
                 rows.pop(f.node_ref, None)
                 clashed.add(f.node_ref)

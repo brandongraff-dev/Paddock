@@ -54,10 +54,25 @@ Exactly one of:
 
 ## 3. `sections.sshd`
 
-`unavailable`: `tool_missing` (no sshd binary and no sshd evidence), `no_data` (evidence of an SSH server such as
-`/etc/ssh/sshd_config`, an `sshd`/`dropbear` process or a listener on 22, but no OpenSSH binary found, i.e.
-unknown, NOT "not installed"), `containerised_agent`, `unsupported_platform`. `error`: `parse_error` when
-`sshd -T` printed something unparseable or a value outside the allowlist's domain.
+`unavailable`: `tool_missing` (no usable OpenSSH `sshd` binary and none of the evidence below), `no_data` (evidence
+that an SSH server may exist, but no usable OpenSSH binary: unknown, NOT "not installed"), `containerised_agent`,
+`unsupported_platform`. `error`: `parse_error` when `sshd -T` printed something unparseable or a value outside the
+allowlist's domain.
+
+**`tool_missing` is not an absence claim.** It means only "no OpenSSH `sshd` we can trust, and nothing that
+looks like an SSH server": the evidence that turns it into `no_data` is a `/etc/ssh/sshd_config` or `/etc/dropbear`,
+an ssh/dropbear unit file, a process whose `comm` or `exe` basename contains `ssh` or `dropbear` (any case), an
+`sshd` in `/usr/local/{sbin,bin}` that failed the trust check, a TCP listener on 22, and any non-loopback TCP
+listener that is unattributed, belongs to a program that is not on the short allow-list of programs known not to
+be (or front) an SSH server (`postgres`, `mysqld`, `mariadbd`, `mongod`, `redis-server`, `memcached`, `named`,
+`unbound`, `dnsmasq`, ...: so `docker-proxy`, `rootlessport`, `kube-proxy`, nginx, haproxy, socat, gitea, teleport,
+sftpgo and every unlisted name make it `no_data`), or whose table is partial or unreadable. `tool_missing` therefore
+needs every public TCP listener to belong to a listed non-SSH program. Even so it is not proof: a consumer must not
+conclude "no SSH server" from `tool_missing`.
+
+**Which binary is run.** The `sshd` that a root-owned process named `sshd` is running (`/proc/<pid>/exe`, not
+deleted), else `sshd` from the fixed system PATH `/usr/sbin:/usr/bin:/sbin:/bin`, else `/usr/local/{sbin,bin}/sshd`
+only when the file and every directory above it up to `/usr` are root-owned and not group/world writable.
 
 `ok.v` (all keys always present):
 
@@ -69,14 +84,16 @@ unknown, NOT "not installed"), `containerised_agent`, `unsupported_platform`. `e
 | `binary` | str | path of the sshd binary |
 | `socket_activated` | bool | `ssh.socket`/`sshd.socket` is enabled (Port/ListenAddress may then be ignored; use `listeners`) |
 | `config` | object | allowlisted effective global config, below |
-| `probes` | object | `{addrs: [str] sorted, users_probed: int, users_total: int, planned: int, done: int, deltas: [D]}`; `users_probed` excludes the nonexistent user; `users_total` = login users on the host (uid != 0, login shell) |
+| `probes` | object | `{addrs: [str] sorted, users_probed: int, users_total: int, planned: int, done: int, deltas: [D]}`; `users_probed` excludes the nonexistent user; `users_total` = login users on the host (uid != 0, login shell), **including login-shell rows dropped because their name cannot be passed as `-C user=`** |
 | `match` | object | `{blocks: int, criteria: [str] sorted, known: bool, unprobed: bool, unprobed_reasons: [str] sorted}` |
 | `files` | [`{path: str, sha256: str\|null, size: int}`] | `sshd_config` and every `Include`d file read (<= 64); `sha256: null` = unreadable |
+| `daemon` | object | the RUNNING sshd, to compare with what `sshd -T` says about the files (below). Always present |
+| `truncated` | [str] sorted | **may be absent.** Present (non-empty) iff a `config` value was cut: a list past 50 items or an item past its length cap (`allowusers`, `allowgroups`, `denyusers`, `denygroups`, `listenaddress`, `authorizedkeysfile`, `port`) or `authenticationmethods` past 200 characters. A cut value is a sorted prefix, not the truth: **treat every key named here as Unknown.** The section is then `conf: approximate` (`match.unprobed_reasons` has `config_truncated`) |
 
 `D` (probe delta) = `{user: str, addr: str, delta: {key: value|null}}`: only keys whose probed value differs
 from the global value; `null` = the key is absent in the probe. `user` is `"<nonexistent>"` for the made-up
 user. Sorted by `(user, addr)`. Probe matrix: users {root, up to 20 login users by uid, literal `Match User`
-names (<= 10), a nonexistent user} x addresses {203.0.113.7, 10.255.255.1, plus one representative per atom of
+names (<= 10, any case), up to 20 representatives of `Match User/Group` selections (below), a nonexistent user} x addresses {203.0.113.7, 10.255.255.1, plus one representative per atom of
 every `Match Address` CIDR (<= 12)}, each as `sshd -T -C user=U,host=probe.invalid,addr=A`; <= 150 runs.
 
 `config` keys (every key may be absent; absent in `source: sshd_T` means this sshd did not print it, absent in
@@ -96,26 +113,69 @@ assume a default for `text`):
 * `authorizedkeysfile`: list of str <= 120 (file order, <= 50). `authorizedkeyscommand`: `"none" | "set"`
   (presence only, never the command).
 
+**Which users are probed when a `Match User` or `Match Group` criterion exists.** A user's result under
+`sshd -T -C user=U` depends only on which user/group criteria it satisfies, so the agent evaluates every criterion
+(OpenSSH `match_pattern_list` semantics: case-sensitive, `*` `?`, a matching `!pattern` wins; for groups the
+user's primary group from `/etc/passwd` plus every `/etc/group` membership) for every `/etc/passwd` account of
+**any shell** and probes the lowest-uid account of each distinct satisfaction vector that root, the 20 login users
+and the literal names do not already cover (nologin SFTP accounts are the usual case). If the user and group
+databases cannot be enumerated from `/etc/passwd` and `/etc/group` the answer is `nss_users_unknown`, not exact.
+
+`daemon` = `{found: bool, masters: int, pid: int|null, start_epoch: int|null, reexec_epoch: int|null,
+config_path: str|null, config_default: bool|null, options_override: bool|null, binary_matches: bool|null,
+config_mtime: int|null, reload_pending: bool|null}` (all keys always present, `null` = could not tell):
+`masters` is the number of root-owned `sshd` processes whose parent is not an `sshd` (listeners); `pid` the lowest;
+`start_epoch` its start time (`/proc/stat` btime + `/proc/<pid>/stat` starttime / CLK_TCK, UTC seconds);
+`reexec_epoch` the mtime of `/run/sshd.pid` (or `/var/run/sshd.pid`) when it names that pid (sshd rewrites it when
+it re-executes on SIGHUP, which keeps the process start time); `config_path` the `-f` path of the command line (path
+only, validated) and `config_default` whether the daemon uses `/etc/ssh/sshd_config`; `options_override` whether the
+command line carries `-o`, `-p`, `-4` or `-6` (only the boolean, never the content); `binary_matches` whether the
+running executable is the binary `sshd -T` was run with (false when it was deleted/replaced on disk);
+`config_mtime` the newest change time (the later of mtime and ctime, so `cp -p`, `rsync -a`, `tar` and `touch -d`
+cannot hide a write) of `sshd_config`, the `Include`d files and every directory an `Include` reads from, also when no
+file is left in it (a deleted drop-in shows only on the directory; for a directory that is gone, its parent).
+The command line is read like getopt (`-Df /path`, `-Df/path`, `-Do Opt=v`, `-D4`; an option letter sshd does not
+document counts as an override).
+`reload_pending` is **true** when `config_mtime` is after `max(start_epoch, reexec_epoch)` (an edit not yet loaded)
+or the daemon runs another config file or extra options; **false** only on positive evidence (config older than the
+last (re)start, or socket-activated with no master); **null** when it cannot be determined (no daemon process
+visible, unreadable `/proc`). `sshd -T` describes the on-disk files, `daemon` is the only evidence about what runs;
+a consumer must treat `reload_pending != false` as Unknown for "the effective sshd configuration". A reload that
+does not rewrite the pid file keeps `reload_pending` true until the daemon is restarted.
+
 `match.unprobed_reasons` enumeration: `text_source`, `users_over_cap` (a `Match User/Group` exists and the host
-has more than 20 login users), `criterion_<name>` (host, localaddress, localport, rdomain, exec, ...: cannot be
+has more than 20 login users, or more than 10 literal `Match User` names, or more than 20 selection classes need
+a probe), `nss_users_unknown` (a user/group criterion exists and `nsswitch.conf` passwd/group names a source other
+than `files`/`compat`/`systemd`, systemd userdb/homed data exists, NIS `+`/`-` rows are present, or `/etc/group` is
+unreadable), `user_name_unprobeable` (an account whose name cannot be passed as `-C user=` would be selected by a
+criterion no probed account represents), `user_pattern` (`Match User` with a `user@host` pattern), `config_truncated`
+(see `truncated`), `reload_pending`, `daemon_config_differs` (the daemon runs another `-f` file or `-o/-p/-4/-6`),
+`daemon_binary_differs`, `daemon_ambiguous` (more than one listener `sshd`), `criterion_<name>` (host, localaddress, localport, rdomain, exec, ...: cannot be
 probed), `address_pattern` (a `Match Address` pattern that is not a CIDR), `address_atoms` (more than 12
 atoms), `config_unreadable`, `passwd_unreadable`, `probe_cap`, `probe_budget`, `probe_failed`,
 `probe_incomplete`, `unexplained_delta` (probes disagree although the text shows no `Match` block: the text view
 is wrong). **`conf` is `exact` iff `source == "sshd_T"` and `match.unprobed == false`.** `match.known: false`
 means a config file could not be read, so `match.criteria` may be incomplete.
 
-Cannot see: AuthorizedKeysCommand results, PAM modules, SSSD/LDAP users, sshd in containers, non-OpenSSH
-daemons (Dropbear), per-user `authorized_keys` options.
+Cannot see: AuthorizedKeysCommand results, PAM modules, SSSD/LDAP users (flagged `nss_users_unknown` when a
+user/group criterion exists), sshd in containers, non-OpenSSH daemons (Dropbear), per-user `authorized_keys`
+options, `Match` criteria evaluated on the daemon's side only (`exec`, `host`, `localport`, ...).
 
 ## 4. `sections.listeners`
 
 `unavailable`: `containerised_agent`, `unsupported_platform` (no `/proc/net/tcp`), `permission_denied`.
-`error`: `truncated` (more than 2000 distinct listeners, or a `/proc/net` table over 8 MiB), `exception`.
-`partial: true` when a data line of `/proc/net/*` could not be parsed or `/proc/net/udp` is missing. A missing
-`tcp6`/`udp6` means IPv6 is disabled (`ipv6: false`), not an error.
+`error`: `truncated` (a `/proc/net` table over 8 MiB), `exception`.
+`partial: true` when a data line of `/proc/net/*` could not be parsed, `/proc/net/udp` is missing, **more than 2000
+distinct listeners exist (a bounded sample is kept, `dropped` says how many were cut)** or the pid attribution scan
+ran out of the collector's time budget. A missing `tcp6`/`udp6` means IPv6 is disabled (`ipv6: false`), not an error.
+Over the cap the sample is prioritised: wildcard binds and privileged ports (< 1024) first, other non-loopback
+binds next, loopback last (a local user can open any number of loopback ports); the kept rows are sorted as below.
+Addresses are decoded in the host's byte order (the kernel prints each 32-bit word in host order).
 
 `ok.v` = `{count: int, listeners: [L] , ipv6: bool, bindv6only: 0|1|null,
-attribution: {status: "ok"|"partial"|"denied", unreadable_pids: int, unattributed: int}}`.
+attribution: {status: "ok"|"partial"|"denied", unreadable_pids: int, unattributed: int}, dropped?: int}`;
+`dropped` is **absent unless > 0**: the number of distinct listeners left out of `listeners` (then `partial` is true
+and the table is a sample, not the host's listener set).
 
 * `attribution.status`: `ok` every listener mapped to a pid; `partial` some; `denied` none (not root:
   `/proc/*/fd` unreadable). Missing attribution is **never** a missing listener.
@@ -145,7 +205,8 @@ services. A listener table is "complete" for coverage only when `partial == fals
 
 `unavailable`: `permission_denied` (no root and no CAP_NET_ADMIN, or the tool said so), `tool_missing` (no
 `nft` and no iptables save tool, or nothing readable), `containerised_agent`, `unsupported_platform`.
-`error`: `timeout`, `exit_nonzero`, `parse_error`, `truncated` (more than 2000 modelled rules).
+`error`: `timeout`, `exit_nonzero`, `parse_error`, `truncated` (more than 2000 modelled rules, or the model
+walk step budget `WALK_BUDGET` was spent: layered conditional jumps no longer stall the agent).
 `ok.partial` is `true` iff an enabled address family could not be read (`families.<f>.read == false`).
 `ok.conf` is `exact` iff `flat_view.confidence == "exact"`.
 
@@ -162,7 +223,9 @@ recorded as `frontends` only, never as truth. Dormant nft tables are ignored.
   "backend": "nft" | "legacy" | "mixed" | "none",
   "frontends": [ {"name":"ufw","state":"active|inactive|unknown","default_incoming":"deny|allow|reject|unknown","rules":int<=1000},
                  {"name":"firewalld","state":"running|not_running|unknown","default_zone":str|null} ],   # sorted by name
-  "ipv6_enabled": bool,                    # a non-loopback v6 address exists and disable_ipv6 != 1
+  "ipv6_enabled": bool,                    # a non-loopback address in /proc/net/if_inet6 (the truth; all/disable_ipv6 is
+                                           # ignored). If it cannot be told (unreadable/truncated file, stack visible but
+                                           # no if_inet6) this is true and confidence is "unknown" ("ipv6_state_unknown")
   "families": { "ip4": F, "ip6": F },
   "flat_view": { "default_input_policy": "accept|drop|reject|unknown",
                  "rules": [ {"src_cidr": str|"any", "proto": str|"any", "port_lo": int, "port_hi": int,
@@ -191,7 +254,14 @@ V = "accept" | "drop" | "reject" | "return" | "jump:<chain name>" | "goto:<chain
   `m`); the reason is a short comma-joined list (<= 3), e.g. `meta_mark`, `m_set`, `limit`, `dynamic_set`,
   `negated_iif`, `iif_pattern`, `ct_status`. `v: "opaque"` means the action itself is unknown (NFQUEUE, TPROXY,
   synproxy, unknown statement). The rule cap is 2000 reachable rules.
-* **`effective_default`**: the verdict for a packet no conditional rule mentions. It is `drop`/`reject` only if
+* `nft -j` elides some implied dependencies; they are restored: `reject with icmp` is IPv4-only, `reject with
+  icmpv6` IPv6-only (`reject`/`icmpx` are family-neutral, `tcp reset` implies tcp).
+* **`effective_default`**: the verdict for a packet no conditional rule mentions. In a base chain whose policy is
+  accept, every way control can reach that policy counts as an accept path: a conditional `return`, a chain entered
+  by `goto` that returns or falls off its end, or a chain end with no terminating rule. An unconditional `jump`/`goto`
+  into a chain counts as terminating only if that chain can never return (no `return` before its terminator and no
+  `goto` into a chain that may return); otherwise control comes back and falls off the base chain. A conditional `ct state new
+  return` therefore keeps the default from being `drop`. It is `drop`/`reject` only if
   some input base chain reaches an unconditional drop/reject (or a drop policy) with every conditional rule treated as
   no-match, at least one packet falls through every conditional rule, and the chain's accept rules do not cover all
   new inbound TCP/UDP on every interface class; `accept` when every base chain's residual walk accepts (also when
@@ -202,10 +272,18 @@ V = "accept" | "drop" | "reject" | "return" | "jump:<chain name>" | "goto:<chain
   proto, port set/range, ct state, icmp type, addrtype, static named sets, jump/goto depth <= 8, accept/drop/reject/
   return) and there is no NAT rewriting, no unreadable family, no unparsed input and plain netfilter dataplane.
   `approximate`: some rule is opaque (ipset, mark, ct helper, owner, recent, limit, geoip, physdev, tcp flags,
-  dynamic/map sets, NFQUEUE, TPROXY...), any DNAT/REDIRECT/TPROXY exists in any table (or IPVS is loaded), a jump
+  dynamic/map sets, NFQUEUE, TPROXY, `th sport/dport` outside a prior `meta l4proto` port-protocol match
+  (`payload_th_dport`), `ip6 nexthdr X` on a non-accept verdict (`ip6_nexthdr`: only the immediate next header),
+  an unknown `reject with` type (`reject_type`), a conditional `return` with an opaque condition that reaches an
+  accept policy (`opaque_return`)...), any DNAT/REDIRECT/TPROXY exists in any table (or IPVS is loaded), a jump
   is unresolved or too deep, or `notrack` is used. `unknown`: a needed family is unreadable, input was unparsed
-  (`problems`), or the dataplane is K8s/Calico/Cilium/Flannel/Weave/CNI. **Never derive HOLDS from
+  (`problems`), the IPv6 state could not be determined, or the dataplane is K8s/Calico/Cilium/Flannel/Weave/CNI. **Never derive HOLDS from
   `approximate` or `unknown`.**
+* **Known limit (not detectable from `nft -j`)**: nft drops the `ip6 nexthdr X` dependency of a following `X`
+  payload match (`ip6 nexthdr tcp tcp dport 22 drop` prints exactly like `meta l4proto tcp tcp dport 22 drop`),
+  although the kernel checks only the *immediate* next header: IPv6 packets with extension headers bypass it. Such a
+  drop is modelled as a definite deny of IPv6 tcp/22; a consumer that needs more must not take an IPv6 port drop as
+  proof against packets with extension headers.
 * `opaque_features` includes `nat_rewrite`, `ipvs`, `notrack`, `assumes_no_dnat_without_rule` (a firewalld
   `ct status dnat accept` rule was dropped because no rule rewrites addresses), `unparsed_rule`.
   `dataplane` in `k8s|cilium|calico|flannel|weave|cni`. `other_hooks` lists unmodelled hooks (`forward`, `output`,

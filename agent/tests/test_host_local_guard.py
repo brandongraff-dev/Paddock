@@ -55,7 +55,8 @@ def test_no_remote_host_parameter_anywhere_in_action_or_apply():
 
     # from_server ignores any stray 'host' a compromised server might send.
     a = Action.from_server({
-        "id": "x", "action_type": "block_ip", "target": "203.0.113.10",
+        # (the id must be a UUID since P2 review agent-3: from_server refuses anything else)
+        "id": "55555555-5555-4555-8555-555555555555", "action_type": "block_ip", "target": "203.0.113.10",
         "status": "approved", "dry_run": True, "host": "some-other-box",
     })
     assert not hasattr(a, "host")
@@ -64,11 +65,12 @@ def test_no_remote_host_parameter_anywhere_in_action_or_apply():
 
 def test_enforcer_apply_signature_takes_only_type_and_target():
     """The enforcer's whole vocabulary is (action_type, target) on THIS host —
-    there is no destination/host argument to route a block elsewhere."""
+    there is no destination/host argument to route a block elsewhere. (``action_id`` is the UUID that tags the
+    rule it creates, P2 review agent-4; it names nothing to act on.)"""
     from paddock_agent.platform_block import LinuxEnforcer
     sig = inspect.signature(LinuxEnforcer.apply)
     params = [p for p in sig.parameters if p != "self"]
-    assert params == ["action_type", "target"]
+    assert params == ["action_type", "target", "action_id"]
 
 
 def test_apply_rejects_remote_target_before_touching_enforcer(enforcer):

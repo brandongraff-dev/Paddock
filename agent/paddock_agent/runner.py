@@ -307,6 +307,15 @@ class Ctx(object):
             return None
         return (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
 
+    def change_ns(self, path):
+        """Newest of mtime and ctime in ns (following symlinks), else None. ctime cannot be set
+        back by ``cp -p``, ``rsync -a``, ``tar`` or ``touch -d``: it shows a change they hide."""
+        try:
+            st = os.stat(self.fs_path(path))
+        except OSError:
+            return None
+        return max(st.st_mtime_ns, st.st_ctime_ns)
+
     def mtime_s(self, path):
         try:
             return int(os.stat(self.fs_path(path)).st_mtime)

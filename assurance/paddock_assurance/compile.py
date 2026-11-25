@@ -61,7 +61,10 @@ def _compile_host(inv: Invariant) -> Plan:
         max_age=parse_duration(inv.evidence.max_age), min_tier=inv.evidence.min_tier,
         protocols=frozenset(), via_ports=None, allowed_ports=(), max_hops=1,
         coverage_required=inv.coverage.require, expr=tree,
-        collectors=tuple(sorted({HF.REGISTRY[lf.field].collector for lf in leaves})))
+        # every collector a leaf reads, secondary ones included (``installed == false`` also rests on
+        # the listener table): a stale or unsigned fact of any of them changes the verdict
+        collectors=tuple(sorted({c for lf in leaves for c in (
+            HF.REGISTRY[lf.field].collector, *HF.REGISTRY[lf.field].also_collectors)})))
 
 
 def compile_invariant(inv: Invariant) -> Plan:

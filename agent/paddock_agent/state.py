@@ -8,31 +8,50 @@ the agent runs as)::
     credentials.json       agent id, tenant id, server, ``fat_`` token (0600)
     seq                    the last sequence number handed out (write-ahead, fsynced)
     outbox/                gzip envelopes/results that could not be delivered yet
-    handled.json           ids + results of server actions already carried out
+    handled.json           ids + results of server actions already carried out (and the rule each applied)
+    .state.lock            flock around every read-modify-write of seq / handled.json / the key files
+    .instance.lock         held for the daemon's whole life (one daemon per state dir); holds its pid
 
 Every secret is written with ``mkstemp`` + ``fchmod 0600`` + ``fsync`` + ``os.replace`` + directory
 fsync, so there is never a world-readable window and a crash leaves either the old or the new file.
 Every secret is **refused on read** when it is group/world accessible, not owned by the running user,
 or lives in a state directory other users can write to. Python 3.8 compatible, stdlib only.
 """
+import contextlib
+import errno
 import gzip
 import json
 import logging
 import os
 import stat
 import tempfile
+import threading
 import time
 
 from . import envelope, signing
 
+try:                       # POSIX only; on other platforms the locks degrade to no-ops
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
+
 log = logging.getLogger("paddock-agent.state")
 
 DEFAULT_STATE_DIR = "/var/lib/paddock-agent"
-MAX_SEQ = 2 ** 62          # far below BIGINT; a counter this large is a corrupt or hostile file
+MAX_SEQ = envelope.MAX_SEQ  # 2**53-1: the largest integer RFC 8785 (IEEE doubles) prints exactly
+LOCK_WAIT_S = 30.0          # how long a state mutation waits for another process before giving up
 
 
 class StateError(RuntimeError):
     """The state directory or a file in it is unusable. Never retried silently."""
+
+
+class InstanceBusy(StateError):
+    """Another agent process holds this state directory. ``pid`` is its pid when it recorded one."""
+
+    def __init__(self, message, pid=None):
+        super(InstanceBusy, self).__init__(message)
+        self.pid = pid
 
 
 # --------------------------------------------------------------------------- #
@@ -258,6 +277,28 @@ def _unlink(path):
         pass
 
 
+def _release(fd):
+    try:
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except (IOError, OSError):
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _read_pid(fd):
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        raw = os.read(fd, 32).decode("ascii", "replace").strip()
+        pid = int(raw)
+        return pid if pid > 1 else None
+    except (OSError, ValueError):
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # the state directory
 # --------------------------------------------------------------------------- #
@@ -271,7 +312,12 @@ class State(object):
         self.cred_path = os.path.join(self.dir, "credentials.json")
         self.seq_path = os.path.join(self.dir, "seq")
         self.handled_path = os.path.join(self.dir, "handled.json")
+        self.lock_path = os.path.join(self.dir, ".state.lock")
+        self.instance_path = os.path.join(self.dir, ".instance.lock")
         self.outbox = Outbox(os.path.join(self.dir, "outbox"), outbox_max_bytes)
+        self._rlock = threading.RLock()
+        self._lock_fd = None
+        self._instance_fd = None
 
     # -- directory ---------------------------------------------------------- #
     def ensure_dir(self):
@@ -289,6 +335,90 @@ class State(object):
                              "chmod 700 %s" % (self.dir, stat.S_IMODE(st.st_mode), self.dir))
         if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
             raise StateError("state directory %s is not owned by the agent user" % self.dir)
+
+    # -- locks -------------------------------------------------------------- #
+    @contextlib.contextmanager
+    def exclusive(self):
+        """Exclusive, re-entrant lock on the state directory (``flock``), for every read-modify-write.
+
+        Two processes (the daemon and `paddock rotate-key`, say) can never reserve the same sequence number or
+        interleave a key change. Waits up to ``LOCK_WAIT_S`` and then raises :class:`StateError` (the run
+        loop treats that as a retry), so a stuck process cannot freeze the daemon for good."""
+        with self._rlock:
+            outer = self._lock_fd is None
+            if outer:
+                self._lock_fd = self._acquire(self.lock_path, wait=True)
+            try:
+                yield
+            finally:
+                if outer:
+                    fd, self._lock_fd = self._lock_fd, None
+                    if fd is not None:
+                        _release(fd)
+
+    def _acquire(self, path, wait):
+        if fcntl is None:                                  # pragma: no cover
+            return None
+        self.ensure_dir()
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+        except OSError as exc:
+            raise StateError("cannot open the lock file %s: %s" % (path, exc))
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except (IOError, OSError) as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+                    os.close(fd)
+                    raise StateError("cannot lock %s: %s" % (path, exc))
+                if not wait or time.monotonic() >= deadline:
+                    os.close(fd)
+                    raise StateError("the state directory %s is locked by another process" % self.dir)
+            time.sleep(0.002)
+
+    def acquire_instance(self):
+        """Claim the state directory for a daemon (non-blocking); records this pid. :class:`InstanceBusy` if taken."""
+        if fcntl is None:                                  # pragma: no cover
+            return
+        self.ensure_dir()
+        fd = os.open(self.instance_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, OSError) as exc:
+            pid = _read_pid(fd)
+            os.close(fd)
+            if exc.errno in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+                raise InstanceBusy("another paddock agent is already running on %s%s"
+                                   % (self.dir, " (pid %d)" % pid if pid else ""), pid=pid)
+            raise StateError("cannot lock %s: %s" % (self.instance_path, exc))
+        os.ftruncate(fd, 0)
+        os.write(fd, ("%d\n" % os.getpid()).encode("ascii"))
+        self._instance_fd = fd
+
+    def release_instance(self):
+        fd, self._instance_fd = self._instance_fd, None
+        if fd is not None:
+            _release(fd)
+
+    def daemon_pid(self):
+        """The pid of the daemon holding this state directory right now, or ``None``."""
+        if fcntl is None:                                  # pragma: no cover
+            return None
+        try:
+            fd = os.open(self.instance_path, os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+        except OSError:
+            return None
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (IOError, OSError):
+                return _read_pid(fd)                       # held by someone: that is the daemon
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return None
+        finally:
+            os.close(fd)
 
     # -- credentials -------------------------------------------------------- #
     def load_credentials(self):
@@ -380,11 +510,12 @@ class State(object):
     def next_seq(self):
         """Reserve the next sequence number. The incremented value is fsynced BEFORE this returns, so a
         crash after the send can only skip a number, never reuse one (write-ahead)."""
-        value = self.current_seq() + 1
-        if value > MAX_SEQ:
-            raise StateError("sequence counter exhausted; re-enroll this host")
-        self._write_seq(value)
-        return value
+        with self.exclusive():
+            value = self.current_seq() + 1
+            if value > MAX_SEQ:
+                raise StateError("sequence counter exhausted; re-enroll this host")
+            self._write_seq(value)
+            return value
 
     def fast_forward(self, next_value):
         """Make the NEXT reserved number at least ``next_value`` (used after a 409 ``expected_min``).
@@ -394,10 +525,11 @@ class State(object):
             return False
         if next_value < 1 or next_value > MAX_SEQ:
             return False
-        if next_value - 1 > self.current_seq():
-            self._write_seq(next_value - 1)
-            return True
-        return False
+        with self.exclusive():
+            if next_value - 1 > self.current_seq():
+                self._write_seq(next_value - 1)
+                return True
+            return False
 
     # -- handled actions ---------------------------------------------------- #
     def load_handled(self):
@@ -412,8 +544,14 @@ class State(object):
         return items if isinstance(items, dict) else {}
 
     def save_handled(self, items, keep=256):
+        """Persist ``items``. The newest ``keep`` stay, and so does every record whose rule is still applied on
+        the host (unreverted): trimming one would make a live block impossible to revert (agent-4)."""
         order = sorted(items, key=lambda k: items[k].get("at", 0))
         trimmed = dict((k, items[k]) for k in order[-keep:])
+        for k in order[:-keep] if keep else order:
+            rule = items[k].get("rule")
+            if isinstance(rule, dict) and not rule.get("reverted") and not items[k].get("reverted"):
+                trimmed[k] = items[k]
         self.ensure_dir()
         atomic_write(self.handled_path,
                      json.dumps({"v": 1, "items": trimmed}, sort_keys=True).encode("utf-8"))

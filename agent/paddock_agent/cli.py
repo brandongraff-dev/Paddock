@@ -13,7 +13,12 @@
 
 Exit status: 0 ok, 1 no posture produced / aborted, 2 usage / not enrolled / refused target, 3 refused by a
 safety rail, 4 apply failed,
-5 server error, 6 unusable state directory, 7 the server requires re-enrollment (do not auto-restart).
+5 server error, 6 unusable state directory, 7 the server said, explicitly, that this agent is revoked or must
+re-enroll (do not auto-restart). A bare 401/403/404 never causes exit 7: the daemon keeps retrying.
+
+``rotate-key`` can run beside the daemon: it changes the key under the state-directory lock and sends the
+running daemon SIGHUP so it reloads at once (a 401 would make it reload anyway). ``enroll`` needs the daemon
+stopped.
 
 Safety:
   * ``simulate`` never mutates -- it prints the plan the enforcer WOULD run.
@@ -33,7 +38,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from . import __version__, signing
-from .actions import Action, HostLocalError, assert_host_local
+from .actions import Action, ActionError, HostLocalError, assert_host_local
 from .agent import (
     EXIT_ACTION_FAILED,
     EXIT_NOT_ENROLLED,
@@ -115,7 +120,7 @@ def _cmd_status(args: argparse.Namespace, agent: Agent) -> int:
         status["server_view"] = {"status": detail.get("status"),
                                  "last_seen": detail.get("last_seen"),
                                  "action_counts": detail.get("action_counts", {})}
-    except FleetClientError as exc:
+    except (FleetClientError, AgentError) as exc:
         status["server_view_error"] = str(exc)
     _print(status)
     return 0
@@ -144,7 +149,11 @@ def _cmd_posture(args: argparse.Namespace, agent: Agent) -> int:
 
 def _cmd_rotate(args: argparse.Namespace, agent: Agent) -> int:
     kid = agent.rotate_key()
-    _print({"rotated": True, "key_id": kid})
+    pid = agent.notify_daemon()
+    _print({"rotated": True, "key_id": kid, "daemon_notified": pid})
+    if pid is None and agent.state.daemon_pid() is not None:
+        print("note: a running agent could not be signalled; it reloads the new key on its next refused "
+              "request, or restart it: systemctl restart paddock-agent", file=sys.stderr)
     return 0
 
 
@@ -221,7 +230,12 @@ def _cmd_apply(args: argparse.Namespace, agent: Agent) -> int:
         if reply not in ("y", "yes"):
             print("aborted")
             return 1
-    outcome = agent.handle_action(Action.from_server(srv))
+    try:
+        action = Action.from_server(srv)
+    except ActionError as exc:
+        print("REFUSED: %s" % exc, file=sys.stderr)
+        return EXIT_REFUSED
+    outcome = agent.handle_action(action)
     _print({"applied": outcome.applied, "status": outcome.status, "output": outcome.output})
     return 0 if outcome.status == "applied" else EXIT_ACTION_FAILED
 
@@ -229,9 +243,15 @@ def _cmd_apply(args: argparse.Namespace, agent: Agent) -> int:
 def _cmd_run(args: argparse.Namespace, agent: Agent) -> int:
     def _stop(_signum, _frame):
         agent.stop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
+
+    def _reload(_signum, _frame):
+        agent.request_reload()           # `paddock rotate-key` changed the key on disk
+    for sig, handler in ((signal.SIGTERM, _stop), (signal.SIGINT, _stop),
+                         (getattr(signal, "SIGHUP", None), _reload)):
+        if sig is None:
+            continue
         try:
-            signal.signal(sig, _stop)
+            signal.signal(sig, handler)
         except (ValueError, OSError):  # not the main thread
             pass
     return agent.run(max_iterations=args.iterations)

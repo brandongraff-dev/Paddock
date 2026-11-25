@@ -13,7 +13,17 @@ Soundness rules, each pinned by a test:
 * A repeated leaf is unknown wherever it is unknown (``A or not A`` is unknown, never true): the
   logic is conservative, not clever.
 * The facts a TRUE answer rests on are returned (``Ev.rel``) so a HOLDS can state its weakest tier
-  and its earliest expiry.
+  and its earliest expiry, and the limits of that evidence (``Ev.notes``) so it can say so.
+* A key a Match block changes has no single value. A leaf over such a key is decided per variant
+  (the base config and every probed user/address): True only if every variant satisfies it, False as
+  soon as one definitely does not (a weakened variant is a violation), else unknown. Only outside
+  ``not``: ``not(x == "yes")`` over a key that varies is not read as "no variant has yes".
+* A False that rests on "some variant fails this leaf" is *witnessed* (``Ev.wit``): it is only a
+  False of the whole expression in THAT variant. ``any`` is False only if every child is False in one
+  and the same variant, so an ``any`` with two witnessed False children is unknown (``A`` fails for
+  one user and ``B`` for another proves nothing); one witnessed child beside children that are False
+  for every variant (a leaf that does not vary) is False. ``all`` is False as soon as one child is,
+  witnessed or not. A True never needs this: every variant satisfied the leaf.
 """
 from __future__ import annotations
 
@@ -37,6 +47,9 @@ class LeafEval:
     leaf: X.Leaf
     spec: HF.FieldSpec
     res: HF.Resolved
+    # per-variant leaves only: the value of the first variant that decided it False (what to show)
+    shown: Any = None
+    has_shown: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,8 @@ class Ev:
     kids: tuple["Ev", ...] = ()
     leaf: Optional[LeafEval] = None
     rel: Rel = ()
+    notes: tuple[str, ...] = ()        # limits of the evidence the TRUE/FALSE answer rests on
+    wit: bool = False                  # a False that holds in some variant, not in every one
 
 
 def _cidrs(values: Iterable[str]) -> list[Any]:
@@ -105,9 +120,9 @@ def _score(rel: Rel) -> tuple:
     return (min(f.observed_at for f, _ in rel), min(t.rank for _, t in rel))
 
 
-def _best(kids: list[Ev]) -> Rel:
+def _best(kids: list[Ev]) -> Ev:
     best = max(range(len(kids)), key=lambda i: (_score(kids[i].rel), -i))
-    return kids[best].rel
+    return kids[best]
 
 
 def union_rel(rels: Iterable[Rel]) -> Rel:
@@ -135,11 +150,37 @@ class HostEvaluator:
             self._cache[key] = got
         return got
 
-    def evaluate(self, node: X.Node) -> Ev:
+    def _per_variant(self, node: X.Leaf, spec: HF.FieldSpec, res: HF.Resolved) -> Ev:
+        """A leaf over a key Match blocks change: every variant must satisfy it. One that does not
+        (definitely) makes it False; one that cannot be read leaves it unknown unless another already
+        failed; all satisfied is True."""
+        tvs: list[Tri] = []
+        shown: Any = None
+        has_shown = False
+        for v in res.variants:
+            if v is None:
+                tvs.append(None)
+                continue
+            try:
+                t: Tri = compare(node, spec, v)
+            except Exception:                    # noqa: BLE001 - a comparison that cannot run is unknown
+                t = None
+            tvs.append(t)
+            if t is False and not has_shown:
+                shown, has_shown = v, True
+        tv = K.k_all(tvs)
+        if tv is None or res.fact is None or res.tier is None:
+            return Ev(node, None, leaf=LeafEval(node, spec, res))
+        return Ev(node, tv, leaf=LeafEval(node, spec, res, shown, has_shown),
+                  rel=((res.fact, res.tier),), wit=tv is False)
+
+    def evaluate(self, node: X.Node, under_not: bool = False) -> Ev:
         if isinstance(node, X.Leaf):
             spec = HF.REGISTRY[node.field]
             res = self.resolve(node)
             if not res.known:
+                if res.variants and not under_not:
+                    return self._per_variant(node, spec, res)
                 return Ev(node, None, leaf=LeafEval(node, spec, res))
             try:
                 tv: Tri = compare(node, spec, res.value)
@@ -149,30 +190,55 @@ class HostEvaluator:
             assert res.fact is not None and res.tier is not None
             rel: Rel = ((res.fact, res.tier),) + tuple(
                 (f, f.tier if f.tier.rank <= HF.CFG.rank else HF.CFG) for f in res.also)
-            return Ev(node, tv, leaf=LeafEval(node, spec, res), rel=rel)
+            return Ev(node, tv, leaf=LeafEval(node, spec, res), rel=rel, notes=res.notes)
         if isinstance(node, X.Not):
-            c = self.evaluate(node.child)
-            return Ev(node, K.k_not(c.tv), (c,), rel=c.rel if c.tv is not None else ())
-        kids = [self.evaluate(c) for c in node.children]
+            c = self.evaluate(node.child, True)
+            known = c.tv is not None
+            return Ev(node, K.k_not(c.tv), (c,), rel=c.rel if known else (),
+                      notes=c.notes if known else ())
+        kids = [self.evaluate(c, under_not) for c in node.children]
         tvs = [k.tv for k in kids]
         tv = K.k_all(tvs) if node.kind == "all" else K.k_any(tvs)
         if tv is None:
             return Ev(node, None, tuple(kids))
+        wit = False
+        if tv is False:
+            if node.kind == "all":
+                wit = all(k.wit for k in kids if k.tv is False)     # one uniform False is enough
+            else:
+                n = sum(1 for k in kids if k.wit)
+                if n > 1:                    # False in different variants: no variant fails them all
+                    return Ev(node, None, tuple(kids))
+                wit = n == 1
         # all+True, any+False: every child took part. all+False, any+True: one child is enough, so
         # rely on the best one (latest expiry, then strongest tier), deterministically.
         every = (node.kind == "all") == (tv is True)
         if every:
             rel = union_rel(k.rel for k in kids)
+            notes = tuple(sorted({n for k in kids for n in k.notes}))
         else:
-            rel = _best([k for k in kids if k.tv is tv])
-        return Ev(node, tv, tuple(kids), rel=rel)
+            one = _best([k for k in kids if k.tv is tv])
+            rel, notes = one.rel, one.notes
+        return Ev(node, tv, tuple(kids), rel=rel, notes=notes, wit=wit)
 
 
 # --------------------------------------------------------------------------------------------
 # provenance
 
+def _variant_leaves(ev: Ev) -> list[LeafEval]:
+    """Leaves under ``ev`` that were decided by looking at the variants of a key Match blocks change."""
+    if ev.leaf is not None:
+        return [ev.leaf] if ev.leaf.res.variants else []
+    out: list[LeafEval] = []
+    for k in ev.kids:
+        out.extend(_variant_leaves(k))
+    return out
+
+
 def unknown_leaves(ev: Ev) -> list[LeafEval]:
-    """Every leaf under an unknown node that is itself unknown (what to fix to decide the host)."""
+    """Every leaf under an unknown node that is itself unknown (what to fix to decide the host). An
+    ``any`` that is unknown only because two of its children fail in different variants has no
+    unknown leaf: its variant-dependent leaves (``match_override``) are what keep it open."""
     if ev.tv is not None:
         return []
     if ev.leaf is not None:
@@ -180,7 +246,7 @@ def unknown_leaves(ev: Ev) -> list[LeafEval]:
     out: list[LeafEval] = []
     for k in ev.kids:
         out.extend(unknown_leaves(k))
-    return out
+    return out or _variant_leaves(ev)
 
 
 def blame(ev: Ev, want: bool, path: tuple[int, ...] = (0,), negations: int = 0) \
@@ -214,20 +280,28 @@ def predicate_text(leaf: X.Leaf, negations: int) -> str:
     return t
 
 
+#: What a host-controlled value may show in a witness (and so in a finding, a ticket, a terminal).
+#: Everything else, markup, spaces, quotes, brackets and non-ASCII included, is shown as ``?``.
+SAFE_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:/@,-")
+OBSERVED_LIMIT = 120
+
+
 def clean_text(s: str) -> str:
-    """Printable ASCII only: a value a host reported ends up in witnesses, findings and terminals."""
-    return "".join(c if " " <= c <= "~" else "?" for c in s)
+    """Restricted alphabet ``[A-Za-z0-9._:/@,-]``, ``?`` for any other character: a value a host
+    reported must not carry markup, links or instructions into witnesses, findings and terminals."""
+    return "".join(c if c in SAFE_CHARS else "?" for c in s)
 
 
-def fmt_observed(value: Any, limit: int = 200) -> str:
+def fmt_observed(value: Any, limit: int = OBSERVED_LIMIT) -> str:
     if isinstance(value, bool):
         s = "true" if value else "false"
     elif isinstance(value, frozenset):
         s = ",".join(sorted(str(v) for v in value))
     else:
         s = str(value)
-    s = clean_text(s)
-    return s if len(s) <= limit else s[:limit - 3] + "..."
+    cut = len(s) > limit
+    s = clean_text(s[:limit])           # cut first: a set of thousands of names is never scanned whole
+    return s[:limit - 3] + "..." if cut else s
 
 
 def fmt_expected(leaf: X.Leaf) -> str:
@@ -247,5 +321,7 @@ def op_text(leaf: X.Leaf) -> str:
 
 def observed_value(le: LeafEval) -> Any:
     """What the host's fact said for this leaf (the count, for a ``count()`` leaf)."""
+    if le.has_shown:
+        return le.shown
     v = le.res.value
     return len(v) if le.leaf.count else v

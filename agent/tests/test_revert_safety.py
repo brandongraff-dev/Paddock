@@ -171,16 +171,37 @@ def test_a_revert_of_the_hosts_file_only_removes_the_one_line_we_wrote(host):
 # legitimate plans still revert (typed fields, and the legacy commands-only shape)
 # --------------------------------------------------------------------------- #
 
-def test_block_ip_roundtrip_executes_only_the_derived_removals(host):
-    enf, runner, _h, _t = host
+def _changes(runner):
+    """The commands that change the firewall (-I / -D), without the read-only ``-C`` probes (P2 review agent-4/7:
+    every insert and delete is preceded by an ``iptables -C`` existence check)."""
+    return [c for c in runner.calls if c[1] in ("-I", "-D")]
+
+
+class _AbsentRunner(Runner):
+    """-C says the rule is absent (rc 1) until ``present`` is set; everything else succeeds."""
+    present = False
+
+    def __call__(self, cmd):
+        from paddock_agent.platform_block import CompletedLike
+        self.calls.append(list(cmd))
+        return CompletedLike(1 if (cmd[1] == "-C" and not self.present) else 0, "", "")
+
+
+def test_block_ip_roundtrip_executes_only_the_derived_removals(tmp_path):
+    runner = _AbsentRunner()
+    enf = LinuxEnforcer(runner=runner, quarantine_dir=str(tmp_path / "q"), hosts_path=str(tmp_path / "h"))
     res = enf.apply("block_ip", "203.0.113.10")
-    assert runner.calls == [["iptables", "-I", "INPUT", "-s", "203.0.113.10", "-j", "DROP"],
+    assert runner.calls == [["iptables", "-C", "INPUT", "-s", "203.0.113.10", "-j", "DROP"],
+                            ["iptables", "-I", "INPUT", "-s", "203.0.113.10", "-j", "DROP"],
+                            ["iptables", "-C", "OUTPUT", "-d", "203.0.113.10", "-j", "DROP"],
                             ["iptables", "-I", "OUTPUT", "-d", "203.0.113.10", "-j", "DROP"]]
     runner.calls.clear()
+    runner.present = True                            # the rules now exist: -C succeeds
     out = revert_action(_revert_action(res["revert"]), enf, agent_dry_run=False)
     assert out.status == "applied"
-    assert runner.calls == [["iptables", "-D", "INPUT", "-s", "203.0.113.10", "-j", "DROP"],
-                            ["iptables", "-D", "OUTPUT", "-d", "203.0.113.10", "-j", "DROP"]]
+    assert _changes(runner) == [["iptables", "-D", "INPUT", "-s", "203.0.113.10", "-j", "DROP"],
+                                ["iptables", "-D", "OUTPUT", "-d", "203.0.113.10", "-j", "DROP"]]
+    assert [c[1] for c in runner.calls] == ["-C", "-D", "-C", "-D"]
 
 
 def test_legacy_commands_only_plan_is_accepted_when_it_is_exactly_what_we_would_build(host):
@@ -188,12 +209,12 @@ def test_legacy_commands_only_plan_is_accepted_when_it_is_exactly_what_we_would_
     legacy = {"mechanism": "iptables", "commands": [
         ["iptables", "-D", "INPUT", "-p", "tcp", "--dport", "22", "-j", "DROP"]]}
     assert enf.revert(legacy) == {"reverted": legacy["commands"]}
-    assert runner.calls == legacy["commands"]
+    assert _changes(runner) == legacy["commands"]
     runner.calls.clear()
     out_rule = {"mechanism": "iptables", "commands": [
         ["iptables", "-D", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "DROP"]]}
     enf.revert(out_rule)
-    assert runner.calls == out_rule["commands"]
+    assert _changes(runner) == out_rule["commands"]
 
 
 def test_server_plan_cannot_widen_what_runs_even_with_valid_typed_fields(host):
@@ -313,8 +334,10 @@ def test_ipv6_block_ip_is_refused_loudly_at_every_layer(host):
     # IPv4 is untouched and an IPv4-mapped IPv6 literal counts as IPv6
     assert apply_action(Action(id="a2", action_type="block_ip", target="::ffff:203.0.113.5", status="approved",
                                dry_run=False), enf, agent_dry_run=False).status == "failed"
-    assert apply_action(Action(id="a3", action_type="block_ip", target="203.0.113.5", status="approved",
-                               dry_run=False), enf, agent_dry_run=False).status == "applied"
+    # (the rule is tagged with the action id, so a real apply needs a UUID id: the agent only ever sees those)
+    assert apply_action(Action(id="a3a3a3a3-a3a3-43a3-83a3-a3a3a3a3a3a3", action_type="block_ip",
+                               target="203.0.113.5", status="approved", dry_run=False), enf,
+                        agent_dry_run=False).status == "applied"
 
 
 # --------------------------------------------------------------------------- #

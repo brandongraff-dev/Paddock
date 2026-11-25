@@ -68,6 +68,34 @@ class HostFacts:
 
 EMPTY = HostFacts(MappingProxyType({}))
 
+#: ``nodes[].facts.host_agent`` is the builder's own summary of the host's agent (not a collector
+#: section). When the agent is gone the builder leaves a *tombstone*: ``data.agent_status`` (or
+#: ``data.status``, or the fact's ``reason``) names why. A tombstoned host stays in the graph and
+#: reads UNKNOWN (``agent_revoked``); nothing its old agent signed is relied on.
+TOMBSTONE_COLLECTOR = "host_agent"
+TOMBSTONE_STATUSES = frozenset(["revoked", "legacy", "rekeyed"])
+TOMBSTONE_REASONS = frozenset(["agent_revoked", "agent_legacy", "agent_rekeyed",
+                               "revoked", "legacy", "rekeyed"])
+
+
+def tombstone(host: Optional[HostFacts]) -> str:
+    """``revoked`` | ``legacy`` | ``rekeyed`` when the host's ``host_agent`` fact says its agent is
+    gone, else ``""``. Unsigned and unavailable on purpose: it is a server-side statement, and a
+    marker can only ever make a host *less* decided."""
+    if host is None:
+        return ""
+    f = host.get(TOMBSTONE_COLLECTOR)
+    if f is None:
+        return ""
+    for key in ("agent_status", "status"):
+        v = f.data.get(key)
+        if isinstance(v, str) and v.lower() in TOMBSTONE_STATUSES:
+            return v.lower()
+    r = f.reason.lower()
+    if r in TOMBSTONE_REASONS:
+        return r[len("agent_"):] if r.startswith("agent_") else r
+    return ""
+
 
 def _ts(value: Any, what: str) -> dt.datetime:
     if not isinstance(value, str):

@@ -71,7 +71,11 @@ def _sshd(password="no", root="no", seq=1, **kw):
     cfg = {"passwordauthentication": password, "kbdinteractiveauthentication": "no",
            "permitrootlogin": root, "pubkeyauthentication": "yes", "permitemptypasswords": "no",
            "usepam": "yes", "maxauthtries": 3, "authenticationmethods": "any", "port": [22]}
-    return _fact({"installed": True, "source": "sshd_T", "config": cfg,
+    daemon = {"found": True, "masters": 1, "pid": 812, "start_epoch": 1780000000, "reexec_epoch": None,
+              "config_path": None, "config_default": True, "options_override": False,
+              "binary_matches": True, "config_mtime": 1770000000,
+              "reload_pending": False}       # positive evidence that the daemon runs these files
+    return _fact({"installed": True, "source": "sshd_T", "config": cfg, "daemon": daemon,
                   "probes": {"deltas": []}, "match": {"blocks": 0, "unprobed": False}}, seq=seq, **kw)
 
 

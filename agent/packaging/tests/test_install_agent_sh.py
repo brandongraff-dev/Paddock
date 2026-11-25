@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSI
 TOKEN = "fet_0123456789ab_Sup3rS3cretTokenValue_0123456789"
 SERVER = "https://paddock.example.com"
 TOOLS = ("sh", "dash", "awk", "sed", "head", "tr", "cat", "cp", "mv", "rm", "mkdir", "chmod", "ln", "id", "uname",
-         "mktemp", "sha256sum", "dirname", "basename", "stty", "grep", "env", "sleep", "readlink")
+         "mktemp", "sha256sum", "dirname", "basename", "stty", "grep", "env", "sleep", "readlink", "find")
 
 
 def clean_env(path=None, **extra):
@@ -286,8 +286,11 @@ def test_staged_install_writes_the_right_files_with_the_right_modes(tmp_path, re
     assert res.returncode == 0, out(res)
     pyz = root / "usr/local/lib/paddock-agent/paddock-agent.pyz"
     assert pyz.read_bytes() == real_pyz.read_bytes() and pyz.stat().st_mode & 0o777 == 0o755
+    # was: a symlink to the archive, run through its `#!/usr/bin/env python3` line (P2 review pkg-8: that is not the
+    # interpreter the installer verified). Now a wrapper that execs the verified interpreter; see test_installer_p2x.py.
     link = root / "usr/local/bin/paddock"
-    assert os.path.islink(str(link)) and os.readlink(str(link)) == "/usr/local/lib/paddock-agent/paddock-agent.pyz"
+    assert not os.path.islink(str(link)) and link.stat().st_mode & 0o777 == 0o755
+    assert "exec '%s' '/usr/local/lib/paddock-agent/paddock-agent.pyz' \"$@\"" % sys.executable in link.read_text()
     env_file = root / "etc/paddock-agent/agent.env"
     assert env_file.stat().st_mode & 0o777 == 0o600
     assert env_file.read_text().splitlines()[-1] == "PADDOCK_SERVER=" + SERVER

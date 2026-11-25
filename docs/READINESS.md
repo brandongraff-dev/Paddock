@@ -245,9 +245,8 @@ inbound by default. The verdict is "no counterexample under this evidence", at e
   of the selector of "all hosts" invariants; unless it is a declared `server` (which reads `UNKNOWN: no_agent`)
   nothing says it went missing. Findings for a host that left the selector are closed as fixed although it was
   never proven.
-- **No UI**: the dashboard's Fleet page does not mint tokens, rotate keys or show verdicts. The events
-  `agent.offline` / `agent.online` are audit rows only until they are registered as integration event types, and
-  the posture freshness limit (6 h) is not yet a setting.
+- **No UI**: the dashboard's Fleet page does not mint tokens, rotate keys or show verdicts. The posture
+  freshness limit (6 h) is not yet a setting.
 - **Rate limits are per process**, so N orchestrator replicas allow N times the limit.
 - No KEV matching or distro advisory data (patch state is collected, not judged), no Windows or macOS.
 

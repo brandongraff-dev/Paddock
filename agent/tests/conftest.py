@@ -30,7 +30,7 @@ class RecordingEnforcer(BaseEnforcer):
         self.calls.append(("simulate", self._key(action_type, target)))
         return {"would": self._plan(action_type, target), "dry_run": True}
 
-    def validate_revert(self, plan: Any) -> dict[str, Any]:
+    def validate_revert(self, plan: Any, ledger: Any = None) -> dict[str, Any]:
         # The fake knows exactly one plan shape; anything else is refused like the real enforcer does.
         if not isinstance(plan, dict) or plan.get("mechanism") != "fake" or not isinstance(plan.get("key"), str):
             raise RevertRefused("not a plan this fake could have produced")

@@ -35,8 +35,8 @@ GOOD = [
     ("host.sshd.usepam", (), "sshd", "yes"),
     ("host.sshd.authenticationmethods", (), "sshd", "any"),
     ("host.sshd.maxauthtries", (), "sshd", 3),
-    ("host.sshd.allowusers", (), "sshd", frozenset()),
-    ("host.sshd.allowgroups", (), "sshd", frozenset()),
+    ("host.sshd.allowusers_set", (), "sshd", False),        # no AllowUsers: everyone may log in
+    ("host.sshd.allowgroups_set", (), "sshd", False),
     ("host.fw.default_inbound_all_families", (), "firewall", "deny"),
     ("host.fw.engine", (), "firewall", "nft"),
     ("host.fw.ipv6_enabled", (), "firewall", True),
@@ -267,8 +267,12 @@ def test_scalar_values_outside_the_vocabulary_are_unknown():
     assert not res("host.sshd.maxauthtries", (), sshd_facts(maxauthtries=True)).known
 
 
-def test_allow_lists_absent_means_empty_present_means_set():
-    assert res("host.sshd.allowusers", (), sshd_facts()).value == frozenset()
+def test_allow_lists_absent_has_no_value_present_means_set():
+    # was "absent = the empty set": that made `subset_of` / `count()` pass the least restricted host
+    # (P2 review hostcfg-1). An absent key now has no value; allowusers_set says it is not configured.
+    r = res("host.sshd.allowusers", (), sshd_facts())
+    assert not r.known and r.reason == "unrestricted"
+    assert res("host.sshd.allowusers_set", (), sshd_facts()).value is False
     r = res("host.sshd.allowusers", (), sshd_facts(allowusers=["deploy", "ops"]))
     assert r.value == frozenset(["deploy", "ops"])
     assert not res("host.sshd.allowusers", (), sshd_facts(allowusers="deploy")).known
@@ -283,8 +287,10 @@ def test_installed_true_only_from_an_ok_fact():
 
 
 def absent_sshd(**lst):
+    # a public listener of a program known to be no SSH server (nginx is NOT one: a web server or
+    # proxy can front an SSH server, P2 review hostcfg-2)
     return good_facts(sshd=fact({}, status="unavailable", reason="tool_missing"),
-                      listeners=fact(listeners(ports=(443,)), **lst))
+                      listeners=fact(listeners(ports=(443,), comms={443: "postgres"}), **lst))
 
 
 def test_installed_false_needs_a_corroborating_listener_table():

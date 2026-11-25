@@ -27,6 +27,9 @@ ReadWritePaths=/var/lib/paddock-agent
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ProtectKernelTunables=yes
 SystemCallFilter=@system-service
+# DAC_READ_SEARCH and SYS_PTRACE read root-only host state; NET_ADMIN reaches nft and iptables-nft over netlink.
+# NOT CAP_NET_RAW: legacy iptables (iptables-legacy) opens a raw socket, so on a host whose firewall is legacy
+# iptables the firewall facts read UNKNOWN and block_ip fails under this unit (docs/AGENT_V2.md section 3).
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_ADMIN
 
 [Install]

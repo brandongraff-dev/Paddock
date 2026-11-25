@@ -131,12 +131,19 @@ The agent runs **on target hosts**, opt-in. Do **not** add it to `docker-compose
 signed release installer (see [AGENT_V2.md](AGENT_V2.md)):
 
 ```bash
-printf %s "$ENROLL_TOKEN" | sudo ./install-agent.sh --server https://paddock.example.com
+printf %s "$ENROLL_TOKEN" | sudo sh ./install-agent.sh --server https://paddock.example.com --require-cosign
 ```
+
+(Run it with `sh ./install-agent.sh`: a downloaded file is not executable. Never put the token after `sudo`
+as `VAR=...`; that is visible in the process list.)
 
 That installs a single-file archive (`paddock-agent.pyz`, standard library only, Python 3.8 or newer), a hardened
 systemd unit (one root process; `NoNewPrivileges`, `ProtectSystem=strict`, a capability bounding set of
 `CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_ADMIN`, and more) and enrolls the host. The token is never an argument.
+Re-running it upgrades the agent (it restarts the service) and keeps your other `agent.env` settings. That
+capability set reaches nftables / `iptables-nft` over netlink but has no `CAP_NET_RAW`, so on a host whose
+firewall is **legacy iptables** the agent cannot read or change it: its firewall facts read `UNKNOWN` and
+`block_ip` / `firewall_rule` fail ([AGENT_V2.md](AGENT_V2.md) section 3).
 For development: `cd agent && pip install -e .` provides the `paddock` command.
 
 A container image exists for trying the agent on a Linux host (`docker build -t paddock/agent agent/`). Give the
@@ -154,10 +161,12 @@ A containerised agent cannot see the host's binaries, so those facts are reporte
 
 ### Required capabilities (why it's opt-in)
 
-Collection is read-only and needs root (or `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE`, `CAP_NET_ADMIN`). To actually
+Collection is read-only and needs root (or `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE`, `CAP_NET_ADMIN`, plus
+`CAP_NET_RAW` to read legacy iptables tables, which the shipped unit does not grant). To actually
 **apply** host-local blocks on Linux the agent needs:
 
-- the **`NET_ADMIN`** capability to edit firewall rules (and host networking in a container);
+- the **`NET_ADMIN`** capability to edit firewall rules over netlink (nft, `iptables-nft`; legacy iptables also
+  needs `CAP_NET_RAW`, and a writable `/run/xtables.lock`), and host networking in a container;
 - write access to `/etc/hosts` (domain sinkhole) and to the quarantine dir (`quarantine_file`). **The shipped
   systemd unit makes those read-only** (`ProtectSystem=strict`), so `block_domain` and `quarantine_file` fail
   under it until you widen `ReadWritePaths=` on purpose.
@@ -167,6 +176,14 @@ only** (explicit `NotImplemented` stubs): they simulate a plan but never apply. 
 (`ipv6_not_supported`) rather than silently doing nothing. A revert plan from the server is treated as data: the
 agent re-derives the only command it could have produced from the original typed action and refuses anything
 else.
+
+The agent is in **dry-run unless you set `PADDOCK_DRY_RUN=false`** in `/etc/paddock-agent/agent.env`, and even
+then it applies only what the server marked approved for real. On the host it also refuses a block that would cut
+it off from its own server (`self_lockout`: the server's addresses, loopback, outbound to the server's port,
+DNS when the server is a name), and it removes a `block_ip` / `firewall_rule` itself when no successful round
+trip to the server follows within `PADDOCK_NETBLOCK_DEADMAN_MIN` minutes (default 10, `0` = off). That dead-man
+removal is local only: the server is not told, so its record of the action can lag. Details in
+[AGENT_V2.md](AGENT_V2.md) section 3.
 
 ---
 

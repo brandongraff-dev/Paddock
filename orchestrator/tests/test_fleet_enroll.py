@@ -943,6 +943,8 @@ def schema_before_041(tmp_path):
     d = tmp_path / "schema"
     shutil.copytree(SCHEMA_DIR, d)
     (d / "041_agent_v2.sql").unlink()
+    for later in d.glob("04[2-9]_*.sql"):         # files that build on 041 (042 hardens its tables) do not exist yet
+        later.unlink()
     return d
 
 
@@ -1005,6 +1007,9 @@ async def test_preexisting_agents_are_marked_legacy_and_nothing_else_changes(emp
             assert rls["relrowsecurity"] and rls["relforcerowsecurity"], t
             assert await con.fetchval(
                 "SELECT count(*) FROM pg_policies WHERE tablename = $1 AND policyname = 'tenant_isolation'", t) == 1
+        # 042 (hardening: rotated_from, enroll_token_id) builds on 041 and applies cleanly on top of it
+        shutil.copy(SCHEMA_DIR / "042_agent_v2_hardening.sql", schema_before_041 / "042_agent_v2_hardening.sql")
+        assert (await _up(empty_db, schema_before_041)).applied == ["042_agent_v2_hardening.sql"]
         # a v2 agent enrolled afterwards is not legacy, and re-running the whole file marks nothing new
         pool = await asyncpg.create_pool(empty_db, min_size=1, max_size=2)
         try:

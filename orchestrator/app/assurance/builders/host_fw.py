@@ -44,6 +44,7 @@ network or randomness; ``now`` is a parameter; the output is sorted and byte-sta
 """
 from __future__ import annotations
 
+import asyncio
 import bisect
 import datetime as dt
 import hashlib
@@ -51,6 +52,9 @@ import ipaddress
 import json
 import logging
 import re
+import threading
+import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
 
@@ -64,6 +68,7 @@ SOURCE = "host_fw"
 
 #: how old a posture may be and still count (the runner passes ``agent_posture_max_age``).
 DEFAULT_POSTURE_MAX_AGE = dt.timedelta(hours=6)
+DEFAULT_EXTERNAL_MAX_AGE = dt.timedelta(hours=168)    # how long an external scan observation is kept (settings)
 #: edges from the last good posture of a silent/stale agent are kept this long (over-approximation).
 DEFAULT_SILENT_EDGE_TTL = dt.timedelta(days=7)
 FUTURE_SKEW = dt.timedelta(minutes=5)
@@ -93,6 +98,29 @@ _PORT_PROTOS = frozenset(("dccp", "sctp", "tcp", "udp", "udplite"))
 _KNOWN_M = frozenset(("iif", "oif", "src", "dst", "proto", "sport", "dport", "ct", "icmp", "dtype"))
 #: a protocol number nothing special-cases: "any other IP protocol" for the covered-host probe.
 _OTHER_PROTO = "p253"
+# The canonical tokens of a rule's ``m`` (agent/paddock_agent/collectors/fwmodel.py). The agent always writes these;
+# a token outside them (version skew, a bug, a lying host) is NOT "a rule that does not match": the rule is marked
+# unknown and explored both ways, so a rule can never silently disappear (review finding hostfw-8).
+_PROTO_NAMES = frozenset(("tcp", "udp", "icmp", "icmpv6", "sctp", "dccp", "udplite", "gre", "esp", "ah", "igmp",
+                          "ipip", "ipv6"))
+_PROTO_NUMBERS = frozenset((1, 2, 4, 6, 17, 33, 41, 47, 50, 51, 58, 132, 136))   # have a name: 'pNNN' is not their spelling
+_CT_STATES = frozenset(("established", "invalid", "new", "related", "untracked"))
+_DTYPES = frozenset(("anycast", "broadcast", "local", "multicast", "unicast"))
+_PNNN = re.compile(r"p(0|[1-9][0-9]{0,2})")
+_IFNAME = re.compile(r"[\x21-\x7e]{1,15}")            # printable, no space; the kernel's limit is 15 characters
+
+
+def _canonical_proto(tok: Any) -> bool:
+    if not isinstance(tok, str):
+        return False
+    if tok in _PROTO_NAMES:
+        return True
+    m = _PNNN.fullmatch(tok)
+    return m is not None and int(tok[1:]) <= 255 and int(tok[1:]) not in _PROTO_NUMBERS
+
+
+def _canonical_ifname(tok: Any) -> bool:
+    return isinstance(tok, str) and _IFNAME.fullmatch(tok) is not None and "*" not in tok and "/" not in tok
 _NAT_FEATURES = frozenset(("nat_rewrite", "ipvs", "notrack"))
 _UNIVERSE = {4: (1 << 24, (224 << 24) - 1), 6: (1, (0xFF00 << 112) - 1)}
 _WORLD = {4: refs.cidr_ref("0.0.0.0/0"), 6: refs.cidr_ref("::/0")}
@@ -234,10 +262,11 @@ class _Rule:
         self.has_dst = "dst" in m
         for key in ("iif", "oif", "proto"):
             if key in m:
-                if isinstance(m[key], str) and m[key]:
+                if isinstance(m[key], str) and (_canonical_proto(m[key]) if key == "proto"
+                                                 else _canonical_ifname(m[key])):
                     setattr(self, key, m[key])
                 else:
-                    self.unknown = True
+                    self.unknown = True        # the condition is NOT applied (it would decide "no match"), the rule is "maybe"
         for key in ("src", "dst"):
             if key in m:
                 ivs = _cidr_ivs(m[key], fam)
@@ -250,14 +279,15 @@ class _Rule:
                 if ivs is None:
                     self.unknown = True
                 setattr(self, key, ivs)
-        for key in ("ct", "dtype"):
+        for key, canon in (("ct", _CT_STATES), ("dtype", _DTYPES)):
             if key in m:
-                if isinstance(m[key], list) and m[key] and all(isinstance(x, str) for x in m[key]):
+                if (isinstance(m[key], list) and m[key] and all(isinstance(x, str) for x in m[key])
+                        and set(m[key]) <= canon):
                     setattr(self, key, frozenset(m[key]))
                 else:
                     self.unknown = True
         if "icmp" in m:
-            if isinstance(m["icmp"], list) and m["icmp"] and all(_is_int(x) for x in m["icmp"]):
+            if isinstance(m["icmp"], list) and m["icmp"] and all(_is_int(x) and 0 <= x <= 255 for x in m["icmp"]):
                 self.icmp = frozenset(m["icmp"])
             else:
                 self.unknown = True
@@ -989,7 +1019,13 @@ def _finish(reach: _Reach, fw: _Fw) -> _Reach:
 # facts: compact, signed, tier configured
 # --------------------------------------------------------------------------- #
 
-_SSHD_KEYS = ("installed", "source", "version", "binary", "socket_activated", "config", "probes", "match")
+# ``daemon`` (the RUNNING sshd) and ``truncated`` (config keys the collector cut) go through UNCHANGED: the library
+# accepts a config claim only on the daemon block's positive evidence and reads a cut list as unknown.
+_SSHD_KEYS = ("installed", "source", "version", "binary", "socket_activated", "config", "probes", "match",
+              "daemon", "truncated")
+#: listener rows a fact carries (the rest of a big table is counted, never stored: the library reads
+#: ``count != len(listeners)`` as an incomplete table, so no claim of absence can rest on it)
+MAX_FACT_LISTENERS = 200
 
 
 def _clip(value: Any, depth: int = 0) -> Any:
@@ -1039,14 +1075,43 @@ def _compact_firewall(v: Mapping[str, Any]) -> dict[str, Any]:
     return _clip(out)
 
 
+def _norm_ip(ip: Any) -> Any:
+    """The canonical text of an address (a long, odd spelling cannot bloat a fact row); anything that does not
+    parse is kept, clipped, so the library still sees what the host said."""
+    if not isinstance(ip, str):
+        return ip
+    try:
+        return ipaddress.ip_address(ip.strip()).compressed
+    except ValueError:
+        return ip[:64]
+
+
+def _exe_name(exe: Any) -> Any:
+    """The executable's BASENAME: all the library reads of it is the name (is it an SSH server?), and the
+    directories of a host's binaries are not something a fact needs to carry."""
+    return exe.rsplit("/", 1)[-1] if isinstance(exe, str) else exe
+
+
+def _listener_order(r: Mapping[str, Any]) -> tuple:
+    port = r.get("port")
+    return (r.get("bind_class") == "loopback", port if _is_int(port) else 1 << 20, str(r.get("proto")),
+            str(r.get("ip")))
+
+
 def _compact_listeners(v: Mapping[str, Any]) -> dict[str, Any]:
     rows = []
     for r in v.get("listeners") or []:
         if isinstance(r, dict):
-            rows.append({"proto": r.get("proto"), "ip": r.get("ip"), "port": r.get("port"),
-                         "bind_class": r.get("bind_class"), "comm": r.get("comm")})
-    return _clip({"count": v.get("count"), "listeners": rows, "ipv6": v.get("ipv6"),
-                  "bindv6only": v.get("bindv6only"), "attribution": v.get("attribution")})
+            rows.append({"proto": r.get("proto"), "ip": _norm_ip(r.get("ip")), "port": r.get("port"),
+                         "bind_class": r.get("bind_class"), "comm": r.get("comm"), "exe": _exe_name(r.get("exe"))})
+    omitted = max(0, len(rows) - MAX_FACT_LISTENERS)
+    if omitted:       # reachable rows first; ``count`` keeps the true total, so the table reads as incomplete
+        rows = sorted(rows, key=_listener_order)[:MAX_FACT_LISTENERS]
+    out = {"count": v.get("count"), "listeners": rows, "ipv6": v.get("ipv6"),
+           "bindv6only": v.get("bindv6only"), "attribution": v.get("attribution")}
+    if omitted:
+        out["omitted"] = omitted
+    return _clip(out)
 
 
 def _compact_patch(v: Mapping[str, Any]) -> dict[str, Any]:
@@ -1102,78 +1167,53 @@ class _Ident:
     ref: str
     basis: str                       # claimed | corroborated
     note: str
-    claimed: list                    # sorted claimed bind addresses
-    node_ips: list                   # every address the node is known by
+    claimed: list                    # sorted claimed bind addresses (a CLAIM: never a placement)
+    node_ips: list                   # addresses the node is KNOWN by: the instance's own when corroborated, else none
     addressable: Optional[bool]
+    observed: list = field(default_factory=list)   # the server-observed peer when it is a usable address hint
 
 
 def _claimed_ips(identity: Any) -> list[str]:
-    out: set[str] = set()
-    raw = identity.get("ips") if isinstance(identity, dict) else None
-    for v in raw if isinstance(raw, list) else []:
-        n = _ipmap.norm_ip(v)
-        if n is None:
-            continue
-        ip = ipaddress.ip_address(n)
-        if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_link_local:
-            continue
-        out.add(n)
-        if len(out) >= 32:
-            break
-    return sorted(out)
+    return _ipmap.claimed_ips(identity)
 
 
 def _resolve_identities(agents: list[Mapping[str, Any]], amap: _ipmap.IpMap) -> dict[str, _Ident]:
-    """Decide every agent's node. A cloud instance absorbs an agent ONLY when all hold: its claimed
-    bind addresses are a non-empty subset of that ONE instance's private addresses, the address the
-    server saw the agent connect from (``identity.peer_ip``) is one of the instance's addresses, and no
-    other live agent claims the instance (by the same candidate or by overlapping claimed addresses).
-    Two agents on one cloud node merge NEITHER. This repeats the ingest's rule on purpose: the graph must
-    not depend on a column a bug could have set."""
-    cand: dict[str, str] = {}
-    info: dict[str, dict[str, Any]] = {}
-    for a in agents:
-        aid = str(a["id"])
-        ident = a.get("identity") if isinstance(a.get("identity"), dict) else {}
-        claimed = _claimed_ips(ident)
-        peer = _ipmap.norm_ip(ident.get("peer_ip")) if isinstance(ident.get("peer_ip"), str) else None
-        info[aid] = {"claimed": claimed, "peer": peer, "note": ""}
-        if not claimed:
-            continue
-        owners = {amap.unique.get(ip) for ip in claimed}
-        if len(owners) != 1 or None in owners or any(amap.is_ambiguous(ip) for ip in claimed):
-            if any(amap.is_ambiguous(ip) or amap.unique.get(ip) for ip in claimed):
-                info[aid]["note"] = "ambiguous_cloud_node"
-            continue
-        ref = next(iter(owners))
-        if amap.node_kind(ref) != _INSTANCE_RESOURCE_KIND:
-            continue
-        priv = {ip for ip in amap.ips_of(ref) if not _ipmap.is_public_ip(ip)}
-        if not set(claimed) <= priv:
-            continue
-        if peer is None or peer not in set(amap.ips_of(ref)):
-            info[aid]["note"] = "peer_address_not_instance"
-            continue
-        cand[aid] = ref
-    # clashes: another live agent claims the same instance (same candidate, or overlapping addresses)
+    """Decide every agent's node with the SAME function the ingest uses (:func:`_ipmap.corroborate`, review
+    findings hostfw-2, hostfw-5, wire-5): the graph must not depend on a column a bug could have set, and the
+    column must not disagree with the graph. A cloud instance absorbs an agent ONLY when its claimed addresses
+    are a subset of that one instance's private addresses, the server saw it connect from one of those private
+    addresses, no other enrolled agent presents the same peer address and no other agent that passed the same
+    checks claims the instance. Two agents on one cloud node merge NEITHER; a claim that never passed cannot
+    demote anyone.
+
+    ``node_ips`` is what the node is KNOWN by. An uncorroborated agent is known by NOTHING (review finding
+    hostfw-1): the addresses it claims are the host's own signed words, so they must not decide its zone or
+    which CIDR rules include it; the graph loader treats a node without addresses as possibly anywhere (D6).
+    They stay visible as ``claimed``. ``observed`` is the server-observed peer address when it is private and
+    not shared with another agent: independent of the host's claims, the one hint a zone may rest on."""
+    claims = [_ipmap.claim_of(str(a["id"]), a.get("identity")) for a in agents]
+    decided = _ipmap.corroborate(claims, amap)
+    peers: dict[str, int] = {}
+    for c in claims:
+        if c.peer:
+            peers[c.peer] = peers.get(c.peer, 0) + 1
     out: dict[str, _Ident] = {}
-    for a in agents:
-        aid = str(a["id"])
-        own = refs.agent_ref(aid)
-        ref, basis, note = own, "claimed", info[aid]["note"]
-        x = cand.get(aid)
-        if x is not None:
-            priv = {ip for ip in amap.ips_of(x) if not _ipmap.is_public_ip(ip)}
-            clash = any(str(b["id"]) != aid and (cand.get(str(b["id"])) == x
-                                                 or set(info[str(b["id"])]["claimed"]) & priv)
-                        for b in agents)
-            if clash:
-                note = "ambiguous_cloud_node"
-            else:
-                ref, basis, note = x, "corroborated", ""
-        node_ips = sorted(set(info[aid]["claimed"]) | (set(amap.ips_of(ref)) if basis == "corroborated" else set()))
-        public = any(_ipmap.is_public_ip(ip) for ip in node_ips)
-        out[aid] = _Ident(aid, ref, basis, note, info[aid]["claimed"], node_ips, True if public else None)
+    for c in claims:
+        aid = c.agent_id
+        d = decided[aid]
+        if d.ref is not None:
+            ref, basis, note = d.ref, "corroborated", ""
+            node_ips = sorted(set(c.ips) | set(amap.ips_of(ref)))
+        else:
+            ref, basis, note = refs.agent_ref(aid), "claimed", d.note
+            node_ips = []
+        public = any(_ipmap.is_public_ip(ip) for ip in (set(c.ips) | set(amap.ips_of(ref))
+                                                         if basis == "corroborated" else c.ips))
+        usable_peer = (basis == "claimed" and c.direct and c.peer is not None and not _ipmap.is_public_ip(c.peer)
+                       and peers.get(c.peer, 0) == 1 and ipaddress.ip_address(c.peer).is_private
+                       and not ipaddress.ip_address(c.peer).is_loopback)
+        out[aid] = _Ident(aid, ref, basis, note, list(c.ips), node_ips, True if public else None,
+                          [c.peer] if usable_peer else [])
     return out
 
 
@@ -1182,12 +1222,13 @@ def _resolve_identities(agents: list[Mapping[str, Any]], amap: _ipmap.IpMap) -> 
 # --------------------------------------------------------------------------- #
 
 def _scan_conflicts(fw: _Fw, lst: _Lst, ident: _Ident, scans: Mapping[str, list[Mapping[str, Any]]],
-                    collected_at: dt.datetime) -> list[dict[str, Any]]:
+                    collected_at: dt.datetime, cover: Optional[Mapping[str, list[Mapping[str, Any]]]] = None
+                    ) -> list[dict[str, Any]]:
     """See :func:`_scan_conflicts_unbounded`. When the check itself is too expensive to finish, the host
     carries a conflict marker (no coverage, every fact unusable): it cannot be shown NOT to contradict the scan."""
     with _Limited(fw):
         try:
-            return _scan_conflicts_unbounded(fw, lst, ident, scans, collected_at)
+            return _scan_conflicts_unbounded(fw, lst, ident, scans, collected_at, cover or {})
         except _BudgetExceeded:
             return [{"kind": "agent_scan_check_budget_exceeded", "proto": "any", "port": 0,
                      "scan_seen_at": _iso(collected_at)}]
@@ -1195,23 +1236,27 @@ def _scan_conflicts(fw: _Fw, lst: _Lst, ident: _Ident, scans: Mapping[str, list[
 
 def _scan_conflicts_unbounded(fw: _Fw, lst: _Lst, ident: _Ident,
                               scans: Mapping[str, list[Mapping[str, Any]]],
-                              collected_at: dt.datetime) -> list[dict[str, Any]]:
-    """Ports the external scan saw open on this node, newer than the posture, that the agent models as
-    closed. Only a host whose firewall and listener table are exact can claim "closed", so only such a
-    host can contradict a scan. A conflict is evidence the host's signature carries a falsehood."""
+                              collected_at: dt.datetime,
+                              cover: Mapping[str, list[Mapping[str, Any]]]) -> list[dict[str, Any]]:
+    """Ports the external scan saw open on this node (an observation still inside the external window) that the
+    agent models as closed. Only a host whose firewall and listener table are exact can claim "closed", so only such
+    a host can contradict a scan. A conflict is evidence the host's signature carries a falsehood.
+
+    The conflict is STICKY (review finding hostfw-3): while the observation is in the graph, a newer posture that
+    repeats "closed" does not clear it (a persistent liar would otherwise read HOLDS between two scans). It is
+    cleared only by positive evidence: a later completed FULL scan of this node (it finished after the posture was
+    collected) that started after the last observation of the port and so did not see it open again. The scanner is
+    TCP only; it never clears a UDP observation."""
     if not fw.exact or not lst.complete:
         return []
-    mine = {ident.ref, refs.agent_ref(ident.agent_id)} | {f"ip:{ip}" for ip in ident.node_ips}
-    out: dict[tuple[str, int], dict[str, Any]] = {}
-    horizon = collected_at - CONFLICT_SLACK
+    mine = {ident.ref, refs.agent_ref(ident.agent_id)} | {f"ip:{ip}" for ip in (*ident.node_ips, *ident.claimed)}
+    last: dict[tuple[str, int], dt.datetime] = {}
     matched = [e for dst in sorted(mine) for e in scans.get(dst, ())]
-    for e in sorted(matched, key=lambda r: (str(r.get("dst_ref")), str(r.get("proto")), r.get("port_lo") or 0)):
+    for e in matched:
         seen = e.get("last_seen")
         if not isinstance(seen, dt.datetime):
             continue
         seen = _aware(seen)
-        if seen <= horizon:
-            continue
         proto = e.get("proto")
         lo, hi = e.get("port_lo"), e.get("port_hi")
         if proto not in ("tcp", "udp", "any") or not _is_int(lo) or not _is_int(hi) or lo > hi:
@@ -1222,11 +1267,19 @@ def _scan_conflicts_unbounded(fw: _Fw, lst: _Lst, ident: _Ident,
             span = range(0)          # a scan edge that wide is not a port observation; cannot be judged
         for p in protos:
             for port in span:
-                if _agent_closed(fw, lst, p, port) and (p, port) not in out:
-                    out[(p, port)] = {"kind": "agent_closed_scan_open", "proto": p, "port": port,
-                                      "scan_seen_at": _iso(seen)}
-                    if len(out) >= MAX_CONFLICTS:
-                        return [out[k] for k in sorted(out)]
+                if (p, port) not in last or seen > last[(p, port)]:
+                    last[(p, port)] = seen
+    later = [c for dst in sorted(mine) for c in cover.get(dst, ())]
+    out: dict[tuple[str, int], dict[str, Any]] = {}
+    for (p, port) in sorted(last):
+        seen = last[(p, port)]
+        if p == "tcp" and any(c["finished_at"] > collected_at and c["started_at"] > seen for c in later):
+            continue                 # a later full scan did not see it again: positive evidence, the claim stands
+        if _agent_closed(fw, lst, p, port):
+            out[(p, port)] = {"kind": "agent_closed_scan_open", "proto": p, "port": port,
+                              "scan_seen_at": _iso(seen)}
+            if len(out) >= MAX_CONFLICTS:
+                break
     return [out[k] for k in sorted(out)]
 
 
@@ -1265,11 +1318,17 @@ class HostFwRows:
                   problem, payload_sha256, sections`` (the signed ``sections``, package list stripped).
     ``assets``    identity rows for ``_ipmap`` (cloud resources and devices; agent rows are ignored here).
     ``scan_edges`` ``external_scan`` edges ``internet -> node`` already persisted by external_exposure.
+    ``scan_cover`` full-port external scans of a node, completed: ``node_ref, started_at, finished_at`` (the
+                  positive evidence that can clear a ``agent_closed_scan_open`` conflict).
+    ``tombstones`` revoked or legacy agents that still have an OPEN invariant finding: ``id, hostname, status,
+                  legacy, revoked_at, node_ref``. The host stays in the graph as an UNKNOWN tombstone.
     """
     agents: list[dict[str, Any]] = field(default_factory=list)
     postures: dict[str, dict[str, Any]] = field(default_factory=dict)
     assets: list[dict[str, Any]] = field(default_factory=list)
     scan_edges: list[dict[str, Any]] = field(default_factory=list)
+    tombstones: list[dict[str, Any]] = field(default_factory=list)
+    scan_cover: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -1304,6 +1363,48 @@ def _posture_problem(p: Mapping[str, Any]) -> str:
     return ""
 
 
+#: Walk results kept ACROSS builds (review finding hostfw-9): hosts with the same firewall and listener table (config
+#: management makes that the rule) share one walk, and a rebuild triggered by ANOTHER host's change does not repeat
+#: the 4 s walk of a large ruleset. Keyed by the digest of the firewall and listener sections and the
+#: address-ability flag, which together fully decide the result; only a COMPLETE walk is kept (a widened
+#: fallback depends on the budget left in that build). Bounded, thread-safe, read-only once stored.
+_REACH_CACHE: "OrderedDict[str, _Reach]" = OrderedDict()
+_REACH_CACHE_MAX = 256
+_REACH_LOCK = threading.Lock()
+
+
+def _reach_key(fw_sec: Any, lst_sec: Any, addressable: Optional[bool]) -> Optional[str]:
+    try:
+        h = hashlib.sha256()
+        for part in (fw_sec, lst_sec):
+            h.update(json.dumps(part, sort_keys=True, separators=(",", ":"), default=str).encode())
+            h.update(b"\x00")
+        h.update(repr(addressable).encode())
+        return h.hexdigest()
+    except (TypeError, ValueError):
+        return None
+
+
+def _reach_cached(key: Optional[str]) -> Optional["_Reach"]:
+    if key is None:
+        return None
+    with _REACH_LOCK:
+        hit = _REACH_CACHE.get(key)
+        if hit is not None:
+            _REACH_CACHE.move_to_end(key)
+        return hit
+
+
+def _reach_remember(key: Optional[str], reach: "_Reach") -> None:
+    if key is None or reach.fallback:
+        return
+    with _REACH_LOCK:
+        _REACH_CACHE[key] = reach
+        _REACH_CACHE.move_to_end(key)
+        while len(_REACH_CACHE) > _REACH_CACHE_MAX:
+            _REACH_CACHE.popitem(last=False)
+
+
 def _fw_for(sec: Any, cache: dict[str, _Fw]) -> _Fw:
     """The parsed firewall of a section; hosts with an identical section (config management makes that the
     rule) share one parse and its verdict caches."""
@@ -1321,14 +1422,15 @@ def _fw_for(sec: Any, cache: dict[str, _Fw]) -> _Fw:
 def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any]], now: dt.datetime,
                max_age: dt.timedelta, edge_ttl: dt.timedelta,
                scans: Mapping[str, list[Mapping[str, Any]]], fw_cache: dict[str, _Fw],
-               budget: Optional[list[int]] = None) -> _Out:
+               budget: Optional[list[int]] = None,
+               cover: Optional[Mapping[str, list[Mapping[str, Any]]]] = None) -> _Out:
     out = _Out()
     aid = ident.agent_id
     hostname = _text(a.get("hostname"), 64) or aid[:8]
     own_ref = refs.agent_ref(aid)
     if ident.ref == own_ref:
         out.node = NodeOut(ref=own_ref, kind="host", label=hostname,
-                           attrs={"ips": ident.node_ips, "agent_id": aid, "identity_basis": ident.basis})
+                           attrs=_node_attrs(ident))
     last_seen = a.get("last_seen")
     silent_after = _clamp_secs(a.get("silent_after_s"), 30, 86400, 300)
     silent = (not isinstance(last_seen, dt.datetime) or _aware(last_seen) > now + FUTURE_SKEW
@@ -1370,16 +1472,20 @@ def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any
         fw = _fw_for(sections.get("firewall"), fw_cache)
         lst = _parse_listeners(sections.get("listeners"), fw.ipv6)
         fw.budget = budget
-        try:
-            reach = compute_reach(fw, lst, ident.addressable)
-        except Exception:  # noqa: BLE001 -- an unforeseen shape widens, never narrows
-            logger.exception("host_fw_reach_failed")
-            reach = _Reach()
-            reach.fallback = True
-            _widen_all(_Fw(), _Lst(), ident.addressable, reach, "reach_failed")
+        rkey = _reach_key(sections.get("firewall"), sections.get("listeners"), ident.addressable)
+        reach = _reach_cached(rkey)
+        if reach is None:
+            try:
+                reach = compute_reach(fw, lst, ident.addressable)
+                _reach_remember(rkey, reach)
+            except Exception:  # noqa: BLE001 -- an unforeseen shape widens, never narrows
+                logger.exception("host_fw_reach_failed")
+                reach = _Reach()
+                reach.fallback = True
+                _widen_all(_Fw(), _Lst(), ident.addressable, reach, "reach_failed")
         out.edges = _edge_outs(reach, ident, p, observed, fw, lst, state)
         if state == "fresh":
-            conflicts = _scan_conflicts(fw, lst, ident, scans, _aware(p["collected_at"]))
+            conflicts = _scan_conflicts(fw, lst, ident, scans, _aware(p["collected_at"]), cover)
             out.conflicts = len(conflicts)
             meta = {"signed": True, "key_id": _text(p.get("key_id"), 64), "seq": p.get("seq") if _is_int(p.get("seq")) else 0,
                     "evidence_ref": f"agent_posture:{aid}:{_text(p.get('key_id'), 64)}:{p.get('seq') if _is_int(p.get('seq')) else 0}"}
@@ -1406,13 +1512,25 @@ def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any
     return out
 
 
+def _node_attrs(ident: _Ident) -> dict[str, Any]:
+    """Attributes of an ``agent:<uuid>`` node. ``ips`` stays EMPTY (the loader reads it as "address unknown", so the
+    node is inside every CIDR expansion and no zone comes from it); what the host claims is ``claimed_ips`` and the
+    server-observed private peer address, when usable, is ``observed_ips``."""
+    attrs: dict[str, Any] = {"ips": [], "agent_id": ident.agent_id, "identity_basis": ident.basis}
+    if ident.claimed:
+        attrs["claimed_ips"] = list(ident.claimed)
+    if ident.observed:
+        attrs["observed_ips"] = list(ident.observed)
+    return attrs
+
+
 def _failed_out(a: Mapping[str, Any], ident: _Ident) -> _Out:
     """What a host we could not process looks like: in scope, with no evidence, no edges, no coverage."""
     out = _Out(state="untrusted")
     own = refs.agent_ref(ident.agent_id)
     if ident.ref == own:
         out.node = NodeOut(ref=own, kind="host", label=_text(a.get("hostname"), 64) or ident.agent_id[:8],
-                           attrs={"ips": ident.node_ips, "agent_id": ident.agent_id})
+                           attrs=_node_attrs(ident))
     out.fact = FactOut(node_ref=ident.ref, source=SOURCE, tier="configured", observed_at=_EPOCH,
                        facts={"host_agent": {"signed": False, "key_id": "", "seq": 0, "evidence_ref": "",
                                              "status": "unavailable", "reason": "builder_error",
@@ -1498,6 +1616,47 @@ def _edge_outs(reach: _Reach, ident: _Ident, p: Mapping[str, Any], observed: dt.
     return out
 
 
+def _tombstone_ref(t: Mapping[str, Any]) -> Optional[str]:
+    """The node a revoked or legacy agent's open finding is about: the node it last had (``fleet_agents.node_ref``:
+    its corroborated cloud instance, else itself)."""
+    try:
+        own = refs.agent_ref(t["id"])
+    except (refs.RefError, KeyError, TypeError):
+        return None
+    ref = t.get("node_ref")
+    if isinstance(ref, str) and ref and ref != refs.INTERNET and refs.is_valid_ref(ref):
+        return ref
+    return own
+
+
+def _tombstones(rows: list[dict[str, Any]], facts: dict[str, FactOut], nodes: dict[str, NodeOut],
+                notes: list[str]) -> int:
+    """A host whose agent is revoked or legacy must not LEAVE the graph while a finding about it is open: a host
+    that is in no list reads as "fixed" to a consumer that closes by absence. It stays as a node with one unsigned,
+    unavailable ``host_agent`` fact whose ``agent_status`` the library reads as UNKNOWN (``agent_revoked``): nothing
+    its old agent signed is relied on, there are no edges and no coverage. A live agent that decides the same node
+    (an honest re-enrollment, a corroborated instance) wins: the tombstone is dropped."""
+    done = 0
+    for t in sorted((r for r in rows if isinstance(r, dict)), key=lambda r: str(r.get("id"))):
+        ref = _tombstone_ref(t)
+        if ref is None or ref in facts:
+            continue
+        revoked = t.get("status") == "revoked" or t.get("revoked_at") is not None
+        status = "revoked" if revoked else "legacy"
+        at = t.get("revoked_at")
+        facts[ref] = FactOut(
+            node_ref=ref, source=SOURCE, tier="configured", observed_at=_aware(at) if isinstance(at, dt.datetime) else _EPOCH,
+            facts={"host_agent": {"signed": False, "key_id": "", "seq": 0, "evidence_ref": "",
+                                  "status": "unavailable", "reason": f"agent_{status}", "conf": "approximate",
+                                  "partial": True, "data": {"agent_id": str(t["id"]), "agent_status": status}}})
+        own = refs.agent_ref(t["id"])
+        if ref == own and own not in nodes:
+            nodes[own] = NodeOut(ref=own, kind="host", label=_text(t.get("hostname"), 64) or str(t["id"])[:8],
+                                 attrs={"ips": [], "agent_id": str(t["id"]), "identity_basis": "claimed"})
+        done += 1
+    return done
+
+
 def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional[dt.timedelta] = None,
           silent_edge_ttl: Optional[dt.timedelta] = None, **_opts: Any) -> BuildOutput:
     """Pure: nodes, edges, coverage and facts of every live v2 agent. Same inputs, byte-identical output."""
@@ -1528,6 +1687,13 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
         if isinstance(e, dict) and isinstance(e.get("dst_ref"), str):
             scans.setdefault(e["dst_ref"], []).append(e)
 
+    cover: dict[str, list[dict[str, Any]]] = {}
+    for c in rows.scan_cover:
+        if (isinstance(c, dict) and isinstance(c.get("node_ref"), str) and isinstance(c.get("started_at"), dt.datetime)
+                and isinstance(c.get("finished_at"), dt.datetime)):
+            cover.setdefault(c["node_ref"], []).append(
+                {"started_at": _aware(c["started_at"]), "finished_at": _aware(c["finished_at"])})
+
     fw_cache: dict[str, _Fw] = {}
     budget = [BUILD_STEP_BUDGET]
     nodes: dict[str, NodeOut] = {}
@@ -1538,11 +1704,12 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
     blocked: dict[str, int] = {}
     notes: list[str] = list(rows.notes)
     clashed = 0
+    shared_peer = 0
     for a in live:
         aid = str(a["id"])
         ident = idents[aid]
         try:
-            o = _agent_out(a, ident, rows.postures.get(aid), now, max_age, ttl, scans, fw_cache, budget)
+            o = _agent_out(a, ident, rows.postures.get(aid), now, max_age, ttl, scans, fw_cache, budget, cover)
         except Exception:  # noqa: BLE001 -- one host's surprise must not stop the others; it fails CLOSED
             logger.exception("host_fw_agent_failed", extra={"agent": aid})
             o = _failed_out(a, ident)
@@ -1550,6 +1717,8 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
         counters[o.state] = counters.get(o.state, 0) + 1
         if ident.note == "ambiguous_cloud_node":
             clashed += 1
+        elif ident.note == "shared_peer_address":
+            shared_peer += 1
         if o.node is not None:
             nodes[o.node.ref] = o.node
         edges.extend(o.edges)
@@ -1565,6 +1734,7 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
             coverage = [c for c in coverage if c.node_ref != o.fact.node_ref]
             continue
         facts[o.fact.node_ref] = o.fact
+    tombstoned = _tombstones(rows.tombstones, facts, nodes, notes)
     for e in edges:
         if e.src_ref == refs.INTERNET and refs.INTERNET not in nodes:
             nodes[refs.INTERNET] = NodeOut(ref=refs.INTERNET, kind="internet", label="internet")
@@ -1579,9 +1749,15 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
                  f"{conflicts_total} scan conflict(s)")
     if counters["revoked_or_legacy"]:
         notes.append(f"host_fw: {counters['revoked_or_legacy']} revoked or legacy agent(s) ignored")
+    if tombstoned:
+        notes.append(f"host_fw: {tombstoned} revoked or legacy agent(s) with an open finding kept as UNKNOWN "
+                     f"tombstone(s)")
     if clashed:
         notes.append(f"host_fw: {clashed} agent(s) claim a cloud instance another agent also claims: "
                      f"not merged into it")
+    if shared_peer:
+        notes.append(f"host_fw: {shared_peer} agent(s) connect from an address another agent also connects from "
+                     f"(NAT, proxy or shared egress): not merged into a cloud instance")
     for k, n in sorted(blocked.items()):
         notes.append(f"host_fw: {n} fresh agent(s) without coverage: {k}")
     notes.extend(f"host_fw: {line}" for line in amap.report())
@@ -1602,6 +1778,22 @@ SELECT id, hostname, status, legacy, revoked_at, last_seen, silent_after_s, node
  ORDER BY id
 """
 
+# Revoked or legacy agents that still have an OPEN invariant finding about their node: they stay in the graph
+# as UNKNOWN tombstones (a finding never closes because its host left the graph). Without an open finding there
+# is nothing to protect and the row is not read (a decommissioned instance must not stay in the graph for ever).
+TOMBSTONES_SQL = """
+SELECT a.id, a.hostname, a.status, a.legacy, a.revoked_at, a.node_ref
+  FROM fleet_agents a
+ WHERE (a.legacy OR a.status = 'revoked' OR a.revoked_at IS NOT NULL)
+   AND EXISTS (SELECT 1 FROM findings f
+                WHERE f.rule_source = 'invariant' AND f.status IN ('open', 'triaged')
+                  AND f.evidence->'witness'->'detail' ? 'clause'
+                  AND f.evidence->>'target_ref' IN ('agent:' || a.id::text, a.node_ref))
+ ORDER BY a.id
+ LIMIT 5001
+"""
+MAX_TOMBSTONES = 5000
+
 # The NEWEST stored posture of each agent with the state of the key that signed it and that key's bytes
 # (so the signature can be checked again, here, instead of trusting the ``signed`` column).
 POSTURE_SQL = """
@@ -1621,6 +1813,19 @@ SELECT dst_ref, proto, port_lo, port_hi, confidence, last_seen, evidence->>'orig
  WHERE source = 'external_scan' AND src_ref = 'internet' AND basis = 'observed' AND last_seen >= $1
  ORDER BY dst_ref, proto, port_lo, port_hi
 """
+
+# The full-port external scans of a node: external_exposure asserts ``in`` coverage only for a node whose latest
+# completed scan PROVED completeness; ``detail.scans`` names the scans. With the scans' start times this is the
+# positive evidence that clears a conflict (a full scan that started after the last observation of a port and
+# did not see it open again).
+SCAN_COVER_SQL = """
+SELECT node_ref, detail->'scans' AS scan_ids
+  FROM reach_coverage
+ WHERE source = 'external_scan' AND direction = 'in'
+ ORDER BY node_ref
+ LIMIT 20000
+"""
+SCANS_SQL = "SELECT id, started_at, finished_at FROM scans WHERE id = ANY($1::uuid[])"
 
 _CHUNK = 25
 _MAX_PAYLOAD = 4 * 1024 * 1024
@@ -1689,6 +1894,40 @@ def _strip_heavy(payload: dict[str, Any]) -> dict[str, Any]:
     return secs
 
 
+async def _load_scan_cover(conn) -> list[dict[str, Any]]:
+    """``[{node_ref, started_at, finished_at}]``: the EARLIEST start and finish over the scans that back each
+    node's external coverage; a node with a scan row missing, unfinished or undated is not listed (no evidence)."""
+    out: list[dict[str, Any]] = []
+    cov = [dict(r) for r in await conn.fetch(SCAN_COVER_SQL)]
+    want: set[uuid.UUID] = set()
+    parsed: dict[str, list[uuid.UUID]] = {}
+    for r in cov:
+        ids = _json(r.get("scan_ids"), [])
+        good: list[uuid.UUID] = []
+        for x in ids if isinstance(ids, list) else []:
+            try:
+                good.append(uuid.UUID(str(x)))
+            except ValueError:
+                good = []
+                break
+        if good:
+            parsed[r["node_ref"]] = good
+            want.update(good)
+    got: dict[uuid.UUID, Mapping[str, Any]] = {}
+    ordered = sorted(want)
+    for i in range(0, len(ordered), 500):
+        for r in await conn.fetch(SCANS_SQL, ordered[i:i + 500]):
+            got[r["id"]] = r
+    for node, ids in sorted(parsed.items()):
+        recs = [got.get(i) for i in ids]
+        if any(r is None or not isinstance(r["started_at"], dt.datetime) or not isinstance(r["finished_at"], dt.datetime)
+               for r in recs):
+            continue
+        out.append({"node_ref": node, "started_at": min(_aware(r["started_at"]) for r in recs),   # type: ignore[index]
+                    "finished_at": min(_aware(r["finished_at"]) for r in recs)})                  # type: ignore[index]
+    return out
+
+
 async def load(conn, now: dt.datetime, *, agent_posture_max_age: Optional[dt.timedelta] = None,
                **_opts: Any) -> HostFwRows:
     """Read the rows ``build`` needs. ``conn`` is tenant-bound; nothing here names a tenant."""
@@ -1702,14 +1941,18 @@ async def load(conn, now: dt.datetime, *, agent_posture_max_age: Optional[dt.tim
         ident = _json(d.get("identity"), {})
         ident = ident if isinstance(ident, dict) else {}
         d["identity"] = {"ips": ident.get("ips") if isinstance(ident.get("ips"), list) else [],
-                         "peer_ip": ident.get("peer_ip") if isinstance(ident.get("peer_ip"), str) else None}
+                         "peer_ip": ident.get("peer_ip") if isinstance(ident.get("peer_ip"), str) else None,
+                         "peer_proxied": ident.get("peer_proxied") is True}
         agents.append(d)
     rows.agents = agents
     ids = [a["id"] for a in agents]
     unverified = 0
     for i in range(0, len(ids), _CHUNK):
-        for r in await conn.fetch(POSTURE_SQL, ids[i:i + _CHUNK]):
-            ok, problem, payload = _verify_stored(r)
+        fetched = await conn.fetch(POSTURE_SQL, ids[i:i + _CHUNK])
+        # json parsing, sha256 and the Ed25519 check of a (possibly hostile, multi-MiB) posture are CPU work: they
+        # run in a worker thread, never on the event loop that also serves the API (review finding hostfw-9)
+        checked = await asyncio.to_thread(lambda recs=fetched: [_verify_stored(r) for r in recs])
+        for r, (ok, problem, payload) in zip(fetched, checked):
             if not ok:
                 unverified += 1
             rows.postures[str(r["agent_id"])] = {
@@ -1719,7 +1962,19 @@ async def load(conn, now: dt.datetime, *, agent_posture_max_age: Optional[dt.tim
                 "sections": _strip_heavy(payload) if payload is not None else {}}
     if unverified:
         rows.notes.append(f"{unverified} stored posture(s) failed verification and are not evidence")
+    tombs = [dict(r) for r in await conn.fetch(TOMBSTONES_SQL)]
+    if len(tombs) > MAX_TOMBSTONES:
+        rows.notes.append(f"host_fw: more than {MAX_TOMBSTONES} revoked agents with open findings: the rest are not "
+                          f"kept as tombstones (their findings still stay open)")
+        tombs = tombs[:MAX_TOMBSTONES]
+    for d in tombs:
+        d["id"] = str(d["id"])
+    rows.tombstones = tombs
     rows.assets = [dict(r) for r in await _ipmap.load_ip_rows(conn)]
-    cutoff = now - max_age - 2 * CONFLICT_SLACK
-    rows.scan_edges = [dict(r) for r in await conn.fetch(SCAN_EDGES_SQL, cutoff)]
+    # an observation counts for the whole EXTERNAL window (``max_age``, 168 h by default), exactly as long as
+    # external_exposure keeps the edge in the graph: not for the posture window (review finding hostfw-3)
+    ext = _opts.get("max_age")
+    ext = ext if isinstance(ext, dt.timedelta) and ext > dt.timedelta(0) else DEFAULT_EXTERNAL_MAX_AGE
+    rows.scan_edges = [dict(r) for r in await conn.fetch(SCAN_EDGES_SQL, now - ext)]
+    rows.scan_cover = await _load_scan_cover(conn)
     return rows

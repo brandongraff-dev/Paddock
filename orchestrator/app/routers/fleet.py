@@ -40,6 +40,7 @@ Network quarantine (schema 025) reuses this exact gate: a
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import logging
@@ -49,6 +50,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
@@ -211,6 +213,23 @@ class RevokeIn(BaseModel):
     reason: str | None = Field(default=None, max_length=512)
 
 
+class AgentRevokeIn(RevokeIn):
+    revoke_enroll_token: bool = Field(
+        default=True,
+        description="also revoke the multi-use enrollment token this agent was first enrolled with (if it has uses "
+                    "left), so a revoked host cannot re-enroll under a new name. False keeps the fleet token for "
+                    "the hosts that have not enrolled yet")
+
+
+class KeyRevokeIn(RevokeIn):
+    successors: Literal["revoke", "keep"] | None = Field(
+        default=None,
+        description="required when the key was rotated and its successor is still active: 'revoke' revokes the whole "
+                    "chain (the stolen-key case), 'keep' revokes only this key (cleanup after a legitimate "
+                    "rotation). Without it the call changes nothing and answers 409 listing active_successors. "
+                    "Revoking the AGENT is the incident action")
+
+
 class PostureAck(BaseModel):
     ok: bool
     seq: int
@@ -327,6 +346,13 @@ class KeyOut(BaseModel):
     retired_at: datetime | None = None
     revoked_at: datetime | None = None
     revoke_reason: str | None = None
+
+
+class AgentRevokeOut(AgentOut):
+    enroll_token_prefix: str | None = Field(
+        default=None, description="prefix of the enrollment token this agent was first enrolled with (None: unknown)")
+    enroll_token_revoked: bool = Field(
+        default=False, description="that token was revoked by this call (it still had uses left)")
 
 
 class AgentDetailOut(AgentOut):
@@ -520,6 +546,27 @@ def _agent_principal(agent_id: UUID, principal: Principal = Depends(current_prin
     return principal
 
 
+def _note_sampled(request: Request, rej: fleet_posture.Rejection) -> None:
+    """Tell the per-request audit middleware that this rejection was folded into an aggregate / counter instead of
+    getting its own ``fleet.evidence.*`` row, so it may skip its own outcome row for the same request (it is the
+    middleware's one-row-per-request that would otherwise still grow the chain without bound under a flood)."""
+    if not rej.audit_row:
+        request.state.audit_aggregated = True
+
+
+async def _require_active_key(pool, agent_id: UUID | str) -> JSONResponse | None:
+    """The bearer alone is not a usable credential: every agent route needs an ACTIVE signing key, so revoking the
+    key (the key-compromise runbook) cuts the unsigned routes too. ``None`` when there is one. The signed routes
+    (heartbeat, posture, rotate) check their own key; re-keying is by a new enrollment token, never by this bearer."""
+    async with pool.acquire() as con:
+        ok = await con.fetchval(
+            "SELECT 1 FROM fleet_agent_keys WHERE agent_id = $1 AND status = 'active' LIMIT 1", UUID(str(agent_id)))
+    if ok:
+        return None
+    return JSONResponse({"detail": "the agent has no active signing key; re-enroll it", "reason": "key_not_active"},
+                        status_code=401)
+
+
 def _rejection_response(rej: fleet_posture.Rejection, headers: dict[str, str] | None = None) -> JSONResponse:
     return JSONResponse(rej.response_body(), status_code=rej.status, headers=headers)
 
@@ -540,27 +587,49 @@ async def _read_body(request: Request, limit: int) -> bytes:
 
 
 async def _ingest(request: Request, pool, principal: Principal, agent_id: UUID, kind: str):
-    """The shared body of heartbeat / posture / rotate: rate limit, capped read, then ``fleet_posture`` checks 1-10.
+    """The shared body of heartbeat / posture / rotate. Order, cheapest first:
+
+    1. a pre-auth check keyed by (agent, STRICT peer address): if that pair has already failed too often this minute
+       the request is a 429 before any body is read (the per-agent budget is not touched);
+    2. the capped body read, then ``fleet_posture`` checks 1-10 with the per-agent budget charged only AFTER the
+       signature verified, so a holder of the bearer alone cannot exhaust the real agent's budget;
+    3. any other exception is audited as a rejection too (these routes are exempt from the per-request audit row).
+
     Returns ``(IngestResult, None)`` or ``(None, JSONResponse)``."""
     route = "rotate" if kind == "rotate" else kind
     tenant = str(principal.tenant_id)
-    if fleet_posture.rate_limited(route, agent_id):
-        rej = fleet_posture.Rejection(429, "rate_limited", "too many requests from this agent; slow down")
-        return None, _rejection_response(rej, {"Retry-After": "60"})
     rid = getattr(request.state, "request_id", None)
     ip = client_ip_strict(request)       # the host's address is a corroboration input: never the forgeable leftmost entry
+    if fleet_posture.preauth_blocked(agent_id, ip):
+        rej = fleet_posture.Rejection(429, "rate_limited", "too many failed requests for this agent from this address")
+        await fleet_posture.record_rejection(pool, tenant_id=tenant, agent_id=agent_id, rej=rej, request_id=rid,
+                                             client_ip=ip, kind=kind, actor=principal.actor)
+        _note_sampled(request, rej)
+        return None, _rejection_response(rej, {"Retry-After": "60"})
     try:
         body = await _read_body(request, fleet_posture.MAX_BODY_BYTES)
     except fleet_posture.Rejection as rej:
+        fleet_posture.preauth_failed(agent_id, ip)
         await fleet_posture.record_rejection(pool, tenant_id=tenant, agent_id=agent_id, rej=rej,
                                              request_id=rid, client_ip=ip, kind=kind, actor=principal.actor)
+        _note_sampled(request, rej)
         return None, _rejection_response(rej)
     try:
         res = await fleet_posture.ingest_envelope(
             pool, agent_id=agent_id, tenant_id=tenant, kind=kind, body=body,
             content_encoding=request.headers.get("content-encoding"), client_ip=ip, request_id=rid,
-            actor=principal.actor)
+            actor=principal.actor, budget=lambda: not fleet_posture.rate_limited(route, agent_id))
     except fleet_posture.Rejection as rej:
+        _note_sampled(request, rej)
+        if rej.status != 429 and not rej.verified:
+            fleet_posture.preauth_failed(agent_id, ip)
+        return None, _rejection_response(rej, {"Retry-After": "60"} if rej.status == 429 else None)
+    except Exception:  # noqa: BLE001 -- heartbeat/posture are exempt from the per-request audit row: audit the crash
+        logger.exception("fleet_ingest_failed", extra={"agent": str(agent_id), "kind": kind})
+        rej = fleet_posture.Rejection(500, "internal_error", "the server could not process this envelope")
+        await fleet_posture.record_rejection(pool, tenant_id=tenant, agent_id=agent_id, rej=rej,
+                                             request_id=rid, client_ip=ip, kind=kind, actor=principal.actor)
+        _note_sampled(request, rej)
         return None, _rejection_response(rej)
     if res.came_online:
         await fleet_monitor.emit_transition(
@@ -592,7 +661,7 @@ async def enroll(body: EnrollIn, request: Request, pool=Depends(get_pool)):
         out = await fleet_enroll.enroll_agent(
             pool, token=body.token, hostname=body.hostname, public_key_b64=body.public_key_b64,
             proof_b64=body.proof_b64, agent_version=body.agent_version, platform=body.platform,
-            capabilities=body.capabilities, client_ip=client_ip(request))
+            capabilities=body.capabilities, client_ip=client_ip_strict(request))
     except fleet_enroll.EnrollError as exc:
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status, detail=exc.detail, headers=headers) from exc
@@ -704,17 +773,27 @@ async def rotate_key(agent_id: UUID, request: Request, pool=Depends(get_pool),
 # Inventory (v1, agent principal): UNSIGNED, a Fleet-page convenience, never evidence
 # --------------------------------------------------------------------------- #
 
+#: v1 inventory bounds (unsigned, so tighter than the signed path): body size, rows kept per agent
+INVENTORY_MAX_BODY_BYTES = 2 * 1024 * 1024
+INVENTORY_KEEP_PER_AGENT = 5
+_UNSTORABLE_RE = re.compile("[\x00\ud800-\udfff]")
+
+
 @router.post("/{agent_id}/inventory", response_model=InventoryOut, status_code=201)
 async def post_inventory(agent_id: UUID, request: Request, pool=Depends(get_pool),
                          principal: Principal = Depends(_agent_principal)):
-    """The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked
-    ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can
-    prove life) and no builder reads it."""
+    """The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent WITH an active key, stored
+    marked ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope
+    can prove life) and no builder reads it. Bounded: at most 2 MiB, an inventory identical to the newest one only
+    refreshes it (same id), and only the newest few per agent are kept."""
     if fleet_posture.rate_limited("inventory", agent_id):
         return JSONResponse({"detail": "too many requests from this agent; slow down"}, status_code=429,
                             headers={"Retry-After": "60"})
+    denied = await _require_active_key(pool, agent_id)
+    if denied is not None:
+        return denied
     try:
-        raw = await _read_body(request, 4 * 1024 * 1024)
+        raw = await _read_body(request, INVENTORY_MAX_BODY_BYTES)
     except fleet_posture.Rejection as rej:
         return _rejection_response(rej)
     try:
@@ -722,21 +801,69 @@ async def post_inventory(agent_id: UUID, request: Request, pool=Depends(get_pool
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=[{"loc": e["loc"], "type": e["type"]}
                                                      for e in exc.errors()[:10]]) from exc
-    posture = {**body.posture, "_evidence": {"signed": False, "tier": "declared"}}
+    if _unstorable_text(body.model_dump()):
+        # Postgres jsonb cannot hold U+0000 (or a lone surrogate): answer 422 here, never a 500 from the insert
+        raise HTTPException(status_code=422, detail="the inventory holds text that cannot be stored (NUL or a lone "
+                                                    "surrogate)")
+    try:
+        digest = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()
+                                ).hexdigest()
+    except (UnicodeError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="the inventory holds text that cannot be encoded") from exc
+    posture = {**body.posture, "_evidence": {"signed": False, "tier": "declared"}, "_inventory_sha256": digest}
+    try:
+        return await _store_inventory(pool, agent_id, body, posture, digest)
+    except asyncpg.exceptions.DataError as exc:             # belt and braces: any value the database refuses
+        logger.warning("fleet_inventory_unstorable", extra={"agent": str(agent_id), "error": type(exc).__name__})
+        raise HTTPException(status_code=422, detail="the inventory holds a value that cannot be stored") from exc
+
+
+def _unstorable_text(value: Any) -> bool:
+    """True if any string or key in ``value`` holds U+0000 or a lone surrogate (what jsonb refuses)."""
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, str):
+            if _UNSTORABLE_RE.search(v):
+                return True
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                if isinstance(k, str) and _UNSTORABLE_RE.search(k):
+                    return True
+                stack.append(x)
+        elif isinstance(v, (list, tuple)):
+            stack.extend(v)
+    return False
+
+
+async def _store_inventory(pool, agent_id: UUID, body: InventoryIn, posture: dict[str, Any],
+                           digest: str) -> InventoryOut:
     async with pool.acquire() as con:
-        row = await con.fetchrow(
-            """
-            INSERT INTO agent_inventory (agent_id, os_info, packages, listeners, posture)
-            SELECT a.id, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb
-              FROM fleet_agents a
-             WHERE a.id = $1 AND a.status <> 'revoked' AND a.legacy = FALSE
-            RETURNING id, collected_at
-            """,
-            agent_id, json.dumps(body.os_info), json.dumps(body.packages),
-            json.dumps(body.listeners), json.dumps(posture),
-        )
-    if row is None:
-        raise HTTPException(status_code=403, detail="this agent is revoked or must re-enroll")
+        async with con.transaction():
+            ok = await con.fetchrow(
+                "SELECT tenant_id FROM fleet_agents WHERE id = $1 AND status <> 'revoked' AND legacy = FALSE "
+                "FOR UPDATE", agent_id)
+            if ok is None:
+                raise HTTPException(status_code=403, detail="this agent is revoked or must re-enroll")
+            same = await con.fetchrow(
+                """UPDATE agent_inventory SET collected_at = NOW()
+                    WHERE id = (SELECT id FROM agent_inventory WHERE agent_id = $1
+                                 ORDER BY collected_at DESC LIMIT 1)
+                      AND posture->>'_inventory_sha256' = $2
+                RETURNING id, collected_at""", agent_id, digest)
+            if same is not None:
+                return InventoryOut(ok=True, inventory_id=same["id"], collected_at=same["collected_at"],
+                                    signed=False)
+            row = await con.fetchrow(
+                """INSERT INTO agent_inventory (agent_id, os_info, packages, listeners, posture)
+                   VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb) RETURNING id, collected_at""",
+                agent_id, json.dumps(body.os_info), json.dumps(body.packages),
+                json.dumps(body.listeners), json.dumps(posture))
+            await con.execute(
+                """DELETE FROM agent_inventory WHERE agent_id = $1 AND id NOT IN (
+                       SELECT id FROM agent_inventory WHERE agent_id = $1
+                        ORDER BY collected_at DESC, id LIMIT $2)""", agent_id, INVENTORY_KEEP_PER_AGENT)
+            await fleet_posture.evict_inventory(con, ok["tenant_id"])
     return InventoryOut(ok=True, inventory_id=row["id"], collected_at=row["collected_at"], signed=False)
 
 
@@ -839,37 +966,56 @@ async def get_agent_posture(agent_id: UUID, request: Request, pool=Depends(get_p
         node_ref=r["node_ref"])
 
 
-@router.post("/agents/{agent_id}/revoke", response_model=AgentOut, dependencies=[Depends(require("admin"))])
-async def revoke_agent(agent_id: UUID, body: RevokeIn, request: Request, pool=Depends(get_pool),
+@router.post("/agents/{agent_id}/revoke", response_model=AgentRevokeOut, dependencies=[Depends(require("admin"))])
+async def revoke_agent(agent_id: UUID, body: AgentRevokeIn, request: Request, pool=Depends(get_pool),
                        principal: Principal = Depends(current_principal)):
-    """Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key
-    tokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached."""
+    """THE incident action for a stolen or compromised host. Revoke an agent NOW: its credential and every key stop
+    working on the very next call, its pending re-key tokens are revoked, and the host drops out of the reach graph's
+    coverage (it stays in the graph as a tombstone and reads UNKNOWN). Nothing is cached.
+
+    By default it also revokes the multi-use fleet enrollment token the agent came from (``revoke_enroll_token``),
+    so the host cannot re-enroll as a new agent; the response says which token and whether it was revoked."""
+    info: dict[str, Any] = {}
     out = await fleet_posture.revoke_agent(
         pool, agent_id, actor=principal.actor, actor_role=principal.role, reason=body.reason or "",
-        client_ip=client_ip(request), request_id=getattr(request.state, "request_id", None))
+        client_ip=client_ip(request), request_id=getattr(request.state, "request_id", None),
+        revoke_enroll_token=body.revoke_enroll_token, info=info)
     if out == "not_found":
         raise HTTPException(status_code=404, detail="agent not found")
     if out == "already_revoked":
         raise HTTPException(status_code=409, detail="agent is already revoked")
     async with pool.acquire() as con:
         r = await con.fetchrow(f"SELECT {_AGENT_COLS} FROM fleet_agents a WHERE a.id = $1", agent_id)
-    return _agent_out(r)
+    return AgentRevokeOut(**_agent_out(r).model_dump(), enroll_token_prefix=info.get("enroll_token_prefix"),
+                          enroll_token_revoked=bool(info.get("enroll_token_revoked")))
 
 
 @router.post("/agents/{agent_id}/keys/{key_id}/revoke", dependencies=[Depends(require("admin"))])
-async def revoke_agent_key(agent_id: UUID, request: Request, body: RevokeIn,
+async def revoke_agent_key(agent_id: UUID, request: Request, body: KeyRevokeIn,
                            key_id: str = Path(pattern=r"^[0-9a-f]{32}$"), pool=Depends(get_pool),
                            principal: Principal = Depends(current_principal)):
     """Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key
-    leaves the agent unable to post until an admin mints it a re-key token."""
+    leaves the agent unable to post until an admin mints it a re-key token. A ROTATED key whose successor is still
+    active needs ``successors``: 'revoke' (the whole chain, for a stolen key) or 'keep'; otherwise 409 and nothing
+    changes. For an incident revoke the agent instead (``POST /agents/{id}/revoke``)."""
+    info: dict[str, Any] = {}
     out = await fleet_posture.revoke_key(
         pool, agent_id, key_id, actor=principal.actor, actor_role=principal.role, reason=body.reason or "",
-        client_ip=client_ip(request), request_id=getattr(request.state, "request_id", None))
+        client_ip=client_ip(request), request_id=getattr(request.state, "request_id", None),
+        successors=body.successors, info=info)
     if out == "not_found":
         raise HTTPException(status_code=404, detail="agent or key not found")
     if out == "already_revoked":
         raise HTTPException(status_code=409, detail="key is already revoked")
-    return {"ok": True, "agent_id": str(agent_id), "key_id": key_id, "status": "revoked"}
+    if out == "successor_active":
+        return JSONResponse(
+            {"detail": "this key was rotated and its successor is still active: revoking only this key leaves the "
+                       "successor usable. Send successors='revoke' to revoke the chain, 'keep' to revoke only this "
+                       "key, or revoke the agent",
+             "reason": "successor_active", "active_successors": info.get("active_successors", [])},
+            status_code=409)
+    return {"ok": True, "agent_id": str(agent_id), "key_id": key_id, "status": "revoked",
+            "revoked_successors": info.get("revoked_successors", [])}
 
 
 def _as_dict_list(v: Any) -> list[dict[str, Any]]:
@@ -1102,6 +1248,9 @@ async def post_result(
         if cur is None:
             raise HTTPException(status_code=404, detail="action not found")
         _assert_agent(principal, cur["agent_id"])
+        denied = await _require_active_key(pool, cur["agent_id"])
+        if denied is not None:
+            return denied
 
         if cur["status"] != "approved":
             raise HTTPException(
@@ -1124,6 +1273,9 @@ async def post_result(
         result_payload = {"output": body.output}
         if body.revert is not None:
             result_payload["revert"] = body.revert
+        if _unstorable_text(result_payload):
+            raise HTTPException(status_code=422, detail="the result holds text that cannot be stored (NUL or a lone "
+                                                        "surrogate)")
 
         row = await con.fetchrow(
             """

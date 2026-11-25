@@ -7,11 +7,13 @@ environments and arguments are never read. Python 3.8 syntax only.
 """
 import ipaddress
 import re
+import sys
 
 from . import base
 from .base import clean_str
 
 MAX_LISTENERS = 2000
+ATTRIB_RESERVE_S = 5      # stop attributing sockets to pids when this little collector time is left
 EXE_HASH_CAP = 128 * 1024 * 1024
 _HASH_CACHE = {}
 _HASH_CACHE_MAX = 512
@@ -24,14 +26,16 @@ _UDP_BOUND = "07"
 def decode_addr(hexaddr):
     """Decode a ``/proc/net`` hex address. Returns ``(ip_string, family)`` (family 4 or 6).
 
-    IPv4 is one little-endian u32; IPv6 is four little-endian 32-bit words. An
-    IPv4-mapped IPv6 address is returned as the plain IPv4 string.
+    The kernel prints each 32-bit word of the address in HOST byte order: reversed on a
+    little-endian host, already in network order on a big-endian one (s390x, ppc64 BE). IPv4 is one
+    word, IPv6 is four. An IPv4-mapped IPv6 address is returned as the plain IPv4 string.
     """
     raw = bytes.fromhex(hexaddr)
+    little = sys.byteorder == "little"
     if len(raw) == 4:
-        return str(ipaddress.IPv4Address(raw[::-1])), 4
+        return str(ipaddress.IPv4Address(raw[::-1] if little else raw)), 4
     if len(raw) == 16:
-        packed = b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4))
+        packed = b"".join(raw[i:i + 4][::-1] if little else raw[i:i + 4] for i in range(0, 16, 4))
         a6 = ipaddress.IPv6Address(packed)
         if a6.ipv4_mapped is not None:
             return str(a6.ipv4_mapped), 4
@@ -97,6 +101,16 @@ def parse_proc_net(text, proto, family):
     return rows, bad
 
 
+def _priority(row):
+    """Sample rank when the table is over the cap: 0 wildcard or privileged non-loopback binds,
+    1 other non-loopback binds, 2 loopback."""
+    if row["bind_class"] == "loopback":
+        return 2
+    if row["bind_class"] in ("wildcard4", "wildcard6") or row["port"] < 1024:
+        return 0
+    return 1
+
+
 def parse_cgroup(text):
     """``(unit, container_short_id)`` from a ``/proc/PID/cgroup`` body (either may be None)."""
     paths = []
@@ -155,16 +169,19 @@ def _exe_hash(ctx, pid):
     return digest
 
 
-def map_inodes(ctx, wanted):
-    """Map socket inodes to pids. Returns ``(inode -> sorted pids, unreadable_pid_count)``."""
+def _map_inodes(ctx, wanted):
+    """``(inode -> sorted pids, unreadable_pid_count, complete)``. ``complete`` is False when the
+    scan stopped early because the collector's time budget was nearly spent."""
     found = {}
     unreadable = 0
     status, names = ctx.listdir("/proc")
     if status != "ok":
-        return found, -1
+        return found, -1, True
     pids = sorted(int(n) for n in names if n.isdigit())
     for i, pid in enumerate(pids):
-        if i % 200 == 0:
+        if i % 50 == 0:
+            if ctx.time_left() < ATTRIB_RESERVE_S:
+                return found, unreadable, False
             ctx.check()
         st, fds = ctx.listdir("/proc/%d/fd" % pid)
         if st == "denied":
@@ -184,6 +201,12 @@ def map_inodes(ctx, wanted):
                 lst = found.setdefault(inode, [])
                 if pid not in lst:
                     lst.append(pid)
+    return found, unreadable, True
+
+
+def map_inodes(ctx, wanted):
+    """Map socket inodes to pids. Returns ``(inode -> sorted pids, unreadable_pid_count)``."""
+    found, unreadable, _complete = _map_inodes(ctx, wanted)
     return found, unreadable
 
 
@@ -247,13 +270,23 @@ def collect(ctx):
             by_key[k] = {"row": r, "inodes": [r["inode"]]}
         else:
             by_key[k]["inodes"].append(r["inode"])
+    dropped = 0
     if len(by_key) > MAX_LISTENERS:
-        return base.error("truncated", "more than %d listeners" % MAX_LISTENERS)
+        # keep a bounded, prioritised sample (wildcard and privileged-port listeners first, loopback
+        # last: a local user can flood loopback ports at will) and keep the table partial
+        keys = sorted(by_key, key=lambda k: (_priority(by_key[k]["row"]), k[2], k[0], k[1]))
+        keep = set(keys[:MAX_LISTENERS])
+        dropped = len(by_key) - MAX_LISTENERS
+        by_key = dict((k, v) for k, v in by_key.items() if k in keep)
+        rows = [r for r in rows if (r["proto"], r["ip"], r["port"]) in by_key]
+        partial = True
 
     wanted = set(r["inode"] for r in rows)
-    pid_map, unreadable = ({}, 0)
+    pid_map, unreadable, scan_complete = ({}, 0, True)
     if wanted:
-        pid_map, unreadable = map_inodes(ctx, wanted)
+        pid_map, unreadable, scan_complete = _map_inodes(ctx, wanted)
+    if not scan_complete:
+        partial = True
     if unreadable < 0:
         unreadable = 0
         attrib = "denied"
@@ -284,6 +317,8 @@ def collect(ctx):
     if attrib is None:
         if not out:
             attrib = "ok"
+        elif not scan_complete:
+            attrib = "denied" if unattributed == len(out) else "partial"
         elif unattributed == 0 and unreadable == 0:
             attrib = "ok"
         elif unattributed == len(out):
@@ -297,4 +332,6 @@ def collect(ctx):
     v = {"count": len(out), "listeners": out, "ipv6": ipv6, "bindv6only": bv6,
          "attribution": {"status": attrib, "unreadable_pids": unreadable,
                          "unattributed": unattributed}}
+    if dropped:
+        v["dropped"] = dropped
     return base.ok(v, conf="exact", partial=partial)

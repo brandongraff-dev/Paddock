@@ -38,6 +38,19 @@
                 22
               ]
             },
+            "daemon": {
+              "found": true,
+              "masters": 1,
+              "pid": 812,
+              "start_epoch": 1780000000,
+              "reexec_epoch": null,
+              "config_path": null,
+              "config_default": true,
+              "options_override": false,
+              "binary_matches": true,
+              "config_mtime": 1770000000,
+              "reload_pending": false
+            },
             "probes": {
               "deltas": []
             },
@@ -151,6 +164,19 @@
                 22
               ]
             },
+            "daemon": {
+              "found": true,
+              "masters": 1,
+              "pid": 812,
+              "start_epoch": 1780000000,
+              "reexec_epoch": null,
+              "config_path": null,
+              "config_default": true,
+              "options_override": false,
+              "binary_matches": true,
+              "config_mtime": 1770000000,
+              "reload_pending": false
+            },
             "probes": {
               "deltas": []
             },
@@ -263,6 +289,19 @@
               "port": [
                 22
               ]
+            },
+            "daemon": {
+              "found": true,
+              "masters": 1,
+              "pid": 812,
+              "start_epoch": 1780000000,
+              "reexec_epoch": null,
+              "config_path": null,
+              "config_default": true,
+              "options_override": false,
+              "binary_matches": true,
+              "config_mtime": 1770000000,
+              "reload_pending": false
             },
             "probes": {
               "deltas": []
