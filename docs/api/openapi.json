@@ -619,6 +619,188 @@
         "title": "AgentOut",
         "type": "object"
       },
+      "AgentRevokeIn": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "revoke_enroll_token": {
+            "default": true,
+            "description": "also revoke the multi-use enrollment token this agent was first enrolled with (if it has uses left), so a revoked host cannot re-enroll under a new name. False keeps the fleet token for the hosts that have not enrolled yet",
+            "title": "Revoke Enroll Token",
+            "type": "boolean"
+          }
+        },
+        "title": "AgentRevokeIn",
+        "type": "object"
+      },
+      "AgentRevokeOut": {
+        "properties": {
+          "agent_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Version"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "enroll_token_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "prefix of the enrollment token this agent was first enrolled with (None: unknown)",
+            "title": "Enroll Token Prefix"
+          },
+          "enroll_token_revoked": {
+            "default": false,
+            "description": "that token was revoked by this call (it still had uses left)",
+            "title": "Enroll Token Revoked",
+            "type": "boolean"
+          },
+          "enrolled_at": {
+            "format": "date-time",
+            "title": "Enrolled At",
+            "type": "string"
+          },
+          "hostname": {
+            "title": "Hostname",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the agent's active signing key",
+            "title": "Key Id"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
+          "last_posture_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Posture At"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "legacy": {
+            "default": false,
+            "description": "a v1 agent without a key: it must re-enroll",
+            "title": "Legacy",
+            "type": "boolean"
+          },
+          "node_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Ref"
+          },
+          "online": {
+            "default": true,
+            "title": "Online",
+            "type": "boolean"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
+          },
+          "silent_after_s": {
+            "default": 300,
+            "title": "Silent After S",
+            "type": "integer"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "hostname",
+          "platform",
+          "agent_version",
+          "labels",
+          "capabilities",
+          "status",
+          "last_seen",
+          "enrolled_at",
+          "stale"
+        ],
+        "title": "AgentRevokeOut",
+        "type": "object"
+      },
       "AlertDeliveryOut": {
         "properties": {
           "change_id": {
@@ -7524,6 +7706,41 @@
         "title": "KeyOut",
         "type": "object"
       },
+      "KeyRevokeIn": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "successors": {
+            "anyOf": [
+              {
+                "enum": [
+                  "revoke",
+                  "keep"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "required when the key was rotated and its successor is still active: 'revoke' revokes the whole chain (the stolen-key case), 'keep' revokes only this key (cleanup after a legitimate rotation). Without it the call changes nothing and answers 409 listing active_successors. Revoking the AGENT is the incident action",
+            "title": "Successors"
+          }
+        },
+        "title": "KeyRevokeIn",
+        "type": "object"
+      },
       "LabelChangeOut": {
         "properties": {
           "changed": {
@@ -11218,25 +11435,6 @@
           }
         },
         "title": "RevertIn",
-        "type": "object"
-      },
-      "RevokeIn": {
-        "additionalProperties": false,
-        "properties": {
-          "reason": {
-            "anyOf": [
-              {
-                "maxLength": 512,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          }
-        },
-        "title": "RevokeIn",
         "type": "object"
       },
       "RiskyAsset": {
@@ -25734,7 +25932,7 @@
     },
     "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke": {
       "post": {
-        "description": "Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key\nleaves the agent unable to post until an admin mints it a re-key token.",
+        "description": "Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key\nleaves the agent unable to post until an admin mints it a re-key token. A ROTATED key whose successor is still\nactive needs ``successors``: 'revoke' (the whole chain, for a stolen key) or 'keep'; otherwise 409 and nothing\nchanges. For an incident revoke the agent instead (``POST /agents/{id}/revoke``).",
         "operationId": "revoke_agent_key_v1_fleet_agents__agent_id__keys__key_id__revoke_post",
         "parameters": [
           {
@@ -25762,7 +25960,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RevokeIn"
+                "$ref": "#/components/schemas/KeyRevokeIn"
               }
             }
           },
@@ -25840,7 +26038,7 @@
     },
     "/v1/fleet/agents/{agent_id}/revoke": {
       "post": {
-        "description": "Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key\ntokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached.",
+        "description": "THE incident action for a stolen or compromised host. Revoke an agent NOW: its credential and every key stop\nworking on the very next call, its pending re-key tokens are revoked, and the host drops out of the reach graph's\ncoverage (it stays in the graph as a tombstone and reads UNKNOWN). Nothing is cached.\n\nBy default it also revokes the multi-use fleet enrollment token the agent came from (``revoke_enroll_token``),\nso the host cannot re-enroll as a new agent; the response says which token and whether it was revoked.",
         "operationId": "revoke_agent_v1_fleet_agents__agent_id__revoke_post",
         "parameters": [
           {
@@ -25858,7 +26056,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RevokeIn"
+                "$ref": "#/components/schemas/AgentRevokeIn"
               }
             }
           },
@@ -25869,7 +26067,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentOut"
+                  "$ref": "#/components/schemas/AgentRevokeOut"
                 }
               }
             },
@@ -26501,7 +26699,7 @@
     },
     "/v1/fleet/{agent_id}/inventory": {
       "post": {
-        "description": "The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked\n``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can\nprove life) and no builder reads it.",
+        "description": "The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent WITH an active key, stored\nmarked ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope\ncan prove life) and no builder reads it. Bounded: at most 2 MiB, an inventory identical to the newest one only\nrefreshes it (same id), and only the newest few per agent are kept.",
         "operationId": "post_inventory_v1_fleet__agent_id__inventory_post",
         "parameters": [
           {

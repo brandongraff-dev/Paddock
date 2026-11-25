@@ -118,6 +118,47 @@ export interface AgentOut {
   status: string;
 }
 
+export interface AgentRevokeIn {
+  reason?: string | null;
+  /**
+   * also revoke the multi-use enrollment token this agent was first enrolled with (if it has uses left), so a revoked host cannot re-enroll under a new name. False keeps the fleet token for the hosts that have not enrolled yet
+   */
+  revoke_enroll_token?: boolean;
+}
+
+export interface AgentRevokeOut {
+  agent_version: string | null;
+  capabilities: string[];
+  /**
+   * prefix of the enrollment token this agent was first enrolled with (None: unknown)
+   */
+  enroll_token_prefix?: string | null;
+  /**
+   * that token was revoked by this call (it still had uses left)
+   */
+  enroll_token_revoked?: boolean;
+  enrolled_at: string;
+  hostname: string;
+  id: string;
+  /**
+   * the agent's active signing key
+   */
+  key_id?: string | null;
+  labels: string[];
+  last_posture_at?: string | null;
+  last_seen: string | null;
+  /**
+   * a v1 agent without a key: it must re-enroll
+   */
+  legacy?: boolean;
+  node_ref?: string | null;
+  online?: boolean;
+  platform: string | null;
+  silent_after_s?: number;
+  stale: boolean;
+  status: string;
+}
+
 export interface AlertDeliveryOut {
   change_id: string | null;
   channel: string;
@@ -1310,6 +1351,14 @@ export interface KeyOut {
   status: string;
 }
 
+export interface KeyRevokeIn {
+  reason?: string | null;
+  /**
+   * required when the key was rotated and its successor is still active: 'revoke' revokes the whole chain (the stolen-key case), 'keep' revokes only this key (cleanup after a legitimate rotation). Without it the call changes nothing and answers 409 listing active_successors. Revoking the AGENT is the incident action
+   */
+  successors?: ("revoke" | "keep") | null;
+}
+
 export interface LabelChangeOut {
   changed: boolean;
   graph_version?: number | null;
@@ -1961,10 +2010,6 @@ export interface Resolutions {
 
 export interface RevertIn {
   note?: string | null;
-}
-
-export interface RevokeIn {
-  reason?: string | null;
 }
 
 export interface RiskyAsset {
@@ -4668,9 +4713,11 @@ export abstract class GeneratedOperations {
    * POST /v1/fleet/agents/{agent_id}/keys/{key_id}/revoke — Revoke Agent Key
    *
    * Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key
-   * leaves the agent unable to post until an admin mints it a re-key token.
+   * leaves the agent unable to post until an admin mints it a re-key token. A ROTATED key whose successor is still
+   * active needs ``successors``: 'revoke' (the whole chain, for a stolen key) or 'keep'; otherwise 409 and nothing
+   * changes. For an incident revoke the agent instead (``POST /agents/{id}/revoke``).
    */
-  revokeAgentKey(agentId: string, keyId: string, body: RevokeIn, options?: RequestOptions): Promise<unknown> {
+  revokeAgentKey(agentId: string, keyId: string, body: KeyRevokeIn, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("POST", "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke", { pathParams: { agent_id: agentId, key_id: keyId }, body, options });
   }
 
@@ -4687,11 +4734,15 @@ export abstract class GeneratedOperations {
   /**
    * POST /v1/fleet/agents/{agent_id}/revoke — Revoke Agent
    *
-   * Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key
-   * tokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached.
+   * THE incident action for a stolen or compromised host. Revoke an agent NOW: its credential and every key stop
+   * working on the very next call, its pending re-key tokens are revoked, and the host drops out of the reach graph's
+   * coverage (it stays in the graph as a tombstone and reads UNKNOWN). Nothing is cached.
+   *
+   * By default it also revokes the multi-use fleet enrollment token the agent came from (``revoke_enroll_token``),
+   * so the host cannot re-enroll as a new agent; the response says which token and whether it was revoked.
    */
-  revokeAgent(agentId: string, body: RevokeIn, options?: RequestOptions): Promise<AgentOut> {
-    return this._request<AgentOut>("POST", "/v1/fleet/agents/{agent_id}/revoke", { pathParams: { agent_id: agentId }, body, options });
+  revokeAgent(agentId: string, body: AgentRevokeIn, options?: RequestOptions): Promise<AgentRevokeOut> {
+    return this._request<AgentRevokeOut>("POST", "/v1/fleet/agents/{agent_id}/revoke", { pathParams: { agent_id: agentId }, body, options });
   }
 
   /**
@@ -4801,9 +4852,10 @@ export abstract class GeneratedOperations {
   /**
    * POST /v1/fleet/{agent_id}/inventory — Post Inventory
    *
-   * The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked
-   * ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can
-   * prove life) and no builder reads it.
+   * The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent WITH an active key, stored
+   * marked ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope
+   * can prove life) and no builder reads it. Bounded: at most 2 MiB, an inventory identical to the newest one only
+   * refreshes it (same id), and only the newest few per agent are kept.
    */
   postInventory(agentId: string, options?: RequestOptions): Promise<InventoryOut> {
     return this._request<InventoryOut>("POST", "/v1/fleet/{agent_id}/inventory", { pathParams: { agent_id: agentId }, options });

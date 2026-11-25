@@ -123,6 +123,40 @@ AgentOut = TypedDict(
     total=False,
 )
 
+AgentRevokeIn = TypedDict(
+    'AgentRevokeIn',
+    {
+        'reason': NotRequired['str | None'],
+        'revoke_enroll_token': NotRequired['bool'],
+    },
+    total=False,
+)
+
+AgentRevokeOut = TypedDict(
+    'AgentRevokeOut',
+    {
+        'agent_version': Required['str | None'],
+        'capabilities': Required['list[str]'],
+        'enroll_token_prefix': NotRequired['str | None'],
+        'enroll_token_revoked': NotRequired['bool'],
+        'enrolled_at': Required['str'],
+        'hostname': Required['str'],
+        'id': Required['str'],
+        'key_id': NotRequired['str | None'],
+        'labels': Required['list[str]'],
+        'last_posture_at': NotRequired['str | None'],
+        'last_seen': Required['str | None'],
+        'legacy': NotRequired['bool'],
+        'node_ref': NotRequired['str | None'],
+        'online': NotRequired['bool'],
+        'platform': Required['str | None'],
+        'silent_after_s': NotRequired['int'],
+        'stale': Required['bool'],
+        'status': Required['str'],
+    },
+    total=False,
+)
+
 AlertDeliveryOut = TypedDict(
     'AlertDeliveryOut',
     {
@@ -1722,6 +1756,15 @@ KeyOut = TypedDict(
     total=False,
 )
 
+KeyRevokeIn = TypedDict(
+    'KeyRevokeIn',
+    {
+        'reason': NotRequired['str | None'],
+        'successors': NotRequired["Literal['revoke', 'keep'] | None"],
+    },
+    total=False,
+)
+
 LabelChangeOut = TypedDict(
     'LabelChangeOut',
     {
@@ -2579,14 +2622,6 @@ RevertIn = TypedDict(
     'RevertIn',
     {
         'note': NotRequired['str | None'],
-    },
-    total=False,
-)
-
-RevokeIn = TypedDict(
-    'RevokeIn',
-    {
-        'reason': NotRequired['str | None'],
     },
     total=False,
 )
@@ -5546,11 +5581,13 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/fleet/agents/{agent_id}', path_params={'agent_id': agent_id})
 
-    def revoke_agent_key(self, agent_id: str, key_id: str, body: RevokeIn | dict[str, Any]) -> Any:
+    def revoke_agent_key(self, agent_id: str, key_id: str, body: KeyRevokeIn | dict[str, Any]) -> Any:
         """POST /v1/fleet/agents/{agent_id}/keys/{key_id}/revoke -- Revoke Agent Key
 
         Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key
-        leaves the agent unable to post until an admin mints it a re-key token.
+        leaves the agent unable to post until an admin mints it a re-key token. A ROTATED key whose successor is still
+        active needs ``successors``: 'revoke' (the whole chain, for a stolen key) or 'keep'; otherwise 409 and nothing
+        changes. For an incident revoke the agent instead (``POST /agents/{id}/revoke``).
         """
         return self._request('POST', '/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke', path_params={'agent_id': agent_id, 'key_id': key_id}, body=body)
 
@@ -5562,11 +5599,15 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/fleet/agents/{agent_id}/posture', path_params={'agent_id': agent_id})
 
-    def revoke_agent(self, agent_id: str, body: RevokeIn | dict[str, Any]) -> AgentOut:
+    def revoke_agent(self, agent_id: str, body: AgentRevokeIn | dict[str, Any]) -> AgentRevokeOut:
         """POST /v1/fleet/agents/{agent_id}/revoke -- Revoke Agent
 
-        Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key
-        tokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached.
+        THE incident action for a stolen or compromised host. Revoke an agent NOW: its credential and every key stop
+        working on the very next call, its pending re-key tokens are revoked, and the host drops out of the reach graph's
+        coverage (it stays in the graph as a tombstone and reads UNKNOWN). Nothing is cached.
+
+        By default it also revokes the multi-use fleet enrollment token the agent came from (``revoke_enroll_token``),
+        so the host cannot re-enroll as a new agent; the response says which token and whether it was revoked.
         """
         return self._request('POST', '/v1/fleet/agents/{agent_id}/revoke', path_params={'agent_id': agent_id}, body=body)
 
@@ -5655,9 +5696,10 @@ class GeneratedOperations:
     def post_inventory(self, agent_id: str) -> InventoryOut:
         """POST /v1/fleet/{agent_id}/inventory -- Post Inventory
 
-        The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked
-        ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can
-        prove life) and no builder reads it.
+        The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent WITH an active key, stored
+        marked ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope
+        can prove life) and no builder reads it. Bounded: at most 2 MiB, an inventory identical to the newest one only
+        refreshes it (same id), and only the newest few per agent are kept.
         """
         return self._request('POST', '/v1/fleet/{agent_id}/inventory', path_params={'agent_id': agent_id})
 
