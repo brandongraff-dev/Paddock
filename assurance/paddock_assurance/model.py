@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from enum import Enum
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import ports as P
+from .tier import Tier
 
 API_VERSION = "paddock.dev/invariant/v1"
 
@@ -33,22 +33,6 @@ MAX_AGE_LIMIT = dt.timedelta(days=30)
 # correlation/app/engine/policy.py (this package does not import from other services).
 _REJECT = ("payload", "msfvenom", "reverse shell", "nc -e", "union select", "/bin/sh",
            "powershell -enc")
-
-
-class Tier(str, Enum):
-    """How strong the evidence behind a fact is. Ordered: declared < configured < observed < tested."""
-
-    declared = "declared"      # the tenant says it should be so
-    configured = "configured"  # a config says it is so (SG rule, firewall ruleset, sshd -T)
-    observed = "observed"      # traffic or an outside scan saw it
-    tested = "tested"          # a scope-proven active test confirmed it
-
-    @property
-    def rank(self) -> int:
-        return _RANK[self.value]
-
-
-_RANK = {"declared": 0, "configured": 1, "observed": 2, "tested": 3}
 
 
 def parse_duration(text: str) -> dt.timedelta:

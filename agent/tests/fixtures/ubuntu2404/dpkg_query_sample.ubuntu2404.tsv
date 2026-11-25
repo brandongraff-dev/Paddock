@@ -1,0 +1,12 @@
+apt	2.8.4ubuntu0.1	amd64	ii 	apt	2.8.4ubuntu0.1
+bash	5.2.21-2ubuntu4	amd64	ii 	bash	5.2.21-2ubuntu4
+coreutils	9.4-3ubuntu6.3	amd64	ii 	coreutils	9.4-3ubuntu6.3
+docker-buildx-plugin	0.39.0-1~ubuntu.24.04~noble	amd64	ii 	docker-buildx-plugin	0.39.0-1~ubuntu.24.04~noble
+docker-ce	5:29.9.3-1~ubuntu.24.04~noble	amd64	ii 	docker-ce	5:29.9.3-1~ubuntu.24.04~noble
+docker-ce-cli	5:29.9.3-1~ubuntu.24.04~noble	amd64	ii 	docker-ce	5:29.9.3-1~ubuntu.24.04~noble
+docker-compose-plugin	5.7.1-1~ubuntu.24.04~noble	amd64	ii 	docker-compose-plugin	5.7.1-1~ubuntu.24.04~noble
+libc6:amd64	2.39-0ubuntu8.12	amd64	ii 	glibc	2.39-0ubuntu8.12
+libc6-dbg:amd64	2.39-0ubuntu8.12	amd64	ii 	glibc	2.39-0ubuntu8.12
+libc6-dev:amd64	2.39-0ubuntu8.12	amd64	ii 	glibc	2.39-0ubuntu8.12
+libssl3t64:amd64	3.0.13-0ubuntu3.16	amd64	ii 	openssl	3.0.13-0ubuntu3.16
+openssl	3.0.13-0ubuntu3.16	amd64	ii 	openssl	3.0.13-0ubuntu3.16

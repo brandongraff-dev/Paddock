@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from . import ports as P
+from .hostfacts import FactError, HostFacts, new_budget, parse_facts
 from .model import Selector, Tier
 
 PROTOS = ("icmp", "tcp", "udp", "any")
@@ -81,6 +82,8 @@ class Node:
     tags: frozenset[str] = frozenset()
     cls: Optional[str] = None
     coverage: tuple[Coverage, ...] = ()
+    # Signed host facts per collector (``nodes[].facts``), or None when the node has none at all.
+    host: Optional[HostFacts] = None
 
 
 @dataclass(frozen=True)
@@ -137,8 +140,9 @@ class ReachGraph:
         if len(raw_nodes) > MAX_NODES or len(raw_edges) > MAX_EDGES:
             raise GraphError("graph too large")
         nodes: dict[str, Node] = {}
+        budget = new_budget()
         for i, rn in enumerate(raw_nodes):
-            n = _node(rn, i)
+            n = _node(rn, i, budget)
             if n.id in nodes:
                 raise GraphError(f"duplicate node id {n.id!r}")
             nodes[n.id] = n
@@ -187,7 +191,7 @@ def _ts(value: Any, what: str) -> dt.datetime:
         raise GraphError(f"{what}: timestamp out of range {value!r}") from exc
 
 
-def _node(raw: Any, i: int) -> Node:
+def _node(raw: Any, i: int, budget: Optional[list[int]] = None) -> Node:
     if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not raw["id"]:
         raise GraphError(f"nodes[{i}]: needs a string 'id'")
     nid = raw["id"]
@@ -199,8 +203,14 @@ def _node(raw: Any, i: int) -> Node:
     for what, v in (("zone", zone), ("class", cls)):
         if v is not None and not isinstance(v, str):
             raise GraphError(f"node {nid!r}: {what!r} must be a string")
+    host: Optional[HostFacts] = None
+    if raw.get("facts") is not None:
+        try:
+            host = parse_facts(raw["facts"], nid, budget if budget is not None else new_budget())
+        except FactError as exc:
+            raise GraphError(str(exc)) from exc
     return Node(id=nid, kind=str(raw.get("kind", "host")), zone=zone,
-                tags=frozenset(tags), cls=cls, coverage=cov)
+                tags=frozenset(tags), cls=cls, coverage=cov, host=host)
 
 
 def _qualifier(c: dict, key: str, nid: str) -> str:

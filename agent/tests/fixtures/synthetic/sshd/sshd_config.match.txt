@@ -1,0 +1,13 @@
+Port 22
+Port 2222
+PermitRootLogin no
+PasswordAuthentication no
+MaxAuthTries=3
+UsePAM yes
+AllowUsers alice bob
+AllowUsers carol
+Match Group sftponly
+    PasswordAuthentication yes
+    ForceCommand internal-sftp
+Match Address 10.0.0.0/8,!10.1.0.0/16 User deploy
+    PermitRootLogin yes

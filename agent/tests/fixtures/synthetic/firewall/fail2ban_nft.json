@@ -1,0 +1,92 @@
+{
+ "nftables": [
+  {
+   "metainfo": {
+    "json_schema_version": 1,
+    "version": "1.0.9"
+   }
+  },
+  {
+   "table": {
+    "family": "inet",
+    "handle": 5,
+    "name": "f2b-table"
+   }
+  },
+  {
+   "set": {
+    "elem": [
+     {
+      "elem": {
+       "expires": 412,
+       "timeout": 600,
+       "val": "203.0.113.9"
+      }
+     }
+    ],
+    "family": "inet",
+    "flags": [
+     "interval",
+     "timeout"
+    ],
+    "handle": 7,
+    "name": "addr-set-sshd",
+    "table": "f2b-table",
+    "timeout": 600,
+    "type": "ipv4_addr"
+   }
+  },
+  {
+   "chain": {
+    "family": "inet",
+    "handle": 1,
+    "hook": "input",
+    "name": "f2b-chain",
+    "policy": "accept",
+    "prio": -1,
+    "table": "f2b-table",
+    "type": "filter"
+   }
+  },
+  {
+   "rule": {
+    "chain": "f2b-chain",
+    "expr": [
+     {
+      "match": {
+       "left": {
+        "payload": {
+         "field": "dport",
+         "protocol": "tcp"
+        }
+       },
+       "op": "==",
+       "right": 22
+      }
+     },
+     {
+      "match": {
+       "left": {
+        "payload": {
+         "field": "saddr",
+         "protocol": "ip"
+        }
+       },
+       "op": "==",
+       "right": "@addr-set-sshd"
+      }
+     },
+     {
+      "reject": {
+       "expr": "port-unreachable",
+       "type": "icmpx"
+      }
+     }
+    ],
+    "family": "inet",
+    "handle": 8,
+    "table": "f2b-table"
+   }
+  }
+ ]
+}

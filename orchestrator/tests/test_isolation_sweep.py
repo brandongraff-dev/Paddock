@@ -45,6 +45,8 @@ GLOBAL_ALLOWLIST = {
 EXTRA_POLICIES = {
     ("sensors", "sensor_auth_lookup"): "app.auth_lookup",
     ("sensor_enroll_tokens", "sensor_token_auth_lookup"): "app.auth_lookup",
+    ("fleet_agents", "fleet_agent_auth_lookup"): "app.auth_lookup",
+    ("fleet_enroll_tokens", "fleet_token_auth_lookup"): "app.auth_lookup",
     ("trust_links", "trust_public_lookup"): "app.trust_hash",
     ("scim_tokens", "scim_token_auth_lookup"): "app.auth_lookup",
     ("identity_providers", "identity_provider_auth_lookup"): "app.auth_lookup",

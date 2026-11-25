@@ -15,6 +15,7 @@ GLOBAL_UNIQUE_OK = {
     "sensors": "random credential prefix is the lookup handle",
     "sensor_enroll_tokens": "random token prefix is the lookup handle",
     "fleet_agents": "random token prefix is the lookup handle",
+    "fleet_enroll_tokens": "random token prefix is the lookup handle",
     "integrations": "random inbound webhook token is the lookup handle",
     "msp_invites": "random invite token hash is the lookup handle",
     "trust_links": "random public token hash is the lookup handle",
