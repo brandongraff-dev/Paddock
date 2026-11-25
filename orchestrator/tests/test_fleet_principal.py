@@ -517,5 +517,212 @@ async def test_agent_listing_shows_liveness_and_key(world):
     assert row["status"] == "offline" and row["online"] is False
 
 
+# =========================================================================== #
+# liveness: the monitor loop (docs/ASSURANCE_P2.md section 6)
+# =========================================================================== #
+
+async def _arm_assurance(db) -> None:
+    """Pretend the assurance runner has just built (last_build_at set), so a NULL afterwards means 'invalidated'."""
+    await db.execute("INSERT INTO assurance_state (last_build_at) VALUES (NOW()) "
+                     "ON CONFLICT (tenant_id) DO UPDATE SET last_build_at = NOW()")
+
+
+async def _built(db) -> bool:
+    return await db.fetchval("SELECT last_build_at FROM assurance_state WHERE tenant_id=$1",
+                             uuid.UUID(TENANT_A)) is not None
+
+
+async def test_monitor_flags_a_silent_agent_and_a_signed_heartbeat_revives_it(world, app_pool):
+    from app import fleet_monitor
+
+    c = world.client
+    host = await enroll_host(c, world.admin_a, "quiet-1")
+    fresh = await enroll_host(c, world.admin_a, "chatty-1")
+    assert (await hb(c, host)).status_code == 200 and (await hb(c, fresh)).status_code == 200
+    await _arm_assurance(world.db)
+
+    # nothing is silent yet
+    assert await fleet_monitor.sweep_all_tenants(app_pool) == 0
+    assert await _built(world.db)
+
+    await world.db.execute("UPDATE fleet_agents SET last_seen = NOW() - interval '10 minutes' WHERE id=$1",
+                           uuid.UUID(host.agent_id))
+    assert await fleet_monitor.sweep_all_tenants(app_pool) == 1
+    a = await agent_row(world.db, host.agent_id)
+    assert a["online"] is False and a["offline_since"] is not None and a["status"] == "offline"
+    assert (await agent_row(world.db, fresh.agent_id))["online"] is True
+    off = await audits(world.db, "fleet.agent.offline", host.agent_id)
+    assert len(off) == 1 and off[0]["actor"] == "system:fleet-monitor" and off[0]["details"]["hostname"] == "quiet-1"
+    assert str(off[0]["tenant_id"]) == TENANT_A
+    assert not await _built(world.db), "silence must invalidate the graph so coverage is dropped within a tick"
+    # an agent is flagged ONCE per silence
+    assert await fleet_monitor.sweep_all_tenants(app_pool) == 0
+    assert len(await audits(world.db, "fleet.agent.offline", host.agent_id)) == 1
+    assert (await c.get("/v1/fleet/agents", headers=hdr(world.viewer_a))).json()
+    row = [x for x in (await c.get("/v1/fleet/agents", headers=hdr(world.viewer_a))).json()
+           if x["id"] == host.agent_id][0]
+    assert row["status"] == "offline" and row["online"] is False
+
+    # a BEARER-only call can never revive it: only a signed envelope is proof of life
+    r = await c.post(f"/v1/fleet/{host.agent_id}/heartbeat", headers=host.h, content=b"{}")
+    assert r.status_code == 400
+    assert (await agent_row(world.db, host.agent_id))["online"] is False
+
+    await _arm_assurance(world.db)
+    assert (await hb(c, host)).status_code == 200
+    a = await agent_row(world.db, host.agent_id)
+    assert a["online"] is True and a["offline_since"] is None and a["status"] == "online"
+    assert len(await audits(world.db, "fleet.agent.online", host.agent_id)) == 1
+    assert not await _built(world.db), "coming back must also invalidate (coverage returns within a tick)"
+
+
+async def test_the_monitor_honours_each_agents_own_silent_after_s(world, app_pool):
+    from app import fleet_monitor
+
+    c = world.client
+    short = await enroll_host(c, world.admin_a, "short-1")
+    long_ = await enroll_host(c, world.admin_a, "long-1")
+    await world.db.execute("UPDATE fleet_agents SET silent_after_s = 30, last_seen = NOW() - interval '60 seconds' "
+                           "WHERE id=$1", uuid.UUID(short.agent_id))
+    await world.db.execute("UPDATE fleet_agents SET silent_after_s = 3600, last_seen = NOW() - interval '30 minutes' "
+                           "WHERE id=$1", uuid.UUID(long_.agent_id))
+    assert await fleet_monitor.sweep_all_tenants(app_pool) == 1
+    assert (await agent_row(world.db, short.agent_id))["online"] is False
+    assert (await agent_row(world.db, long_.agent_id))["online"] is True
+
+
+async def test_a_never_heard_from_agent_goes_offline_after_its_window(world, app_pool):
+    """An agent that enrolled and then never sent anything is silent too (a host that was never seen is not fine)."""
+    from app import fleet_monitor
+
+    host = await enroll_host(world.client, world.admin_a, "mute-1")
+    await world.db.execute("UPDATE fleet_agents SET last_seen = NULL, enrolled_at = NOW() - interval '1 hour' "
+                           "WHERE id=$1", uuid.UUID(host.agent_id))
+    assert await fleet_monitor.sweep_all_tenants(app_pool) == 1
+    assert (await agent_row(world.db, host.agent_id))["online"] is False
+
+
+async def test_the_monitor_never_sweeps_legacy_or_revoked_agents_and_covers_every_tenant(world, app_pool):
+    from app import fleet_monitor
+
+    c = world.client
+    aid, _ = await _legacy_agent(world.db, TENANT_A)
+    await world.db.execute("UPDATE fleet_agents SET last_seen = NOW() - interval '1 day' WHERE id=$1",
+                           uuid.UUID(aid))
+    gone = await enroll_host(c, world.admin_a, "revoked-1")
+    assert (await c.post(f"/v1/fleet/agents/{gone.agent_id}/revoke", headers=hdr(world.admin_a),
+                         json={"reason": "decommissioned"})).status_code == 200
+    await world.db.execute("UPDATE fleet_agents SET last_seen = NOW() - interval '1 day' WHERE id=$1",
+                           uuid.UUID(gone.agent_id))
+    other = await enroll_host(c, world.admin_b, "tenant-b-1")
+    await world.db.execute("UPDATE fleet_agents SET last_seen = NOW() - interval '1 day' WHERE id=$1",
+                           uuid.UUID(other.agent_id))
+    assert await fleet_monitor.sweep_all_tenants(app_pool) == 1            # only tenant B's live agent
+    assert (await agent_row(world.db, aid))["online"] is True              # legacy: it can never answer, no flapping
+    r = await agent_row(world.db, gone.agent_id)
+    assert r["online"] is False and r["status"] == "revoked"               # revoked stays revoked (not 'offline')
+    assert (await agent_row(world.db, other.agent_id))["online"] is False
+    off = await audits(world.db, "fleet.agent.offline", other.agent_id)
+    assert len(off) == 1 and str(off[0]["tenant_id"]) == TENANT_B
+    assert await audits(world.db, "fleet.agent.offline", aid) == []
+
+
+async def test_the_monitor_loop_survives_errors_and_is_registered_in_the_lifespan(monkeypatch):
+    import asyncio
+    import inspect
+
+    from app import fleet_monitor, main
+
+    calls = []
+
+    async def boom(pool):
+        calls.append(1)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(fleet_monitor, "sweep_all_tenants", boom)
+    monkeypatch.setattr(fleet_monitor, "monitor_interval_s", lambda: 0)
+
+    class _State:
+        pool = object()
+
+    class _App:
+        state = _State()
+
+    task = asyncio.create_task(fleet_monitor.fleet_agent_monitor_loop(_App()))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if len(calls) >= 3:
+            break
+    assert len(calls) >= 3 and not task.done(), "one failing sweep must not end the loop"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    src = inspect.getsource(main.lifespan)
+    assert "fleet_monitor.fleet_agent_monitor_loop" in src and "fleet_agent_task" in src.split("finally")[1]
+
+
+# =========================================================================== #
+# retention defaults (E8) and what a viewer may see
+# =========================================================================== #
+
+def test_retention_defaults_bound_the_inventory_and_posture_history(monkeypatch):
+    from app import retention
+
+    monkeypatch.delenv("RETENTION_AGENT_INVENTORY_DAYS", raising=False)
+    monkeypatch.delenv("RETENTION_AGENT_POSTURE_DAYS", raising=False)
+    pols = {p.table: p for p in retention.configured_policies()}
+    assert (pols["agent_inventory"].column, pols["agent_inventory"].days) == ("collected_at", 30)
+    assert (pols["agent_posture"].column, pols["agent_posture"].days) == ("received_at", 90)
+    monkeypatch.setenv("RETENTION_AGENT_POSTURE_DAYS", "7")
+    monkeypatch.setenv("RETENTION_AGENT_INVENTORY_DAYS", "junk")
+    pols = {p.table: p for p in retention.configured_policies()}
+    assert pols["agent_posture"].days == 7 and pols["agent_inventory"].days == 30
+    monkeypatch.setenv("RETENTION_AGENT_POSTURE_DAYS", "0")
+    assert {p.table: p for p in retention.configured_policies()}["agent_posture"].days == 0   # 0 disables (kept)
+
+
+async def test_retention_purges_old_posture_and_inventory_per_tenant_and_keeps_the_rest(world, app_pool):
+    from app import retention
+
+    c = world.client
+    a = await enroll_host(c, world.admin_a, "ret-a")
+    b = await enroll_host(c, world.admin_b, "ret-b")
+    for h in (a, b):
+        assert (await ps(c, h)).status_code == 200
+        async with world.db.acquire() as con:
+            await con.execute("INSERT INTO agent_inventory (tenant_id, agent_id, os_info) "
+                              "SELECT tenant_id, id, '{}'::jsonb FROM fleet_agents WHERE id=$1", uuid.UUID(h.agent_id))
+            await con.execute("INSERT INTO agent_posture (tenant_id, agent_id, key_id, seq, schema_version, "
+                              "collected_at, received_at, header, payload_raw, payload_sha256, signature, signed, "
+                              "size_bytes) SELECT tenant_id, agent_id, key_id, seq + 100, schema_version, "
+                              "collected_at, NOW() - interval '120 days', header, payload_raw, payload_sha256, "
+                              "signature, signed, size_bytes FROM agent_posture WHERE agent_id=$1",
+                              uuid.UUID(h.agent_id))
+            await con.execute("UPDATE agent_inventory SET collected_at = NOW() - interval '45 days' WHERE agent_id=$1",
+                              uuid.UUID(h.agent_id))
+    counts = await retention.run_retention(app_pool)
+    assert counts["agent_posture"] == 2 and counts["agent_inventory"] == 2
+    for h in (a, b):
+        rows = await posture_rows(world.db, h.agent_id)
+        assert len(rows) == 1 and rows[0]["seq"] < 100               # the recent posture stays
+        assert await world.db.fetchval("SELECT count(*) FROM agent_inventory WHERE agent_id=$1",
+                                       uuid.UUID(h.agent_id)) == 0
+
+
+async def test_the_viewer_safe_agent_summary_leaks_no_host_fingerprints_or_ingest_internals(world):
+    c = world.client
+    host = await enroll_host(c, world.admin_a, "priv-1")
+    assert (await ps(c, host, good_posture(ips=["10.0.1.5"]))).status_code == 200
+    ident = (await c.get(f"/v1/fleet/agents/{host.agent_id}", headers=hdr(world.viewer_a))).json()["identity"]
+    assert ident == {"hostname": "priv-1", "basis": "claimed", "ips": ["10.0.1.5"]}
+    text = json.dumps((await c.get(f"/v1/fleet/agents/{host.agent_id}", headers=hdr(world.viewer_a))).json())
+    for secret in ("c" * 64, "11111111-2222-3333-4444-555555555555", "_ingest", "payload_raw", "peer_ip",
+                   "machine_id_hash", "boot_id", "last_env"):
+        assert secret not in text, secret
+    # the full posture is a triage read: a viewer is refused, an analyst sees it
+    assert (await c.get(f"/v1/fleet/agents/{host.agent_id}/posture", headers=hdr(world.viewer_a))).status_code == 403
+    assert (await c.get(f"/v1/fleet/agents/{host.agent_id}/posture", headers=hdr(world.analyst_a))).status_code == 200
+
+
 def test_unused_imports_are_fixtures():
     assert Host and canon and TENANT_A and TENANT_B and ps and enforce and rls_app and _reset_limiters

@@ -15,18 +15,30 @@ over-approximate when a fact is unknown).
 Rows are plain mappings (an asyncpg ``Record`` works): ``id``, ``kind``, ``value`` and ``metadata``
 (a dict or its JSON text). Only these asset kinds carry machine identity: ``cloud_resource`` and
 the two device kinds. Plain ``ipv4``/``ipv6`` assets are *not* mapped; they are the bare address.
+
+Managed hosts (docs/ASSURANCE_P2.md E3): a ``fleet_agents`` row is an identity too, with
+``kind == "agent"`` and the addresses the agent CLAIMS in ``identity.ips`` (its specific bind
+addresses). It maps to ``agent:<uuid>``. A claim is only a claim: an address that an asset also owns
+is ambiguous (``resolve_all`` then returns the asset, the agent AND ``ip:``, so no path is lost),
+and an agent already merged into a cloud instance (``node_ref`` ``asset:...``) adds nothing, its
+addresses are the asset's. Revoked and legacy agents never reach the map (the SQL excludes them).
 """
 from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
 
 from .. import refs
 
+logger = logging.getLogger(__name__)
+
 #: asset kinds that give an address a machine identity.
 IDENTITY_KINDS = ("cloud_resource", "iot_device", "ot_device")
+#: the row kind of a managed host (a ``fleet_agents`` row), see ``AGENT_IDENTITY_SQL``.
+AGENT_KIND = "agent"
 #: metadata keys that hold addresses (``ips`` for devices, the rest for cloud resources).
 IP_KEYS = ("public_ips", "private_ips", "ips", "ip")
 
@@ -36,6 +48,14 @@ IDENTITY_SQL = (
     "WHERE kind IN ('cloud_resource','iot_device','ot_device') "
     "AND (metadata ? 'public_ips' OR metadata ? 'private_ips' OR metadata ? 'ips' OR metadata ? 'ip') "
     "ORDER BY first_seen, id"
+)
+
+#: Live v2 agents (not legacy, not revoked) and the addresses they claim. ``identity`` holds the claimed
+#: ``ips``; the router never exposes the rest of it, and neither does this map.
+AGENT_IDENTITY_SQL = (
+    "SELECT id, hostname, node_ref, identity FROM fleet_agents "
+    "WHERE legacy = FALSE AND status <> 'revoked' AND revoked_at IS NULL "
+    "ORDER BY enrolled_at, id"
 )
 
 #: Longest textual address we look at (a v6 literal with a v4 tail is 45 chars); the rest is junk.
@@ -90,6 +110,31 @@ def _md(row: Mapping[str, Any]) -> dict[str, Any]:
         except ValueError:
             return {}
     return md if isinstance(md, dict) else {}
+
+
+def _agent_identity(row: Mapping[str, Any]) -> tuple[Optional[str], dict[str, Any]]:
+    """``(agent ref, {"ips": [...]})`` of a ``fleet_agents`` row, or ``(None, {})`` when it adds nothing.
+
+    A row whose ``node_ref`` is an ``asset:`` ref is a corroborated agent: its addresses ARE the
+    asset's, so it adds nothing (and must not make its own asset's addresses look ambiguous).
+    """
+    try:
+        ref = refs.agent_ref(row["id"])
+    except (refs.RefError, KeyError):
+        return None, {}
+    node_ref = row.get("node_ref")
+    if isinstance(node_ref, str) and node_ref.startswith("asset:"):
+        return None, {}
+    ident = row.get("identity")
+    if isinstance(ident, (str, bytes)):
+        try:
+            ident = json.loads(ident)
+        except ValueError:
+            return None, {}
+    if not isinstance(ident, dict):
+        return None, {}
+    ips = ident.get("ips")
+    return ref, {"ips": ips if isinstance(ips, list) else []}
 
 
 def _ips_in(md: Mapping[str, Any]) -> list[str]:
@@ -183,17 +228,23 @@ def build_ip_map(rows: Iterable[Mapping[str, Any]]) -> IpMap:
     kinds: dict[str, str] = {}
     ips_by_ref: dict[str, tuple[str, ...]] = {}
     for row in rows:
-        if row.get("kind") not in IDENTITY_KINDS:
+        kind = row.get("kind")
+        if kind == AGENT_KIND:
+            ref, md = _agent_identity(row)
+            if ref is None:
+                continue
+        elif kind in IDENTITY_KINDS:
+            try:
+                ref = refs.asset_ref(row["id"])
+            except (refs.RefError, KeyError):
+                continue
+            md = _md(row)
+        else:
             continue
-        try:
-            ref = refs.asset_ref(row["id"])
-        except (refs.RefError, KeyError):
-            continue
-        md = _md(row)
         ips = _ips_in(md)
         if not ips:
             continue
-        kinds[ref] = node_kind(str(row["kind"]), md)
+        kinds[ref] = node_kind(str(kind), md)
         ips_by_ref[ref] = tuple(ips)
         for ip in ips:
             owners.setdefault(ip, set()).add(ref)
@@ -209,5 +260,18 @@ def resolve(ip_map: IpMap, ip: str) -> str:
 
 
 async def load_ip_rows(conn) -> list[dict[str, Any]]:
-    """Fetch the asset rows ``build_ip_map`` needs. Tenancy comes from the connection (RLS)."""
-    return [dict(r) for r in await conn.fetch(IDENTITY_SQL)]
+    """Fetch the identity rows ``build_ip_map`` needs: cloud/device assets, then live agents.
+
+    Tenancy comes from the connection (RLS). A failure reading the agents (a schema without them)
+    must not take the asset identities, and with them every builder that shares this map, down: the
+    agents are skipped and the hosts keep their ``ip:`` identity, which only ever loses a merge.
+    """
+    rows = [dict(r) for r in await conn.fetch(IDENTITY_SQL)]
+    try:
+        for r in await conn.fetch(AGENT_IDENTITY_SQL):
+            d = dict(r)
+            rows.append({"id": d["id"], "kind": AGENT_KIND, "node_ref": d.get("node_ref"),
+                         "identity": d.get("identity")})
+    except Exception:  # noqa: BLE001 -- see docstring; asyncpg.PostgresError and friends
+        logger.warning("ipmap_agents_unreadable", exc_info=True)
+    return rows

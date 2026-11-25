@@ -95,10 +95,10 @@ HOURLY_S = 3600
 _HEADER_FIELDS = ("v", "alg", "kid", "agent_id", "tenant_id", "kind", "seq", "issued_at", "nonce",
                   "payload_type", "payload_sha256", "payload_len", "collectors")
 _ALL_FIELDS = frozenset(_HEADER_FIELDS) | {"payload_b64", "sig"}
-_ISSUED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
-_KID_RE = re.compile(r"^[0-9a-f]{32}$")
-_B64U_RE = re.compile(r"^[A-Za-z0-9_-]*$")
+_ISSUED_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}\Z")
+_KID_TEXT_RE = re.compile(r"^[\x21-\x7e]{1,64}\Z")
+_B64U_RE = re.compile(r"^[A-Za-z0-9_-]*\Z")
 _CTL_RE = re.compile(r"[\x00-\x1f\x7f]")
 # Linear depth scan (no regex backtracking over a whole string: an unterminated string just ends the scan).
 _STRUCT_RE = re.compile(rb'["\[\]{}]')
@@ -346,7 +346,12 @@ def parse_envelope(raw: bytes, expected_kind: str) -> Envelope:
             or any(not isinstance(k, str) or not isinstance(v, str) or len(k) > 64 or len(v) > 128
                    for k, v in coll.items())):
         raise _bad("collectors must map at most 32 short strings to strings")
-    if len(env["kid"]) > 64 or not env["kid"]:
+    if any(_CTL_RE.search(k) or _CTL_RE.search(v) for k, v in coll.items()):
+        # the header is stored as JSONB, which cannot hold U+0000: refuse control characters up front
+        raise _bad("collectors must not contain control characters")
+    # kid reaches SQL (a NUL byte in a text parameter is a database error, i.e. a 500) and the signed header:
+    # printable ASCII only, so a malformed one is a clean 400 and never an unaudited crash.
+    if not _KID_TEXT_RE.match(env["kid"]):
         raise _bad("kid is malformed")
     for name in ("agent_id", "tenant_id"):
         try:
@@ -869,7 +874,12 @@ def validate_posture(raw: bytes) -> dict[str, Any]:
     return obj
 
 
+MAX_HEARTBEAT_BYTES = 4096
+
+
 def validate_heartbeat(raw: bytes) -> dict[str, Any]:
+    if len(raw) > MAX_HEARTBEAT_BYTES:      # "tiny payload": a heartbeat is a liveness proof, not a data channel
+        raise PayloadError("payload_schema", f"a heartbeat payload is at most {MAX_HEARTBEAT_BYTES} bytes")
     obj = _parse_payload_json(raw)
     if not isinstance(obj, dict):
         raise PayloadError("payload_schema", "the payload must be a JSON object")
@@ -1160,7 +1170,8 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
             res = IngestResult(kind=kind, seq=seq, idempotent=True, key_id=kid, server_time=iso(now))
             if kind == "heartbeat":
                 res.pending_actions = await _pending_actions(con, agent_id)
-                res.agent = {"id": agent_id, "status": agent["status"], "last_seen": now}
+                res.agent = {"id": agent_id, "status": agent["status"], "last_seen": now,
+                             "hostname": agent["hostname"]}
             return res
         if not same_slot and seq <= cur["last_seq"] and kind == "posture":
             # An older STORED posture that is sent again (a lost answer, then newer envelopes went through).
@@ -1211,8 +1222,12 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
         stored_at = _parse_stored(ingest.get("stored_at"))
         changed = digest != old_digest
         due = stored_at is None or (now - stored_at).total_seconds() >= HOURLY_S
+        # The newest STORED posture must be signed by the key that is active NOW: the host_fw builder ignores a
+        # posture whose key is rotated or revoked, so after a rotation an unchanged posture signed by the new key
+        # is stored at once (and the graph rebuilt), not an hour later (docs/ASSURANCE_P2.md 13.4 item 1).
+        key_changed = ingest.get("stored_kid") != kid
         res.changed = changed
-        res.stored = changed or due
+        res.stored = changed or due or key_changed
         new_identity.update({"ips": claimed_id["ips"], "machine_id_hash": claimed_id["machine_id_hash"],
                              "boot_id": claimed_id["boot_id"], "peer_ip": client_ip})
         new_identity.setdefault("hostname", agent["hostname"])
@@ -1228,10 +1243,10 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
                    ON CONFLICT (tenant_id, agent_id, key_id, seq) DO NOTHING""",
                 agent_id, kid, seq, collected, now, json.dumps(env.header), payload, sha,
                 b64u_decode(env.sig_b64), len(payload))
-            ingest.update({"digest": digest, "stored_at": iso(now), "stored_seq": seq})
+            ingest.update({"digest": digest, "stored_at": iso(now), "stored_seq": seq, "stored_kid": kid})
             node_ref, new_identity, ident_changed = await _resolve_node(
                 con, agent_id, new_identity, node_ref, client_ip)
-            invalidate = changed or ident_changed
+            invalidate = changed or ident_changed or key_changed
     elif kind == "heartbeat":
         pass
     else:   # rotate: retire the old key BEFORE the new one becomes active (one active key per agent)
@@ -1266,7 +1281,8 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
     res.came_online = came_online
     if kind == "heartbeat":
         res.pending_actions = await _pending_actions(con, agent_id)
-    res.agent = {"id": agent_id, "status": "online", "last_seen": now, "node_ref": node_ref}
+    res.agent = {"id": agent_id, "status": "online", "last_seen": now, "node_ref": node_ref,
+                 "hostname": agent["hostname"]}
     return res
 
 

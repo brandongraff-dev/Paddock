@@ -159,7 +159,8 @@ from their API docs.
 - **One shared service key.** In strict mode it is limited by route allow-lists
   and job binding. Per-service keys or per-job tokens are the real fix
   ([trust/TENANCY.md](trust/TENANCY.md)).
-- **Graph sync and the fleet agent** are platform-tenant only.
+- **Graph sync** is platform-tenant only. (The fleet agent used to be too; since agent v2 it is per-tenant:
+  per-tenant enrollment tokens, and row-level security on every fleet table.)
 - **Foreign keys bypass RLS** (documented).
 - **External scanners still resolve DNS themselves**: `tlsx`, `nuclei` and the
   screenshot browser in the active worker don't get the pinned IPs. The
@@ -202,6 +203,54 @@ from their API docs.
 - The vendor licence key hasn't been generated or embedded.
 - No live Stripe account exists yet.
 
+## 8. Host agent v2 and provable containment (P2)
+
+([AGENT_V2.md](AGENT_V2.md), [ASSURANCE_P2.md](ASSURANCE_P2.md), [FLEET_WIRING.md](FLEET_WIRING.md))
+
+A server can now be asked, and answer with evidence, whether SSH is hardened and whether the firewall denies
+inbound by default. The verdict is "no counterexample under this evidence", at evidence tier `configured`.
+
+**Built and tested**
+- **Enrollment and identity**: per-tenant one-time tokens (hashed, atomic redemption, generic 401, rate limit and
+  lockout); the agent proves possession of its own Ed25519 key; rotate, revoke (immediate) and re-key (a host
+  that lost its state keeps its history); v1 agents are kept and told `403 re_enroll_required`.
+- **Signed evidence**: ten ordered server checks (size, parse, agent, key, digest, signature, clock, atomic
+  sequence claim, schema, persist), each refusal audited; a tampered or replayed envelope leaves the previous
+  posture in place, and silence turns into `UNKNOWN`.
+- **The agent**: standard library only, Python 3.8 or newer, a vendored RFC 8032 signer that is byte-identical to
+  OpenSSL's, a write-ahead sequence counter, an offline outbox, and a fix for a hole in the old agent (it ran
+  server-supplied revert commands verbatim).
+- **Collectors**: sshd (with `Match` probes), listeners with process attribution, a firewall model for nft and
+  iptables, patch state, self-health. Parsers are pure functions tested on real captures from Ubuntu 24.04.
+- **Invariants**: a typed host-config predicate language with three-valued logic, two standard invariants, a
+  brute-force oracle and mutation tests. The `host_fw` builder turns a posture into edges, coverage and facts.
+- **End to end**: `orchestrator/tests/test_assurance_p2_e2e.py` runs the real agent against the real server (RLS
+  role, two tenants): enrol, sign, `HOLDS`, a password flip to `VIOLATED` with a finding, tamper refused, replay 409,
+  silence to `UNKNOWN`, a port conflict with the external scan, legacy credential refused, 20 concurrent
+  redemptions with one winner, rotation, re-key and revoke.
+- **Packaging**: a byte-reproducible single-file archive (same bytes on Python 3.8 to 3.13), a POSIX installer
+  (shellcheck clean; checksum and cosign gates; the token never on argv) and a release job that signs it.
+
+**Gaps (all of them are open work, not hidden)**
+- **Never run on a real host.** Not run: the installer as root, the unit under a real systemd, `nft`/`iptables`
+  applied for real, a real `sshd -T` (none was available to capture; the sshd fixtures are written from the
+  manual), RHEL, SUSE or Alpine. The release workflow has not run on GitHub, and the cosign branch of the
+  installer was tested only against a recording fake.
+- **Signed is not true.** A compromised host signs whatever it likes; only ports the external scan or cloud
+  configuration can see are cross-checked. The agent is one root process that talks to the network (decision O2);
+  the privilege split is planned.
+- **Precision loss on purpose**: ipset, marks, DNAT, Docker/Kubernetes dataplanes, a missing `nft` binary, a
+  non-root agent and a container all give `UNKNOWN` rather than a guess.
+- **A host that leaves the graph is not flagged.** A revoked or legacy agent, or a removed tag, drops the host out
+  of the selector of "all hosts" invariants; unless it is a declared `server` (which reads `UNKNOWN: no_agent`)
+  nothing says it went missing. Findings for a host that left the selector are closed as fixed although it was
+  never proven.
+- **No UI**: the dashboard's Fleet page does not mint tokens, rotate keys or show verdicts. The events
+  `agent.offline` / `agent.online` are audit rows only until they are registered as integration event types, and
+  the posture freshness limit (6 h) is not yet a setting.
+- **Rate limits are per process**, so N orchestrator replicas allow N times the limit.
+- No KEV matching or distro advisory data (patch state is collected, not judged), no Windows or macOS.
+
 ---
 
 ## Recommended next 30 days
@@ -217,3 +266,6 @@ from their API docs.
    Pin the installer and CI templates to a release tag first.
 6. **Business**: legal review of the CLA, real prices, the vendor key, Stripe,
    and starting SOC 2 Type I.
+7. **Run agent v2 on three real hosts** (Ubuntu, RHEL 9, a Docker host): the installer as root, the unit under
+   systemd, a real `sshd -T`, and a pre-release tag through the release workflow with cosign verification. Fix what
+   the fixtures could not tell us.

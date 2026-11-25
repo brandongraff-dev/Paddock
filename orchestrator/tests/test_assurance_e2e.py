@@ -308,7 +308,7 @@ async def test_p1_end_to_end(db_pool, app_pool, fake_redis, monkeypatch, small_w
     first = await runner.tick_once(app_pool, redis=fake_redis, now=t0)
     sa = first[A]
     assert sa["ok"], sa["errors"]
-    assert sa["built"] and set(sa["builders"]) == {"aws_sg", "external_scan", "sentry_flow"}
+    assert sa["built"] and set(sa["builders"]) == {"aws_sg", "external_scan", "host_fw", "sentry_flow"}
     assert all(b["ok"] for b in sa["builders"].values()), sa["builders"]
 
     async with conn_for(app_pool) as con:

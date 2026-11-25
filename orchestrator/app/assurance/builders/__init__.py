@@ -9,7 +9,9 @@ from types import ModuleType
 
 logger = logging.getLogger(__name__)
 
-BUILDER_NAMES: tuple[str, ...] = ("aws_sg", "external_exposure", "sentry_flows")
+#: Order matters: ``host_fw`` reads the ``external_scan`` edges ``external_exposure`` has just persisted
+#: (its cross-check of "the agent says closed, the scan connected"), so it is registered AFTER it.
+BUILDER_NAMES: tuple[str, ...] = ("aws_sg", "external_exposure", "host_fw", "sentry_flows")
 
 
 def load_builders() -> list[ModuleType]:

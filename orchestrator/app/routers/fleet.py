@@ -54,7 +54,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
 
 from .. import audit, fleet_enroll, fleet_monitor, fleet_posture
-from ..auth import Principal, client_ip, current_principal, require
+from ..auth import Principal, client_ip, client_ip_strict, current_principal, require
 from ..db import get_pool
 
 logger = logging.getLogger(__name__)
@@ -548,7 +548,7 @@ async def _ingest(request: Request, pool, principal: Principal, agent_id: UUID, 
         rej = fleet_posture.Rejection(429, "rate_limited", "too many requests from this agent; slow down")
         return None, _rejection_response(rej, {"Retry-After": "60"})
     rid = getattr(request.state, "request_id", None)
-    ip = client_ip(request)
+    ip = client_ip_strict(request)       # the host's address is a corroboration input: never the forgeable leftmost entry
     try:
         body = await _read_body(request, fleet_posture.MAX_BODY_BYTES)
     except fleet_posture.Rejection as rej:
@@ -764,10 +764,15 @@ def _agent_out(r: Any) -> AgentOut:
     )
 
 
+_PUBLIC_IDENTITY_KEYS = ("hostname", "basis", "note", "ips")
+
+
 def _public_identity(raw: Any) -> dict[str, Any]:
-    """The claimed identity without the ingest bookkeeping (``_ingest``)."""
+    """The viewer-safe part of the claimed identity: hostname, basis (claimed | corroborated), the node note and
+    the claimed bind addresses (the v1 inventory already shows listeners to viewers). The machine-id hash, the boot
+    id, the address the server saw the agent connect from and the ingest bookkeeping (``_ingest``) stay server-side."""
     ident = _as_dict(raw)
-    return {k: v for k, v in ident.items() if not k.startswith("_")}
+    return {k: ident[k] for k in _PUBLIC_IDENTITY_KEYS if k in ident}
 
 
 @router.get("/agents", response_model=list[AgentOut])

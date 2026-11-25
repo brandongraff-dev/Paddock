@@ -113,10 +113,12 @@ jobs:
           pip install -q asyncpg
           python scripts/ci_apply_schema.py
 
-      # The orchestrator evaluates invariants in-process with the pure library (docs/ASSURANCE_P1.md D2).
-      - name: Install the assurance library (orchestrator legs)
+      # The orchestrator evaluates invariants in-process with the pure library (docs/ASSURANCE_P1.md D2). Its P2
+      # end-to-end and wire-vector tests drive the REAL host agent (stdlib-only, no dependencies of its own),
+      # so the agent package is installed the same way (docs/ASSURANCE_P2.md section 10).
+      - name: Install the assurance library and the host agent (orchestrator legs)
         if: ${{ startsWith(matrix.service, 'orchestrator') }}
-        run: pip install -e assurance
+        run: pip install -e assurance -e agent
 
       - name: Install ${{ matrix.service }} (+ ${{ matrix.extra }} extra)
         working-directory: ${{ matrix.path }}
@@ -127,6 +129,57 @@ jobs:
       - name: pytest
         working-directory: ${{ matrix.path }}
         run: pytest -q
+
+  # --------------------------------------------------------------------- #
+  # Host agent on the OLDEST supported interpreter. The agent core is standard
+  # library only and Python >= 3.8 (docs/ASSURANCE_P2.md O1), and no 3.8
+  # interpreter is on the other runners, so the whole agent suite (and the
+  # zipapp builder and installer tests) run in the python:3.8 image, once with
+  # the OpenSSL-backed signer and once forced onto the vendored pure-Python
+  # RFC 8032 signer that hosts without `cryptography` fall back to.
+  # --------------------------------------------------------------------- #
+  agent-py38:
+    name: agent (python 3.8, stdlib core)
+    runs-on: ubuntu-latest
+    container: python:3.8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the agent (+ test extra)
+        working-directory: agent
+        run: |
+          python --version
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: pytest (cryptography signer)
+        working-directory: agent
+        run: pytest -q
+      - name: pytest (vendored pure-Python signer)
+        working-directory: agent
+        env:
+          PADDOCK_ED25519_BACKEND: pure
+        run: pytest -q tests/test_ed25519.py tests/test_envelope.py tests/test_state.py tests/test_agent.py tests/test_cli.py
+      - name: packaging (zipapp builds byte-for-byte and runs on 3.8; installer)
+        working-directory: agent
+        run: pytest -q packaging/tests
+
+  # The installer is POSIX sh run as root on customer hosts: lint it, and run
+  # its offline tests (dry run, argument handling, checksum/cosign gates, the
+  # token never on argv) with the unit checked by systemd-analyze.
+  agent-installer:
+    name: agent installer (shellcheck + packaging tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: shellcheck
+        run: shellcheck -s sh scripts/install-agent.sh
+      - name: packaging tests
+        working-directory: agent
+        run: |
+          pip install pytest
+          pytest -q packaging/tests
 
   # --------------------------------------------------------------------- #
   # Detection quality: seeded ranges (true positives + look-alikes) run

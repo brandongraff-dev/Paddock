@@ -88,6 +88,8 @@ The **Test** button is the one synchronous path: the API sends an
 | `device.behavior` | a Sentry behaviour detector fired | detector's | `device`, `detector` |
 | `sensor.offline` | a Sentry sensor stopped reporting (see [Sentry](SENTRY.md)) | `high` | `sensor_id`, `sensor`, `site`, `last_seen`, `silent_for_s` |
 | `sensor.online` | a silent sensor is reporting again | `info` | `sensor_id`, `sensor`, `site` |
+| `agent.offline` | a host agent stopped sending signed evidence ([agent v2](AGENT_V2.md)); its host facts turn UNKNOWN | `high` | `agent_id`, `hostname`, `since`, `silent_for_s`, `silent_after_s` |
+| `agent.online` | a silent host agent is sending signed evidence again | `info` | `agent_id`, `hostname`, `at` |
 | `scan.completed` / `scan.failed` | a scan finished / failed | none | `scan_id`, `scan_kind`, `target`, `error` |
 | `report.digest` | the scheduled digest is ready | none | |
 | `integration.test` | the Test button | `info` | `integration_id`, `integration_name` |

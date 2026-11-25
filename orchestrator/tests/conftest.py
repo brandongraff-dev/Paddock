@@ -170,6 +170,22 @@ async def fake_redis():
 
 
 @pytest.fixture(autouse=True)
+def reset_assurance_process_state():
+    """The assurance runner keeps what its last build/evaluation did per tenant in process-local dicts, and every test
+    uses the same default tenant id: without this a test that builds (the P2 end-to-end tests do) makes
+    ``/v1/assurance/state`` of a LATER test in the same process report builders, i.e. the suite passes only in
+    alphabetical order (``pytest tests/test_assurance_p2_e2e.py tests/test_assurance_api.py`` failed)."""
+    try:
+        from app.assurance import runner
+    except Exception:  # noqa: BLE001 -- the library may be absent in a slim test environment
+        yield
+        return
+    runner._LAST_BUILD.clear()
+    runner._LAST_EVAL.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def reset_scope_caches():
     from app import scope as scope_svc
 

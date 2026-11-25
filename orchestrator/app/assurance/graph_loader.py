@@ -497,6 +497,14 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
         if ref != INTERNET:
             kinds.setdefault(ref, _default_kind(ref))
     kinds[INTERNET] = "internet"
+    # docs/ASSURANCE_P2.md E5: a node DECLARED a server is part of the graph even when no builder emitted it
+    # (an on-prem host, an asset no connector draws edges for). Without this the label would be ignored and the
+    # std host invariants would silently leave that server out of scope; with it the node reaches the library
+    # as a `server` with no agent facts, which is UNKNOWN (no_agent), never a pass.
+    for ref, lab in labels.items():
+        value = (lab.get("server") or (0, "false"))[1]
+        if ref != INTERNET and "server" in lab and value.strip().lower() not in _FALSE_VALUES:
+            kinds.setdefault(ref, _default_kind(ref))
     asset_ids = _asset_ids(snap)
 
     cov_by: dict[str, list[dict[str, str]]] = {}

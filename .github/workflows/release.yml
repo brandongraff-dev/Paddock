@@ -15,6 +15,11 @@ name: Release
 # then creates the GitHub release with the SBOMs, a SHA256SUMS manifest of the
 # image digests, and a keyless signature bundle for that manifest.
 #
+# The host agent ships as a single file, not an image (docs/AGENT_V2.md): the `agent` job builds the
+# deterministic zipapp `paddock-agent.pyz`, the installer pinned to this tag, a `SHA256SUMS` over both and a
+# keyless cosign bundle for it, and attaches SLSA build provenance for the archive. scripts/install-agent.sh
+# verifies exactly these.
+#
 # Hardening notes: least-privilege `permissions` per job; no secrets other than
 # the ephemeral GITHUB_TOKEN / OIDC token; third-party actions are pinned to a
 # major version tag -- pin them to full commit SHAs (e.g. with Dependabot or
@@ -169,9 +174,74 @@ jobs:
             digests/
           retention-days: 7
 
+  agent:
+    name: agent zipapp + installer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # keyless signing (Fulcio)
+      attestations: write    # GitHub attestation store
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the zipapp, pin the installer to this tag, write SHA256SUMS
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF_NAME" in v[0-9]*.[0-9]*.[0-9]*) : ;; *) echo "unexpected tag $GITHUB_REF_NAME" >&2; exit 1 ;; esac
+          mkdir -p agent-dist
+          # the installer that ships with a release installs THAT release, never "latest"
+          sed "s/^PINNED_TAG=.*/PINNED_TAG=\"${GITHUB_REF_NAME}\"/" scripts/install-agent.sh > agent-dist/install-agent.sh
+          chmod 0755 agent-dist/install-agent.sh
+          grep -q "^PINNED_TAG=\"${GITHUB_REF_NAME}\"\$" agent-dist/install-agent.sh
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" python agent/packaging/build_zipapp.py \
+            --out agent-dist/paddock-agent.pyz --sums agent-dist/SHA256SUMS --also agent-dist/install-agent.sh
+          cat agent-dist/SHA256SUMS
+
+      - name: Smoke test what will be published
+        run: |
+          set -euo pipefail
+          shellcheck -s sh agent-dist/install-agent.sh
+          python agent-dist/paddock-agent.pyz --version
+          # a staged install from the files themselves: checksum gate, unit, modes (no systemd, no network)
+          sh agent-dist/install-agent.sh --server https://paddock.invalid --root "$RUNNER_TEMP/stage" \
+            --base-url "file://$PWD/agent-dist" --python "$(command -v python3)" --no-enroll
+          test -x "$RUNNER_TEMP/stage/usr/local/lib/paddock-agent/paddock-agent.pyz"
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign SHA256SUMS (cosign keyless)
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle agent-dist/SHA256SUMS.sigstore.json agent-dist/SHA256SUMS
+          # prove the bundle verifies against this workflow's own identity, the way the installer will
+          cosign verify-blob --bundle agent-dist/SHA256SUMS.sigstore.json \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com agent-dist/SHA256SUMS
+
+      - name: SLSA build provenance for the archive
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: agent-dist/paddock-agent.pyz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-agent-pyz
+          path: |
+            agent-dist/paddock-agent.pyz
+            agent-dist/install-agent.sh
+            agent-dist/SHA256SUMS
+            agent-dist/SHA256SUMS.sigstore.json
+          retention-days: 7
+
   release:
     name: GitHub release
-    needs: images
+    needs: [images, agent]
     runs-on: ubuntu-latest
     permissions:
       contents: write        # create the release
@@ -204,3 +274,7 @@ jobs:
             out/IMAGE_DIGESTS.txt.sigstore.json
             out/SBOM_SHA256SUMS.txt
             out/SBOM_SHA256SUMS.txt.sigstore.json
+            out/paddock-agent.pyz
+            out/install-agent.sh
+            out/SHA256SUMS
+            out/SHA256SUMS.sigstore.json

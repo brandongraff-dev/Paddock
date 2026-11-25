@@ -1168,6 +1168,42 @@ def client_ip(request: Request) -> str | None:
     return peer
 
 
+def client_ip_strict(request: Request) -> str | None:
+    """The address that really connected, for decisions an attacker must not be able to steer.
+
+    ``client_ip`` takes the LEFTMOST ``X-Forwarded-For`` entry from a trusted proxy. A proxy that APPENDS (nginx
+    ``$proxy_add_x_forwarded_for``, an AWS ALB) leaves whatever the client sent in front of it, so the leftmost
+    entry is attacker-chosen. Here the entries are read from the RIGHT, skipping trusted proxies: the first one a
+    trusted proxy did not itself add is the client as that proxy saw it. A malformed entry fails closed to the
+    socket peer. docs/ASSURANCE_P2.md E3 uses this for the address a host must connect from to be corroborated
+    as a cloud instance."""
+    import ipaddress
+
+    peer = request.client.host if request.client else None
+    fwd = request.headers.get("x-forwarded-for")
+    if not (peer and fwd):
+        return peer
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+    trusted = _trusted_proxies()
+
+    def is_trusted(ip: Any) -> bool:
+        return any(ip.version == n.version and ip in n for n in trusted)
+
+    if not is_trusted(peer_ip):
+        return peer
+    for part in reversed(fwd.split(",")):
+        try:
+            ip = ipaddress.ip_address(part.strip())
+        except ValueError:
+            return peer
+        if not is_trusted(ip):
+            return str(ip)
+    return peer
+
+
 # --------------------------------------------------------------------------- #
 # FastAPI dependencies (defence-in-depth; middleware is the primary gate)
 # --------------------------------------------------------------------------- #

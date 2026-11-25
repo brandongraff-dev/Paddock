@@ -1572,6 +1572,109 @@ def test_gunzip_capped_is_bounded():
         fp.gunzip_capped(two)
 
 
+# =========================================================================== #
+# hardening found in review: nothing malformed may reach SQL or JSONB as a 500, nothing unsigned may be malleable
+# =========================================================================== #
+
+async def test_step2_control_characters_in_kid_and_collectors_are_a_clean_400_not_a_500(world):
+    """A NUL in `kid` (a SQL text parameter) or in `collectors` (stored as JSONB, which cannot hold U+0000) used to
+    be a database error, i.e. an unaudited 500 after the claim. They are refused as malformed, audited, and the
+    seq never moves."""
+    c = world.client
+    host = await enroll_host(c, world.admin_a)
+    fp.posture_limiter.limit = 1000
+    bad = {
+        "kid NUL": {"kid": "ab\u0000cd"},
+        "kid newline": {"kid": host.kid + "\n"},
+        "kid space": {"kid": "ab cd"},
+        "kid empty": {"kid": ""},
+        "kid too long": {"kid": "a" * 65},
+        "kid non-ascii": {"kid": "k\u00e9"},
+        "collectors NUL value": {"collectors": {"agent": "0.2.0\u0000"}},
+        "collectors NUL key": {"collectors": {"ag\u0000ent": "0.2.0"}},
+        "collectors newline": {"collectors": {"agent": "0.2.0\n"}},
+    }
+    for name, edit in bad.items():
+        env = {**host.env("posture"), **edit}
+        r = await post(c, host, "posture", json.dumps(env).encode())
+        assert r.status_code == 400 and r.json()["reason"] == "bad_envelope", (name, r.status_code, r.text)
+    assert (await key_row(world.db, host.agent_id, host.kid))["last_seq"] == 0
+    assert len(await rejected(world.db, host)) == len(bad)
+    assert await posture_rows(world.db, host.agent_id) == []
+    # and the real agent is unaffected
+    assert (await ps(c, host)).status_code == 200
+
+
+async def test_trailing_newlines_cannot_make_a_signed_envelope_malleable(world):
+    """`$` in a Python regex matches before a trailing newline, and urlsafe_b64decode silently drops it: an
+    envelope with `sig` or `payload_b64` plus a newline used to verify and be accepted although it is not the
+    bytes the agent signed/sent. The unsigned fields must be exactly what they say."""
+    c = world.client
+    host = await enroll_host(c, world.admin_a)
+    fp.posture_limiter.limit = 1000
+    base = host.env("posture")
+    cases = {
+        "sig newline": ({**base, "sig": base["sig"] + "\n"}, 401),
+        "sig space": ({**base, "sig": base["sig"][:10] + " " + base["sig"][10:]}, 401),
+        "payload_b64 newline": ({**base, "payload_b64": base["payload_b64"] + "\n"}, 400),
+        "payload_sha256 newline": ({**base, "payload_sha256": base["payload_sha256"] + "\n"}, 400),
+        "issued_at newline": ({**base, "issued_at": base["issued_at"] + "\n"}, 400),
+        "nonce newline": ({**base, "nonce": base["nonce"] + "\n"}, 400),
+    }
+    for name, (env, want) in cases.items():
+        r = await post(c, host, "posture", json.dumps(env).encode())
+        assert r.status_code == want, (name, r.status_code, r.text)
+    assert (await key_row(world.db, host.agent_id, host.kid))["last_seq"] == 0
+    assert await posture_rows(world.db, host.agent_id) == []
+    # the exact envelope still verifies: the refusals above were about the extra byte only
+    assert (await post(c, host, "posture", base)).status_code == 200
+
+
+async def test_a_heartbeat_payload_is_tiny(world):
+    """The heartbeat is a liveness proof, not a data channel: padding it past 4 KiB is a 422 and rolls the claim back."""
+    c = world.client
+    host = await enroll_host(c, world.admin_a)
+    ok = pbytes({"agent_version": "0.2.0", "status": "ok"})
+    fat = ok + b" " * 5000                       # still strict JSON, still schema-valid, just not tiny
+    r = await post(c, host, "heartbeat", host.env("heartbeat", fat))
+    assert r.status_code == 422 and r.json()["reason"] == "payload_schema"
+    assert (await key_row(world.db, host.agent_id, host.kid))["last_seq"] == 0
+    assert (await hb(c, host)).status_code == 200
+
+
+async def test_the_ingest_itself_refuses_legacy_and_revoked_agents(world):
+    """Defence in depth: the principal already answers 403 for these, but the ingest re-reads the agent row under
+    its lock, so a credential resolved a moment before a revoke (or a re-flag) still cannot land evidence."""
+    c = world.client
+    for how, sql, reason in (
+        ("legacy", "UPDATE fleet_agents SET legacy=TRUE WHERE id=$1", "re_enroll_required"),
+        ("revoked", "UPDATE fleet_agents SET status='revoked', revoked_at=NOW() WHERE id=$1", "agent_revoked"),
+        ("revoked_at only", "UPDATE fleet_agents SET revoked_at=NOW() WHERE id=$1", "agent_revoked"),
+    ):
+        host = await enroll_host(c, world.admin_a, f"direct-{how.replace(' ', '-')}")
+        env = host.env("posture")
+        await world.db.execute(sql, uuid.UUID(host.agent_id))
+        with pytest.raises(fp.Rejection) as ei:
+            await fp.ingest_envelope(world.db, agent_id=uuid.UUID(host.agent_id), tenant_id=TENANT_A,
+                                     kind="posture", body=json.dumps(env).encode(), content_encoding=None)
+        assert ei.value.status == 403 and ei.value.reason == reason, how
+        assert (await key_row(world.db, host.agent_id, host.kid))["last_seq"] == 0, how
+        assert await posture_rows(world.db, host.agent_id) == [], how
+        assert [r["details"]["reason"] for r in await rejected(world.db, host)] == [reason], how
+
+
+async def test_the_online_transition_names_the_host(world):
+    """`agent.online` carries the hostname (it used to be an empty string)."""
+    c = world.client
+    host = await enroll_host(c, world.admin_a, "web-online")
+    assert (await hb(c, host)).status_code == 200
+    await world.db.execute("UPDATE fleet_agents SET online=FALSE, offline_since=NOW() WHERE id=$1",
+                           uuid.UUID(host.agent_id))
+    assert (await hb(c, host)).status_code == 200
+    rows = await audits(world.db, "fleet.agent.online", host.agent_id)
+    assert len(rows) == 1 and rows[0]["details"]["hostname"] == "web-online"
+
+
 def test_the_module_is_python_312_clean_and_has_no_third_party_surprises():
     src = pathlib.Path(fp.__file__).read_text()
     assert "pickle" not in src and "eval(" not in src and "yaml" not in src

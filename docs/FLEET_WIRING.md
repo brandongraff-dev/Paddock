@@ -1,12 +1,15 @@
-# Fleet Agent + Gated Enforcement — Wiring
+# Fleet Agent + Gated Enforcement: Wiring
 
-Schema `014_fleet_remediation.sql` (`fleet_agents`, `agent_inventory`,
-`agent_actions`) + a new **host agent** (`agent/`), an orchestrator router
-(`/v1/fleet`), and a dashboard page. Everything below is the **manual wiring**
-into files this change intentionally did **not** edit
-(`orchestrator/app/main.py`, `orchestrator/app/auth.py`, `dashboard/src/App.tsx`,
-`dashboard/src/components/Shell.tsx`, `dashboard/src/api/types.ts`,
-`docker-compose.yml`, `schema/*`).
+Schema `014_fleet_remediation.sql` (`fleet_agents`, `agent_inventory`, `agent_actions`) and
+`041_agent_v2.sql` (keys, enrollment tokens, signed postures), a **host agent** (`agent/`), an orchestrator
+router (`/v1/fleet`), and a dashboard page.
+
+> **Agent v2 (this release).** The agent now enrolls with a per-tenant one-time token and its own Ed25519 key and
+> signs everything it sends; the shared `FLEET_ENROLL_TOKEN`, hostname-upsert enrollment and the unsigned
+> heartbeat are **gone** (a hard cut: v1 agents get `403 re_enroll_required` and need a re-key token). Install,
+> enroll, rotate, revoke and the threat model are in [AGENT_V2.md](AGENT_V2.md); the evidence it produces is
+> described in [ASSURANCE_P2.md](ASSURANCE_P2.md). This page keeps the **enforcement gate** (propose, approve,
+> apply), which is unchanged, and the wiring of the router and the dashboard.
 
 The feature is **defensive and gated**. An agent runs **on a host**, enrolls,
 reports inventory, and can apply **host-local** blocks — but only through
@@ -33,82 +36,47 @@ reports inventory, and can apply **host-local** blocks — but only through
 
 ---
 
-## 1. Orchestrator router include
+## 1. Orchestrator router (already registered)
 
-File: `orchestrator/app/main.py`
+`orchestrator/app/main.py` includes `routers/fleet.py` (prefix `/v1/fleet`) and starts the agent liveness monitor
+(`fleet_monitor.fleet_agent_monitor_loop`). Nothing to wire by hand.
 
-Add the import alongside the other router imports:
-
-```python
-from .routers import fleet as fleet_router
-```
-
-Register it in `create_app()` (next to the other Tier routers, e.g. after
-`threatintel_router`):
-
-```python
-    # Fleet agents + gated host-local enforcement (schema 014).
-    app.include_router(fleet_router.router)
-```
-
-The router's prefix is `/v1/fleet` and it owns:
-
-| Method | Path                               | Auth            | Notes                                              |
-| ------ | ---------------------------------- | --------------- | -------------------------------------------------- |
-| POST   | `/v1/fleet/enroll`                 | enroll token    | mint agent + one-time credential (sha256 stored)   |
-| POST   | `/v1/fleet/{id}/heartbeat`         | `X-Agent-Token` | last_seen + returns approved **real** work          |
-| POST   | `/v1/fleet/{id}/inventory`         | `X-Agent-Token` | os/packages/listeners/posture snapshot             |
-| GET    | `/v1/fleet/agents`                 | read            | list + status (stale if last_seen old)             |
-| GET    | `/v1/fleet/agents/{id}`            | read            | agent + latest inventory + action counts           |
-| POST   | `/v1/fleet/actions`                | requester       | **propose** — status `proposed`, `dry_run=true`    |
-| POST   | `/v1/fleet/actions/{id}/approve`   | **admin**       | `proposed→approved`; four-eyes; `apply_for_real`   |
-| POST   | `/v1/fleet/actions/{id}/deny`      | **admin**       | `proposed→denied`                                  |
-| GET    | `/v1/fleet/actions?agent=&status=` | read            | list/filter                                        |
-| POST   | `/v1/fleet/actions/{id}/result`    | `X-Agent-Token` | agent reports `applied`/`failed`                   |
-| POST   | `/v1/fleet/actions/{id}/revert`    | admin/requester | mint a first-class `revert` action                 |
+| Method | Path | Auth | Notes |
+| ------ | ---- | ---- | ----- |
+| POST | `/v1/fleet/enroll` | the `fet_` token in the body | redeem a one-time token, bind an Ed25519 key (proof of possession), receive the `fat_` credential once; every token failure is the same generic 401 |
+| POST/GET/DELETE | `/v1/fleet/enroll-tokens[/{id}]` | admin | mint (shown once), list (prefix only), revoke; `for_agent` mints a re-key token |
+| POST | `/v1/fleet/{id}/heartbeat` | `X-Agent-Token` + signed envelope | proof of life; the reply carries the agent's approved **real** work |
+| POST | `/v1/fleet/{id}/posture` | `X-Agent-Token` + signed envelope | the signed host posture (evidence) |
+| POST | `/v1/fleet/{id}/keys/rotate` | `X-Agent-Token` + envelope signed by the current key | key rotation |
+| POST | `/v1/fleet/{id}/inventory` | `X-Agent-Token` | v1 inventory for the Fleet page: **unsigned, never evidence**, refused for legacy agents |
+| POST | `/v1/fleet/actions/{id}/result` | `X-Agent-Token` | the agent reports `applied`/`failed`; bound to the agent the action belongs to |
+| GET | `/v1/fleet/agents`, `/agents/{id}` | read | list and detail (viewer-safe: no machine id hash, no peer address) |
+| GET | `/v1/fleet/agents/{id}/posture` | `triage` | the full stored posture; audited |
+| POST | `/v1/fleet/agents/{id}/revoke`, `/agents/{id}/keys/{key_id}/revoke` | admin | immediate; nothing is cached |
+| POST | `/v1/fleet/actions` | requester | **propose**: status `proposed`, `dry_run=true` |
+| POST | `/v1/fleet/actions/{id}/approve` | **admin** | `proposed` to `approved`; four-eyes; `apply_for_real` |
+| POST | `/v1/fleet/actions/{id}/deny` | **admin** | `proposed` to `denied` |
+| GET | `/v1/fleet/actions?agent=&status=` | read | list/filter |
+| POST | `/v1/fleet/actions/{id}/revert` | admin/requester | mint a first-class `revert` action |
 
 Every transition calls `audit.record()`.
 
-### RBAC note (production / `AUTH_MODE=enforce`)
+### RBAC (enforce mode)
 
-The governance middleware (`auth.py`) is **deny-closed**: an unclassified `POST`
-defaults to the `admin` capability and a `GET` to `read`. The router enforces
-admin-only approve/deny with its own `require("admin")` dependency and
-authenticates agents with the minted credential (`X-Agent-Token`), so it is
-correct as-is in `dev` mode and for the test-suite.
+The agent is **a principal of its own** (`kind="agent"`, capability `agent`, never a role). `auth.py` resolves the
+`X-Agent-Token` credential by its 12-hex prefix, compares the sha256 in constant time, and refuses revoked agents
+(`403 agent_revoked`), legacy agents (`403 re_enroll_required`) and suspended tenants. The route rules are
+anchored on a UUID path segment, so they cannot shadow `/v1/fleet/actions/...`, and the agent id in the path must be
+the principal's own. Agent routes work in `AUTH_MODE=enforce` and outside the default tenant; the old rules that
+made every fleet route admin-only (so agents could only work in dev mode) are gone. No other credential, not even
+an admin's, is accepted on an agent route.
 
-For `enforce` mode you will want to add RBAC rules to `auth.py` so the agent and
-operator flows are not forced through `admin` (mirrors how the existing TI
-POSTs are handled). Suggested `_rule(...)` additions:
+### Enrollment
 
-```python
-# Fleet: agent + operator surface (schema 014)
-_rule("POST", r"/v1/fleet/enroll", None)                                # token-gated, public route
-_rule("POST", rf"/v1/fleet/{_ANY}/heartbeat", None)                     # X-Agent-Token validated in-router
-_rule("POST", rf"/v1/fleet/{_ANY}/inventory", None)                     # X-Agent-Token validated in-router
-_rule("POST", rf"/v1/fleet/actions/{_ANY}/result", None)               # X-Agent-Token validated in-router
-_rule("POST", r"/v1/fleet/actions", "triage")                           # propose = analyst+admin
-_rule("POST", rf"/v1/fleet/actions/{_ANY}/(approve|deny)", "admin")    # gate stays admin
-_rule("POST", rf"/v1/fleet/actions/{_ANY}/revert", "triage")
-```
-
-`enroll`, `heartbeat`, `inventory`, and `result` are marked public at the
-middleware layer because they carry their **own** credential (the enrollment
-bootstrap token / the minted `X-Agent-Token`) that the router validates — the
-agent credential is not a DB user, so it cannot resolve to a `Principal`.
-
-### Enrollment secret
-
-Set a shared enrollment bootstrap secret in the orchestrator's environment:
-
-```yaml
-      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN}   # agents must present exactly this
-      # FLEET_ALLOW_SELF_APPROVE: "false"          # default; keep four-eyes on
-```
-
-When `FLEET_ENROLL_TOKEN` is unset the router accepts any non-empty token and
-logs a warning (dev only). Four-eyes (approver must differ from requester) is on
-by default; `FLEET_ALLOW_SELF_APPROVE=1` relaxes it (not recommended).
+There is no shared enrollment secret any more. An admin mints a per-tenant token (single use by default; up to 50
+uses with a ttl of at most 24 h for cloud-init fleets); see [AGENT_V2.md](AGENT_V2.md). Four-eyes on action approval
+(the approver must differ from the requester) is on by default; `FLEET_ALLOW_SELF_APPROVE=1` relaxes it (not
+recommended).
 
 ---
 
@@ -159,57 +127,55 @@ existing `<Gate need="admin">` so they are admin-gated in the UI too.
 
 ## 3. The agent is NOT a compose service
 
-The agent runs **on target hosts**, opt-in — do **not** add it to
-`docker-compose.yml`. It is built/installed per host:
+The agent runs **on target hosts**, opt-in. Do **not** add it to `docker-compose.yml`. Install it with the
+signed release installer (see [AGENT_V2.md](AGENT_V2.md)):
 
 ```bash
-cd agent
-pip install -e .            # provides the `paddock` console script
-# or: docker build -t paddock/agent .
+printf %s "$ENROLL_TOKEN" | sudo ./install-agent.sh --server https://paddock.example.com
 ```
 
-Enroll + run on a host (dry-run by default):
+That installs a single-file archive (`paddock-agent.pyz`, standard library only, Python 3.8 or newer), a hardened
+systemd unit (one root process; `NoNewPrivileges`, `ProtectSystem=strict`, a capability bounding set of
+`CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_ADMIN`, and more) and enrolls the host. The token is never an argument.
+For development: `cd agent && pip install -e .` provides the `paddock` command.
+
+A container image exists for trying the agent on a Linux host (`docker build -t paddock/agent agent/`). Give the
+token on stdin, not with `-e` (which `docker inspect` shows):
 
 ```bash
-paddock enroll --server https://orchestrator.internal:8080 --token "$FLEET_ENROLL_TOKEN"
-paddock run        # heartbeat + inventory loop; applies only approved, real work
-```
-
-Or as a container, opt-in, on a target **Linux** host:
-
-```bash
-docker run --rm \
-  --network host --cap-add NET_ADMIN \
+printf %s "$ENROLL_TOKEN" | docker run --rm -i --network host --cap-add NET_ADMIN \
   -e PADDOCK_SERVER=https://orchestrator.internal:8080 \
-  -e PADDOCK_DRY_RUN=true \
-  -v paddock-agent-cred:/root/.config/paddock-agent \
-  -v paddock-quarantine:/var/lib/paddock-agent/quarantine \
-  paddock/agent paddock enroll --token "$FLEET_ENROLL_TOKEN"
+  -v paddock-agent-state:/var/lib/paddock-agent \
+  paddock/agent paddock enroll --token-stdin
 ```
+
+A containerised agent cannot see the host's binaries, so those facts are reported as
+`unavailable(containerised_agent)`, which Paddock reads as `UNKNOWN`, never as a pass.
 
 ### Required capabilities (why it's opt-in)
 
-The agent runs fine in **inventory / dry-run** mode with **no** special
-privileges. To actually **apply** host-local blocks on Linux it needs:
+Collection is read-only and needs root (or `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE`, `CAP_NET_ADMIN`). To actually
+**apply** host-local blocks on Linux the agent needs:
 
-- **host networking** (`--network host`) so iptables/nft rules affect the real
-  host;
-- the **`NET_ADMIN`** capability (`--cap-add NET_ADMIN`) to edit firewall rules;
-- write access to `/etc/hosts` (domain sinkhole) and to the quarantine dir
-  (`quarantine_file`).
+- the **`NET_ADMIN`** capability to edit firewall rules (and host networking in a container);
+- write access to `/etc/hosts` (domain sinkhole) and to the quarantine dir (`quarantine_file`). **The shipped
+  systemd unit makes those read-only** (`ProtectSystem=strict`), so `block_domain` and `quarantine_file` fail
+  under it until you widen `ReadWritePaths=` on purpose.
 
-Because those are elevated, deploying the agent is a deliberate per-host
-decision. **Windows / macOS are dry-run only** (explicit `NotImplemented`
-stubs): they simulate a plan but never apply.
+Because those are elevated, deploying the agent is a deliberate per-host decision. **Windows / macOS are dry-run
+only** (explicit `NotImplemented` stubs): they simulate a plan but never apply. IPv6 `block_ip` is refused loudly
+(`ipv6_not_supported`) rather than silently doing nothing. A revert plan from the server is treated as data: the
+agent re-derives the only command it could have produced from the original typed action and refuses anything
+else.
 
 ---
 
 ## 4. Smoke test after wiring
 
 ```bash
-# agent (state machine, platform dry-run, inventory, host-local guard)
+# agent (state machine, signing, collectors, platform dry-run, host-local guard); no server needed
 cd agent && pip install -e .[test] && pytest -q
-# orchestrator (includes tests/test_fleet.py)
+# orchestrator (tests/test_fleet*.py, the P2 end-to-end test and the wire vectors)
 cd ../orchestrator && make test
 # dashboard typecheck
 cd ../dashboard && npx tsc -b
@@ -218,11 +184,14 @@ cd ../dashboard && npx tsc -b
 With the stack up and an agent enrolled (dry-run):
 
 ```bash
-curl -s localhost:8080/v1/fleet/agents
+curl -s -H "Authorization: Bearer $KEY" localhost:8080/v1/fleet/agents
 # propose (dry-run), approve for real as a DIFFERENT admin, watch it apply
-curl -s -XPOST localhost:8080/v1/fleet/actions -H 'content-type: application/json' \
+curl -s -XPOST localhost:8080/v1/fleet/actions -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
      -d '{"agent_id":"<id>","action_type":"block_ip","target":"203.0.113.10","reason":"ti match"}'
-curl -s -XPOST localhost:8080/v1/fleet/actions/<action-id>/approve \
+curl -s -XPOST localhost:8080/v1/fleet/actions/<action-id>/approve -H "Authorization: Bearer $ADMIN_KEY" \
      -H 'content-type: application/json' -d '{"apply_for_real":true}'
-curl -s 'localhost:8080/v1/fleet/actions?status=applied'
+curl -s -H "Authorization: Bearer $KEY" 'localhost:8080/v1/fleet/actions?status=applied'
 ```
+
+The Fleet page in the dashboard still shows the v1 fields (status, last seen, unsigned inventory). It has no
+screen for enrollment tokens, key rotation or posture verdicts yet: use the API ([AGENT_V2.md](AGENT_V2.md)).

@@ -60,6 +60,8 @@ EVENT_TYPES: dict[str, str] = {
     "supplier.cert_expiring": "A monitored supplier has an expired or expiring certificate",
     "sensor.offline": "A Sentry sensor stopped reporting",
     "sensor.online": "A silent Sentry sensor is reporting again",
+    "agent.offline": "A host agent stopped sending signed evidence (its host facts are UNKNOWN until it returns)",
+    "agent.online": "A silent host agent is sending signed evidence again",
 }
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")

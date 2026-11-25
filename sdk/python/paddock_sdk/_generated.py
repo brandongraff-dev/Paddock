@@ -82,10 +82,18 @@ AgentDetailOut = TypedDict(
         'enrolled_at': Required['str'],
         'hostname': Required['str'],
         'id': Required['str'],
+        'identity': NotRequired['dict[str, Any]'],
         'inventory': NotRequired['InventorySnapshot | None'],
+        'key_id': NotRequired['str | None'],
+        'keys': NotRequired['list[KeyOut]'],
         'labels': Required['list[str]'],
+        'last_posture_at': NotRequired['str | None'],
         'last_seen': Required['str | None'],
+        'legacy': NotRequired['bool'],
+        'node_ref': NotRequired['str | None'],
+        'online': NotRequired['bool'],
         'platform': Required['str | None'],
+        'silent_after_s': NotRequired['int'],
         'stale': Required['bool'],
         'status': Required['str'],
     },
@@ -100,9 +108,15 @@ AgentOut = TypedDict(
         'enrolled_at': Required['str'],
         'hostname': Required['str'],
         'id': Required['str'],
+        'key_id': NotRequired['str | None'],
         'labels': Required['list[str]'],
+        'last_posture_at': NotRequired['str | None'],
         'last_seen': Required['str | None'],
+        'legacy': NotRequired['bool'],
+        'node_ref': NotRequired['str | None'],
+        'online': NotRequired['bool'],
         'platform': Required['str | None'],
+        'silent_after_s': NotRequired['int'],
         'stale': Required['bool'],
         'status': Required['str'],
     },
@@ -1415,12 +1429,24 @@ HealthIn = TypedDict(
 )
 """The ONLY telemetry a sensor sends: counters about itself, never traffic."""
 
+HeartbeatIn = TypedDict(
+    'HeartbeatIn',
+    {
+        'health': NotRequired['HealthIn'],
+        'interfaces': NotRequired['list[InterfaceIn] | None'],
+        'version': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 HeartbeatOut = TypedDict(
     'HeartbeatOut',
     {
         'id': Required['str'],
+        'idempotent': NotRequired['bool'],
         'last_seen': Required['str'],
         'pending_actions': NotRequired['list[PendingAction]'],
+        'server_time': NotRequired['str | None'],
         'status': Required['str'],
     },
     total=False,
@@ -1648,23 +1674,13 @@ InvariantVersionOut = TypedDict(
     total=False,
 )
 
-InventoryIn = TypedDict(
-    'InventoryIn',
-    {
-        'listeners': NotRequired['list[dict[str, Any]]'],
-        'os_info': NotRequired['dict[str, Any]'],
-        'packages': NotRequired['list[dict[str, Any]]'],
-        'posture': NotRequired['dict[str, Any]'],
-    },
-    total=False,
-)
-
 InventoryOut = TypedDict(
     'InventoryOut',
     {
         'collected_at': Required['str'],
         'inventory_id': Required['str'],
         'ok': Required['bool'],
+        'signed': NotRequired['bool'],
     },
     total=False,
 )
@@ -1678,6 +1694,7 @@ InventorySnapshot = TypedDict(
         'os_info': Required['dict[str, Any]'],
         'packages': Required['list[dict[str, Any]]'],
         'posture': Required['dict[str, Any]'],
+        'signed': NotRequired['bool'],
     },
     total=False,
 )
@@ -1686,6 +1703,21 @@ InviteIn = TypedDict(
     'InviteIn',
     {
         'label': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+KeyOut = TypedDict(
+    'KeyOut',
+    {
+        'alg': Required['str'],
+        'created_at': Required['str'],
+        'key_id': Required['str'],
+        'last_seq': Required['int'],
+        'retired_at': NotRequired['str | None'],
+        'revoke_reason': NotRequired['str | None'],
+        'revoked_at': NotRequired['str | None'],
+        'status': Required['str'],
     },
     total=False,
 )
@@ -2206,6 +2238,45 @@ PlanOut = TypedDict(
     total=False,
 )
 
+PostureAck = TypedDict(
+    'PostureAck',
+    {
+        'changed': Required['bool'],
+        'idempotent': NotRequired['bool'],
+        'ok': Required['bool'],
+        'seq': Required['int'],
+        'server_time': Required['str'],
+        'stored': Required['bool'],
+    },
+    total=False,
+)
+
+PostureOut = TypedDict(
+    'PostureOut',
+    {
+        'agent_id': Required['str'],
+        'agent_status': Required['str'],
+        'collected_at': Required['str'],
+        'header': Required['dict[str, Any]'],
+        'key_id': Required['str'],
+        'key_status': Required['str | None'],
+        'last_seen': Required['str | None'],
+        'node_ref': Required['str | None'],
+        'online': Required['bool'],
+        'payload': Required['dict[str, Any] | None'],
+        'payload_sha256': Required['str'],
+        'received_at': Required['str'],
+        'schema_version': Required['int'],
+        'seq': Required['int'],
+        'signed': Required['bool'],
+        'silent_after_s': Required['int'],
+        'size_bytes': Required['int'],
+        'tier': Required['str'],
+    },
+    total=False,
+)
+"""The full latest signed posture of an agent (``triage``). Tier is ``configured`` at best: signed is not true."""
+
 ProposeIn = TypedDict(
     'ProposeIn',
     {
@@ -2512,6 +2583,14 @@ RevertIn = TypedDict(
     total=False,
 )
 
+RevokeIn = TypedDict(
+    'RevokeIn',
+    {
+        'reason': NotRequired['str | None'],
+    },
+    total=False,
+)
+
 RiskyAsset = TypedDict(
     'RiskyAsset',
     {
@@ -2536,6 +2615,16 @@ RoleMapping = TypedDict(
     total=False,
 )
 """One IdP group/claim value -> Paddock role (+ optional clearance)."""
+
+RotateAck = TypedDict(
+    'RotateAck',
+    {
+        'key_id': Required['str'],
+        'ok': Required['bool'],
+        'server_time': Required['str'],
+    },
+    total=False,
+)
 
 RunOut = TypedDict(
     'RunOut',
@@ -3798,35 +3887,14 @@ TokenCreateIn = TypedDict(
     total=False,
 )
 
-TokenCreated = TypedDict(
-    'TokenCreated',
+TokenMintIn = TypedDict(
+    'TokenMintIn',
     {
-        'created_at': Required['str'],
-        'created_by': Required['str | None'],
-        'expires_at': Required['str'],
-        'id': Required['str'],
-        'label': Required['str | None'],
-        'site': Required['str'],
-        'state': Required['str'],
-        'token': Required['str'],
-        'token_prefix': Required['str'],
-        'used_by_sensor': NotRequired['str | None'],
-    },
-    total=False,
-)
-
-TokenOut = TypedDict(
-    'TokenOut',
-    {
-        'created_at': Required['str'],
-        'created_by': Required['str | None'],
-        'expires_at': Required['str'],
-        'id': Required['str'],
-        'label': Required['str | None'],
-        'site': Required['str'],
-        'state': Required['str'],
-        'token_prefix': Required['str'],
-        'used_by_sensor': NotRequired['str | None'],
+        'for_agent': NotRequired['str | None'],
+        'label': NotRequired['str | None'],
+        'labels': NotRequired['list[str]'],
+        'max_uses': NotRequired['int'],
+        'ttl_minutes': NotRequired['int'],
     },
     total=False,
 )
@@ -4193,34 +4261,28 @@ app__routers__fleet__EnrollIn = TypedDict(
     'app__routers__fleet__EnrollIn',
     {
         'agent_version': NotRequired['str | None'],
-        'capabilities': NotRequired['list[str]'],
+        'capabilities': NotRequired['list[str] | None'],
         'hostname': Required['str'],
-        'labels': NotRequired['list[str]'],
-        'platform': Required['str'],
+        'platform': NotRequired['str'],
+        'proof_b64': Required['str'],
+        'public_key_b64': Required['str'],
         'token': Required['str'],
     },
     total=False,
 )
+"""``POST /v1/fleet/enroll``. The token travels in the body, never in a header or URL."""
 
 app__routers__fleet__EnrollOut = TypedDict(
     'app__routers__fleet__EnrollOut',
     {
+        'agent_id': Required['str'],
         'agent_token': Required['str'],
-        'capabilities': Required['list[str]'],
         'hostname': Required['str'],
-        'id': Required['str'],
-        'platform': Required['str | None'],
-        'status': Required['str'],
+        'key_id': Required['str'],
+        'rekey': Required['bool'],
+        'server_time': Required['str'],
+        'tenant_id': Required['str'],
         'token_prefix': Required['str'],
-    },
-    total=False,
-)
-
-app__routers__fleet__HeartbeatIn = TypedDict(
-    'app__routers__fleet__HeartbeatIn',
-    {
-        'agent_version': NotRequired['str | None'],
-        'status': NotRequired['str | None'],
     },
     total=False,
 )
@@ -4231,6 +4293,47 @@ app__routers__fleet__ResultIn = TypedDict(
         'output': NotRequired['dict[str, Any]'],
         'revert': NotRequired['dict[str, Any] | None'],
         'status': Required["Literal['applied', 'failed']"],
+    },
+    total=False,
+)
+
+app__routers__fleet__TokenCreated = TypedDict(
+    'app__routers__fleet__TokenCreated',
+    {
+        'created_at': Required['str'],
+        'created_by': Required['str | None'],
+        'expires_at': Required['str'],
+        'for_agent': Required['str | None'],
+        'id': Required['str'],
+        'label': Required['str'],
+        'labels': Required['list[str]'],
+        'max_uses': Required['int'],
+        'revoked_at': Required['str | None'],
+        'revoked_by': Required['str | None'],
+        'state': Required['str'],
+        'token': Required['str'],
+        'token_prefix': Required['str'],
+        'uses': Required['int'],
+    },
+    total=False,
+)
+
+app__routers__fleet__TokenOut = TypedDict(
+    'app__routers__fleet__TokenOut',
+    {
+        'created_at': Required['str'],
+        'created_by': Required['str | None'],
+        'expires_at': Required['str'],
+        'for_agent': Required['str | None'],
+        'id': Required['str'],
+        'label': Required['str'],
+        'labels': Required['list[str]'],
+        'max_uses': Required['int'],
+        'revoked_at': Required['str | None'],
+        'revoked_by': Required['str | None'],
+        'state': Required['str'],
+        'token_prefix': Required['str'],
+        'uses': Required['int'],
     },
     total=False,
 )
@@ -4288,12 +4391,35 @@ app__routers__sensors__EnrollOut = TypedDict(
     total=False,
 )
 
-app__routers__sensors__HeartbeatIn = TypedDict(
-    'app__routers__sensors__HeartbeatIn',
+app__routers__sensors__TokenCreated = TypedDict(
+    'app__routers__sensors__TokenCreated',
     {
-        'health': NotRequired['HealthIn'],
-        'interfaces': NotRequired['list[InterfaceIn] | None'],
-        'version': NotRequired['str | None'],
+        'created_at': Required['str'],
+        'created_by': Required['str | None'],
+        'expires_at': Required['str'],
+        'id': Required['str'],
+        'label': Required['str | None'],
+        'site': Required['str'],
+        'state': Required['str'],
+        'token': Required['str'],
+        'token_prefix': Required['str'],
+        'used_by_sensor': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+app__routers__sensors__TokenOut = TypedDict(
+    'app__routers__sensors__TokenOut',
+    {
+        'created_at': Required['str'],
+        'created_by': Required['str | None'],
+        'expires_at': Required['str'],
+        'id': Required['str'],
+        'label': Required['str | None'],
+        'site': Required['str'],
+        'state': Required['str'],
+        'token_prefix': Required['str'],
+        'used_by_sensor': NotRequired['str | None'],
     },
     total=False,
 )
@@ -4450,7 +4576,14 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'revert_action': ('POST', '/v1/fleet/actions/{action_id}/revert', False),
     'list_agents': ('GET', '/v1/fleet/agents', False),
     'get_agent': ('GET', '/v1/fleet/agents/{agent_id}', False),
+    'revoke_agent_key': ('POST', '/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke', False),
+    'get_agent_posture': ('GET', '/v1/fleet/agents/{agent_id}/posture', False),
+    'revoke_agent': ('POST', '/v1/fleet/agents/{agent_id}/revoke', False),
     'enroll': ('POST', '/v1/fleet/enroll', False),
+    'list_enroll_tokens': ('GET', '/v1/fleet/enroll-tokens', False),
+    'mint_enroll_token': ('POST', '/v1/fleet/enroll-tokens', False),
+    'get_enroll_token': ('GET', '/v1/fleet/enroll-tokens/{token_id}', False),
+    'revoke_enroll_token': ('DELETE', '/v1/fleet/enroll-tokens/{token_id}', False),
     'list_network_actions': ('GET', '/v1/fleet/network-actions', True),
     'propose': ('POST', '/v1/fleet/network-actions', False),
     'propose_from_finding': ('POST', '/v1/fleet/network-actions/from-finding', False),
@@ -4458,6 +4591,8 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'execute': ('POST', '/v1/fleet/network-actions/{action_id}/execute', False),
     'heartbeat': ('POST', '/v1/fleet/{agent_id}/heartbeat', False),
     'post_inventory': ('POST', '/v1/fleet/{agent_id}/inventory', False),
+    'rotate_key': ('POST', '/v1/fleet/{agent_id}/keys/rotate', False),
+    'post_posture': ('POST', '/v1/fleet/{agent_id}/posture', False),
     'graph_neighborhood': ('GET', '/v1/graph/neighborhood/{asset_id}', False),
     'graph_paths': ('GET', '/v1/graph/paths', False),
     'import_lockfiles': ('POST', '/v1/import/lockfiles', False),
@@ -5387,7 +5522,7 @@ class GeneratedOperations:
         Agent reports the outcome of a real apply. Guards enforce rails #2 + #3:
         an action may only be reported ``applied`` when it is ``approved`` AND
         ``dry_run = false``. A dry-run can never mutate, so it can never be
-        ``applied`` here.
+        ``applied`` here. Principal-bound: only the agent the action belongs to may report on it.
         """
         return self._request('POST', '/v1/fleet/actions/{action_id}/result', path_params={'action_id': action_id}, body=body)
 
@@ -5411,13 +5546,64 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/fleet/agents/{agent_id}', path_params={'agent_id': agent_id})
 
+    def revoke_agent_key(self, agent_id: str, key_id: str, body: RevokeIn | dict[str, Any]) -> Any:
+        """POST /v1/fleet/agents/{agent_id}/keys/{key_id}/revoke -- Revoke Agent Key
+
+        Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key
+        leaves the agent unable to post until an admin mints it a re-key token.
+        """
+        return self._request('POST', '/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke', path_params={'agent_id': agent_id, 'key_id': key_id}, body=body)
+
+    def get_agent_posture(self, agent_id: str) -> PostureOut:
+        """GET /v1/fleet/agents/{agent_id}/posture -- Get Agent Posture
+
+        The full latest SIGNED posture (``triage``): firewall rules, listeners, sshd and patch state. Reading it
+        is audited. ``tier`` is ``configured`` at best (E2): signed is not true.
+        """
+        return self._request('GET', '/v1/fleet/agents/{agent_id}/posture', path_params={'agent_id': agent_id})
+
+    def revoke_agent(self, agent_id: str, body: RevokeIn | dict[str, Any]) -> AgentOut:
+        """POST /v1/fleet/agents/{agent_id}/revoke -- Revoke Agent
+
+        Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key
+        tokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached.
+        """
+        return self._request('POST', '/v1/fleet/agents/{agent_id}/revoke', path_params={'agent_id': agent_id}, body=body)
+
     def enroll(self, body: app__routers__fleet__EnrollIn | dict[str, Any]) -> app__routers__fleet__EnrollOut:
         """POST /v1/fleet/enroll -- Enroll
 
-        Enroll a host agent. Validates the bootstrap token, mints an agent id +
-        a one-time credential (only its sha256 is stored), upserts by hostname.
+        Redeem a per-tenant enrollment token, bind an Ed25519 key (proof of possession required) and receive the
+        agent credential, ONCE. Every token failure is the same generic 401; failures are rate limited and lock the
+        client out; a taken hostname or key is a 409 that does not spend the token. A ``for_agent`` (re-key) token
+        rebinds an existing agent and keeps its history. The body (it holds the token) is never logged.
         """
         return self._request('POST', '/v1/fleet/enroll', body=body)
+
+    def list_enroll_tokens(self, *, limit: int | None = None) -> list[app__routers__fleet__TokenOut]:
+        """GET /v1/fleet/enroll-tokens -- List Enroll Tokens
+
+        Token metadata (prefix, uses, state): never the token or its hash. Listing is audited.
+        """
+        return self._request('GET', '/v1/fleet/enroll-tokens', query={'limit': limit})
+
+    def mint_enroll_token(self, body: TokenMintIn | dict[str, Any]) -> app__routers__fleet__TokenCreated:
+        """POST /v1/fleet/enroll-tokens -- Mint Enroll Token
+
+        Mint a per-tenant enrollment token. Shown ONCE; only its sha256 is stored. Single use by default;
+        ``max_uses`` up to 50 needs a ttl of at most 24 h (cloud-init fleets). ``for_agent`` mints a re-key token.
+        """
+        return self._request('POST', '/v1/fleet/enroll-tokens', body=body)
+
+    def get_enroll_token(self, token_id: str) -> app__routers__fleet__TokenOut:
+        """GET /v1/fleet/enroll-tokens/{token_id} -- Get Enroll Token
+        """
+        return self._request('GET', '/v1/fleet/enroll-tokens/{token_id}', path_params={'token_id': token_id})
+
+    def revoke_enroll_token(self, token_id: str) -> None:
+        """DELETE /v1/fleet/enroll-tokens/{token_id} -- Revoke Enroll Token
+        """
+        return self._request('DELETE', '/v1/fleet/enroll-tokens/{token_id}', path_params={'token_id': token_id})
 
     def list_network_actions(self, *, status: str | None = None, limit: int | None = None, offset: int | None = None) -> ActionPage:
         """GET /v1/fleet/network-actions -- List Network Actions
@@ -5458,15 +5644,38 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/fleet/network-actions/{action_id}/execute', path_params={'action_id': action_id}, body=body)
 
-    def heartbeat(self, agent_id: str, body: app__routers__fleet__HeartbeatIn | dict[str, Any]) -> HeartbeatOut:
+    def heartbeat(self, agent_id: str, body: dict[str, Any] | dict[str, Any]) -> HeartbeatOut:
         """POST /v1/fleet/{agent_id}/heartbeat -- Heartbeat
+
+        A SIGNED ``kind=heartbeat`` envelope. The only proof of life: an unsigned (stolen bearer) call can never
+        refresh ``last_seen``. The reply lists the approved, real work for this host.
         """
         return self._request('POST', '/v1/fleet/{agent_id}/heartbeat', path_params={'agent_id': agent_id}, body=body)
 
-    def post_inventory(self, agent_id: str, body: InventoryIn | dict[str, Any]) -> InventoryOut:
+    def post_inventory(self, agent_id: str) -> InventoryOut:
         """POST /v1/fleet/{agent_id}/inventory -- Post Inventory
+
+        The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked
+        ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can
+        prove life) and no builder reads it.
         """
-        return self._request('POST', '/v1/fleet/{agent_id}/inventory', path_params={'agent_id': agent_id}, body=body)
+        return self._request('POST', '/v1/fleet/{agent_id}/inventory', path_params={'agent_id': agent_id})
+
+    def rotate_key(self, agent_id: str, body: dict[str, Any] | dict[str, Any]) -> RotateAck:
+        """POST /v1/fleet/{agent_id}/keys/rotate -- Rotate Key
+
+        A ``kind=rotate`` envelope signed by the CURRENT key carrying the new key and its proof of possession.
+        The old key becomes ``rotated`` in the same transaction the new one becomes ``active``.
+        """
+        return self._request('POST', '/v1/fleet/{agent_id}/keys/rotate', path_params={'agent_id': agent_id}, body=body)
+
+    def post_posture(self, agent_id: str, body: dict[str, Any] | dict[str, Any]) -> PostureAck:
+        """POST /v1/fleet/{agent_id}/posture -- Post Posture
+
+        A SIGNED ``kind=posture`` envelope (paddock.host.posture/v2). Verified, replay-protected and schema-checked
+        (docs/ASSURANCE_P2.md section 2); a rejected envelope leaves the previous posture in place.
+        """
+        return self._request('POST', '/v1/fleet/{agent_id}/posture', path_params={'agent_id': agent_id}, body=body)
 
     def graph_neighborhood(self, asset_id: str, *, depth: int | None = None) -> dict[str, Any]:
         """GET /v1/graph/neighborhood/{asset_id} -- Graph Neighborhood
@@ -6260,7 +6469,7 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/sensors/enroll', body=body)
 
-    def heartbeat_sensors(self, body: app__routers__sensors__HeartbeatIn | dict[str, Any]) -> Any:
+    def heartbeat_sensors(self, body: HeartbeatIn | dict[str, Any]) -> Any:
         """POST /v1/sensors/heartbeat -- Heartbeat
         """
         return self._request('POST', '/v1/sensors/heartbeat', body=body)
@@ -6275,12 +6484,12 @@ class GeneratedOperations:
         """
         return self._request('POST', '/v1/sensors/ingest/done', body=body)
 
-    def list_tokens(self, *, limit: int | None = None) -> list[TokenOut]:
+    def list_tokens(self, *, limit: int | None = None) -> list[app__routers__sensors__TokenOut]:
         """GET /v1/sensors/tokens -- List Tokens
         """
         return self._request('GET', '/v1/sensors/tokens', query={'limit': limit})
 
-    def create_token(self, body: TokenCreateIn | dict[str, Any]) -> TokenCreated:
+    def create_token(self, body: TokenCreateIn | dict[str, Any]) -> app__routers__sensors__TokenCreated:
         """POST /v1/sensors/tokens -- Create Token
 
         Create a one-time enrollment token. The token is returned ONCE.

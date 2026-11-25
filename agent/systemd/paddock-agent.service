@@ -1,0 +1,33 @@
+# Paddock fleet host agent: one root process, sandboxed (docs/ASSURANCE_P2.md section 8, owner decision O2).
+# scripts/install-agent.sh writes this unit with the interpreter and archive paths it installed; a test
+# keeps the two byte-identical apart from those two paths. The enrollment token is never in a unit.
+[Unit]
+Description=Paddock fleet host agent
+Documentation=https://github.com/brandongraff-dev/paddock/blob/main/docs/AGENT_V2.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/local/lib/paddock-agent/paddock-agent.pyz run
+EnvironmentFile=-/etc/paddock-agent/agent.env
+Restart=on-failure
+RestartSec=10
+# exit status 7 = the server requires re-enrollment: stop instead of hammering it
+RestartPreventExitStatus=7
+StateDirectory=paddock-agent
+StateDirectoryMode=0700
+# --- sandboxing ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/paddock-agent
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ProtectKernelTunables=yes
+SystemCallFilter=@system-service
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

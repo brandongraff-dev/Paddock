@@ -80,6 +80,7 @@ _EVENT_ACTIVITY: dict[str, int] = {
     "asset.discovered": ACTIVITY_CREATE,
     "device.behavior": ACTIVITY_CREATE,
     "sensor.offline": ACTIVITY_CREATE,
+    "agent.offline": ACTIVITY_CREATE,
 }
 _EVENT_STATUS: dict[str, int] = {
     "finding.opened": 1,

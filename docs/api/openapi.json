@@ -352,6 +352,12 @@
             "title": "Id",
             "type": "string"
           },
+          "identity": {
+            "additionalProperties": true,
+            "description": "claimed identity (hostname, ips, basis)",
+            "title": "Identity",
+            "type": "object"
+          },
           "inventory": {
             "anyOf": [
               {
@@ -362,12 +368,43 @@
               }
             ]
           },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the agent's active signing key",
+            "title": "Key Id"
+          },
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/KeyOut"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
           "labels": {
             "items": {
               "type": "string"
             },
             "title": "Labels",
             "type": "array"
+          },
+          "last_posture_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Posture At"
           },
           "last_seen": {
             "anyOf": [
@@ -381,6 +418,28 @@
             ],
             "title": "Last Seen"
           },
+          "legacy": {
+            "default": false,
+            "description": "a v1 agent without a key: it must re-enroll",
+            "title": "Legacy",
+            "type": "boolean"
+          },
+          "node_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Ref"
+          },
+          "online": {
+            "default": true,
+            "title": "Online",
+            "type": "boolean"
+          },
           "platform": {
             "anyOf": [
               {
@@ -391,6 +450,11 @@
               }
             ],
             "title": "Platform"
+          },
+          "silent_after_s": {
+            "default": 300,
+            "title": "Silent After S",
+            "type": "integer"
           },
           "stale": {
             "title": "Stale",
@@ -450,12 +514,36 @@
             "title": "Id",
             "type": "string"
           },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the agent's active signing key",
+            "title": "Key Id"
+          },
           "labels": {
             "items": {
               "type": "string"
             },
             "title": "Labels",
             "type": "array"
+          },
+          "last_posture_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Posture At"
           },
           "last_seen": {
             "anyOf": [
@@ -469,6 +557,28 @@
             ],
             "title": "Last Seen"
           },
+          "legacy": {
+            "default": false,
+            "description": "a v1 agent without a key: it must re-enroll",
+            "title": "Legacy",
+            "type": "boolean"
+          },
+          "node_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Ref"
+          },
+          "online": {
+            "default": true,
+            "title": "Online",
+            "type": "boolean"
+          },
           "platform": {
             "anyOf": [
               {
@@ -479,6 +589,11 @@
               }
             ],
             "title": "Platform"
+          },
+          "silent_after_s": {
+            "default": 300,
+            "title": "Silent After S",
+            "type": "integer"
           },
           "stale": {
             "title": "Stale",
@@ -6065,12 +6180,53 @@
         "title": "HealthIn",
         "type": "object"
       },
+      "HeartbeatIn": {
+        "properties": {
+          "health": {
+            "$ref": "#/components/schemas/HealthIn"
+          },
+          "interfaces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/InterfaceIn"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interfaces"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "HeartbeatIn",
+        "type": "object"
+      },
       "HeartbeatOut": {
         "properties": {
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "idempotent": {
+            "default": false,
+            "title": "Idempotent",
+            "type": "boolean"
           },
           "last_seen": {
             "format": "date-time",
@@ -6083,6 +6239,17 @@
             },
             "title": "Pending Actions",
             "type": "array"
+          },
+          "server_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Time"
           },
           "status": {
             "title": "Status",
@@ -7183,39 +7350,6 @@
         "title": "InvariantVersionOut",
         "type": "object"
       },
-      "InventoryIn": {
-        "additionalProperties": false,
-        "properties": {
-          "listeners": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Listeners",
-            "type": "array"
-          },
-          "os_info": {
-            "additionalProperties": true,
-            "title": "Os Info",
-            "type": "object"
-          },
-          "packages": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Packages",
-            "type": "array"
-          },
-          "posture": {
-            "additionalProperties": true,
-            "title": "Posture",
-            "type": "object"
-          }
-        },
-        "title": "InventoryIn",
-        "type": "object"
-      },
       "InventoryOut": {
         "properties": {
           "collected_at": {
@@ -7230,6 +7364,12 @@
           },
           "ok": {
             "title": "Ok",
+            "type": "boolean"
+          },
+          "signed": {
+            "default": false,
+            "description": "always false: the v1 inventory is never evidence",
+            "title": "Signed",
             "type": "boolean"
           }
         },
@@ -7278,6 +7418,12 @@
             "additionalProperties": true,
             "title": "Posture",
             "type": "object"
+          },
+          "signed": {
+            "default": false,
+            "description": "always false: the v1 inventory is never evidence",
+            "title": "Signed",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7307,6 +7453,75 @@
           }
         },
         "title": "InviteIn",
+        "type": "object"
+      },
+      "KeyOut": {
+        "properties": {
+          "alg": {
+            "title": "Alg",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "last_seq": {
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "retired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retired At"
+          },
+          "revoke_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoke Reason"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key_id",
+          "alg",
+          "status",
+          "last_seq",
+          "created_at"
+        ],
+        "title": "KeyOut",
         "type": "object"
       },
       "LabelChangeOut": {
@@ -9362,6 +9577,180 @@
         "title": "PlanOut",
         "type": "object"
       },
+      "PostureAck": {
+        "properties": {
+          "changed": {
+            "description": "the content digest differs from the last stored posture",
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "idempotent": {
+            "default": false,
+            "title": "Idempotent",
+            "type": "boolean"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "server_time": {
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stored": {
+            "description": "a posture row was written (content changed, or the hourly refresh)",
+            "title": "Stored",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "seq",
+          "stored",
+          "changed",
+          "server_time"
+        ],
+        "title": "PostureAck",
+        "type": "object"
+      },
+      "PostureOut": {
+        "description": "The full latest signed posture of an agent (``triage``). Tier is ``configured`` at best: signed is not true.",
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_status": {
+            "title": "Agent Status",
+            "type": "string"
+          },
+          "collected_at": {
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "header": {
+            "additionalProperties": true,
+            "title": "Header",
+            "type": "object"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "key_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "status of the key that signed it (a revoked key's posture is untrusted)",
+            "title": "Key Status"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "node_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Ref"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          },
+          "payload_sha256": {
+            "title": "Payload Sha256",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "signed": {
+            "title": "Signed",
+            "type": "boolean"
+          },
+          "silent_after_s": {
+            "title": "Silent After S",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "key_id",
+          "key_status",
+          "seq",
+          "schema_version",
+          "collected_at",
+          "received_at",
+          "signed",
+          "tier",
+          "payload_sha256",
+          "size_bytes",
+          "header",
+          "payload",
+          "agent_status",
+          "online",
+          "last_seen",
+          "silent_after_s",
+          "node_ref"
+        ],
+        "title": "PostureOut",
+        "type": "object"
+      },
       "ProposeIn": {
         "properties": {
           "created_by": {
@@ -10831,6 +11220,25 @@
         "title": "RevertIn",
         "type": "object"
       },
+      "RevokeIn": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "RevokeIn",
+        "type": "object"
+      },
       "RiskyAsset": {
         "properties": {
           "asset_id": {
@@ -10917,6 +11325,30 @@
           "role"
         ],
         "title": "RoleMapping",
+        "type": "object"
+      },
+      "RotateAck": {
+        "properties": {
+          "key_id": {
+            "description": "the new, now active, key id",
+            "title": "Key Id",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "server_time": {
+            "title": "Server Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "key_id",
+          "server_time"
+        ],
+        "title": "RotateAck",
         "type": "object"
       },
       "RunOut": {
@@ -16613,64 +17045,10 @@
         "title": "TokenCreateIn",
         "type": "object"
       },
-      "TokenCreated": {
+      "TokenMintIn": {
+        "additionalProperties": false,
         "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "created_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Label"
-          },
-          "site": {
-            "title": "Site",
-            "type": "string"
-          },
-          "state": {
-            "description": "pending | used | expired | revoked",
-            "title": "State",
-            "type": "string"
-          },
-          "token": {
-            "description": "the enrollment token; shown ONCE",
-            "title": "Token",
-            "type": "string"
-          },
-          "token_prefix": {
-            "title": "Token Prefix",
-            "type": "string"
-          },
-          "used_by_sensor": {
+          "for_agent": {
             "anyOf": [
               {
                 "format": "uuid",
@@ -16680,54 +17058,13 @@
                 "type": "null"
               }
             ],
-            "title": "Used By Sensor"
-          }
-        },
-        "required": [
-          "id",
-          "token_prefix",
-          "site",
-          "label",
-          "created_by",
-          "created_at",
-          "expires_at",
-          "state",
-          "token"
-        ],
-        "title": "TokenCreated",
-        "type": "object"
-      },
-      "TokenOut": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "created_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
+            "description": "re-key token: rebinds this EXISTING agent (history kept); single use",
+            "title": "For Agent"
           },
           "label": {
             "anyOf": [
               {
+                "maxLength": 128,
                 "type": "string"
               },
               {
@@ -16736,43 +17073,32 @@
             ],
             "title": "Label"
           },
-          "site": {
-            "title": "Site",
-            "type": "string"
+          "labels": {
+            "description": "labels given to the agents this token enrolls",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Labels",
+            "type": "array"
           },
-          "state": {
-            "description": "pending | used | expired | revoked",
-            "title": "State",
-            "type": "string"
+          "max_uses": {
+            "default": 1,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Uses",
+            "type": "integer"
           },
-          "token_prefix": {
-            "title": "Token Prefix",
-            "type": "string"
-          },
-          "used_by_sensor": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Used By Sensor"
+          "ttl_minutes": {
+            "default": 60,
+            "description": "at most 24 h when max_uses > 1",
+            "maximum": 10080.0,
+            "minimum": 1.0,
+            "title": "Ttl Minutes",
+            "type": "integer"
           }
         },
-        "required": [
-          "id",
-          "token_prefix",
-          "site",
-          "label",
-          "created_by",
-          "created_at",
-          "expires_at",
-          "state"
-        ],
-        "title": "TokenOut",
+        "title": "TokenMintIn",
         "type": "object"
       },
       "TransitionOut": {
@@ -18311,10 +18637,12 @@
       },
       "app__routers__fleet__EnrollIn": {
         "additionalProperties": false,
+        "description": "``POST /v1/fleet/enroll``. The token travels in the body, never in a header or URL.",
         "properties": {
           "agent_version": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -18324,11 +18652,20 @@
             "title": "Agent Version"
           },
           "capabilities": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Capabilities",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
           },
           "hostname": {
             "maxLength": 253,
@@ -18336,69 +18673,76 @@
             "title": "Hostname",
             "type": "string"
           },
-          "labels": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Labels",
-            "type": "array"
-          },
           "platform": {
+            "default": "linux",
             "description": "linux | windows | macos",
+            "maxLength": 16,
             "title": "Platform",
             "type": "string"
           },
+          "proof_b64": {
+            "description": "the key's signature over 'paddock-enroll/v1\\n<token prefix>\\n<hostname>'",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Proof B64",
+            "type": "string"
+          },
+          "public_key_b64": {
+            "description": "raw 32-byte Ed25519 public key",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Public Key B64",
+            "type": "string"
+          },
           "token": {
-            "description": "enrollment bootstrap token",
+            "description": "per-tenant enrollment token (fet_...)",
+            "maxLength": 256,
             "minLength": 1,
             "title": "Token",
             "type": "string"
           }
         },
         "required": [
+          "token",
           "hostname",
-          "platform",
-          "token"
+          "public_key_b64",
+          "proof_b64"
         ],
         "title": "EnrollIn",
         "type": "object"
       },
       "app__routers__fleet__EnrollOut": {
         "properties": {
-          "agent_token": {
-            "description": "shown ONCE; store it securely on the host",
-            "title": "Agent Token",
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
             "type": "string"
           },
-          "capabilities": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Capabilities",
-            "type": "array"
+          "agent_token": {
+            "description": "shown ONCE; store it 0600 on the host",
+            "title": "Agent Token",
+            "type": "string"
           },
           "hostname": {
             "title": "Hostname",
             "type": "string"
           },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
+          "key_id": {
+            "title": "Key Id",
             "type": "string"
           },
-          "platform": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Platform"
+          "rekey": {
+            "description": "true when this enrollment rebound an existing agent (history kept)",
+            "title": "Rekey",
+            "type": "boolean"
           },
-          "status": {
-            "title": "Status",
+          "server_time": {
+            "title": "Server Time",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
             "type": "string"
           },
           "token_prefix": {
@@ -18407,45 +18751,16 @@
           }
         },
         "required": [
-          "id",
-          "hostname",
-          "platform",
-          "status",
+          "agent_id",
           "agent_token",
+          "key_id",
+          "tenant_id",
+          "server_time",
+          "hostname",
           "token_prefix",
-          "capabilities"
+          "rekey"
         ],
         "title": "EnrollOut",
-        "type": "object"
-      },
-      "app__routers__fleet__HeartbeatIn": {
-        "additionalProperties": false,
-        "properties": {
-          "agent_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Version"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "agent-reported health note",
-            "title": "Status"
-          }
-        },
-        "title": "HeartbeatIn",
         "type": "object"
       },
       "app__routers__fleet__ResultIn": {
@@ -18481,6 +18796,232 @@
           "status"
         ],
         "title": "ResultIn",
+        "type": "object"
+      },
+      "app__routers__fleet__TokenCreated": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "for_agent": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "For Agent"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
+          "max_uses": {
+            "title": "Max Uses",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "revoked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked By"
+          },
+          "state": {
+            "description": "pending | active | used | expired | revoked",
+            "title": "State",
+            "type": "string"
+          },
+          "token": {
+            "description": "the enrollment token; shown ONCE",
+            "title": "Token",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "uses": {
+            "title": "Uses",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "token_prefix",
+          "label",
+          "labels",
+          "max_uses",
+          "uses",
+          "for_agent",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "revoked_by",
+          "state",
+          "token"
+        ],
+        "title": "TokenCreated",
+        "type": "object"
+      },
+      "app__routers__fleet__TokenOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "for_agent": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "For Agent"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
+          "max_uses": {
+            "title": "Max Uses",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "revoked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked By"
+          },
+          "state": {
+            "description": "pending | active | used | expired | revoked",
+            "title": "State",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "uses": {
+            "title": "Uses",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "token_prefix",
+          "label",
+          "labels",
+          "max_uses",
+          "uses",
+          "for_agent",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "revoked_by",
+          "state"
+        ],
+        "title": "TokenOut",
         "type": "object"
       },
       "app__routers__integration_sync__DismissIn": {
@@ -18665,40 +19206,166 @@
         "title": "EnrollOut",
         "type": "object"
       },
-      "app__routers__sensors__HeartbeatIn": {
+      "app__routers__sensors__TokenCreated": {
         "properties": {
-          "health": {
-            "$ref": "#/components/schemas/HealthIn"
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
           },
-          "interfaces": {
+          "created_by": {
             "anyOf": [
               {
-                "items": {
-                  "$ref": "#/components/schemas/InterfaceIn"
-                },
-                "maxItems": 32,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Interfaces"
-          },
-          "version": {
-            "anyOf": [
-              {
-                "maxLength": 64,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Version"
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "site": {
+            "title": "Site",
+            "type": "string"
+          },
+          "state": {
+            "description": "pending | used | expired | revoked",
+            "title": "State",
+            "type": "string"
+          },
+          "token": {
+            "description": "the enrollment token; shown ONCE",
+            "title": "Token",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "used_by_sensor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used By Sensor"
           }
         },
-        "title": "HeartbeatIn",
+        "required": [
+          "id",
+          "token_prefix",
+          "site",
+          "label",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "state",
+          "token"
+        ],
+        "title": "TokenCreated",
+        "type": "object"
+      },
+      "app__routers__sensors__TokenOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "site": {
+            "title": "Site",
+            "type": "string"
+          },
+          "state": {
+            "description": "pending | used | expired | revoked",
+            "title": "State",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "used_by_sensor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used By Sensor"
+          }
+        },
+        "required": [
+          "id",
+          "token_prefix",
+          "site",
+          "label",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "state"
+        ],
+        "title": "TokenOut",
         "type": "object"
       },
       "app__scope_proof__VerifyIn": {
@@ -24891,7 +25558,7 @@
     },
     "/v1/fleet/actions/{action_id}/result": {
       "post": {
-        "description": "Agent reports the outcome of a real apply. Guards enforce rails #2 + #3:\nan action may only be reported ``applied`` when it is ``approved`` AND\n``dry_run = false``. A dry-run can never mutate, so it can never be\n``applied`` here.",
+        "description": "Agent reports the outcome of a real apply. Guards enforce rails #2 + #3:\nan action may only be reported ``applied`` when it is ``approved`` AND\n``dry_run = false``. A dry-run can never mutate, so it can never be\n``applied`` here. Principal-bound: only the agent the action belongs to may report on it.",
         "operationId": "post_result_v1_fleet_actions__action_id__result_post",
         "parameters": [
           {
@@ -24902,22 +25569,6 @@
               "format": "uuid",
               "title": "Action Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Agent-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Agent-Token"
             }
           }
         ],
@@ -25081,9 +25732,169 @@
         ]
       }
     },
+    "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke": {
+      "post": {
+        "description": "Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key\nleaves the agent unable to post until an admin mints it a re-key token.",
+        "operationId": "revoke_agent_key_v1_fleet_agents__agent_id__keys__key_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Key Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Agent Key",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/agents/{agent_id}/posture": {
+      "get": {
+        "description": "The full latest SIGNED posture (``triage``): firewall rules, listeners, sshd and patch state. Reading it\nis audited. ``tier`` is ``configured`` at best (E2): signed is not true.",
+        "operationId": "get_agent_posture_v1_fleet_agents__agent_id__posture_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostureOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Posture",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/agents/{agent_id}/revoke": {
+      "post": {
+        "description": "Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key\ntokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached.",
+        "operationId": "revoke_agent_v1_fleet_agents__agent_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Agent",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
     "/v1/fleet/enroll": {
       "post": {
-        "description": "Enroll a host agent. Validates the bootstrap token, mints an agent id +\na one-time credential (only its sha256 is stored), upserts by hostname.",
+        "description": "Redeem a per-tenant enrollment token, bind an Ed25519 key (proof of possession required) and receive the\nagent credential, ONCE. Every token failure is the same generic 401; failures are rate limited and lock the\nclient out; a taken hostname or key is a 409 that does not spend the token. A ``for_agent`` (re-key) token\nrebinds an existing agent and keeps its history. The body (it holds the token) is never logged.",
         "operationId": "enroll_v1_fleet_enroll_post",
         "requestBody": {
           "content": {
@@ -25118,6 +25929,173 @@
           }
         },
         "summary": "Enroll",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/enroll-tokens": {
+      "get": {
+        "description": "Token metadata (prefix, uses, state): never the token or its hash. Listing is audited.",
+        "operationId": "list_enroll_tokens_v1_fleet_enroll_tokens_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/app__routers__fleet__TokenOut"
+                  },
+                  "title": "Response List Enroll Tokens V1 Fleet Enroll Tokens Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Enroll Tokens",
+        "tags": [
+          "fleet"
+        ]
+      },
+      "post": {
+        "description": "Mint a per-tenant enrollment token. Shown ONCE; only its sha256 is stored. Single use by default;\n``max_uses`` up to 50 needs a ttl of at most 24 h (cloud-init fleets). ``for_agent`` mints a re-key token.",
+        "operationId": "mint_enroll_token_v1_fleet_enroll_tokens_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenMintIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__routers__fleet__TokenCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mint Enroll Token",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/enroll-tokens/{token_id}": {
+      "delete": {
+        "operationId": "revoke_enroll_token_v1_fleet_enroll_tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Enroll Token",
+        "tags": [
+          "fleet"
+        ]
+      },
+      "get": {
+        "operationId": "get_enroll_token_v1_fleet_enroll_tokens__token_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__routers__fleet__TokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Enroll Token",
         "tags": [
           "fleet"
         ]
@@ -25377,6 +26355,7 @@
     },
     "/v1/fleet/{agent_id}/heartbeat": {
       "post": {
+        "description": "A SIGNED ``kind=heartbeat`` envelope. The only proof of life: an unsigned (stolen bearer) call can never\nrefresh ``last_seen``. The reply lists the approved, real work for this host.",
         "operationId": "heartbeat_v1_fleet__agent_id__heartbeat_post",
         "parameters": [
           {
@@ -25388,29 +26367,105 @@
               "title": "Agent Id",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Agent-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Agent-Token"
-            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/app__routers__fleet__HeartbeatIn"
+                "description": "Documentation of the signed envelope (docs/ASSURANCE_P2.md section 2). The handler parses the raw bytes\nitself (strict JSON, duplicate keys refused); this model only describes them.",
+                "properties": {
+                  "agent_id": {
+                    "format": "uuid",
+                    "title": "Agent Id",
+                    "type": "string"
+                  },
+                  "alg": {
+                    "default": "ed25519",
+                    "title": "Alg",
+                    "type": "string"
+                  },
+                  "collectors": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "Collectors",
+                    "type": "object"
+                  },
+                  "issued_at": {
+                    "title": "Issued At",
+                    "type": "string"
+                  },
+                  "kid": {
+                    "title": "Kid",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "posture",
+                      "heartbeat",
+                      "rotate"
+                    ],
+                    "title": "Kind",
+                    "type": "string"
+                  },
+                  "nonce": {
+                    "title": "Nonce",
+                    "type": "string"
+                  },
+                  "payload_b64": {
+                    "title": "Payload B64",
+                    "type": "string"
+                  },
+                  "payload_len": {
+                    "title": "Payload Len",
+                    "type": "integer"
+                  },
+                  "payload_sha256": {
+                    "title": "Payload Sha256",
+                    "type": "string"
+                  },
+                  "payload_type": {
+                    "title": "Payload Type",
+                    "type": "string"
+                  },
+                  "seq": {
+                    "minimum": 1,
+                    "title": "Seq",
+                    "type": "integer"
+                  },
+                  "sig": {
+                    "title": "Sig",
+                    "type": "string"
+                  },
+                  "tenant_id": {
+                    "format": "uuid",
+                    "title": "Tenant Id",
+                    "type": "string"
+                  },
+                  "v": {
+                    "title": "V",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "v",
+                  "kid",
+                  "agent_id",
+                  "tenant_id",
+                  "kind",
+                  "seq",
+                  "issued_at",
+                  "nonce",
+                  "payload_type",
+                  "payload_sha256",
+                  "payload_len",
+                  "collectors",
+                  "payload_b64",
+                  "sig"
+                ],
+                "title": "EnvelopeDoc",
+                "type": "object"
               }
             }
           },
@@ -25446,6 +26501,7 @@
     },
     "/v1/fleet/{agent_id}/inventory": {
       "post": {
+        "description": "The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked\n``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can\nprove life) and no builder reads it.",
         "operationId": "post_inventory_v1_fleet__agent_id__inventory_post",
         "parameters": [
           {
@@ -25457,34 +26513,8 @@
               "title": "Agent Id",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "X-Agent-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Agent-Token"
-            }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InventoryIn"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "201": {
             "content": {
@@ -25508,6 +26538,298 @@
           }
         },
         "summary": "Post Inventory",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/{agent_id}/keys/rotate": {
+      "post": {
+        "description": "A ``kind=rotate`` envelope signed by the CURRENT key carrying the new key and its proof of possession.\nThe old key becomes ``rotated`` in the same transaction the new one becomes ``active``.",
+        "operationId": "rotate_key_v1_fleet__agent_id__keys_rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "Documentation of the signed envelope (docs/ASSURANCE_P2.md section 2). The handler parses the raw bytes\nitself (strict JSON, duplicate keys refused); this model only describes them.",
+                "properties": {
+                  "agent_id": {
+                    "format": "uuid",
+                    "title": "Agent Id",
+                    "type": "string"
+                  },
+                  "alg": {
+                    "default": "ed25519",
+                    "title": "Alg",
+                    "type": "string"
+                  },
+                  "collectors": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "Collectors",
+                    "type": "object"
+                  },
+                  "issued_at": {
+                    "title": "Issued At",
+                    "type": "string"
+                  },
+                  "kid": {
+                    "title": "Kid",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "posture",
+                      "heartbeat",
+                      "rotate"
+                    ],
+                    "title": "Kind",
+                    "type": "string"
+                  },
+                  "nonce": {
+                    "title": "Nonce",
+                    "type": "string"
+                  },
+                  "payload_b64": {
+                    "title": "Payload B64",
+                    "type": "string"
+                  },
+                  "payload_len": {
+                    "title": "Payload Len",
+                    "type": "integer"
+                  },
+                  "payload_sha256": {
+                    "title": "Payload Sha256",
+                    "type": "string"
+                  },
+                  "payload_type": {
+                    "title": "Payload Type",
+                    "type": "string"
+                  },
+                  "seq": {
+                    "minimum": 1,
+                    "title": "Seq",
+                    "type": "integer"
+                  },
+                  "sig": {
+                    "title": "Sig",
+                    "type": "string"
+                  },
+                  "tenant_id": {
+                    "format": "uuid",
+                    "title": "Tenant Id",
+                    "type": "string"
+                  },
+                  "v": {
+                    "title": "V",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "v",
+                  "kid",
+                  "agent_id",
+                  "tenant_id",
+                  "kind",
+                  "seq",
+                  "issued_at",
+                  "nonce",
+                  "payload_type",
+                  "payload_sha256",
+                  "payload_len",
+                  "collectors",
+                  "payload_b64",
+                  "sig"
+                ],
+                "title": "EnvelopeDoc",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RotateAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Key",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/{agent_id}/posture": {
+      "post": {
+        "description": "A SIGNED ``kind=posture`` envelope (paddock.host.posture/v2). Verified, replay-protected and schema-checked\n(docs/ASSURANCE_P2.md section 2); a rejected envelope leaves the previous posture in place.",
+        "operationId": "post_posture_v1_fleet__agent_id__posture_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "Documentation of the signed envelope (docs/ASSURANCE_P2.md section 2). The handler parses the raw bytes\nitself (strict JSON, duplicate keys refused); this model only describes them.",
+                "properties": {
+                  "agent_id": {
+                    "format": "uuid",
+                    "title": "Agent Id",
+                    "type": "string"
+                  },
+                  "alg": {
+                    "default": "ed25519",
+                    "title": "Alg",
+                    "type": "string"
+                  },
+                  "collectors": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "Collectors",
+                    "type": "object"
+                  },
+                  "issued_at": {
+                    "title": "Issued At",
+                    "type": "string"
+                  },
+                  "kid": {
+                    "title": "Kid",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "posture",
+                      "heartbeat",
+                      "rotate"
+                    ],
+                    "title": "Kind",
+                    "type": "string"
+                  },
+                  "nonce": {
+                    "title": "Nonce",
+                    "type": "string"
+                  },
+                  "payload_b64": {
+                    "title": "Payload B64",
+                    "type": "string"
+                  },
+                  "payload_len": {
+                    "title": "Payload Len",
+                    "type": "integer"
+                  },
+                  "payload_sha256": {
+                    "title": "Payload Sha256",
+                    "type": "string"
+                  },
+                  "payload_type": {
+                    "title": "Payload Type",
+                    "type": "string"
+                  },
+                  "seq": {
+                    "minimum": 1,
+                    "title": "Seq",
+                    "type": "integer"
+                  },
+                  "sig": {
+                    "title": "Sig",
+                    "type": "string"
+                  },
+                  "tenant_id": {
+                    "format": "uuid",
+                    "title": "Tenant Id",
+                    "type": "string"
+                  },
+                  "v": {
+                    "title": "V",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "v",
+                  "kid",
+                  "agent_id",
+                  "tenant_id",
+                  "kind",
+                  "seq",
+                  "issued_at",
+                  "nonce",
+                  "payload_type",
+                  "payload_sha256",
+                  "payload_len",
+                  "collectors",
+                  "payload_b64",
+                  "sig"
+                ],
+                "title": "EnvelopeDoc",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostureAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Posture",
         "tags": [
           "fleet"
         ]
@@ -32077,7 +33399,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/app__routers__sensors__HeartbeatIn"
+                "$ref": "#/components/schemas/HeartbeatIn"
               }
             }
           },
@@ -32246,7 +33568,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/TokenOut"
+                    "$ref": "#/components/schemas/app__routers__sensors__TokenOut"
                   },
                   "title": "Response List Tokens V1 Sensors Tokens Get",
                   "type": "array"
@@ -32289,7 +33611,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TokenCreated"
+                  "$ref": "#/components/schemas/app__routers__sensors__TokenCreated"
                 }
               }
             },

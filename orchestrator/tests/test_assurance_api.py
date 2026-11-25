@@ -148,12 +148,16 @@ async def test_invalid_yaml_is_422_with_the_librarys_problem_list(client):
     d = r.json()["detail"]
     assert d["error"] == "invalid_invariant" and d["problems"] and all(isinstance(p, str) for p in d["problems"])
 
-    # a structurally valid document that violates the schema reports each problem with its path
-    bad = inv_yaml(severity="catastrophic").replace("assert: unreachable", "assert: nonsense")
+    # a structurally valid document that violates the schema reports the problem with its path
+    r = await client.post("/v1/invariants", json={"yaml": inv_yaml(severity="catastrophic")})
+    assert r.status_code == 422
+    assert any("severity" in p for p in r.json()["detail"]["problems"])
+    # P2: any `assert:` string that is not a known literal is read as a host predicate, so `nonsense` is refused as a
+    # predicate (the problem names `assert` and says what was expected), not as an unknown assertion name
+    bad = inv_yaml().replace("assert: unreachable", "assert: nonsense")
     r = await client.post("/v1/invariants", json={"yaml": bad})
     assert r.status_code == 422
-    problems = r.json()["detail"]["problems"]
-    assert any("severity" in p for p in problems) and any("assert" in p for p in problems)
+    assert any("assert" in p and "expected an operator" in p for p in r.json()["detail"]["problems"])
 
     # nothing was stored
     assert (await client.get("/v1/invariants")).json()["total"] == 0
@@ -331,7 +335,8 @@ async def test_std_listing_and_enable(client, db_pool):
     lst = (await client.get("/v1/invariants/std")).json()
     ids = [s["id"] for s in lst]
     assert ids == sorted(ids) and "std:no-internet-to-datastore" in ids and "std:coverage-complete" in ids
-    assert len(ids) == 4 and not any(s["installed"] or s["enabled"] for s in lst)
+    assert len(ids) == 6 and {"std:server-ssh-hardened", "std:server-default-deny-inbound"} <= set(ids)   # P2 added the host pair
+    assert not any(s["installed"] or s["enabled"] for s in lst)
     assert all(s["digest"].startswith("sha256:") and s["assertion"] for s in lst)
 
     r = await client.post("/v1/invariants/std/std:no-internet-to-datastore/enable")

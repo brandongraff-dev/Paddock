@@ -68,10 +68,27 @@ export interface AgentDetailOut {
   enrolled_at: string;
   hostname: string;
   id: string;
+  /**
+   * claimed identity (hostname, ips, basis)
+   */
+  identity?: Record<string, unknown>;
   inventory?: InventorySnapshot | null;
+  /**
+   * the agent's active signing key
+   */
+  key_id?: string | null;
+  keys?: KeyOut[];
   labels: string[];
+  last_posture_at?: string | null;
   last_seen: string | null;
+  /**
+   * a v1 agent without a key: it must re-enroll
+   */
+  legacy?: boolean;
+  node_ref?: string | null;
+  online?: boolean;
   platform: string | null;
+  silent_after_s?: number;
   stale: boolean;
   status: string;
 }
@@ -82,9 +99,21 @@ export interface AgentOut {
   enrolled_at: string;
   hostname: string;
   id: string;
+  /**
+   * the agent's active signing key
+   */
+  key_id?: string | null;
   labels: string[];
+  last_posture_at?: string | null;
   last_seen: string | null;
+  /**
+   * a v1 agent without a key: it must re-enroll
+   */
+  legacy?: boolean;
+  node_ref?: string | null;
+  online?: boolean;
   platform: string | null;
+  silent_after_s?: number;
   stale: boolean;
   status: string;
 }
@@ -1040,10 +1069,18 @@ export interface HealthIn {
   uptime_s?: number | null;
 }
 
+export interface HeartbeatIn {
+  health?: HealthIn;
+  interfaces?: InterfaceIn[] | null;
+  version?: string | null;
+}
+
 export interface HeartbeatOut {
   id: string;
+  idempotent?: boolean;
   last_seen: string;
   pending_actions?: PendingAction[];
+  server_time?: string | null;
   status: string;
 }
 
@@ -1235,17 +1272,14 @@ export interface InvariantVersionOut {
   version: number;
 }
 
-export interface InventoryIn {
-  listeners?: Record<string, unknown>[];
-  os_info?: Record<string, unknown>;
-  packages?: Record<string, unknown>[];
-  posture?: Record<string, unknown>;
-}
-
 export interface InventoryOut {
   collected_at: string;
   inventory_id: string;
   ok: boolean;
+  /**
+   * always false: the v1 inventory is never evidence
+   */
+  signed?: boolean;
 }
 
 export interface InventorySnapshot {
@@ -1255,10 +1289,25 @@ export interface InventorySnapshot {
   os_info: Record<string, unknown>;
   packages: Record<string, unknown>[];
   posture: Record<string, unknown>;
+  /**
+   * always false: the v1 inventory is never evidence
+   */
+  signed?: boolean;
 }
 
 export interface InviteIn {
   label?: string | null;
+}
+
+export interface KeyOut {
+  alg: string;
+  created_at: string;
+  key_id: string;
+  last_seq: number;
+  retired_at?: string | null;
+  revoke_reason?: string | null;
+  revoked_at?: string | null;
+  status: string;
 }
 
 export interface LabelChangeOut {
@@ -1637,6 +1686,48 @@ export interface PlanOut {
   sites: number | null;
 }
 
+export interface PostureAck {
+  /**
+   * the content digest differs from the last stored posture
+   */
+  changed: boolean;
+  idempotent?: boolean;
+  ok: boolean;
+  seq: number;
+  server_time: string;
+  /**
+   * a posture row was written (content changed, or the hourly refresh)
+   */
+  stored: boolean;
+}
+
+/**
+ * The full latest signed posture of an agent (``triage``). Tier is ``configured`` at best: signed is not true.
+ */
+export interface PostureOut {
+  agent_id: string;
+  agent_status: string;
+  collected_at: string;
+  header: Record<string, unknown>;
+  key_id: string;
+  /**
+   * status of the key that signed it (a revoked key's posture is untrusted)
+   */
+  key_status: string | null;
+  last_seen: string | null;
+  node_ref: string | null;
+  online: boolean;
+  payload: Record<string, unknown> | null;
+  payload_sha256: string;
+  received_at: string;
+  schema_version: number;
+  seq: number;
+  signed: boolean;
+  silent_after_s: number;
+  size_bytes: number;
+  tier: string;
+}
+
 export interface ProposeIn {
   created_by?: string | null;
   finding_id: string;
@@ -1872,6 +1963,10 @@ export interface RevertIn {
   note?: string | null;
 }
 
+export interface RevokeIn {
+  reason?: string | null;
+}
+
 export interface RiskyAsset {
   asset_id: string;
   critical: number;
@@ -1889,6 +1984,15 @@ export interface RoleMapping {
   clearance?: ("public" | "internal" | "confidential" | "restricted") | null;
   group: string;
   role: "viewer" | "analyst" | "admin" | "auditor";
+}
+
+export interface RotateAck {
+  /**
+   * the new, now active, key id
+   */
+  key_id: string;
+  ok: boolean;
+  server_time: string;
 }
 
 export interface RunOut {
@@ -2814,38 +2918,21 @@ export interface TokenCreateIn {
   ttl_minutes?: number;
 }
 
-export interface TokenCreated {
-  created_at: string;
-  created_by: string | null;
-  expires_at: string;
-  id: string;
-  label: string | null;
-  site: string;
+export interface TokenMintIn {
   /**
-   * pending | used | expired | revoked
+   * re-key token: rebinds this EXISTING agent (history kept); single use
    */
-  state: string;
+  for_agent?: string | null;
+  label?: string | null;
   /**
-   * the enrollment token; shown ONCE
+   * labels given to the agents this token enrolls
    */
-  token: string;
-  token_prefix: string;
-  used_by_sensor?: string | null;
-}
-
-export interface TokenOut {
-  created_at: string;
-  created_by: string | null;
-  expires_at: string;
-  id: string;
-  label: string | null;
-  site: string;
+  labels?: string[];
+  max_uses?: number;
   /**
-   * pending | used | expired | revoked
+   * at most 24 h when max_uses > 1
    */
-  state: string;
-  token_prefix: string;
-  used_by_sensor?: string | null;
+  ttl_minutes?: number;
 }
 
 export interface TransitionOut {
@@ -3114,46 +3201,94 @@ export interface app__routers__devices__FindingBrief {
   title: string;
 }
 
+/**
+ * ``POST /v1/fleet/enroll``. The token travels in the body, never in a header or URL.
+ */
 export interface app__routers__fleet__EnrollIn {
   agent_version?: string | null;
-  capabilities?: string[];
+  capabilities?: string[] | null;
   hostname: string;
-  labels?: string[];
   /**
    * linux | windows | macos
    */
-  platform: string;
+  platform?: string;
   /**
-   * enrollment bootstrap token
+   * the key's signature over 'paddock-enroll/v1\n<token prefix>\n<hostname>'
+   */
+  proof_b64: string;
+  /**
+   * raw 32-byte Ed25519 public key
+   */
+  public_key_b64: string;
+  /**
+   * per-tenant enrollment token (fet_...)
    */
   token: string;
 }
 
 export interface app__routers__fleet__EnrollOut {
+  agent_id: string;
   /**
-   * shown ONCE; store it securely on the host
+   * shown ONCE; store it 0600 on the host
    */
   agent_token: string;
-  capabilities: string[];
   hostname: string;
-  id: string;
-  platform: string | null;
-  status: string;
-  token_prefix: string;
-}
-
-export interface app__routers__fleet__HeartbeatIn {
-  agent_version?: string | null;
+  key_id: string;
   /**
-   * agent-reported health note
+   * true when this enrollment rebound an existing agent (history kept)
    */
-  status?: string | null;
+  rekey: boolean;
+  server_time: string;
+  tenant_id: string;
+  token_prefix: string;
 }
 
 export interface app__routers__fleet__ResultIn {
   output?: Record<string, unknown>;
   revert?: Record<string, unknown> | null;
   status: "applied" | "failed";
+}
+
+export interface app__routers__fleet__TokenCreated {
+  created_at: string;
+  created_by: string | null;
+  expires_at: string;
+  for_agent: string | null;
+  id: string;
+  label: string;
+  labels: string[];
+  max_uses: number;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  /**
+   * pending | active | used | expired | revoked
+   */
+  state: string;
+  /**
+   * the enrollment token; shown ONCE
+   */
+  token: string;
+  token_prefix: string;
+  uses: number;
+}
+
+export interface app__routers__fleet__TokenOut {
+  created_at: string;
+  created_by: string | null;
+  expires_at: string;
+  for_agent: string | null;
+  id: string;
+  label: string;
+  labels: string[];
+  max_uses: number;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  /**
+   * pending | active | used | expired | revoked
+   */
+  state: string;
+  token_prefix: string;
+  uses: number;
 }
 
 export interface app__routers__integration_sync__DismissIn {
@@ -3192,10 +3327,38 @@ export interface app__routers__sensors__EnrollOut {
   site: string;
 }
 
-export interface app__routers__sensors__HeartbeatIn {
-  health?: HealthIn;
-  interfaces?: InterfaceIn[] | null;
-  version?: string | null;
+export interface app__routers__sensors__TokenCreated {
+  created_at: string;
+  created_by: string | null;
+  expires_at: string;
+  id: string;
+  label: string | null;
+  site: string;
+  /**
+   * pending | used | expired | revoked
+   */
+  state: string;
+  /**
+   * the enrollment token; shown ONCE
+   */
+  token: string;
+  token_prefix: string;
+  used_by_sensor?: string | null;
+}
+
+export interface app__routers__sensors__TokenOut {
+  created_at: string;
+  created_by: string | null;
+  expires_at: string;
+  id: string;
+  label: string | null;
+  site: string;
+  /**
+   * pending | used | expired | revoked
+   */
+  state: string;
+  token_prefix: string;
+  used_by_sensor?: string | null;
 }
 
 export interface app__scope_proof__VerifyIn {
@@ -3345,7 +3508,14 @@ export const OPERATIONS = {
   revertAction: ["POST", "/v1/fleet/actions/{action_id}/revert", false],
   listAgents: ["GET", "/v1/fleet/agents", false],
   getAgent: ["GET", "/v1/fleet/agents/{agent_id}", false],
+  revokeAgentKey: ["POST", "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke", false],
+  getAgentPosture: ["GET", "/v1/fleet/agents/{agent_id}/posture", false],
+  revokeAgent: ["POST", "/v1/fleet/agents/{agent_id}/revoke", false],
   enroll: ["POST", "/v1/fleet/enroll", false],
+  listEnrollTokens: ["GET", "/v1/fleet/enroll-tokens", false],
+  mintEnrollToken: ["POST", "/v1/fleet/enroll-tokens", false],
+  getEnrollToken: ["GET", "/v1/fleet/enroll-tokens/{token_id}", false],
+  revokeEnrollToken: ["DELETE", "/v1/fleet/enroll-tokens/{token_id}", false],
   listNetworkActions: ["GET", "/v1/fleet/network-actions", true],
   propose: ["POST", "/v1/fleet/network-actions", false],
   proposeFromFinding: ["POST", "/v1/fleet/network-actions/from-finding", false],
@@ -3353,6 +3523,8 @@ export const OPERATIONS = {
   execute: ["POST", "/v1/fleet/network-actions/{action_id}/execute", false],
   heartbeat: ["POST", "/v1/fleet/{agent_id}/heartbeat", false],
   postInventory: ["POST", "/v1/fleet/{agent_id}/inventory", false],
+  rotateKey: ["POST", "/v1/fleet/{agent_id}/keys/rotate", false],
+  postPosture: ["POST", "/v1/fleet/{agent_id}/posture", false],
   graphNeighborhood: ["GET", "/v1/graph/neighborhood/{asset_id}", false],
   graphPaths: ["GET", "/v1/graph/paths", false],
   importLockfiles: ["POST", "/v1/import/lockfiles", false],
@@ -4460,7 +4632,7 @@ export abstract class GeneratedOperations {
    * Agent reports the outcome of a real apply. Guards enforce rails #2 + #3:
    * an action may only be reported ``applied`` when it is ``approved`` AND
    * ``dry_run = false``. A dry-run can never mutate, so it can never be
-   * ``applied`` here.
+   * ``applied`` here. Principal-bound: only the agent the action belongs to may report on it.
    */
   postResult(actionId: string, body: app__routers__fleet__ResultIn, options?: RequestOptions): Promise<ActionOut> {
     return this._request<ActionOut>("POST", "/v1/fleet/actions/{action_id}/result", { pathParams: { action_id: actionId }, body, options });
@@ -4493,13 +4665,78 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * POST /v1/fleet/agents/{agent_id}/keys/{key_id}/revoke — Revoke Agent Key
+   *
+   * Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key
+   * leaves the agent unable to post until an admin mints it a re-key token.
+   */
+  revokeAgentKey(agentId: string, keyId: string, body: RevokeIn, options?: RequestOptions): Promise<unknown> {
+    return this._request<unknown>("POST", "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke", { pathParams: { agent_id: agentId, key_id: keyId }, body, options });
+  }
+
+  /**
+   * GET /v1/fleet/agents/{agent_id}/posture — Get Agent Posture
+   *
+   * The full latest SIGNED posture (``triage``): firewall rules, listeners, sshd and patch state. Reading it
+   * is audited. ``tier`` is ``configured`` at best (E2): signed is not true.
+   */
+  getAgentPosture(agentId: string, options?: RequestOptions): Promise<PostureOut> {
+    return this._request<PostureOut>("GET", "/v1/fleet/agents/{agent_id}/posture", { pathParams: { agent_id: agentId }, options });
+  }
+
+  /**
+   * POST /v1/fleet/agents/{agent_id}/revoke — Revoke Agent
+   *
+   * Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key
+   * tokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached.
+   */
+  revokeAgent(agentId: string, body: RevokeIn, options?: RequestOptions): Promise<AgentOut> {
+    return this._request<AgentOut>("POST", "/v1/fleet/agents/{agent_id}/revoke", { pathParams: { agent_id: agentId }, body, options });
+  }
+
+  /**
    * POST /v1/fleet/enroll — Enroll
    *
-   * Enroll a host agent. Validates the bootstrap token, mints an agent id +
-   * a one-time credential (only its sha256 is stored), upserts by hostname.
+   * Redeem a per-tenant enrollment token, bind an Ed25519 key (proof of possession required) and receive the
+   * agent credential, ONCE. Every token failure is the same generic 401; failures are rate limited and lock the
+   * client out; a taken hostname or key is a 409 that does not spend the token. A ``for_agent`` (re-key) token
+   * rebinds an existing agent and keeps its history. The body (it holds the token) is never logged.
    */
   enroll(body: app__routers__fleet__EnrollIn, options?: RequestOptions): Promise<app__routers__fleet__EnrollOut> {
     return this._request<app__routers__fleet__EnrollOut>("POST", "/v1/fleet/enroll", { body, options });
+  }
+
+  /**
+   * GET /v1/fleet/enroll-tokens — List Enroll Tokens
+   *
+   * Token metadata (prefix, uses, state): never the token or its hash. Listing is audited.
+   */
+  listEnrollTokens(query?: { limit?: number }, options?: RequestOptions): Promise<app__routers__fleet__TokenOut[]> {
+    return this._request<app__routers__fleet__TokenOut[]>("GET", "/v1/fleet/enroll-tokens", { query, options });
+  }
+
+  /**
+   * POST /v1/fleet/enroll-tokens — Mint Enroll Token
+   *
+   * Mint a per-tenant enrollment token. Shown ONCE; only its sha256 is stored. Single use by default;
+   * ``max_uses`` up to 50 needs a ttl of at most 24 h (cloud-init fleets). ``for_agent`` mints a re-key token.
+   */
+  mintEnrollToken(body: TokenMintIn, options?: RequestOptions): Promise<app__routers__fleet__TokenCreated> {
+    return this._request<app__routers__fleet__TokenCreated>("POST", "/v1/fleet/enroll-tokens", { body, options });
+  }
+
+  /**
+   * GET /v1/fleet/enroll-tokens/{token_id} — Get Enroll Token
+   */
+  getEnrollToken(tokenId: string, options?: RequestOptions): Promise<app__routers__fleet__TokenOut> {
+    return this._request<app__routers__fleet__TokenOut>("GET", "/v1/fleet/enroll-tokens/{token_id}", { pathParams: { token_id: tokenId }, options });
+  }
+
+  /**
+   * DELETE /v1/fleet/enroll-tokens/{token_id} — Revoke Enroll Token
+   */
+  revokeEnrollToken(tokenId: string, options?: RequestOptions): Promise<void> {
+    return this._request<void>("DELETE", "/v1/fleet/enroll-tokens/{token_id}", { pathParams: { token_id: tokenId }, options });
   }
 
   /**
@@ -4553,16 +4790,43 @@ export abstract class GeneratedOperations {
 
   /**
    * POST /v1/fleet/{agent_id}/heartbeat — Heartbeat
+   *
+   * A SIGNED ``kind=heartbeat`` envelope. The only proof of life: an unsigned (stolen bearer) call can never
+   * refresh ``last_seen``. The reply lists the approved, real work for this host.
    */
-  heartbeat(agentId: string, body: app__routers__fleet__HeartbeatIn, options?: RequestOptions): Promise<HeartbeatOut> {
+  heartbeat(agentId: string, body: Record<string, unknown>, options?: RequestOptions): Promise<HeartbeatOut> {
     return this._request<HeartbeatOut>("POST", "/v1/fleet/{agent_id}/heartbeat", { pathParams: { agent_id: agentId }, body, options });
   }
 
   /**
    * POST /v1/fleet/{agent_id}/inventory — Post Inventory
+   *
+   * The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked
+   * ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can
+   * prove life) and no builder reads it.
    */
-  postInventory(agentId: string, body: InventoryIn, options?: RequestOptions): Promise<InventoryOut> {
-    return this._request<InventoryOut>("POST", "/v1/fleet/{agent_id}/inventory", { pathParams: { agent_id: agentId }, body, options });
+  postInventory(agentId: string, options?: RequestOptions): Promise<InventoryOut> {
+    return this._request<InventoryOut>("POST", "/v1/fleet/{agent_id}/inventory", { pathParams: { agent_id: agentId }, options });
+  }
+
+  /**
+   * POST /v1/fleet/{agent_id}/keys/rotate — Rotate Key
+   *
+   * A ``kind=rotate`` envelope signed by the CURRENT key carrying the new key and its proof of possession.
+   * The old key becomes ``rotated`` in the same transaction the new one becomes ``active``.
+   */
+  rotateKey(agentId: string, body: Record<string, unknown>, options?: RequestOptions): Promise<RotateAck> {
+    return this._request<RotateAck>("POST", "/v1/fleet/{agent_id}/keys/rotate", { pathParams: { agent_id: agentId }, body, options });
+  }
+
+  /**
+   * POST /v1/fleet/{agent_id}/posture — Post Posture
+   *
+   * A SIGNED ``kind=posture`` envelope (paddock.host.posture/v2). Verified, replay-protected and schema-checked
+   * (docs/ASSURANCE_P2.md section 2); a rejected envelope leaves the previous posture in place.
+   */
+  postPosture(agentId: string, body: Record<string, unknown>, options?: RequestOptions): Promise<PostureAck> {
+    return this._request<PostureAck>("POST", "/v1/fleet/{agent_id}/posture", { pathParams: { agent_id: agentId }, body, options });
   }
 
   /**
@@ -5563,7 +5827,7 @@ export abstract class GeneratedOperations {
   /**
    * POST /v1/sensors/heartbeat — Heartbeat
    */
-  heartbeatSensors(body: app__routers__sensors__HeartbeatIn, options?: RequestOptions): Promise<unknown> {
+  heartbeatSensors(body: HeartbeatIn, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("POST", "/v1/sensors/heartbeat", { body, options });
   }
 
@@ -5584,8 +5848,8 @@ export abstract class GeneratedOperations {
   /**
    * GET /v1/sensors/tokens — List Tokens
    */
-  listTokens(query?: { limit?: number }, options?: RequestOptions): Promise<TokenOut[]> {
-    return this._request<TokenOut[]>("GET", "/v1/sensors/tokens", { query, options });
+  listTokens(query?: { limit?: number }, options?: RequestOptions): Promise<app__routers__sensors__TokenOut[]> {
+    return this._request<app__routers__sensors__TokenOut[]>("GET", "/v1/sensors/tokens", { query, options });
   }
 
   /**
@@ -5593,8 +5857,8 @@ export abstract class GeneratedOperations {
    *
    * Create a one-time enrollment token. The token is returned ONCE.
    */
-  createToken(body: TokenCreateIn, options?: RequestOptions): Promise<TokenCreated> {
-    return this._request<TokenCreated>("POST", "/v1/sensors/tokens", { body, options });
+  createToken(body: TokenCreateIn, options?: RequestOptions): Promise<app__routers__sensors__TokenCreated> {
+    return this._request<app__routers__sensors__TokenCreated>("POST", "/v1/sensors/tokens", { body, options });
   }
 
   /**

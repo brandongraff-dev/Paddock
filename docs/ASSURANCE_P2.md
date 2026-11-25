@@ -1,6 +1,6 @@
 # Provable Containment, P2: agent v2 for servers
 
-> Status: design contract for P2. Companion to [ASSURANCE_P1.md](ASSURANCE_P1.md) (the reach graph,
+> Status: design contract for P2, built; section 13 says what shipped and where it differs. Companion to [ASSURANCE_P1.md](ASSURANCE_P1.md) (the reach graph,
 > builders, runner and findings P2 plugs into) and [PROVABLE_CONTAINMENT_MVP.md](PROVABLE_CONTAINMENT_MVP.md)
 > section 6. Where documents disagree, **this file wins for P2**. Background research (long, may
 > contradict the decisions below) is in the scouting reports: see section 12.
@@ -359,3 +359,147 @@ coverage floor) are tracked in ASSURANCE_P1.md and must be resolved before P2 ev
 Scouting reports (six, about 175 KB, may contradict the decisions above): the session scratchpad
 `.../scratchpad/p2/scouts.json`, keys `agent, fleet, signing, collectors, invariants, integration`; real captured
 command output for fixtures: `.../scratchpad/p2/fixtures-collectors/` and `fixtures-signing/`.
+
+## 13. Status: what shipped, what differs, what is open
+
+Written after the build (2026-11-25). Sections 0 to 12 are the contract as agreed and are left as written; this
+section records where the build differs and what is still open. Operator documentation: [AGENT_V2.md](AGENT_V2.md).
+
+### 13.1 Shipped
+
+| WP | What exists |
+|---|---|
+| WP1 | `schema/041_agent_v2.sql`; `app/fleet_enroll.py` (one-time and multi-use tokens, strict Ed25519 key validation, proof of possession, re-key tokens) |
+| WP2a | agent core: signing (OpenSSL or the vendored RFC 8032 signer, byte-identical), envelope, write-ahead state, urllib client with backoff and outbox, enrollment, rotation, the revert-plan safety fix |
+| WP2b | collectors sshd, listeners, firewall (`fwmodel.py`), patch, self-health; the probe runner; `agent/PAYLOAD.md` |
+| WP3 | `app/fleet_posture.py` (the ten ordered checks), `routers/fleet.py`, the agent principal and RBAC rules in `auth.py`, `fleet_monitor.py`, retention |
+| WP4 | library: host-config predicates, field registry, Kleene evaluation, `std:server-ssh-hardened`, `std:server-default-deny-inbound`, `paddock-invariants fields` |
+| WP5 | `builders/host_fw.py` and agent identities in `_ipmap.py` |
+| WP6 | `FactOut`, `agent:` refs, `reach_node_facts` in the store, loader and findings sync, runner option and build stamp |
+| WP7 | reproducible zipapp builder, installer, systemd unit, release job and CI jobs, `AGENT_V2.md`, `FLEET_WIRING.md`, `READINESS.md`, regenerated OpenAPI and SDKs, the end-to-end test and the cross-language wire vectors |
+
+### 13.2 Differences from the contract text (each deliberate; none loosens a rule)
+
+* **Schema and tokens.** `agent_posture.signed` defaults to `FALSE` (a row is evidence only if ingest set it after
+  verifying); one active key per agent is enforced by a partial unique index (rotation retires the old key first);
+  `uses <= max_uses` is also a CHECK; re-key tokens (`for_agent`) exist and cannot revive an agent revoked after
+  they were minted; v1 revoked rows get `revoked_at` backfilled.
+* **Wire.** `kind=rotate` (payload type `paddock.agent.key-rotate/v1`, proof message `paddock-rotate/v1\n<agent>\n<old
+  kid>\n<new kid>`) and a heartbeat payload are defined; the enroll reply carries `tenant_id` and the body takes an
+  optional `platform`; `kid` is 1 to 64 printable characters; heartbeat payloads are capped at 4 KiB; an identical
+  resend of an older stored posture is an idempotent 200; the viewer-safe agent detail hides the machine id hash,
+  boot id and peer address.
+* **Library.** `Invariant.assert_` is the string `host-config` and the tree is in `Invariant.expr`; facts carry
+  `conf`, `partial` and `reason` besides the listed keys (missing means the weakest value); `min_tier` above a
+  field's reachable tier is a `CompileError`; `host.sshd.installed == false` needs a complete, attributed listener
+  table showing no SSH server; `root_login_possible` is true only for `PermitRootLogin yes`; the document depth cap
+  went from 12 to 14. A bare predicate string is a valid `assert:`, so a misspelt literal such as `nonsense` now
+  fails as a predicate, not as an unknown assertion.
+* **Builder and store.** Facts are `{collector: entry}` plus an informational `host_agent` entry the library never
+  reads; edges also cover ICMP and other IP protocols, and a firewall that accepts everything emits the world CIDR
+  as well as `internet`; corroboration also requires the server-observed peer address to be one of the instance's
+  addresses, and accepts any VM-type cloud resource; a conflict flags every collector entry of the host; the
+  digest ignores `seq` and `evidence_ref`; the runner stamps `last_build_at` at the start of a build, so a request
+  made during the build is not overwritten.
+* **Collectors.** A host with iptables-nft but no `nft` binary, or a failing `nft`, is `UNKNOWN`; the firewall's
+  `effective_default` claims a drop only if some packet really reaches the policy.
+* **Packaging.** The archive is written member by member (fixed timestamp and modes, stored, files only) and
+  `zipapp` only prepends the interpreter line, because `zipapp`'s directory mode gives different bytes on Python
+  3.12 than on 3.11; the entry point is a generated `__main__.py` with `sys.exit(main())` (`zipapp`'s `main=` drops
+  the return value, which would turn exit status 7 into 0). The installer adds `--sha256`, `--require-cosign`,
+  `--root` and `--base-url`, and each release carries an installer pinned to its own tag. CI gains `agent-py38`
+  (the `python:3.8` image) and `agent-installer`.
+
+### 13.3 Verification
+
+Run on 2026-11-25 in the build sandbox (Postgres 16 on a private port, Python 3.13 unless stated).
+
+* `agent`: 709 tests pass; on a real CPython 3.8.20 707 pass and 2 skip (they need Python 3.10); the signer-forced
+  subset passes on both; `ruff check` clean. `agent/packaging/tests`: 74 pass on 3.13 and on 3.8.20.
+* `assurance`: 8066 pass, 1 skipped; `ruff check` clean.
+* Orchestrator, one pytest session at a time, the P1 gate list plus every `test_assurance_*`, `test_fleet*`,
+  `test_isolation_keys` and `test_public_surface_adversarial`: 1343 pass and 3 fail in the normal run (the
+  failures are listed in 13.4; none is in code of this change); the `ORCH_TEST_APP_ROLE=1` run gives the same three failures plus one wall-clock flake
+  (`test_assurance_acl.py::test_compile_timeout_is_a_422_and_slots_are_bounded`, a 0.9 s timing bound that passes alone in
+  both modes): 1342 pass and 1 strict `xfail` (13.4 item 1).
+* Definition of done: `tests/test_assurance_p2_e2e.py` (real agent, real server, two tenants) and
+  `tests/test_fleet_wire_vectors.py` (the agent's vectors checked by the server, `cryptography` and the OpenSSL CLI).
+* Generated files regenerated; `--check` clean for the OpenAPI document and both SDKs. `ruff check .` clean.
+* Mutation checks (a rule broken in a scratch copy, the tests must fail): WP1 20/20, WP2a 23/24 (the survivor is an
+  equivalent mutant), WP2b 30 killed and 1 equivalent mutant (two that first survived got new tests), WP3 44/44, WP4 15/15 plus 19 in-suite, WP5 40/40,
+  WP6 30/30; WP7: 11/11 server rules through the end-to-end and vector tests, 14/14 installer and builder rules.
+  For two of the WP7 server mutants (token uses past `max_uses`, old key left active on rotation) the test died on a
+  database constraint (`fleet_enroll_tokens_uses_le_max`, `uq_fleet_agent_keys_one_active`), which is a second line
+  of defence, not the assertion the test was written for.
+
+### 13.4 Open issues (found while building; each is in a file of another package or of the lead)
+
+1. **Fixed by the verifier (13.6, item 3).** ~~Rotation leaves the host `UNKNOWN` for up to an hour.~~ The first posture under a new key is not stored when
+   its digest is unchanged, so the newest stored posture is signed by a `rotated` key and `host_fw` rightly ignores
+   it. Fix in `fleet_posture._claim_and_persist`: store when the key id differs. Test:
+   `test_assurance_p2_e2e.py::test_a_healthy_host_keeps_holds_after_a_key_rotation` (strict `xfail`; remove the
+   marker when fixed).
+2. **Fixed by the verifier (13.6).** ~~P1 end-to-end test is stale.~~ `tests/test_assurance_e2e.py:311` expects the builder set
+   `{aws_sg, external_scan, sentry_flow}`; `host_fw` is now registered, so add `"host_fw"` to the set.
+3. **Fixed by the verifier (13.6).** ~~`tests/test_assurance_api.py` encodes superseded behaviour.~~ `test_std_listing_and_enable` expects 4 std
+   invariants (6 ship now); `test_invalid_yaml_is_422_with_the_librarys_problem_list` expects `assert: nonsense` to
+   be reported against `assert` (it is now a predicate and fails with another message).
+4. **Fixed by the verifier (13.6, item 5).** ~~`agent.offline` and `agent.online` are not in `integrations.base.EVENT_TYPES`, so the
+   monitor writes audit rows only.~~
+5. **Setting.** `config.py` has no `assurance_agent_posture_max_age_h`; the runner uses its 6 h default.
+6. **A host that leaves the graph is silent.** A revoked or legacy agent, or a removed tag, drops out of an "all
+   hosts" selector; the library does not list passing hosts, so findings for a host that left a still-`VIOLATED`
+   selector close as fixed. Needs `passing_targets` (or the selected set) in the library result.
+7. **External observations persist for their window.** After the external scan sees a port the agent calls closed,
+   the conflict stays until that observation ages out (`assurance_edge_window_h`); a newer posture does not clear it.
+   This follows P1's rule that observations expire rather than being disproved by one look.
+8. **Environment.** `scripts/tests/test_ci_templates.py::test_shellcheck` fails where `shellcheck` 0.10 is
+   installed (info-level SC2015 in `integrations/ci/paddock-ci.sh`); it skips where there is no `shellcheck`.
+9. In-process rate limiters (N replicas allow N times the limit); no dashboard screens for tokens, rotation or
+   verdicts; `POST /v1/fleet/actions/{id}/result` has no body-size cap of its own and is an existence oracle inside
+   one tenant (403 versus 404).
+
+### 13.5 Not verified
+
+The installer as root, the unit under a real systemd, a real GitHub release (the workflow has never run; cosign
+was exercised only through a recording fake), real `nft`/`iptables` applied on a host, a real `sshd -T` (the sshd
+fixtures are synthetic), RHEL, SUSE and Alpine hosts, Docker and Kubernetes dataplanes, several orchestrator
+replicas, a Postgres major version other than 16, and the performance of `host_fw` on a large fleet (about 100 ms
+per host with a distinct large ruleset, measured by WP5 on synthetic data).
+
+### 13.6 Independent verification (2026-11-25)
+
+A verifier who trusted none of the work packages' reports re-ran every gate and probed the seams between packages.
+Five defects were found and fixed, each with a test that failed before and passes after
+(`orchestrator/tests/test_p2_verifier.py`, plus the un-xfailed rotation test and the three stale tests):
+
+1. **`host_fw` could be made to compute for hours by one signed posture (DoS, high).** The walk budget counted walks,
+   but a walk costs up to one rule evaluation per rule: 2000 distinct-CIDR rules and 2000 listeners (a 700 KB posture
+   the ingest schema accepts) is billions of evaluations in a worker thread no timeout can stop (measured before the fix:
+   1.3 s, 8.6 s and 56 s for 100, 200 and 400 rules and listeners; cubic). Now bounded in rule evaluations
+   (`STEP_BUDGET` per agent, `BUILD_STEP_BUDGET` per build); a host over budget is widened (confidence 60, no coverage), and
+   an external-scan check that cannot finish is a conflict, never a pass.
+2. **A declared `server` that no builder drew a node for was silently out of scope (E5 violated).** `graph_loader` now adds
+   every node carrying a `server` label, so the std host invariants see it as `UNKNOWN: no_agent`.
+3. **After a key rotation the host read `UNKNOWN` for up to an hour** (13.4 item 1): the first posture under a new key is
+   now always stored and the graph rebuilt.
+4. **Cloud-instance corroboration was forgeable behind a proxy.** `peer_ip` was the leftmost `X-Forwarded-For` entry,
+   which a proxy that appends leaves attacker-chosen: a compromised host could be merged into `asset:<victim>` and
+   attach its facts and coverage to it. `auth.client_ip_strict` reads the header from the right, skipping trusted proxies.
+5. **`agent.offline` / `agent.online` are registered integration events** (13.4 item 4), with OCSF activity and docs.
+
+6. **The suite passed only in alphabetical order.** The assurance runner keeps its last build per tenant in a process-local
+   dict and every test uses the default tenant, so a test that builds (the P2 end-to-end tests do) made a later
+   `test_state_endpoint` fail (`pytest tests/test_assurance_p2_e2e.py tests/test_assurance_api.py`). `tests/conftest.py` now
+   clears it before every test.
+
+Limits chosen for item 1: 8 M rule evaluations per agent (about 4 s; a typical host needs 0.2 M) and 100 M per build. A fleet of
+more than about 500 hosts that all have DIFFERENT large rulesets will see the later hosts widened (UNKNOWN) rather than
+walked; hosts with identical rulesets share one walk.
+
+Also corrected: three tests that encoded superseded behaviour (the P1 end-to-end builder set, the std count, the
+`assert: nonsense` diagnostic; the library now reports the predicate error alone, not next to a severity error).
+
+Remaining, deliberately not changed: a revoked or legacy agent still leaves the graph unless its host is a declared
+server (13.4 item 6; a declared server now stays in scope as `UNKNOWN`); `client_ip` (leftmost entry) still feeds rate limits;
+the in-process limiters multiply with replicas; the pure signer is not constant-time.
