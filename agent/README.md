@@ -31,7 +31,7 @@ export PADDOCK_SERVER=https://paddock.example.com
 read -rs PADDOCK_ENROLL_TOKEN && export PADDOCK_ENROLL_TOKEN      # or: printf %s "$TOKEN" | paddock enroll --token-stdin
 sudo -E paddock enroll             # generates a NEW key, proves possession of it, spends the token
 paddock status
-sudo systemctl enable --now paddock-agent
+sudo systemctl enable paddock-agent && sudo systemctl restart paddock-agent   # restart, so a running agent picks up new credentials
 ```
 
 Enrollment generates the key on the host (it never leaves it), signs
@@ -167,7 +167,8 @@ credential file is rejected on read; v1 agents get `403 re_enroll_required` from
 
 ## The systemd unit (one root process, hardened)
 
-The unit file itself ships with WP7 (`scripts/install-agent.sh`); this is the contract it implements
+The shipped unit is `agent/systemd/paddock-agent.service`; `scripts/install-agent.sh` writes it with the interpreter and
+archive paths it installed (a test keeps the two identical apart from those). The sketch below is the contract it implements
 (`docs/ASSURANCE_P2.md` section 8). The enrollment token is **never** in the unit.
 
 ```ini

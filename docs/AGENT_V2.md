@@ -202,9 +202,11 @@ is not tested by this project. Upgrading with the installer rewrites the unit fi
   401/403/404 (a proxy, WAF or gateway in the way) never ends the agent: it keeps retrying at the capped backoff
   (300 s) and recovers by itself when the server answers again. The other side of that: an agent whose row was
   deleted on the server, behind something that answers a bare 404, never exits by itself and logs an error every
-  few minutes until an operator runs `systemctl disable --now paddock-agent`. A host whose agent exited 7 or went
-  silent stays in the graph as a tombstone that reads `UNKNOWN`, and its open finding stays open until an
-  operator closes it or the host is evaluated `HOLDS` again.
+  few minutes until an operator runs `systemctl disable --now paddock-agent`. On the server, a host that merely went
+  silent reads `UNKNOWN`; a revoked or legacy agent stays in the graph as a tombstone that reads `UNKNOWN` only while
+  an open (or triaged) host-config finding names it, and that finding stays open until the host is evaluated as
+  passing again or an operator sets its status (`PATCH /findings/{id}`). A revoked host with no open finding leaves the
+  graph.
 
 Because `ProtectSystem=strict` makes everything but the state directory read-only, the optional enforcement
 actions `block_domain` (writes `/etc/hosts`) and `quarantine_file` fail with a read-only error under this unit and
@@ -255,11 +257,17 @@ Safety rails the agent applies on the host, whatever the server says:
 
 ## 4. How the evidence is used
 
-A posture that passes the server's checks becomes facts on a node `agent:<uuid>` in the reach graph (or the cloud
-instance's own node once the agent's addresses and its peer address prove it is that instance). The invariants
+A posture that passes the server's checks becomes facts on a node `agent:<uuid>` in the reach graph. **It is never
+merged into the cloud instance's own node in this release**: a private source address is not proof that the host is
+that instance (a NAT or VPN instance can stand in for another machine), and there is no signed instance identity or
+operator pairing yet. A cloud instance with an agent therefore has two nodes, the instance (inventory and exposure
+edges, no host facts) and the agent (host facts); host-config invariants judge the agent node, and reach or exposure
+invariants that need the instance's inbound coverage read `UNKNOWN` for it, never `HOLDS`. The invariants
 then evaluate each host as true, false or unknown, and a fact is **unusable** (the host reads unknown, never
 fine) when it is unsigned, from a revoked key, stale, partial, approximate, from an agent that went silent, below
-the invariant's evidence tier, or contradicted by another source.
+the invariant's evidence tier, or contradicted by another source. For sshd claims the server also needs positive
+evidence that the running daemon uses the configuration `sshd -T` read: a daemon the agent cannot see or inspect
+(an agent that is not root, a stopped sshd, a pending reload, `-f` or `-o` options on its command line) reads `UNKNOWN`.
 
 | Situation | Verdict |
 |---|---|
@@ -267,10 +275,22 @@ the invariant's evidence tier, or contradicted by another source.
 | any host fails the predicate | `VIOLATED`, a finding per host |
 | host silent more than `silent_after_s` (default 300 s) | `UNKNOWN`; an open finding stays open |
 | tampered envelope, bad signature, replay | rejected (401 / 409); the previous posture stays; silence follows if it persists |
-| the external scan saw an open port the agent says is closed | `UNKNOWN`, no coverage, a conflict recorded on the host |
+| the external scan saw an open port the agent says is closed | `UNKNOWN`, no coverage, a conflict recorded on the host; it stays until a later full TCP scan of the host did not see the port, or the observation ages out (168 h); a newer posture does not clear it, and there is no operator action to clear it |
 | firewall uses ipset, marks, DNAT, Docker publishing, or `sshd -T` could not run | `UNKNOWN` (approximate is never a pass) |
-| agent revoked | the host leaves the graph; the selector may be empty, which is `UNKNOWN` |
+| agent revoked or legacy | `UNKNOWN` tombstone while an open finding names the host; otherwise the host leaves the graph (the selector may then be empty, which is `UNKNOWN`) |
+| zone of the host not established (no declared zone label, and its claim and the address the server saw do not agree) | zone-selected invariants read `UNKNOWN` for it, never `HOLDS` |
 | a declared `server` with no agent | `UNKNOWN: no_agent` |
+
+**Zones.** A host with no declared zone label is placed in a zone only when its own claimed addresses (its listener
+table) and the address the server saw it connect from resolve to the same single zone (a zone label written by a connector or by asset metadata, weaker than a declared one,
+also places it when the two do not agree). Behind an ingress that adds
+`X-Forwarded-For` while `trustedProxyCidrs` is empty (the shipped Helm default) the server sees no usable peer, so every
+undeclared agent is `zone_unknown`, as is a host with only wildcard listeners or a claim outside every zone. To make
+zone-selected invariants decide for a host, declare its zone (Team feature): `PUT /v1/labels` with
+`{"node_ref":"agent:<uuid>","tag":"zone","value":"<zone>","justification":"..."}`. A declared label always wins. If you
+want the server to see real client addresses, set `trustedProxyCidrs` to the ingress addresses ONLY (never a whole
+RFC1918 range) and keep `trustedProxyHops` equal to the number of appending proxies. With more than 64 zone-unknown hosts
+in both selections of a zone invariant, a `VIOLATED` verdict closes no finding until labels are declared.
 
 Read the stored posture with `GET /v1/fleet/agents/{id}/posture` (analyst role and above; it is audited).
 Rejected envelopes are audit rows `fleet.evidence.rejected` with the reason; liveness changes are
@@ -309,11 +329,29 @@ curl -s -X POST "$PADDOCK/v1/fleet/agents/$ID/keys/$KEY_ID/revoke" ...      # on
 curl -s -X DELETE "$PADDOCK/v1/fleet/enroll-tokens/$TOKEN_ID" ...            # a token that was minted but not used
 ```
 
+Revoking the **agent** is the incident action. It also revokes the multi-use fleet enrollment token the agent came from
+(if it has uses left), so a revoked host cannot enroll again under a new name; pass `"revoke_enroll_token": false` to
+keep the fleet token for the hosts that have not enrolled yet. Revoking a single key that was **rotated** while its
+successor is still active needs `"successors": "revoke"` (the whole chain, for a stolen key) or `"keep"` (only that
+key); without it the call changes nothing and answers 409 with the active successors. A revoked key or agent cuts the
+credential's unsigned routes too (v1 inventory, action results), not only the signed ones.
+
 **Limits** (per agent, per minute unless noted; in-process, so multiply by replicas): heartbeat 60, posture 20,
-rotate 10/hour, inventory 6; enrollment 20 per client per minute with a lockout after 5 failures in 10 minutes.
-Environment overrides: `FLEET_HEARTBEAT_PER_MIN`, `FLEET_POSTURE_PER_MIN`, `FLEET_ROTATE_PER_HOUR`,
-`FLEET_INVENTORY_PER_MIN`, `FLEET_ENROLL_PER_MIN`, `FLEET_ENROLL_FAILS`, `FLEET_AGENT_MONITOR_SEC`. Retention:
-signed postures 90 days (`RETENTION_AGENT_POSTURE_DAYS`), v1 inventory 30 days (`RETENTION_AGENT_INVENTORY_DAYS`).
+rotate 10/hour, each charged only for an accepted (signed, fresh) envelope, and the unsigned v1 inventory 6 (charged per
+request); at most 30 unverified requests
+per minute per (agent, client address), after which the answer is a 429 before the body is read
+(`FLEET_PREAUTH_FAILS_PER_MIN`); 60 per minute of validly signed envelopes that make no progress (replays, stale
+`issued_at`; `FLEET_REPLAY_PER_MIN`); enrollment 20 per client per minute with a lockout after 5 failures in 10 minutes,
+keyed on the strict client address (see `trustedProxyCidrs`, section 4). Environment overrides: `FLEET_HEARTBEAT_PER_MIN`,
+`FLEET_POSTURE_PER_MIN`, `FLEET_ROTATE_PER_HOUR`, `FLEET_INVENTORY_PER_MIN`, `FLEET_ENROLL_PER_MIN`,
+`FLEET_ENROLL_FAILS`, `FLEET_AGENT_MONITOR_SEC`. Retention: signed postures 90 days (`RETENTION_AGENT_POSTURE_DAYS`),
+v1 inventory 30 days (`RETENTION_AGENT_INVENTORY_DAYS`). Storage caps: a changed posture within 300 s of the last one
+overwrites it (`FLEET_POSTURE_MIN_STORE_S`); 128 MiB of postures per agent (`FLEET_POSTURE_AGENT_MAX_MB`), 2 GiB per
+tenant (`FLEET_POSTURE_TENANT_MAX_MB`), 512 MiB of v1 inventory per tenant (`FLEET_INVENTORY_TENANT_MAX_MB`), the tenant
+caps checked at most once a minute. Enrollment caps: 10000 active agents per tenant (`FLEET_MAX_AGENTS_PER_TENANT`) and
+ten times that many rows including revoked ones (`FLEET_MAX_AGENT_ROWS_PER_TENANT`); revoked rows are never deleted, so a
+long-lived autoscaling tenant eventually needs the second limit raised. An agent built before this release is refused
+(422) on every posture because it sends no `sshd.v.daemon`; upgrade it.
 
 **Time**: an envelope is accepted only within 10 minutes of the server's clock (`422` with `server_now`
 otherwise). Keep hosts on NTP.
@@ -375,7 +413,7 @@ tests; see "Not verified" in [ASSURANCE_P2.md](ASSURANCE_P2.md).
 
 | To stop | Do | Effect |
 |---|---|---|
-| One host's evidence, now | `POST /v1/fleet/agents/{id}/revoke` | credential and every key refused on the next call; pending re-key tokens revoked; coverage and facts dropped |
+| One host's evidence, now | `POST /v1/fleet/agents/{id}/revoke` | credential and every key refused on the next call; pending re-key tokens and (by default) the fleet token it enrolled with revoked; coverage and facts dropped at the next graph rebuild (requested at once, done on the runner's next tick); the host reads `UNKNOWN` while a finding for it is open |
 | One key | `POST /v1/fleet/agents/{id}/keys/{key_id}/revoke` | that key's evidence refused; the agent needs a re-key token |
 | New enrollments | `DELETE /v1/fleet/enroll-tokens/{id}` for each open token (list them with `GET`) | nothing can enroll without a new token; suspending the tenant also refuses enrollment and every agent call |
 | The agent on a host | `systemctl disable --now paddock-agent` or `install-agent.sh --uninstall` | nothing is sent; the server sees silence and the host reads `UNKNOWN` after `silent_after_s` |
@@ -391,7 +429,9 @@ The full list is in [ASSURANCE_P2.md](ASSURANCE_P2.md) (sections 11 and 13). The
 no distro advisory data and no KEV matching (patch state is collected, not judged); Linux only; Debian and RPM
 families only for patches; a firewall using ipset, marks, DNAT or Docker publishing stays `UNKNOWN`, and so does
 one held in legacy iptables tables (the shipped unit has no `CAP_NET_RAW`, section 3); a host
-without root or without `sshd -T` is `UNKNOWN`; AWS instance identity is matched by address overlap, not verified
-cryptographically; RHEL 8's default Python 3.6 is unsupported (install the `python39` module); the rate limits are
-per process; and the installer, the unit and a real release have not been run on a live host or a real GitHub
-release yet.
+without root or without `sshd -T` is `UNKNOWN`; an agent is never merged into its cloud instance's node (no signed
+instance identity or operator pairing yet), so reach invariants over an instance with an agent read `UNKNOWN`; a host
+with no declared zone label may be `zone_unknown`, and zone-selected invariants then read `UNKNOWN`; a scan conflict has
+no operator action; the v1 inventory route is unsigned (never evidence); RHEL 8's default Python 3.6 is unsupported
+(install the `python39` module); the rate limits are per process; the release settings in section 1 are not applied; and
+the installer, the unit and a real release have not been run on a live host or a real GitHub release yet.

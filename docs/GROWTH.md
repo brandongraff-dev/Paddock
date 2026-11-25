@@ -75,7 +75,13 @@ Jobs are rows in `exposure_reports` claimed by the runner loop with
 | Limiter outage | fails closed (503) |
 
 IP addresses are never stored, only a salted hash (set `GROWTH_IP_HASH_SALT`).
-Behind a proxy, list it in `TRUSTED_PROXY_CIDRS` so the real client IP is used.
+Behind a proxy, list it in `TRUSTED_PROXY_CIDRS` so the real client IP is used. List the proxies only (never a whole
+private range such as `10.0.0.0/8`). The exposure and trust-page limiters (and the audit log) read the address with
+`client_ip`: when the socket peer is a listed proxy they take the **leftmost** `X-Forwarded-For` entry, so the proxy must
+overwrite the header, not append to what the client sent, or the address is client-chosen and the per-address limits can
+be dodged. (`client_ip_strict`, which takes the `TRUSTED_PROXY_HOPS`-th entry from the right and is used by the fleet
+enrollment limiters and agent placement, is not used here.) With the list empty (the Helm default) these see the ingress
+address, and fleet agents behind it are not placed by address (docs/AGENT_V2.md section 4).
 
 **Leads**: an email is stored in `exposure_leads` only when `consent` is true,
 with the consent time and hashed IP. Without consent the email is discarded.

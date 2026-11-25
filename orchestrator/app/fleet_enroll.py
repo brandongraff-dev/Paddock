@@ -88,8 +88,8 @@ def _env_int(name: str, default: int) -> int:
 #: ACTIVE (not revoked) agents per tenant. Re-keying an existing agent is not a new agent. A refusal rolls the
 #: transaction back, so it does not spend a use of the token.
 MAX_AGENTS_PER_TENANT = _env_int("FLEET_MAX_AGENTS_PER_TENANT", 10000)
-#: ALL agent rows per tenant, revoked tombstones included. A revoked host stays in the graph as a tombstone (it
-#: reads UNKNOWN until an operator closes it), and nothing deletes it, so the tombstones need their own, larger
+#: ALL agent rows per tenant, revoked tombstones included. A revoked host's row is never deleted; it stays in the
+#: graph as a tombstone (reading UNKNOWN) only while an open or triaged host-config finding names it, so the tombstones need their own, larger
 #: bound: an autoscaling fleet must not exhaust a lifetime counter, and an admin must not grow the table forever.
 MAX_AGENT_ROWS_PER_TENANT = _env_int("FLEET_MAX_AGENT_ROWS_PER_TENANT", 10 * MAX_AGENTS_PER_TENANT)
 

@@ -25,7 +25,7 @@ loop. For each finding it:
 | **Integrations** | ★★★★★ | live tests against real SaaS tenants |
 | **Time to first value** | ★★★★☆ | a first green run of the install workflow on GitHub; a Pi image built on real hardware |
 | **Operations** | ★★★★☆ | Helm deployed on a real cluster; a 24 h soak test |
-| **Enterprise trust** | ★★★★☆ | per-service keys; SOC 2 audit and a third-party pen test |
+| **Enterprise trust** | ★★★★☆ | per-service keys; SOC 2 audit and a third-party pen test; the open host-agent owner decisions and release settings (section 8) |
 | **Reporting** | ★★★★☆ | customer branding; scheduled reports beyond the weekly digest |
 | **Commercial plumbing** | ★★★★☆ | real prices, legal review of the CLA, the vendor licence key, a live Stripe account |
 
@@ -153,7 +153,9 @@ from their API docs.
 - **Security reviews done on this branch**:
   - an adversarial review of the public surface (13 bugs fixed);
   - a tenancy stress test (9 bugs fixed);
-  - an independent security review (8 findings fixed or mitigated).
+  - an independent security review (8 findings fixed or mitigated);
+  - an adversarial review of host agent v2 and provable containment: 66 findings, 45 fixed, 20 fixed with a stated
+    residual, 1 deferred ([ASSURANCE_P2.md](ASSURANCE_P2.md) section 13.7; open items in section 8 below).
 
 **Gaps:**
 - **One shared service key.** In strict mode it is limited by route allow-lists
@@ -208,46 +210,99 @@ from their API docs.
 ([AGENT_V2.md](AGENT_V2.md), [ASSURANCE_P2.md](ASSURANCE_P2.md), [FLEET_WIRING.md](FLEET_WIRING.md))
 
 A server can now be asked, and answer with evidence, whether SSH is hardened and whether the firewall denies
-inbound by default. The verdict is "no counterexample under this evidence", at evidence tier `configured`.
+inbound by default. The verdict is "no counterexample under this evidence", at evidence tier `configured`: `HOLDS`
+means that, not that the host is secure and not that any of this ran on a real host. Everything below was built and
+tested on **synthetic hosts** (fixtures written from captures and manuals); see "Exercised by tests, and not" for the
+line.
 
 **Built and tested**
 - **Enrollment and identity**: per-tenant one-time tokens (hashed, atomic redemption, generic 401, rate limit and
-  lockout); the agent proves possession of its own Ed25519 key; rotate, revoke (immediate) and re-key (a host
-  that lost its state keeps its history); v1 agents are kept and told `403 re_enroll_required`.
+  lockout keyed on the strict peer address); the agent proves possession of its own Ed25519 key; rotate, revoke
+  (immediate; it also revokes the multi-use token the agent came from, and a revoked key cuts the bearer's unsigned
+  routes) and re-key (a host that lost its state keeps its history); v1 agents are kept and told `403 re_enroll_required`.
 - **Signed evidence**: ten ordered server checks (size, parse, agent, key, digest, signature, clock, atomic
-  sequence claim, schema, persist), each refusal audited; a tampered or replayed envelope leaves the previous
-  posture in place, and silence turns into `UNKNOWN`.
+  sequence claim, schema, persist); a tampered or replayed envelope leaves the previous posture in place, and silence
+  turns into `UNKNOWN`. Every refusal of a signature-verified envelope is audited; refusals of unverified envelopes are
+  sampled (the counter stays exact) and throttled requests are one aggregate row per agent per minute, so a flood grows
+  the audit chain by a bounded amount (300 garbage requests: about 40 rows). The pre-auth limiter is atomic, the
+  per-agent budget is charged only for an accepted envelope, and replays have a bucket of their own. Posture storage is
+  bounded per agent and tenant.
 - **The agent**: standard library only, Python 3.8 or newer, a vendored RFC 8032 signer that is byte-identical to
-  OpenSSL's, a write-ahead sequence counter, an offline outbox, and a fix for a hole in the old agent (it ran
-  server-supplied revert commands verbatim).
-- **Collectors**: sshd (with `Match` probes), listeners with process attribution, a firewall model for nft and
-  iptables, patch state, self-health. Parsers are pure functions tested on real captures from Ubuntu 24.04.
+  OpenSSL's, a write-ahead sequence counter, an offline outbox, a revert bound to a local ledger (the old agent ran
+  server-supplied revert commands verbatim), a self-lockout guard and a dead-man timer for firewall blocks, and exit
+  status 7 only on an explicit server verdict.
+- **Collectors**: sshd (with `Match` probes and evidence about the running daemon), listeners with process
+  attribution, a firewall model for nft and iptables-nft, patch state, self-health. Parsers are pure functions tested on
+  real captures from Ubuntu 24.04.
 - **Invariants**: a typed host-config predicate language with three-valued logic, two standard invariants, a
-  brute-force oracle and mutation tests. The `host_fw` builder turns a posture into edges, coverage and facts.
+  brute-force oracle and mutation tests. The `host_fw` builder turns a posture into edges, coverage and facts. A host
+  whose zone cannot be established is `zone_unknown` and reads `UNKNOWN` for zone-selected invariants; a host-config
+  finding closes only when the host is evaluated as passing.
 - **End to end**: `orchestrator/tests/test_assurance_p2_e2e.py` runs the real agent against the real server (RLS
   role, two tenants): enrol, sign, `HOLDS`, a password flip to `VIOLATED` with a finding, tamper refused, replay 409,
   silence to `UNKNOWN`, a port conflict with the external scan, legacy credential refused, 20 concurrent
-  redemptions with one winner, rotation, re-key and revoke.
+  redemptions with one winner, rotation, re-key and revoke. `test_p2x_integration.py` drives the real collectors against
+  the server's schema, so a change to the agent's payload that the server does not follow fails there first.
 - **Packaging**: a byte-reproducible single-file archive (same bytes on Python 3.8 to 3.13), a POSIX installer
-  (shellcheck clean; checksum and cosign gates; the token never on argv) and a release job that signs it.
+  (checksum and cosign gates; the token never on argv; `shellcheck` runs in CI and was not available to re-run on the
+  last installer change) and a release job that signs it.
+- **Adversarial review and hardening**: 66 findings confirmed and worked in three rounds with independent verifiers: 45
+  fixed, 20 fixed with a stated residual, 1 deferred (legacy iptables, an owner decision). The list, by area, is in
+  [ASSURANCE_P2.md](ASSURANCE_P2.md) section 13.7. The agent, library and orchestrator gates are green
+  (917 agent tests, 915 on Python 3.8; 8405 library; 3088 orchestrator, normally and under the RLS role).
+
+**Exercised by tests, and not**
+- *Exercised*: the real agent code against the real server code and Postgres on synthetic hosts; the installer staged
+  into a directory against a local mirror, with real signals on a pty under `sh`, `dash` and `bash`; the archive's
+  byte reproducibility; the structure of `release.yml` (SHA pins, pinned cosign, `needs: gate`) read as text.
+- *Not exercised anywhere*: the installer as root on a host; the unit under a real systemd (the sandbox, the capability
+  set, `RestartPreventExitStatus=7`); a real `sshd -T` and a real running sshd master (daemon evidence is built from a
+  modelled `/proc`); `nft` and `iptables` applied for real (blocks, reverts, the dead-man timer, `self_lockout`); RHEL,
+  SUSE or Alpine; a big-endian host (checked by faking the byte order); `release.yml` (it has **never run on GitHub**;
+  the cosign branch of the installer was tested only against a recording fake); several orchestrator replicas.
 
 **Gaps (all of them are open work, not hidden)**
-- **Never run on a real host.** Not run: the installer as root, the unit under a real systemd, `nft`/`iptables`
-  applied for real, a real `sshd -T` (none was available to capture; the sshd fixtures are written from the
-  manual), RHEL, SUSE or Alpine. The release workflow has not run on GitHub, and the cosign branch of the
-  installer was tested only against a recording fake.
+- **Never run on a real host.** See above. Findings the fixtures could not show are likely: the daemon evidence, in
+  particular, reads UNKNOWN for every sshd claim when the agent cannot read `/proc/<pid>/exe` or `cmdline`.
 - **Signed is not true.** A compromised host signs whatever it likes; only ports the external scan or cloud
   configuration can see are cross-checked. The agent is one root process that talks to the network (decision O2);
   the privilege split is planned.
+- **No agent is merged into its cloud instance.** A private source address is not proof (a header-less NAT or VPN
+  instance with one agent behind it cannot be told from the instance), so every host is `agent:<uuid>`. A cloud
+  instance with an agent has two nodes; reach and exposure invariants see the instance node without host facts and read
+  `UNKNOWN`, never `HOLDS`. Turning merging back on, and closing the "claim and peer lie consistently" gap in zone
+  placement, need a trust root (a signed instance identity or an operator pairing: P2.1).
+- **Zones need labels.** A host without a declared zone label is placed only when its claim and the address the server
+  saw agree; otherwise `zone_unknown` and zone-selected invariants read `UNKNOWN`. With more than 64 zone-unknown nodes
+  in both selections a `VIOLATED` zone invariant closes **no** finding (behind an ingress, the shipped Helm default makes undeclared
+  agents zone-unknown, so this is reachable at 65 agents) until zone labels are declared.
 - **Precision loss on purpose**: ipset, marks, DNAT, Docker/Kubernetes dataplanes, a missing `nft` binary, a
-  non-root agent and a container all give `UNKNOWN` rather than a guess.
-- **A host that leaves the graph is not flagged.** A revoked or legacy agent, or a removed tag, drops the host out
-  of the selector of "all hosts" invariants; unless it is a declared `server` (which reads `UNKNOWN: no_agent`)
-  nothing says it went missing. Findings for a host that left the selector are closed as fixed although it was
-  never proven.
+  non-root agent, a container, a daemon whose command line the agent cannot read, and **legacy iptables** (the shipped
+  unit has no `CAP_NET_RAW`; `block_ip` and `firewall_rule` also fail there) all give `UNKNOWN` rather than a guess.
+  One known limit goes the other way: an IPv6 `ip6 nexthdr` drop is modelled as a definite deny, although packets
+  with extension headers bypass it.
+- **Hosts that leave the graph.** A host-config finding closes only when its host is evaluated as passing. A revoked
+  or legacy agent keeps an `UNKNOWN` tombstone and its open finding while a finding is open; one revoked while passing
+  leaves the coverage universe, and revoked rows are never deleted (capped at 10 times the active-agent cap). A host
+  labelled out of the selector is an opt-out: its finding stays open until it passes again or an operator sets its
+  status. Disabled or deleted invariants keep their findings open (runner-4, from P1).
+- **Scan conflicts have no operator action.** `agent_closed_scan_open` is sticky: a later full TCP scan that did not
+  see the port, or the 168 h observation window, clears it; a remediated honest host stays in conflict until then.
+- **The v1 inventory route is still unsigned** (never evidence, bounded; signing or dropping it is an owner decision).
+  Agents built before this release are refused 422 on every posture (no `sshd.v.daemon`) until upgraded.
+- **Release trust is not applied.** The GitHub environment, tag ruleset and branch protection the release gate relies on
+  are an open owner action (checklist in AGENT_V2.md section 1); the gate alone does not stop someone who can push tags.
+- **Remaining low items**: rotate, wrong-agent-bearer and garbage-bearer rejections each still write one audit row; the
+  enrollment fail-lockout is check-then-act; an agent whose row was deleted behind a bare 404 keeps polling; the
+  dead-man report is refused with 409 when the server already holds the action as `applied`, and the server's action
+  view then stays wrong until an operator looks.
 - **No UI**: the dashboard's Fleet page does not mint tokens, rotate keys or show verdicts. The posture
   freshness limit (6 h) is not yet a setting.
 - **Rate limits are per process**, so N orchestrator replicas allow N times the limit.
+- **Open owner decisions** (ASSURANCE_P2.md 13.7): the v1 inventory route; an operator route to clear a scan conflict or
+  pair an agent with an asset; the identity trust root (P2.1); `CAP_NET_RAW` and legacy iptables; tombstone scope and
+  revoked rows; behaviour at 65 or more unplaced agents; disabled-invariant findings; sensor scopes; applying the release
+  settings.
 - No KEV matching or distro advisory data (patch state is collected, not judged), no Windows or macOS.
 
 ---

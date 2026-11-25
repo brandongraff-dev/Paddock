@@ -126,12 +126,14 @@ docker-compose: pin every `image:` to `@sha256:<digest>` from the verified
 
 ## Honest limits
 
-* Third-party actions in the workflow are pinned to major-version tags, not
-  commit SHAs; a compromised action tag could affect a build. Pin to SHAs
-  before relying on this for regulated releases.
-* Builds are not bit-for-bit **reproducible** yet (base images are tag-pinned,
-  `apt`/`pip` resolve at build time). Provenance proves *where/how* an image
-  was built, not that you can rebuild the identical bytes.
+* The third-party actions in `release.yml` are pinned to commit SHAs (cosign to an exact version); a compromised
+  action tag cannot change a build, but the pins have to be refreshed by hand. The workflow has never run on GitHub,
+  and a tag pusher can still remove its own gate: the release trust rests on repository settings that are not applied
+  yet (docs/AGENT_V2.md section 1).
+* The container images are not bit-for-bit **reproducible** yet (base images are tag-pinned, `apt`/`pip` resolve at
+  build time). Provenance proves *where/how* an image was built, not that you can rebuild the identical bytes. The host
+  agent archive (`paddock-agent.pyz`) **is** reproducible: the same sources give the same bytes with
+  `SOURCE_DATE_EPOCH=315532800` (docs/AGENT_V2.md section 2).
 * The worker-active image is built for `linux/amd64` only.
 * `docker-compose.yml` still builds images from source by default; the signed
   images only protect you if you deploy them by digest.

@@ -48,11 +48,11 @@ reports inventory, and can apply **host-local** blocks — but only through
 | POST | `/v1/fleet/{id}/heartbeat` | `X-Agent-Token` + signed envelope | proof of life; the reply carries the agent's approved **real** work |
 | POST | `/v1/fleet/{id}/posture` | `X-Agent-Token` + signed envelope | the signed host posture (evidence) |
 | POST | `/v1/fleet/{id}/keys/rotate` | `X-Agent-Token` + envelope signed by the current key | key rotation |
-| POST | `/v1/fleet/{id}/inventory` | `X-Agent-Token` | v1 inventory for the Fleet page: **unsigned, never evidence**, refused for legacy agents |
-| POST | `/v1/fleet/actions/{id}/result` | `X-Agent-Token` | the agent reports `applied`/`failed`; bound to the agent the action belongs to |
+| POST | `/v1/fleet/{id}/inventory` | `X-Agent-Token` (and an active signing key) | v1 inventory for the Fleet page: **unsigned, never evidence**, bounded (2 MiB, newest 5 per agent, a tenant byte cap), refused for legacy and revoked agents |
+| POST | `/v1/fleet/actions/{id}/result` | `X-Agent-Token` (and an active signing key) | the agent reports `applied`/`failed`; bound to the agent the action belongs to; accepted only while the action is `approved` (a dead-man revert is reported through it as `failed`, `output.error = "deadman_reverted"`) |
 | GET | `/v1/fleet/agents`, `/agents/{id}` | read | list and detail (viewer-safe: no machine id hash, no peer address) |
 | GET | `/v1/fleet/agents/{id}/posture` | `triage` | the full stored posture; audited |
-| POST | `/v1/fleet/agents/{id}/revoke`, `/agents/{id}/keys/{key_id}/revoke` | admin | immediate; nothing is cached |
+| POST | `/v1/fleet/agents/{id}/revoke`, `/agents/{id}/keys/{key_id}/revoke` | admin | immediate; nothing is cached. The agent revoke is the incident action and also revokes the fleet token the agent came from unless `revoke_enroll_token=false`; revoking a rotated key with an active successor needs `successors=revoke` or `keep` (AGENT_V2.md section 5) |
 | POST | `/v1/fleet/actions` | requester | **propose**: status `proposed`, `dry_run=true` |
 | POST | `/v1/fleet/actions/{id}/approve` | **admin** | `proposed` to `approved`; four-eyes; `apply_for_real` |
 | POST | `/v1/fleet/actions/{id}/deny` | **admin** | `proposed` to `denied` |
