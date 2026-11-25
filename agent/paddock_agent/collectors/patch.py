@@ -187,18 +187,27 @@ def manifest_digest(rows):
 
 
 _INST_RE = re.compile(
-    r"^Inst\s+(\S+)\s+(?:\[([^\]]*)\]\s+)?\(([^\s]+)\s+(.*?)(?:\s+\[([^\]]*)\])?\)\s*$")
+    r"^Inst\s+(\S+)\s+(?:\[([^\]]*)\]\s+)?\(([^\s]+)\s+(.*?)(?:\s+\[([^\]]*)\])?\)"
+    r"(?:\s+\[[^\]]*\])*\s*$")
 _SUMMARY_RE = re.compile(
     r"(\d+) upgraded, (\d+) newly installed, (\d+) to remove and (\d+) not upgraded")
+
+
+def _origin_is_security(origin):
+    """``Origin:Release/suite`` -> True when the suite is a ``*-security`` pocket."""
+    suite = origin.strip().lower().rsplit("/", 1)[-1].strip()
+    return suite.endswith("-security")
 
 
 def parse_apt_sim(text):
     """Parse ``apt-get -s dist-upgrade``: counts and the names of security upgrades.
 
-    Returns ``None`` when the summary line is missing (output not understood).
+    Returns ``None`` when the summary line is missing (output not understood). ``unparsed``
+    counts ``Inst`` lines that could not be read; a caller must not trust ``security`` then.
     """
     summary = None
     inst = 0
+    unparsed = 0
     sec = set()
     removals = 0
     for line in text.splitlines():
@@ -214,19 +223,13 @@ def parse_apt_sim(text):
         inst += 1
         im = _INST_RE.match(line.rstrip())
         if not im:
+            unparsed += 1
             continue
-        origins = im.group(4)
-        is_sec = False
-        for origin in origins.split(","):
-            origin = origin.strip()
-            low = origin.lower()
-            if "-security" in low or low.startswith("debian-security"):
-                is_sec = True
-        if is_sec:
+        if any(_origin_is_security(o) for o in im.group(4).split(",")):
             sec.add(im.group(1))
     if summary is None:
         return None
-    return {"total": inst, "security": len(sec),
+    return {"total": inst, "security": len(sec), "unparsed": unparsed,
             "security_pkgs": sorted(sec)[:MAX_SEC_NAMES], "kept_back": int(summary.group(4)),
             "removals": max(removals, int(summary.group(3)))}
 
@@ -371,6 +374,9 @@ def _collect_pending(ctx, mgr):
         parsed = parse_apt_sim(r["out"])
         if parsed is None:
             return _sb_error("parse_error", "apt-get -s summary not found")
+        if parsed["unparsed"]:
+            return _sb_error("parse_error", "%d apt Inst lines not understood" % parsed["unparsed"])
+        del parsed["unparsed"]
         return _sb_ok(mgr="apt", metadata_age_s=_apt_age(ctx), **parsed)
     if mgr == "rpm":
         dnf = ctx.which("dnf")
@@ -508,7 +514,8 @@ def collect(ctx):
     blocks = {"os": os_sb, "manifest": manifest, "pending": pending, "auto_update": auto,
               "kernel": kernel, "reboot": reboot}
     states = [b["state"] for b in blocks.values()]
-    if "ok" not in states:
+    if blocks["manifest"]["state"] != "ok" and blocks["os"]["state"] != "ok":
+        # neither the identity nor the package list could be read: this is a failure, not data
         for key in ("manifest", "os"):
             b = blocks[key]
             if b["state"] == "error":

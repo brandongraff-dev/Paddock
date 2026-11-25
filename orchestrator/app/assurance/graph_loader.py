@@ -4,6 +4,16 @@
 (sorted nodes, edges and coverage facts), so a verdict digest is stable. The document is the
 format of docs/ASSURANCE_P1.md section 3 and loads with ``paddock_assurance.ReachGraph.from_dict``.
 
+Host facts (docs/ASSURANCE_P2.md section 5): ``reach_node_facts`` rows become
+``nodes[].facts.<collector> = {status, tier, observed_at, signed, source, key_id, seq, evidence_ref,
+conf, partial, [reason], [conflict], data}`` (``store.FactOut`` documents the stored shape). A node
+with any fact row is auto-tagged ``agent`` (a metadata default: a declared ``agent`` label, even
+``false``, overrides it). A stored entry the document cannot carry (malformed, over a cap, or
+rejected by the library's own fact parser) is DROPPED and counted in ``LoadDiagnostics``: that
+collector is then unknown on the host, which the evaluator reads as UNKNOWN, whereas passing it
+through would make the library refuse the whole graph and every invariant UNKNOWN. Two sources
+claiming the same collector on one node are both dropped (which one is right?).
+
 Where the stored facts are coarser than the document can say, the loader widens rather than
 narrows (a false HOLDS is the worst bug): an edge port range that touches port 0 becomes
 ``1-hi`` (or the full range when it is only port 0), and no edge is ever dropped. Coverage is
@@ -20,7 +30,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .refs import INTERNET, KINDS
+from .refs import INTERNET, KINDS, is_valid_ref
+from . import store
 from .store import Zone, ZoneIndex, _zone
 
 #: label values that explicitly turn a tag off (e.g. un-mark a metadata-derived crown jewel).
@@ -28,6 +39,8 @@ _FALSE_VALUES = frozenset({"false", "no", "0", "off"})
 _SPECIAL_TAGS = frozenset({"zone", "class", "kind"})
 _SOURCE_RANK = {"declared": 3, "connector": 2, "metadata": 1}
 _IP_KEYS = ("ips", "public_ips", "private_ips", "ip")
+#: Tag every node that has host facts (any source) gets, unless a declared label says otherwise.
+AGENT_TAG = "agent"
 
 _ASSET_SQL = (
     "SELECT id, kind, value, jsonb_build_object("
@@ -56,6 +69,10 @@ class LoadDiagnostics:
     cidr_overflow: bool = False
     #: node id -> zone names its addresses resolved into (a multi-homed node in two zones).
     zone_conflicts: dict[str, list[str]] = field(default_factory=dict)
+    #: host-fact entries (or whole rows) left out of the document because they were invalid; the
+    #: affected collectors read as unknown. ``fact_issues`` keeps the first few reasons.
+    facts_dropped: int = 0
+    fact_issues: list[str] = field(default_factory=list)
 
 
 def _iso(t: dt.datetime) -> str:
@@ -142,17 +159,35 @@ def doc_sha(doc: dict[str, Any]) -> str:
     The document's own ``now`` and the coverage ``observed_at`` stamps are left out on purpose:
     both change on every refresh without changing what the graph says, and re-evaluating on each
     would make the loop spin. A refreshed ``observed_at`` can only make evidence fresher; the
-    freshness limit itself is tracked by ``valid_until`` and the backstop.
+    freshness limit itself is tracked by ``valid_until`` and the backstop. Host facts follow the
+    same rule (``store.FACT_DIGEST_SKIP``: ``observed_at``, ``seq`` and ``evidence_ref`` of each
+    entry, ``*_at`` inside a conflict record); every other part of a fact is in the hash, so a
+    changed value, ``signed``, ``key_id``, ``conf``, ``partial``, ``status``, ``conflict`` or tier
+    re-evaluates.
     """
+    def strip_fact(f: Any) -> Any:
+        if not isinstance(f, dict):
+            return f
+        out = {k: v for k, v in f.items() if k not in store.FACT_DIGEST_SKIP}
+        if "conflict" in out:
+            out["conflict"] = store._strip_timestamps(out["conflict"])
+        return out
+
     def strip(node: Any) -> Any:
-        if not isinstance(node, dict) or "coverage" not in node:
+        if not isinstance(node, dict) or ("coverage" not in node and "facts" not in node):
             return node
-        cov = node["coverage"]
-        if isinstance(cov, list):
-            cov = [{k: v for k, v in c.items() if k != "observed_at"} if isinstance(c, dict) else c for c in cov]
-        elif isinstance(cov, dict):
-            cov = {k: v for k, v in cov.items() if k != "observed_at"}
-        return {**node, "coverage": cov}
+        node = dict(node)
+        if "coverage" in node:
+            cov = node["coverage"]
+            if isinstance(cov, list):
+                cov = [{k: v for k, v in c.items() if k != "observed_at"} if isinstance(c, dict) else c
+                       for c in cov]
+            elif isinstance(cov, dict):
+                cov = {k: v for k, v in cov.items() if k != "observed_at"}
+            node["coverage"] = cov
+        if isinstance(node.get("facts"), dict):
+            node["facts"] = {name: strip_fact(f) for name, f in node["facts"].items()}
+        return node
 
     canon = {k: v for k, v in doc.items() if k != "now"}
     if isinstance(canon.get("nodes"), list):
@@ -171,6 +206,8 @@ async def _fetch(conn) -> dict[str, Any]:
         "cov": await conn.fetch(
             "SELECT node_ref, direction, tier, observed_at, source, detail FROM reach_coverage "
             "ORDER BY node_ref, direction, source"),
+        "facts": await conn.fetch(
+            "SELECT node_ref, source, tier, observed_at, facts FROM reach_node_facts ORDER BY node_ref, source"),
         "labels": await conn.fetch("SELECT node_ref, tag, value, source FROM asset_labels ORDER BY node_ref, tag"),
         "zones": await conn.fetch("SELECT * FROM zones ORDER BY name"),
     }
@@ -192,10 +229,14 @@ def _labels_by_node(rows: list[Any]) -> dict[str, dict[str, tuple[int, str]]]:
 
 
 def _node_doc(ref: str, kind: str, labels: dict[str, tuple[int, str]], md: dict[str, Any],
-              zone: Optional[str], cov: list[dict[str, str]]) -> dict[str, Any]:
-    """Labels: ``declared`` rows override metadata-derived defaults (crown jewel, data store)."""
+              zone: Optional[str], cov: list[dict[str, str]],
+              facts: Optional[dict[str, dict[str, Any]]] = None, has_agent: bool = False) -> dict[str, Any]:
+    """Labels: ``declared`` rows override metadata-derived defaults (crown jewel, data store, and
+    the ``agent`` tag a node with host facts gets)."""
     tags: set[str] = set()
     cls: Optional[str] = None
+    if has_agent:
+        tags.add(AGENT_TAG)
     if _truthy(md.get("crown_jewel")):
         tags.add("crown-jewel")
     if kind == "cloud_db":
@@ -220,6 +261,8 @@ def _node_doc(ref: str, kind: str, labels: dict[str, tuple[int, str]], md: dict[
     doc["tags"] = sorted(tags)
     if cov:
         doc["coverage"] = cov
+    if facts:
+        doc["facts"] = facts
     return doc
 
 
@@ -339,6 +382,100 @@ def _asset_ids(snap: dict[str, Any]) -> dict[str, str]:
     return asset_ids
 
 
+def _lib_fact_parser() -> Any:
+    """The library's own fact parser (``paddock_assurance.hostfacts``), or ``None``: the loader
+    must not break where the library is absent or older. Used only to DROP what the library would
+    refuse, never to change a fact."""
+    try:
+        from paddock_assurance import hostfacts  # noqa: PLC0415
+        return hostfacts.parse_fact, hostfacts.new_budget
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fact_entry_doc(name: str, e: dict[str, Any], row: Any) -> dict[str, Any]:
+    """One stored entry -> the document's fact. The row's tier / observed_at are ceilings: an
+    entry may only be weaker / older."""
+    tier = row["tier"]
+    if e.get("tier") and store._BASIS_RANK[e["tier"]] < store._BASIS_RANK[tier]:
+        tier = e["tier"]
+    seen = row["observed_at"]
+    if e.get("observed_at"):
+        seen = min(seen, store._parse_ts(e["observed_at"]) or seen)
+    d: dict[str, Any] = {
+        "status": e["status"], "tier": tier, "observed_at": _iso(seen), "signed": e["signed"],
+        "source": row["source"], "key_id": e["key_id"], "seq": e["seq"], "evidence_ref": e["evidence_ref"],
+        "conf": e["conf"], "partial": e["partial"]}
+    if e.get("reason"):
+        d["reason"] = e["reason"]
+    if "conflict" in e:
+        d["conflict"] = e["conflict"]
+    d["data"] = e["data"]
+    return d
+
+
+def _note_fact_issue(diag: LoadDiagnostics, text: str) -> None:
+    diag.facts_dropped += 1
+    if len(diag.fact_issues) < 50:
+        diag.fact_issues.append(text[:300])
+
+
+def _assemble_facts(rows: list[Any], diag: LoadDiagnostics) -> tuple[dict[str, dict[str, dict[str, Any]]], set[str]]:
+    """``(node_ref -> collector -> fact document, refs that have any fact row)``. Pure; rows are
+    sorted by (node_ref, source), so the output (and which fact the document budget cuts) is
+    deterministic. Invalid material is dropped and counted, never passed on."""
+    lib = _lib_fact_parser()
+    have: set[str] = set()
+    by_node: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for row in rows:
+        ref = row["node_ref"]
+        have.add(ref)
+        if row["tier"] not in store.BASES or not is_valid_ref(ref) or ref == INTERNET:
+            _note_fact_issue(diag, f"{ref}: bad fact row (tier/ref)")
+            continue
+        raw = _loads(row["facts"])
+        if not isinstance(raw, dict) or len(raw) > store.MAX_FACT_COLLECTORS:
+            _note_fact_issue(diag, f"{ref}: facts of {row['source']!r} are not a collector object within the cap")
+            continue
+        for name in sorted(raw):
+            try:
+                if not isinstance(name, str) or not store.FACT_COLLECTOR_RE.fullmatch(name):
+                    raise store.FactInvalid(f"bad collector name {str(name)[:40]!r}")
+                entry = _fact_entry_doc(name, store.normalise_fact_entry(name, raw[name]), row)
+                if lib is not None:
+                    try:
+                        lib[0](name, entry, ref, lib[1]())
+                    except ValueError as exc:                # the library's FactError
+                        raise store.FactInvalid(f"rejected by the assurance library: {exc}") from exc
+                    except Exception:  # noqa: BLE001 - a parser we cannot call: our own checks stand
+                        lib = None
+            except store.FactInvalid as exc:
+                _note_fact_issue(diag, f"{ref} {str(name)[:40]}: {exc}")
+                continue
+            by_node.setdefault(ref, {}).setdefault(name, []).append(entry)
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    budget = store.MAX_FACT_TOTAL_ELEMENTS
+    for ref in sorted(by_node):
+        merged: dict[str, dict[str, Any]] = {}
+        for name in sorted(by_node[ref]):
+            entries = by_node[ref][name]
+            if len(entries) > 1:
+                _note_fact_issue(diag, f"{ref} {name}: {len(entries)} sources claim this collector; none is trusted")
+                continue
+            merged[name] = entries[0]
+        if len(merged) > store.MAX_FACT_COLLECTORS:
+            _note_fact_issue(diag, f"{ref}: more than {store.MAX_FACT_COLLECTORS} collectors across sources")
+            continue
+        cost = sum(store.count_fact_elements(f["data"]) + store.count_fact_elements(f.get("conflict")) for f in merged.values())
+        if cost > budget:
+            _note_fact_issue(diag, f"{ref}: the graph document's fact budget is exhausted")
+            continue
+        budget -= cost
+        if merged:
+            out[ref] = merged
+    return out, have
+
+
 def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
               now: dt.datetime) -> tuple[dict[str, Any], LoadDiagnostics]:
     """Pure: rows -> (document, diagnostics). No I/O, so it can run off the event loop."""
@@ -354,6 +491,10 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
         attrs[r["node_ref"]] = a if isinstance(a, dict) else {}
     for e in snap["edges"]:
         for ref in (e["src_ref"], e["dst_ref"]):
+            kinds.setdefault(ref, _default_kind(ref))
+    host_facts, has_facts = _assemble_facts(list(snap.get("facts") or ()), diag)
+    for ref in sorted(has_facts):
+        if ref != INTERNET:
             kinds.setdefault(ref, _default_kind(ref))
     kinds[INTERNET] = "internet"
     asset_ids = _asset_ids(snap)
@@ -389,7 +530,8 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
                     zone = weak
         nodes.append(_node_doc(ref, kinds[ref], lab, md, zone,
                                sorted(cov_by.get(ref, []), key=lambda c: (c["direction"], c["source"], c["tier"]))
-                               if ref != INTERNET else []))
+                               if ref != INTERNET else [],
+                               host_facts.get(ref), ref in has_facts and ref != INTERNET))
 
     edges: list[dict[str, Any]] = []
     for e in sorted(snap["edges"], key=lambda r: (r["src_ref"], r["dst_ref"], r["proto"], r["port_lo"],

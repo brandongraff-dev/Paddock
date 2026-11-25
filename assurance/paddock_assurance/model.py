@@ -12,10 +12,12 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import hostexpr as X
 from . import ports as P
 from .tier import Tier
 
 API_VERSION = "paddock.dev/invariant/v1"
+_LITERAL_ASSERTS = ("unreachable", "exposes-only", "covered")
 
 # These are applied with ``fullmatch``: ``$`` also matches before a trailing newline, which made
 # ``acme:x\n`` a second, distinct-looking id. ``[0-9]`` rather than ``\d`` (which is any Unicode digit).
@@ -193,13 +195,53 @@ class Invariant(_Strict):
     description: Optional[str] = Field(default=None, max_length=2000)
     severity: Literal["info", "low", "medium", "high", "critical"] = "high"
     subjects: Subjects = Subjects()
-    assert_: Literal["unreachable", "exposes-only", "covered"] = Field(alias="assert")
+    # ``host-config`` is what a predicate / all / any / not mapping becomes: the structured tree is
+    # in ``expr`` (excluded from model_dump; ``parse.canonical_json`` puts its canonical form into
+    # the digest). Consumers keep reading ``assert_`` as a plain string.
+    assert_: Literal["unreachable", "exposes-only", "covered", "host-config"] = Field(alias="assert")
+    expr: Any = Field(default=None, exclude=True, repr=False)
     via: Via = Via()
     ports: Optional[str] = None
     allow: tuple[Allow, ...] = ()
     evidence: Evidence = Evidence()
     coverage: Coverage = Coverage()
     on_violation: OnViolation = OnViolation()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _host_assert(cls, data: Any) -> Any:
+        """``assert:`` is a literal, or a predicate / ``{all|any|not: ...}`` (host-config)."""
+        if not isinstance(data, dict):
+            return data
+        if "expr" in data:
+            raise ValueError("expr: unknown key (write the predicate under assert)")
+        keys = [k for k in ("assert", "assert_") if k in data]
+        if len(keys) != 1:
+            return data
+        raw = data[keys[0]]
+        if isinstance(raw, str) and raw in _LITERAL_ASSERTS:
+            return data
+        if raw is None or isinstance(raw, (bool, int, float, list)):
+            raise ValueError("assert: must be unreachable, exposes-only, covered, a predicate "
+                             "string or a mapping with all, any or not")
+        try:
+            tree = X.parse_assertion(raw)
+        except X.ExprError as exc:
+            hint = ""
+            if isinstance(raw, str) and not any(c in raw for c in " (=<>!"):
+                hint = " (not one of unreachable, exposes-only, covered)"
+            raise ValueError(f"{exc}{hint}") from None
+        out = dict(data)
+        out[keys[0]] = "host-config"
+        out["expr"] = tree
+        # A host invariant that does not choose a floor gets the strict one: an unknown host is not
+        # a pass. (Std invariants say 1.0 themselves; a lower floor is an explicit, digested choice.)
+        cov = out.get("coverage")
+        if cov is None:
+            out["coverage"] = {"require": 1.0}
+        elif isinstance(cov, dict) and "require" not in cov:
+            out["coverage"] = dict(cov, require=1.0)
+        return out
 
     @field_validator("id")
     @classmethod
@@ -224,7 +266,17 @@ class Invariant(_Strict):
 
     @model_validator(mode="after")
     def _shape(self) -> "Invariant":
-        if self.assert_ == "unreachable":
+        if (self.assert_ == "host-config") != (self.expr is not None):
+            raise ValueError("assert: 'host-config' is not written literally; give a predicate "
+                             "or a mapping with all, any or not")
+        if self.assert_ == "host-config":
+            if self.subjects.to is None:
+                raise ValueError("a host-config assertion needs subjects.to (the hosts it judges)")
+            if self.subjects.from_ is not None:
+                raise ValueError("a host-config assertion takes no subjects.from")
+            if self.ports is not None or self.allow or self.via != Via():
+                raise ValueError("a host-config assertion takes no ports, allow or via")
+        elif self.assert_ == "unreachable":
             if self.subjects.from_ is None or self.subjects.to is None:
                 raise ValueError("'unreachable' needs both subjects.from and subjects.to")
             if self.ports is not None or any(a.ports for a in self.allow):

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import functools
 import hashlib
 import hmac
 import json
@@ -232,6 +233,16 @@ def b64_decode_strict(text: str, *, max_chars: int = 512) -> bytes:
         raise KeyFormatError("bad base64") from exc
 
 
+@functools.lru_cache(maxsize=2048)
+def _validated(raw: bytes) -> None:
+    """Raises :class:`KeyFormatError`. Only successes are cached (an exception is never memoised)."""
+    pt = _decompress(raw)
+    if pt is None:
+        raise KeyFormatError("not a valid Ed25519 point")
+    if _is_small_order(pt):
+        raise KeyFormatError("small-order Ed25519 public key")
+
+
 def parse_public_key(raw: bytes) -> bytes:
     """Validate 32 raw bytes as an Ed25519 public key and return them.
 
@@ -240,11 +251,7 @@ def parse_public_key(raw: bytes) -> bytes:
     """
     if not isinstance(raw, (bytes, bytearray)) or len(raw) != 32:
         raise KeyFormatError("an Ed25519 public key is 32 bytes")
-    pt = _decompress(bytes(raw))
-    if pt is None:
-        raise KeyFormatError("not a valid Ed25519 point")
-    if _is_small_order(pt):
-        raise KeyFormatError("small-order Ed25519 public key")
+    _validated(bytes(raw))
     return bytes(raw)
 
 
@@ -525,7 +532,7 @@ async def _enroll(pool: Any, *, token: str, hostname: str, public_key_b64: str, 
                 claimed = await con.fetchrow(
                     """UPDATE fleet_enroll_tokens SET uses = uses + 1
                         WHERE id = $1 AND revoked_at IS NULL AND expires_at > NOW() AND uses < max_uses
-                    RETURNING id, labels, for_agent, created_by""",
+                    RETURNING id, labels, for_agent, created_by, created_at""",
                     trow["id"])
                 if claimed is None:
                     raise _bad()
@@ -535,7 +542,8 @@ async def _enroll(pool: Any, *, token: str, hostname: str, public_key_b64: str, 
                 if claimed["for_agent"] is not None:
                     agent_id, retired = await _rekey(
                         con, claimed["for_agent"], host=host, platform=plat, version=version, labels=labels,
-                        caps=caps, actor=actor, identity=identity, token_prefix=prefix)
+                        caps=caps, actor=actor, identity=identity, token_prefix=prefix,
+                        token_created_at=claimed["created_at"])
                     cred = retired["cred"]
                     revoked_keys = retired["revoked_keys"]
                 else:
@@ -591,17 +599,24 @@ async def _insert_agent(con: Any, *, host: str, platform: str, version: str | No
 
 async def _rekey(con: Any, for_agent: uuid.UUID, *, host: str, platform: str, version: str | None,
                  labels: list[str], caps: list[str], actor: str, identity: str,
-                 token_prefix: str) -> tuple[uuid.UUID, dict[str, Any]]:
+                 token_prefix: str, token_created_at: datetime) -> tuple[uuid.UUID, dict[str, Any]]:
     """Rebind an existing agent (legacy, key lost, or key compromised) to a new key and credential.
 
     History is kept. Every active key of the agent is revoked with a reason. The identity is reset to
     ``claimed`` and the node to ``agent:<id>`` (a corroboration of the old host says nothing about the new
     one); the posture counters restart with the new key.
+
+    A **revoked** agent is only re-activated by a token minted AFTER the revocation (an explicit admin decision):
+    a token minted before it (leaked, or simply forgotten in a pending list) must never undo a revocation. An
+    agent marked revoked without a ``revoked_at`` (a v1 row the migration could not date) is never re-keyed.
     """
-    row = await con.fetchrow("SELECT id, labels, capabilities FROM fleet_agents WHERE id = $1 FOR UPDATE",
-                             for_agent)
+    row = await con.fetchrow(
+        "SELECT id, status, revoked_at FROM fleet_agents WHERE id = $1 FOR UPDATE", for_agent)
     if row is None:
         raise _bad()                                # the agent was deleted since the token was minted
+    if row["status"] == "revoked" or row["revoked_at"] is not None:
+        if row["revoked_at"] is None or row["revoked_at"] >= token_created_at:
+            raise _bad()                            # rolls the claim back: the token stays unspent
     revoked = await con.fetch(
         """UPDATE fleet_agent_keys SET status = 'revoked', revoked_at = NOW(),
                   revoke_reason = $2

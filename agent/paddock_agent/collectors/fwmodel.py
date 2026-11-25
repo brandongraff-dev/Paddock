@@ -722,6 +722,13 @@ def _nft_rule(expr, sets, tkey, prefix_table, rule_fam):
     return out, nat, features
 
 
+def _is_dormant(table):
+    flags = table.get("flags") or []
+    if isinstance(flags, str):
+        flags = [flags]
+    return "dormant" in flags
+
+
 def normalise_nft(obj):
     """Normalise the parsed JSON of ``nft -j list ruleset`` into a chain dump."""
     if not isinstance(obj, dict) or not isinstance(obj.get("nftables"), list):
@@ -744,6 +751,10 @@ def normalise_nft(obj):
         elif k == "rule":
             rules.append(v)
     fam_map = {"inet": (4, 6), "ip": (4,), "ip6": (6,)}
+    # a dormant table is not evaluated by the kernel: its chains filter nothing
+    dormant = set(k for k, t in tables.items() if _is_dormant(t))
+    chains = [c for c in chains if (c.get("family"), c.get("table")) not in dormant]
+    rules = [r for r in rules if (r.get("family"), r.get("table")) not in dormant]
     for c in chains:
         fam = c.get("family")
         label = _dataplane_of(str(c.get("name", "")))

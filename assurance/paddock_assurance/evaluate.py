@@ -27,6 +27,13 @@ Soundness rules (these are what make a HOLDS worth anything):
    *and* the earliest active ``allow`` exception (end of its last day, UTC): once an exception
    lapses a re-evaluation can flip the verdict.
 
+8. **Host-config (``assert:`` a predicate over signed host facts) is three-valued and never reads
+   silence as a pass.** Per host the predicate is Kleene strong logic over leaves; a leaf is unknown
+   unless its collector fact is usable (signed, fresh, tier, no conflict, exact where needed). An
+   unusable fact is never false. Estate verdict: VIOLATED if any host is false, else UNKNOWN if any
+   is unknown (unless an explicit lower ``coverage.require`` is met), else HOLDS; ``HOLDS`` rests on
+   the facts it relied on (``evidence_tier`` = weakest, ``valid_until`` = earliest expiry).
+
 Output is deterministic: sorted adjacency, sorted tie-breaks, no hidden clock.
 """
 from __future__ import annotations
@@ -39,6 +46,8 @@ from enum import Enum
 from typing import Any, Callable, Iterator, Optional
 
 from . import ports as P
+from . import hostconfig as HC
+from . import hostfields as HF
 from .compile import Plan, PlanKind
 from .graph import INTERNET, DirState, Edge, Node, ReachGraph, direction_state, matches
 from .model import Allow, Tier
@@ -49,6 +58,9 @@ MAX_COVERED_WITNESSES = 50   # one per uncovered node: the list is the work queu
 MAX_VIOLATING_TARGETS = 5000   # cap on Result.violating_targets (the flag says when it bites)
 MAX_OVERLAP = 64             # |from-selection AND to-selection| beyond which we answer UNKNOWN
 MAX_EXCEPTION_HORIZON = dt.timedelta(days=400)   # an exception may not outlive the evidence by years
+MAX_HOST_WITNESSES = 50          # host-config: hop-less witnesses over the whole result
+MAX_HOST_WITNESSES_PER_HOST = 3
+MAX_HOST_BLIND_SPOTS = 5000      # host-config: one row per (undecided host, collector)
 
 
 class Verdict(str, Enum):
@@ -80,7 +92,16 @@ class BlindSpot:
     node: str
     reason: str
     relevant: bool      # could an unknown edge at this node change the verdict?
-    direction: str = "both"   # which side is blind: in | out | both
+    direction: str = "both"   # which side is blind: in | out | both | host (host-config facts)
+    # host-config only: the collector whose fact was unusable (None: the host has no agent at all)
+    collector: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"node": self.node, "reason": self.reason, "relevant": self.relevant,
+                             "direction": self.direction}
+        if self.collector is not None:          # additive: absent for every P1 blind spot
+            d["collector"] = self.collector
+        return d
 
 
 @dataclass
@@ -117,6 +138,8 @@ class Result:
     expired_exceptions: list[dict[str, str]] = field(default_factory=list)
     confirmation: str = "not_run"
     boundaries_reached: list[str] = field(default_factory=list)  # nodes where the search stopped
+    # host-config only (empty otherwise): {"selected", "holds", "violated", "unknown"} host counts.
+    hosts: dict[str, int] = field(default_factory=dict)
 
     @property
     def coverage_ratio(self) -> float:
@@ -137,7 +160,7 @@ class Result:
             return None if t is None else t.astimezone(dt.timezone.utc).isoformat() \
                 .replace("+00:00", "Z")
 
-        return {
+        out = {
             "invariant": self.invariant_id,
             "digest": self.digest,
             "severity": self.severity,
@@ -160,12 +183,15 @@ class Result:
                 "hops": [h.__dict__ for h in w.hops],
                 "weakest_basis": w.weakest_basis, "confirmed": w.confirmed, "detail": w.detail,
             } for w in self.witnesses],
-            "blind_spots": [b.__dict__ for b in self.blind_spots],
+            "blind_spots": [b.to_dict() for b in self.blind_spots],
             "exceptions_used": self.exceptions_used,
             "expired_exceptions": self.expired_exceptions,
             "confirmation": self.confirmation,
             "boundaries_reached": self.boundaries_reached,
         }
+        if self.hosts:
+            out["hosts"] = dict(self.hosts)
+        return out
 
 
 # --------------------------------------------------------------------------------------------
@@ -699,6 +725,129 @@ def _eval_covered(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     return _finish(res, plan, g, cov, set(sel), relied)
 
 
+# --------------------------------------------------------------------------------------------
+# HOSTCONFIG: assert <predicate over host facts>
+
+_TIER_BY_RANK = {t.rank: t for t in Tier}
+
+
+def _iso(t: dt.datetime) -> str:
+    return t.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _host_witness(node_id: str, path: tuple[int, ...], negations: int, le: HC.LeafEval) -> Witness:
+    """A hop-less witness: one failing clause of one host, every value a string."""
+    fact, tier = le.res.fact, le.res.tier
+    assert fact is not None and tier is not None
+    leaf = le.leaf
+    detail = {
+        "node": node_id,
+        "field": le.spec.display(leaf.params),
+        "clause": HC.clause_id(path),
+        "predicate": HC.predicate_text(leaf, negations),
+        "op": HC.op_text(leaf),
+        "expected": HC.fmt_expected(leaf),
+        "observed": HC.fmt_observed(HC.observed_value(le)),
+        "tier": tier.value,
+        "observed_at": _iso(fact.observed_at),
+        "source": fact.source,
+        "signed": "true" if fact.signed else "false",
+        "key_id": fact.key_id,
+        "seq": str(fact.seq),
+        "evidence_ref": fact.evidence_ref,
+    }
+    return Witness((), tier.value, False, detail)
+
+
+def _host_blind_spots(unknown: list[tuple[str, HC.Ev]]) -> list[BlindSpot]:
+    """One row per (undecided host, collector): the most fundamental reason that collector's
+    leaves were unknown. A host with no agent at all has one row with no collector."""
+    rows: list[BlindSpot] = []
+    for nid, ev in unknown:
+        best: dict[Optional[str], str] = {}
+        for le in HC.unknown_leaves(ev):
+            col: Optional[str] = None if le.res.reason == "no_agent" else le.spec.collector
+            r = le.res.reason or "no_value"
+            cur = best.get(col)
+            if cur is None or HF.reason_rank(r) < HF.reason_rank(cur):
+                best[col] = r
+        for col in sorted(best, key=lambda c: c or ""):
+            rows.append(BlindSpot(nid, best[col], True, "host", col))
+    return rows
+
+
+def _eval_hostconfig(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
+    """Kleene three-valued, per host, then aggregated: VIOLATED if any host is false, else UNKNOWN
+    (``hosts_unknown:<n>``) if any is unknown, else HOLDS. A lower ``coverage.require`` lets a HOLDS
+    stand with unknown hosts when passing/selected reaches it; those hosts are blind spots. An
+    unusable fact is unknown, never false, so a silent violating host cannot turn a verdict into
+    anything but UNKNOWN (it also can never be a HOLDS)."""
+    assert plan.expr is not None
+    sel = g.select(plan.invariant.subjects.to)
+    if not sel:
+        return _new(plan, now, Verdict.UNKNOWN, "empty_selector:to")
+    evs: list[tuple[str, HC.Ev]] = []
+    for n in sel:
+        ev = HC.HostEvaluator(n.host, now, plan.min_tier, plan.max_age).evaluate(plan.expr)
+        evs.append((n.id, ev))
+    passing = [(nid, ev) for nid, ev in evs if ev.tv is True]
+    failing = [(nid, ev) for nid, ev in evs if ev.tv is False]
+    unknown = [(nid, ev) for nid, ev in evs if ev.tv is None]
+    total = len(evs)
+
+    res = _new(plan, now, Verdict.UNKNOWN, f"hosts_unknown:{len(unknown)}")
+    res.hosts = {"selected": total, "holds": len(passing), "violated": len(failing),
+                 "unknown": len(unknown)}
+    res.coverage_universe = res.relevant_universe = total
+    res.coverage_covered = res.relevant_covered = len(passing) + len(failing)
+    res.blind_spots = _host_blind_spots(unknown)[:MAX_HOST_BLIND_SPOTS]
+    unknown_ids = [nid for nid, _ in unknown]
+    res.unproven_targets = unknown_ids[:MAX_VIOLATING_TARGETS]
+    unknown_truncated = len(unknown_ids) > MAX_VIOLATING_TARGETS
+    res.violating_truncated = unknown_truncated
+
+    if failing:
+        res.verdict, res.reasons = Verdict.VIOLATED, ["witness_found"]
+        res.violation_count = len(failing)
+        _cap_targets(res, [nid for nid, _ in failing])
+        res.violating_truncated = res.violating_truncated or unknown_truncated
+        per_host = [[(nid, p, ng, le) for p, ng, le in sorted(
+            HC.blame(ev, False), key=lambda t: t[0])[:MAX_HOST_WITNESSES_PER_HOST]]
+            for nid, ev in failing]
+        picked: list[tuple[str, tuple[int, ...], int, HC.LeafEval]] = []
+        for rank in range(MAX_HOST_WITNESSES_PER_HOST):      # fairness: one clause per host first
+            for rows in per_host:
+                if rank < len(rows) and len(picked) < MAX_HOST_WITNESSES:
+                    picked.append(rows[rank])
+        picked.sort(key=lambda t: (t[0], t[1]))
+        res.witnesses = [_host_witness(nid, p, ng, le) for nid, p, ng, le in picked]
+        return res
+
+    if unknown:
+        ratio = len(passing) / total
+        if not (plan.coverage_required < 1.0 and passing and ratio + 1e-12 >= plan.coverage_required):
+            return res
+        res.reasons = ["no_counterexample", f"hosts_unknown:{len(unknown)}"]
+    else:
+        res.reasons = ["no_counterexample"]
+    res.verdict = Verdict.HOLDS
+    relied = HC.union_rel(ev.rel for _, ev in passing)
+    horizon: list[dt.datetime] = []
+    if relied:
+        res.evidence_tier = _TIER_BY_RANK[min(t.rank for _, t in relied)]
+        horizon.append(min(f.observed_at for f, _ in relied) + plan.max_age)
+    else:                                   # unreachable (a true host rests on some fact); stay finite
+        horizon.append(now + plan.max_age)
+    # A fact that is too far in the future to use today becomes usable (and may then say something
+    # false) five minutes before its own timestamp: an unknown host must not outlive that.
+    for _, ev in unknown:
+        for le in HC.unknown_leaves(ev):
+            if le.res.reason == "future_timestamp" and le.res.fact is not None:
+                horizon.append(le.res.fact.observed_at - HF.FUTURE_SLACK)
+    res.valid_until = min(horizon)
+    return res
+
+
 def evaluate(plan: Plan, graph: ReachGraph, now: dt.datetime) -> Result:
     """Evaluate one compiled invariant against a graph "as of" ``now`` (timezone-aware)."""
     if now.tzinfo is None:
@@ -708,6 +857,8 @@ def evaluate(plan: Plan, graph: ReachGraph, now: dt.datetime) -> Result:
         return _eval_reach(plan, graph, now)
     if plan.kind is PlanKind.COVERED:
         return _eval_covered(plan, graph, now)
+    if plan.kind is PlanKind.HOSTCONFIG:
+        return _eval_hostconfig(plan, graph, now)
     return _eval_exposure(plan, graph, now)
 
 

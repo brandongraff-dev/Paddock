@@ -81,6 +81,8 @@ def walk_chain(chains, name, p, opaque_on, flag):
         if act == "return":
             return None
         v = walk_chain(chains, act[1], p, opaque_on, flag)
+        if act[0] == "goto":
+            return v          # a goto never comes back: the calling chain ends too
         if v is not None:
             return v
     return None
@@ -210,7 +212,7 @@ def gen_rule(rng, jumps):
     elif roll < 0.76:
         r["action"] = "return"
     elif jumps:
-        r["action"] = ("jump", rng.choice(jumps))
+        r["action"] = (rng.choice(["jump", "jump", "goto"]), rng.choice(jumps))
     else:
         r["action"] = "accept"
     return r
@@ -261,7 +263,7 @@ def ipt_text(rs):
             act = r["action"]
             tgt = {"accept": "ACCEPT", "drop": "DROP", "reject": "REJECT", "return": "RETURN"}.get(act) \
                 if isinstance(act, str) else act[1]
-            parts += ["-j", tgt]
+            parts += ["-g" if isinstance(act, tuple) and act[0] == "goto" else "-j", tgt]
             out.append(" ".join(parts))
     out.append("COMMIT")
     return "\n".join(out) + "\n"
@@ -311,7 +313,7 @@ def nft_obj(rs):
             elif act == "return":
                 ex.append({"return": None})
             else:
-                ex.append({"jump": {"target": act[1]}})
+                ex.append({act[0]: {"target": act[1]}})
             ents.append({"rule": {"family": "inet", "table": "filter", "chain": name, "expr": ex}})
     return {"nftables": ents}
 
@@ -355,8 +357,13 @@ def check_default(rs, label, model):
                 good = True
         assert good, "UNSOUND default %s (%s)" % (d, label)
     if d == "accept":
-        # accept is only reported when there is nothing denying the unmentioned packets
-        assert all(final_outcomes(rs, p) for p in PACKETS[:1])
+        # accept is only reported when every base chain accepts the packets no conditional
+        # rule mentions (opaque rules off); a chain with no such packet cannot contradict it
+        off = dict((id(r), False) for r in all_rules(rs) if r["opaque"])
+        for b in rs["bases"]:
+            for p in PACKETS:
+                v, matched = chain_verdict(rs, b, p, off)
+                assert matched or v == "accept", "UNSOUND accept default (%s) %r" % (label, p)
     if model["flat_view"]["confidence"] == "exact":
         assert not opaque_can_accept(rs), "exact model with an opaque accepting rule (%s)" % label
 

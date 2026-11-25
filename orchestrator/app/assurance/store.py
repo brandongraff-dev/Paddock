@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import hashlib
 import ipaddress
 import json
 import logging
@@ -27,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
 from .refs import INTERNET, KINDS, RefError, cidr_ref, is_valid_ref, is_valid_tag, parse_ref
-from .types import BuildOutput
+from .types import BuildOutput, FactOut
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,26 @@ ZONE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _ZONE_KIND_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 #: 'internet' is the fixed zone of the internet node; tenants may not declare it.
 RESERVED_ZONES = frozenset({"internet"})
+
+# Host facts (docs/ASSURANCE_P2.md section 5 / 7.2). The caps mirror the library's
+# (``paddock_assurance.hostfacts``) so a row this module stores is one the library can parse.
+FACT_COLLECTOR_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")
+FACT_STATUSES = ("ok", "error", "unavailable")
+FACT_CONFS = ("exact", "approximate")
+MAX_FACT_COLLECTORS = 16          # collectors per node
+MAX_FACT_LIST = 5000              # entries in any list/object inside a fact
+MAX_FACT_ELEMENTS = 100_000       # values inside one collector entry's data
+MAX_FACT_TOTAL_ELEMENTS = 4_000_000   # across the whole graph document
+MAX_FACT_DEPTH = 12
+MAX_FACT_STRING = 2048
+MAX_FACT_REF = 256                # key_id / evidence_ref
+MAX_FACT_ROW_BYTES = 256 * 1024   # one (node, source) row, serialised
+#: Entry keys that are timestamps or pure provenance. They are NOT part of the fact digest: a
+#: re-signed posture with the same content (a new ``seq``, a new ``observed_at``) is a refresh, not
+#: a change, and must not bump the graph version (the runner would re-evaluate every hour).
+FACT_DIGEST_SKIP = frozenset({"observed_at", "seq", "evidence_ref"})
+_FACT_KEYS = frozenset({"status", "signed", "key_id", "seq", "evidence_ref", "conf", "partial", "reason",
+                        "conflict", "tier", "observed_at", "data"})
 
 # Generic kinds never overwrite a more specific one (two builders emit the same node; a
 # kind that ping-ponged would bump graph_version on every build).
@@ -76,6 +97,9 @@ class BuildReport:
     skipped: int = 0                 # invalid rows dropped (see notes); >0 => possibly degraded
     nodes_removed: int = 0           # unreferenced, long-unemitted nodes pruned
     nodes_added: int = 0             # new nodes or kind changes (they change the node universe)
+    facts_changed: int = 0           # fact rows added/removed/changed, timestamps and seq excluded
+    facts_stored: int = 0            # fact rows this source has after the build
+    facts_digest: str = ""           # digest of this source's facts minus timestamps (diagnostics)
     graph_version: Optional[int] = None   # the version after this build
     notes: list[str] = field(default_factory=list)
 
@@ -412,6 +436,289 @@ def _clean_coverage(out: BuildOutput, rep: BuildReport) -> dict[tuple, dict[str,
     return cov
 
 
+# --------------------------------------------------------------------------------------------
+# Host facts (reach_node_facts)
+# --------------------------------------------------------------------------------------------
+
+class FactInvalid(ValueError):
+    """A collector entry (or one value inside it) the graph document cannot carry."""
+
+
+def _parse_ts(value: Any) -> Optional[dt.datetime]:
+    """An ISO-8601 string WITH a timezone -> aware UTC datetime, else ``None``."""
+    if not isinstance(value, str) or not value or len(value) > 64:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        t = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        return None
+    try:
+        return t.astimezone(dt.timezone.utc)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _check_text(value: str, what: str, limit: int) -> None:
+    if len(value) > limit:
+        raise FactInvalid(f"{what} longer than {limit} characters")
+    if "\x00" in value:
+        raise FactInvalid(f"{what} contains a NUL character")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise FactInvalid(f"{what} is not valid unicode") from exc
+
+
+def count_fact_elements(value: Any) -> int:
+    """Values (leaves and containers) inside ``value``; iterative, so depth cannot blow the stack."""
+    n, todo = 0, [value]
+    while todo:
+        v = todo.pop()
+        n += 1
+        if isinstance(v, dict):
+            todo.extend(v.values())
+        elif isinstance(v, (list, tuple)):
+            todo.extend(v)
+    return n
+
+
+def _check_fact_value(value: Any, depth: int, left: list[int], what: str) -> None:
+    left[0] -= 1
+    if left[0] < 0:
+        raise FactInvalid(f"{what}: too many values (max {MAX_FACT_ELEMENTS})")
+    if depth > MAX_FACT_DEPTH:
+        raise FactInvalid(f"{what}: nested deeper than {MAX_FACT_DEPTH} levels")
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if abs(value) > 2 ** 63 - 1:
+            raise FactInvalid(f"{what}: integer out of range")
+        return
+    if isinstance(value, float):
+        raise FactInvalid(f"{what}: floats are not allowed")
+    if isinstance(value, str):
+        _check_text(value, what, MAX_FACT_STRING)
+        return
+    if isinstance(value, list):
+        if len(value) > MAX_FACT_LIST:
+            raise FactInvalid(f"{what}: more than {MAX_FACT_LIST} rows in a list")
+        for v in value:
+            _check_fact_value(v, depth + 1, left, what)
+        return
+    if isinstance(value, dict):
+        if len(value) > MAX_FACT_LIST:
+            raise FactInvalid(f"{what}: more than {MAX_FACT_LIST} keys in an object")
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise FactInvalid(f"{what}: object keys must be strings")
+            _check_text(k, what, 256)
+            _check_fact_value(v, depth + 1, left, what)
+        return
+    raise FactInvalid(f"{what}: unsupported value type {type(value).__name__}")
+
+
+def _conflict_ok(value: Any) -> bool:
+    """The library's rule: false/null/[] = none; true / non-empty object / non-empty list of
+    non-empty objects = conflict; anything else cannot be read and is refused."""
+    if value is None or isinstance(value, bool):
+        return True
+    if isinstance(value, dict):
+        return bool(value)
+    if isinstance(value, list):
+        return all(isinstance(x, dict) and x for x in value)
+    return False       # 0, "", 1.5, ...: unreadable, so refused (never read as "no conflict")
+
+
+def normalise_fact_entry(name: str, entry: Any) -> dict[str, Any]:
+    """One collector entry in storage form, or ``FactInvalid``.
+
+    Defaults are made explicit and are the SAFE ones: a missing ``conf`` is ``approximate`` and a
+    missing ``partial`` is ``True`` (both mean "never HOLDS"). ``signed`` has no default: a builder
+    that forgot it must fail loudly, not look unsigned by accident. Unknown keys are dropped (they
+    never reach the evaluator), except one that looks like a misspelt conflict marker, which would
+    otherwise read as "no conflict".
+    """
+    what = f"facts.{name}"
+    if not isinstance(entry, dict):
+        raise FactInvalid(f"{what}: an entry must be an object")
+    for k in entry:
+        if isinstance(k, str) and "conflict" in k.lower() and k != "conflict":
+            raise FactInvalid(f"{what}: unknown key {k!r} (the conflict marker is 'conflict')")
+    status = entry.get("status")
+    if not isinstance(status, str) or status not in FACT_STATUSES:
+        raise FactInvalid(f"{what}: status must be one of {FACT_STATUSES}")
+    signed = entry.get("signed")
+    if not isinstance(signed, bool):
+        raise FactInvalid(f"{what}: 'signed' must be a boolean")
+    seq = entry.get("seq", 0)
+    if seq is None:
+        seq = 0
+    if type(seq) is not int or not 0 <= seq <= 2 ** 63 - 1:
+        raise FactInvalid(f"{what}: 'seq' must be a non-negative integer")
+    conf = entry.get("conf", "approximate")
+    if conf is None:
+        conf = "approximate"
+    if not isinstance(conf, str) or conf not in FACT_CONFS:
+        raise FactInvalid(f"{what}: 'conf' must be exact or approximate")
+    partial = entry.get("partial", True)
+    if partial is None:
+        partial = True
+    if not isinstance(partial, bool):
+        raise FactInvalid(f"{what}: 'partial' must be a boolean")
+    out: dict[str, Any] = {"status": status, "signed": signed, "conf": conf, "partial": partial, "seq": seq}
+    for key, limit in (("key_id", MAX_FACT_REF), ("evidence_ref", MAX_FACT_REF), ("reason", 64)):
+        v = entry.get(key, "")
+        if v is None:
+            v = ""
+        if not isinstance(v, str):
+            raise FactInvalid(f"{what}: {key!r} must be a string")
+        _check_text(v, f"{what}.{key}", limit)
+        if v or key != "reason":
+            out[key] = v
+    if "conflict" in entry:
+        c = entry["conflict"]
+        if not _conflict_ok(c):
+            raise FactInvalid(f"{what}: 'conflict' must be a boolean, a non-empty object or a list of them")
+        if c is True or (isinstance(c, (dict, list)) and c):      # absent / false / null / [] = none
+            _check_fact_value(c, 0, [MAX_FACT_ELEMENTS], f"{what}.conflict")
+            out["conflict"] = c
+    if entry.get("tier") is not None:
+        if not isinstance(entry["tier"], str) or entry["tier"] not in BASES:
+            raise FactInvalid(f"{what}: bad tier {entry['tier']!r}")
+        out["tier"] = entry["tier"]
+    if entry.get("observed_at") is not None:
+        ts = _parse_ts(entry["observed_at"])
+        if ts is None:
+            raise FactInvalid(f"{what}: observed_at must be an ISO-8601 timestamp with a timezone")
+        out["observed_at"] = ts.isoformat()
+    data = entry.get("data", {})
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise FactInvalid(f"{what}: 'data' must be an object")
+    _check_fact_value(data, 0, [MAX_FACT_ELEMENTS], f"{what}.data")
+    out["data"] = data
+    return out
+
+
+def _strip_timestamps(value: Any) -> Any:
+    """Drop ``*_at`` keys, recursively (a conflict record says when a scan saw the port: that moves
+    with every scan and is not a change of state)."""
+    if isinstance(value, dict):
+        return {k: _strip_timestamps(v) for k, v in value.items() if not str(k).endswith("_at")}
+    if isinstance(value, list):
+        return [_strip_timestamps(v) for v in value]
+    return value
+
+
+def fact_row_digest(tier: str, entries: dict[str, dict[str, Any]]) -> str:
+    """sha256 over a fact row's MEANING: tier, collectors and every entry field except
+    ``observed_at`` / ``seq`` / ``evidence_ref`` (and ``*_at`` inside a conflict record). A pure
+    refresh therefore keeps the digest; a changed value, ``signed``, ``key_id`` (a different
+    trust root), ``conf``, ``partial``, ``status``, ``conflict`` or tier changes it."""
+    stripped: dict[str, Any] = {}
+    for name in sorted(entries):
+        d = {k: v for k, v in entries[name].items() if k not in FACT_DIGEST_SKIP}
+        if "conflict" in d:
+            d["conflict"] = _strip_timestamps(d["conflict"])
+        stripped[name] = d
+    blob = _json({"tier": tier, "facts": stripped}) or ""
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _clean_facts(out: BuildOutput, rep: BuildReport) -> dict[str, dict[str, Any]]:
+    """``node_ref -> row`` for the rows that can be stored. A bad collector entry is dropped on its
+    own (that collector is then unknown on the host; the others stay); a bad row is skipped; two
+    rows for one node are BOTH dropped (which one is right?). Everything dropped is counted."""
+    rows: dict[str, dict[str, Any]] = {}
+    clashed: set[str] = set()
+    for f in out.facts:
+        ref = str(getattr(f, "node_ref", ""))[:80]
+        try:
+            if not isinstance(f, FactOut):
+                raise ValueError("not a FactOut")
+            if f.source != out.source:
+                raise ValueError(f"fact source {f.source!r} != build source {out.source!r}")
+            if not is_valid_ref(f.node_ref) or f.node_ref == INTERNET:
+                raise ValueError("bad node ref (the internet carries no host facts)")
+            if f.tier not in BASES:
+                raise ValueError("bad tier")
+            if not isinstance(f.observed_at, dt.datetime) or f.observed_at.tzinfo is None:
+                raise ValueError("observed_at must be timezone-aware")
+            if not isinstance(f.facts, dict):
+                raise ValueError("facts must be an object keyed by collector")
+            if len(f.facts) > MAX_FACT_COLLECTORS:
+                raise ValueError(f"more than {MAX_FACT_COLLECTORS} collectors")
+            entries: dict[str, dict[str, Any]] = {}
+            for name in sorted(f.facts, key=str):
+                try:
+                    if not isinstance(name, str) or not FACT_COLLECTOR_RE.fullmatch(name):
+                        raise FactInvalid(f"bad collector name {str(name)[:40]!r}")
+                    entries[name] = normalise_fact_entry(name, f.facts[name])
+                except FactInvalid as exc:
+                    rep.skipped += 1
+                    rep.notes.append(f"dropped fact {ref!r} {str(name)[:40]!r}: {exc}")
+            text = _json(entries)
+            if text is None or len(text) > MAX_FACT_ROW_BYTES:
+                raise ValueError(f"facts larger than {MAX_FACT_ROW_BYTES} bytes")
+            if f.node_ref in clashed or f.node_ref in rows:
+                rows.pop(f.node_ref, None)
+                clashed.add(f.node_ref)
+                raise ValueError("two fact rows for one node: neither is trusted")
+            rows[f.node_ref] = {
+                "node_ref": f.node_ref, "tier": f.tier, "observed_at": f.observed_at.astimezone(dt.timezone.utc),
+                "facts": text, "entries": entries, "digest": fact_row_digest(f.tier, entries)}
+        except Exception as exc:  # noqa: BLE001 - one bad row never aborts the build
+            rep.skipped += 1
+            rep.notes.append(f"skipped facts {ref!r}: {exc}")
+    return rows
+
+
+async def _persist_facts(conn, out: BuildOutput, rows: dict[str, dict[str, Any]], rep: BuildReport) -> None:
+    """Replace this source's ``reach_node_facts`` rows. ``rep.facts_changed`` counts rows added,
+    removed or whose digest (meaning, timestamps excluded) changed, plus rows whose ``observed_at``
+    moved BACKWARDS (freshness only ever shrinks then, and the evaluation that relied on the newer
+    stamp must not outlive it). A forward refresh rewrites the row and counts nothing."""
+    existing = {r["node_ref"]: r for r in await conn.fetch(
+        "SELECT id, node_ref, tier, observed_at, digest, facts::text AS facts FROM reach_node_facts "
+        "WHERE source = $1", out.source)}
+    to_write: list[dict[str, Any]] = []
+    for ref, new in rows.items():
+        old = existing.get(ref)
+        if old is None:
+            rep.facts_changed += 1
+            to_write.append(new)
+            continue
+        if old["digest"] != new["digest"] or old["tier"] != new["tier"]:
+            rep.facts_changed += 1
+        elif new["observed_at"] < old["observed_at"]:
+            rep.facts_changed += 1
+        elif old["observed_at"] == new["observed_at"] and \
+                _json(json.loads(old["facts"] or "{}")) == new["facts"]:
+            continue                                   # identical, nothing to write
+        to_write.append(new)
+    gone = [r for k, r in existing.items() if k not in rows]
+    rep.facts_changed += len(gone)
+    for part in _chunks(to_write, 500):
+        await conn.execute(
+            "INSERT INTO reach_node_facts (node_ref, source, tier, observed_at, digest, facts) "
+            "SELECT t.n, $6::text, t.tr, t.o, t.d, t.f::jsonb "
+            "FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::text[], $5::text[]) "
+            "AS t(n, tr, o, d, f) "
+            "ON CONFLICT (tenant_id, node_ref, source) DO UPDATE SET tier = EXCLUDED.tier, "
+            "observed_at = EXCLUDED.observed_at, digest = EXCLUDED.digest, facts = EXCLUDED.facts",
+            [r["node_ref"] for r in part], [r["tier"] for r in part], [r["observed_at"] for r in part],
+            [r["digest"] for r in part], [r["facts"] for r in part], out.source)
+    for part in _chunks([r["id"] for r in gone]):
+        await conn.execute("DELETE FROM reach_node_facts WHERE id = ANY($1::uuid[])", list(part))
+    rep.facts_stored = len(rows)
+    rep.facts_digest = hashlib.sha256(
+        "\n".join(f"{ref}:{rows[ref]['digest']}" for ref in sorted(rows)).encode()).hexdigest() if rows else ""
+
+
 async def _lock_source(conn, source: str) -> None:
     """Serialise persists for one (tenant, source). Replicas/pods racing the same builder
     would otherwise diff against each other's half-applied state."""
@@ -534,6 +841,7 @@ async def _prune_nodes(conn, out: BuildOutput, emitted: list[str], now: dt.datet
         "AND n.node_ref <> ALL($2::text[]) AND n.last_seen < $3 "
         "AND NOT EXISTS (SELECT 1 FROM reach_edges e WHERE e.src_ref = n.node_ref OR e.dst_ref = n.node_ref) "
         "AND NOT EXISTS (SELECT 1 FROM reach_coverage c WHERE c.node_ref = n.node_ref) "
+        "AND NOT EXISTS (SELECT 1 FROM reach_node_facts f WHERE f.node_ref = n.node_ref) "
         "RETURNING n.node_ref", out.source, emitted, now - grace)
     return len(rows)
 
@@ -543,9 +851,10 @@ async def persist_build(conn, out: BuildOutput, now: dt.datetime) -> BuildReport
 
     ``replace``: the source owns its edges; whatever it does not re-emit is deleted.
     ``window``:  edges persist until ``last_seen`` ages past ``out.window``.
-    Coverage rows of ``out.source`` are always replaced wholesale.
-    A change (the graph version bumps) is a different SET of edges / coverage facts / nodes;
-    refreshing ``last_seen`` or ``observed_at`` is not. Invalid rows are skipped and counted.
+    Coverage and host-fact rows of ``out.source`` are always replaced wholesale.
+    A change (the graph version bumps) is a different SET of edges / coverage facts / nodes or a
+    changed host fact (``fact_row_digest``); refreshing ``last_seen`` or ``observed_at`` (or
+    re-signing identical facts under a new ``seq``) is not. Invalid rows are skipped and counted.
     """
     now = _aware(now)
     if not isinstance(out.source, str) or not out.source or len(out.source) > 64:
@@ -558,14 +867,16 @@ async def persist_build(conn, out: BuildOutput, now: dt.datetime) -> BuildReport
     nodes = _clean_nodes(out, rep)
     edges = _clean_edges(out, now, rep)
     cov = _clean_coverage(out, rep)
+    fact_rows = _clean_facts(out, rep)
     async with conn.transaction():
         await _lock_source(conn, out.source)
         await _persist_nodes(conn, nodes, now, out.source, rep)
         await _persist_edges(conn, out, edges, now, rep)
         await _persist_coverage(conn, out, cov, rep)
+        await _persist_facts(conn, out, fact_rows, rep)
         rep.nodes_removed = await _prune_nodes(conn, out, sorted(nodes), now)
         rep.changed = bool(rep.edges_added or rep.edges_removed or rep.coverage_changed
-                           or rep.nodes_added or rep.nodes_removed)
+                           or rep.nodes_added or rep.nodes_removed or rep.facts_changed)
         if rep.changed:
             rep.graph_version = await bump_graph_version(conn)
         else:

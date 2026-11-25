@@ -15,6 +15,7 @@ from .base import clean_str
 NFT_TIMEOUT_S = 25
 SAVE_TIMEOUT_S = 25
 MAX_OUT = 4 * 1024 * 1024
+PARSE_ERRORS = (ValueError, KeyError, TypeError, AttributeError, IndexError, fwmodel.FwModelError)
 
 
 def parse_ufw_status(text):
@@ -79,10 +80,28 @@ def ipv6_enabled(ctx):
 
 
 def _tables(ctx, path):
+    """Names listed in ``/proc/net/ip{,6}_tables_names``.
+
+    ``[]`` means the legacy table module is not loaded (file missing: nothing to read);
+    ``None`` means the file exists but could not be read (the legacy state is unknown).
+    """
     st, text = ctx.read_text(path, 4096)
-    if st != "ok":
+    if st == "missing":
         return []
+    if st != "ok":
+        return None
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+
+def _nf_tables_module(ctx):
+    """True/False when ``/proc/modules`` says nf_tables is loaded; None when it cannot tell."""
+    st, text = ctx.read_text("/proc/modules", 1 << 20)
+    if st != "ok":
+        return None
+    for line in text.splitlines():
+        if line.split(" ", 1)[0] == "nf_tables":
+            return True
+    return False
 
 
 def _frontends(ctx):
@@ -108,6 +127,14 @@ def _frontends(ctx):
     return sorted(out, key=lambda x: x["name"])
 
 
+def _flavour(ctx, binary_name):
+    exe = ctx.which(binary_name)
+    if exe is None:
+        return "unknown"
+    v = ctx.run([exe, "--version"], timeout=5, max_bytes=4096)
+    return parse_ipt_flavour(v.get("out", "") + " " + v.get("err_tail", ""))
+
+
 def collect(ctx):
     if not ctx.platform.startswith("linux"):
         return base.unavailable("unsupported_platform")
@@ -116,16 +143,17 @@ def collect(ctx):
     if not ctx.is_root and not ctx.can_read_net_admin:
         return base.unavailable("permission_denied")
     nft = ctx.which("nft")
-    save4_legacy = ctx.which("iptables-legacy-save")
-    save6_legacy = ctx.which("ip6tables-legacy-save")
-    save4 = ctx.which("iptables-save")
-    save6 = ctx.which("ip6tables-save")
-    if not (nft or save4_legacy or save4):
+    tools = {4: {"legacy": ctx.which("iptables-legacy-save"), "generic": ctx.which("iptables-save"),
+                 "name": "iptables"},
+             6: {"legacy": ctx.which("ip6tables-legacy-save"), "generic": ctx.which("ip6tables-save"),
+                 "name": "ip6tables"}}
+    if not (nft or tools[4]["legacy"] or tools[4]["generic"]):
         return base.unavailable("tool_missing")
 
+    # nft_state: ok (ruleset read) | failed (tool present, could not read) | missing
     dumps = []
     readable = {"ip4": False, "ip6": False}
-    nft_ok = False
+    nft_state = "missing"
     nft_failure = None
     if nft:
         res = ctx.run([nft, "-j", "list", "ruleset"], timeout=NFT_TIMEOUT_S, max_bytes=MAX_OUT)
@@ -134,49 +162,51 @@ def collect(ctx):
             try:
                 obj = json.loads(res["out"])
                 dumps.append(fwmodel.normalise_nft(obj))
-            except (ValueError, KeyError, TypeError, AttributeError, fwmodel.FwModelError):
+            except PARSE_ERRORS:
                 return base.error("parse_error", "nft json not understood")
-            nft_ok = True
+            nft_state = "ok"
+            readable = {"ip4": True, "ip6": True}
+        else:
+            nft_state = "failed"
+    else:
+        # no nft binary: a native nftables ruleset cannot be ruled out while nf_tables is loaded
+        if _nf_tables_module(ctx) is False:
             readable = {"ip4": True, "ip6": True}
     ctx.check()
 
-    flavour = "unknown"
-    if save4:
-        v = ctx.run([ctx.which("iptables") or "iptables", "--version"], timeout=5, max_bytes=4096)
-        flavour = parse_ipt_flavour(v.get("out", "") + " " + v.get("err_tail", ""))
-
-    loaded4 = _tables(ctx, "/proc/net/ip_tables_names")
-    loaded6 = _tables(ctx, "/proc/net/ip6_tables_names")
+    loaded = {4: _tables(ctx, "/proc/net/ip_tables_names"),
+              6: _tables(ctx, "/proc/net/ip6_tables_names")}
     legacy_used = False
-    for fam, name, loaded, lsave, gsave, prefix in (
-            (4, "ip4", loaded4, save4_legacy, save4, "legacy4"),
-            (6, "ip6", loaded6, save6_legacy, save6, "legacy6")):
-        need = bool(loaded) or not nft_ok
-        if not need:
+    for fam, name in ((4, "ip4"), (6, "ip6")):
+        t = tools[fam]
+        names = loaded[fam]
+        if names is None:  # the legacy table list exists but cannot be read
+            readable[name] = False
             continue
-        cmd = lsave
-        if cmd is None and gsave and (not nft_ok or flavour in ("legacy", "unknown")) and (
-                fam == 4 or flavour != "nft"):
-            cmd = gsave
+        if not names:  # the legacy modules are not loaded: nothing to read
+            continue
+        # legacy tables are loaded: only a legacy-flavoured save tool can read them (the
+        # nf_tables flavour of iptables-save shows a different set of tables)
+        cmd = t["legacy"]
+        if cmd is None and t["generic"] and _flavour(ctx, t["name"]) == "legacy":
+            cmd = t["generic"]
         if cmd is None:
-            if loaded:
-                readable[name] = False
+            readable[name] = False
             continue
         r = ctx.run([cmd], timeout=SAVE_TIMEOUT_S, max_bytes=MAX_OUT)
         f = base.classify_run(r, "iptables-save")
         if f is not None:
             readable[name] = False
-            if not nft_ok and fam == 4:
+            if nft_state != "ok" and fam == 4 and not dumps:
                 return f
             continue
         try:
-            dumps.append(fwmodel.parse_iptables_save(r["out"], fam, prefix))
-        except fwmodel.FwModelError:
+            dumps.append(fwmodel.parse_iptables_save(r["out"], fam, "legacy%d" % fam))
+        except PARSE_ERRORS:
             return base.error("parse_error", "iptables-save not understood")
         legacy_used = True
-        readable[name] = True
 
-    if not nft_ok and not legacy_used:
+    if not dumps:
         if nft_failure is not None:
             return nft_failure
         return base.unavailable("tool_missing")
@@ -192,9 +222,9 @@ def collect(ctx):
     for d in ("/run/cilium", "/var/run/cilium"):
         if ctx.exists(d):
             merged["dataplane"].add("cilium")
-    if nft_ok and legacy_used:
+    if nft_state == "ok" and legacy_used:
         backend = "mixed"
-    elif nft_ok:
+    elif nft_state == "ok":
         backend = "nft"
     else:
         backend = "legacy"
@@ -202,9 +232,11 @@ def collect(ctx):
         model = fwmodel.build_model(merged, backend, _frontends(ctx), v6, readable)
     except fwmodel.FwTooLarge:
         return base.error("truncated", "more than %d firewall rules" % fwmodel.MAX_RULES)
-    except fwmodel.FwModelError as exc:
-        return base.error("parse_error", clean_str("model: %s" % exc, 100))
-    if model["rule_count"] == 0 and not merged["chains"] and nft_ok and not legacy_used:
+    except PARSE_ERRORS as exc:
+        return base.error("parse_error", clean_str("model: %s" % type(exc).__name__, 100))
+    if model["rule_count"] == 0 and not merged["chains"] and nft_state == "ok" and not legacy_used:
         model["backend"] = "none"
+    enabled = ["ip4"] + (["ip6"] if v6 else [])
+    unread = [n for n in enabled if not readable[n]]
     conf = "exact" if model["flat_view"]["confidence"] == "exact" else "approximate"
-    return base.ok(model, conf=conf, partial=False)
+    return base.ok(model, conf=conf, partial=bool(unread))

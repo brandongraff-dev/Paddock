@@ -1386,3 +1386,126 @@ async def test_without_enforcement_the_loop_is_unchanged(db_pool, app_pool, fake
     await enable_custom(app_pool)
     out = await runner.tick_once(app_pool, redis=fake_redis, now=NOW)
     assert out[A]["skipped"] is None and out[A]["evaluated"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# P2: agent posture option, rebuild requests, facts diagnostics
+# --------------------------------------------------------------------------- #
+
+def _recording_builder(source, seen, **fixed):
+    """A builder whose load/build declare their options explicitly (no ``**opts``), like the real ones."""
+    async def load(conn, now, *, max_age=None):
+        return None
+
+    def build(rows, now, *, agent_posture_max_age=None, max_age=None):
+        seen.append({"agent_posture_max_age": agent_posture_max_age, "max_age": max_age})
+        return BuildOutput(source=source, mode="replace")
+
+    return types.SimpleNamespace(SOURCE=source, load=load, build=build)
+
+
+async def test_the_agent_posture_max_age_option_reaches_only_the_builders_that_declare_it(app_pool, monkeypatch):
+    seen_a, seen_b = [], []
+
+    async def load(conn, now):                     # a P1 builder: no such option, must not receive it
+        return None
+
+    def build(rows, now):
+        seen_b.append(True)
+        return BuildOutput(source="plain", mode="replace")
+
+    monkeypatch.setattr(builders_pkg, "load_builders", lambda: [
+        _recording_builder("hostlike", seen_a), types.SimpleNamespace(SOURCE="plain", load=load, build=build)])
+    out = await runner.build_tenant(app_pool, A, now=NOW)
+    assert all(v["ok"] for v in out.values()), out
+    assert seen_a[0]["agent_posture_max_age"] == dt.timedelta(hours=6) and seen_b == [True]
+    assert seen_a[0]["max_age"] == dt.timedelta(hours=settings.assurance_external_max_age_h)   # existing opts intact
+
+
+@pytest.mark.parametrize("setting,expected", [(12, 12), ("3", 3), (0, 6), (-4, 6), ("junk", 6), (None, 6)])
+async def test_the_agent_posture_max_age_follows_the_setting_and_fails_to_the_default(app_pool, monkeypatch,
+                                                                                      setting, expected):
+    seen = []
+    monkeypatch.setattr(builders_pkg, "load_builders", lambda: [_recording_builder("hostlike", seen)])
+    # (the Settings model has no such field yet, so stand in for it: the runner reads it with getattr)
+    monkeypatch.setattr(runner, "settings", types.SimpleNamespace(
+        assurance_external_max_age_h=settings.assurance_external_max_age_h,
+        assurance_edge_window_h=settings.assurance_edge_window_h, assurance_agent_posture_max_age_h=setting))
+    await runner.build_tenant(app_pool, A, now=NOW)
+    assert seen[0]["agent_posture_max_age"] == dt.timedelta(hours=expected)
+
+
+async def test_a_tenant_whose_last_build_is_null_rebuilds_on_the_next_tick(db_pool, app_pool, fake_redis, monkeypatch):
+    ran = []
+    mod = _fake_builder("seed3")
+    orig = mod.load
+
+    async def counting(conn, now, **o):
+        ran.append(now)
+        return await orig(conn, now, **o)
+
+    mod.load = counting
+    monkeypatch.setattr(builders_pkg, "load_builders", lambda: [mod])
+    monkeypatch.setattr(settings, "assurance_rebuild_min", 100_000)
+    await enable_std(app_pool)
+    await go(app_pool, redis=fake_redis)
+    assert len(ran) == 1
+    await go(app_pool, redis=fake_redis, now=NOW + H)
+    assert len(ran) == 1                                  # not due: the interval is huge
+    async with conn_for(app_pool) as con:
+        await con.execute("UPDATE assurance_state SET last_build_at = NULL")      # what posture ingest does
+    await go(app_pool, redis=fake_redis, now=NOW + 2 * H)
+    assert len(ran) == 2
+
+
+async def test_a_rebuild_requested_while_a_build_runs_is_not_lost(db_pool, app_pool, fake_redis, monkeypatch):
+    """Ingest asks for a rebuild with ``last_build_at = NULL`` at any moment. The old runner stamped
+    the build AFTER its builders ran, overwriting a request made in between (the posture it
+    announced then waited out the whole rebuild interval)."""
+    ran = []
+    mod = _fake_builder("seed4")
+
+    async def load_and_get_poked(conn, now, **o):
+        ran.append(now)
+        if len(ran) == 1:                                  # a posture arrives mid-build
+            await conn.execute("UPDATE assurance_state SET last_build_at = NULL")
+        return [None]
+
+    mod.load = load_and_get_poked
+    monkeypatch.setattr(builders_pkg, "load_builders", lambda: [mod])
+    await enable_std(app_pool)
+    await go(app_pool, redis=fake_redis)
+    assert len(ran) == 1
+    async with conn_for(app_pool) as con:
+        assert (await store.get_state(con)).last_build_at is None          # the request survived the build
+    await go(app_pool, redis=fake_redis, now=NOW + dt.timedelta(minutes=1))
+    assert len(ran) == 2                                                    # and the next tick honours it
+    async with conn_for(app_pool) as con:
+        assert (await store.get_state(con)).last_build_at == NOW + dt.timedelta(minutes=1)
+
+
+async def test_the_build_is_stamped_before_the_builders_read_anything(db_pool, app_pool, monkeypatch):
+    stamps = []
+    mod = _fake_builder("seed5")
+
+    async def load(conn, now, **o):
+        stamps.append((await store.get_state(conn)).last_build_at)
+        return [None]
+
+    mod.load = load
+    monkeypatch.setattr(builders_pkg, "load_builders", lambda: [mod])
+    await runner.build_tenant(app_pool, A, now=NOW)
+    assert stamps == [NOW]
+
+
+async def test_dropped_facts_are_reported_in_the_evaluation_diagnostics(db_pool, app_pool, fake_redis):
+    await enable_std(app_pool)
+    w = await world(db_pool, app_pool)
+    del w
+    await db_pool.execute(
+        "INSERT INTO reach_node_facts (node_ref, source, tier, observed_at, digest, facts) "
+        "VALUES ($1, 'host_fw', 'configured', $2, 'x', $3::jsonb)",
+        "agent:00000000-0000-0000-0000-000000000001", NOW, json.dumps({"sshd": {"status": "ok"}}))
+    s = await go(app_pool, redis=fake_redis, rebuild=True)
+    assert s["diagnostics"]["facts_dropped"] == 1 and s["diagnostics"]["fact_issues"]
+    assert runner.last_evaluation(A)["facts_dropped"] == 1

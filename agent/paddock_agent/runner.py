@@ -171,6 +171,8 @@ class Ctx(object):
         self.agent_version = str(agent_version)
         self.seq = int(seq)
         self.key_id = str(key_id)
+        if isinstance(machine_salt, str):
+            machine_salt = machine_salt.encode("utf-8")
         self.machine_salt = bytes(machine_salt or b"")
         self.clock_skew_ms = None if clock_skew_ms is None else int(clock_skew_ms)
         self.enable_imds = bool(enable_imds)
@@ -200,6 +202,8 @@ class Ctx(object):
             n = n()
         if n is None:
             return int(time.time())
+        if hasattr(n, "timestamp"):  # a datetime
+            return int(n.timestamp())
         return int(n)
 
     def now_iso(self):

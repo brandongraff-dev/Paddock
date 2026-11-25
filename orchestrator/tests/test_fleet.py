@@ -3,6 +3,10 @@
 The fleet router is wired by hand in production (see docs/FLEET_WIRING.md), so we
 mount it onto the test app the same way test_threatintel.py mounts its router.
 
+Schema 041 / agent v2: an agent enrolls with a per-tenant one-time token + an Ed25519 key and speaks through
+SIGNED envelopes (the heavy lifting is tested in test_fleet_posture.py / test_fleet_principal.py); this file keeps
+the gated-enforcement lifecycle tests, now driven through that real enrollment and a signed heartbeat.
+
 We prove the safety rails:
   * enroll mints a credential whose sha256 matches the stored token_hash;
   * agent-authenticated endpoints reject a wrong/missing agent token;
@@ -19,10 +23,23 @@ import uuid
 
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from httpx import ASGITransport, AsyncClient
 
 from app import auth as auth_svc
+from app import fleet_enroll, fleet_posture
 from app.config import settings
+
+from .test_fleet_posture import Host, b64u, build_envelope, canon, kid_of, pubkey
+
+
+@pytest.fixture(autouse=True)
+def _reset_fleet_limiters():
+    fleet_enroll.reset_limiters()
+    fleet_posture.reset_limiters()
+    yield
+    fleet_enroll.reset_limiters()
+    fleet_posture.reset_limiters()
 
 
 @pytest_asyncio.fixture
@@ -72,14 +89,39 @@ def _hdr(key):
     return {"Authorization": f"Bearer {key}"}
 
 
-async def _enroll(fleet_client, hostname="host-a.local", platform="linux",
-                  token="dev-enroll", headers=None):
-    r = await fleet_client.post("/v1/fleet/enroll", headers=headers, json={
-        "hostname": hostname, "platform": platform, "token": token,
-        "capabilities": ["inventory", "block", "quarantine"],
-    })
+async def _mint(fleet_client, headers=None, **body):
+    r = await fleet_client.post("/v1/fleet/enroll-tokens", headers=headers, json=body)
     assert r.status_code == 201, r.text
     return r.json()
+
+
+async def _enroll_raw(fleet_client, token, hostname, sk, **over):
+    parts = token.split("_")
+    prefix = parts[1] if len(parts) > 1 else "0" * 12
+    proof = sk.sign(b"paddock-enroll/v1\n" + prefix.encode() + b"\n" + hostname.encode())
+    body = {"token": token, "hostname": hostname, "public_key_b64": b64u(pubkey(sk)), "proof_b64": b64u(proof),
+            "capabilities": ["inventory", "block", "quarantine"]}
+    body.update(over)
+    return await fleet_client.post("/v1/fleet/enroll", json=body)
+
+
+async def _enroll(fleet_client, hostname="host-a.local", headers=None):
+    """Mint a one-time token (as the caller), enroll with a fresh key, return the enrollment answer plus the
+    `Host` that can sign envelopes. ``id`` is the agent id (kept for the v1-shaped tests below)."""
+    sk = Ed25519PrivateKey.generate()
+    token = (await _mint(fleet_client, headers))["token"]
+    r = await _enroll_raw(fleet_client, token, hostname, sk)
+    assert r.status_code == 201, r.text
+    out = r.json()
+    host = Host(sk, out["agent_id"], out["tenant_id"], out["agent_token"], hostname)
+    return {**out, "id": out["agent_id"], "host": host}
+
+
+async def _hb(fleet_client, enrolled):
+    """A SIGNED heartbeat (the only kind the server accepts)."""
+    host = enrolled["host"]
+    return await fleet_client.post(f"/v1/fleet/{host.agent_id}/heartbeat", headers=host.h,
+                                   json=host.env("heartbeat"))
 
 
 def _atok(enrolled):
@@ -105,12 +147,11 @@ async def _audit_actions(db_pool, resource_id=None):
 async def test_enroll_mints_token_whose_hash_is_stored(fleet_client, db_pool):
     out = await _enroll(fleet_client)
     assert out["agent_token"].startswith("fat_")
-    assert out["token_prefix"] in out["agent_token"]
-    assert out["status"] == "enrolled"
+    assert out["token_prefix"] in out["agent_token"] and len(out["token_prefix"]) == 12
 
     async with db_pool.acquire() as con:
         row = await con.fetchrow(
-            "SELECT token_hash, token_prefix FROM fleet_agents WHERE id = $1",
+            "SELECT token_hash, token_prefix, status, legacy FROM fleet_agents WHERE id = $1",
             uuid.UUID(out["id"]),
         )
     # The raw token is never stored; only its sha256.
@@ -118,28 +159,37 @@ async def test_enroll_mints_token_whose_hash_is_stored(fleet_client, db_pool):
     assert row["token_hash"] == expected
     assert row["token_hash"] != out["agent_token"]
     assert row["token_prefix"] == out["token_prefix"]
+    assert row["status"] == "enrolled" and row["legacy"] is False
 
     audits = await _audit_actions(db_pool, out["id"])
-    assert any(a["action"] == "enroll" for a in audits)
+    assert any(a["action"] == "fleet.agent.enroll" for a in audits)
 
 
 @pytest.mark.asyncio
 async def test_enroll_rejects_bad_platform(fleet_client):
-    r = await fleet_client.post("/v1/fleet/enroll", json={
-        "hostname": "h", "platform": "plan9", "token": "x",
-    })
-    assert r.status_code == 422
+    token = (await _mint(fleet_client))["token"]
+    r = await _enroll_raw(fleet_client, token, "h", Ed25519PrivateKey.generate(), platform="plan9")
+    assert r.status_code == 400
+    # a rejected request does not spend the token
+    r = await _enroll_raw(fleet_client, token, "h", Ed25519PrivateKey.generate())
+    assert r.status_code == 201
 
 
 @pytest.mark.asyncio
-async def test_enroll_enforces_shared_secret_when_set(fleet_client, monkeypatch):
+async def test_enrollment_needs_a_per_tenant_one_time_token(fleet_client, monkeypatch):
+    """FLEET_ENROLL_TOKEN (the shared bootstrap secret) and 'any token in dev mode' are gone (decision O3)."""
     monkeypatch.setenv("FLEET_ENROLL_TOKEN", "s3cret")
-    bad = await fleet_client.post("/v1/fleet/enroll", json={
-        "hostname": "h2", "platform": "linux", "token": "wrong"})
-    assert bad.status_code == 401
-    good = await fleet_client.post("/v1/fleet/enroll", json={
-        "hostname": "h2", "platform": "linux", "token": "s3cret"})
+    sk = Ed25519PrivateKey.generate()
+    for bad in ("s3cret", "dev-enroll", "x", "fet_" + "0" * 12 + "_" + "x" * 30):
+        r = await _enroll_raw(fleet_client, bad, "h2", sk)
+        assert r.status_code in (400, 401), bad
+    fleet_enroll.reset_limiters()
+    token = (await _mint(fleet_client))["token"]
+    good = await _enroll_raw(fleet_client, token, "h2", sk)
     assert good.status_code == 201
+    again = await _enroll_raw(fleet_client, token, "h3", Ed25519PrivateKey.generate())
+    assert again.status_code == 401                     # single use
+    assert again.json()["detail"] == fleet_enroll.GENERIC_ENROLL_DETAIL
 
 
 # --------------------------------------------------------------------------- #
@@ -150,15 +200,19 @@ async def test_enroll_enforces_shared_secret_when_set(fleet_client, monkeypatch)
 async def test_heartbeat_requires_valid_agent_token(fleet_client):
     out = await _enroll(fleet_client)
     aid = out["id"]
-    # missing token
+    host = out["host"]
+    # missing token: in dev mode the caller is the synthetic admin, which is not an agent (403)
     r = await fleet_client.post(f"/v1/fleet/{aid}/heartbeat", json={})
-    assert r.status_code == 401
+    assert r.status_code == 403
     # wrong token
     r = await fleet_client.post(f"/v1/fleet/{aid}/heartbeat", json={},
                                 headers={"X-Agent-Token": "fat_dead_beef"})
     assert r.status_code == 401
-    # right token
+    # right token but UNSIGNED: not an envelope, so not proof of anything
     r = await fleet_client.post(f"/v1/fleet/{aid}/heartbeat", json={}, headers=_atok(out))
+    assert r.status_code == 400
+    # right token, signed envelope
+    r = await fleet_client.post(f"/v1/fleet/{aid}/heartbeat", headers=host.h, json=host.env("heartbeat"))
     assert r.status_code == 200
     assert r.json()["status"] == "online"
     assert r.json()["pending_actions"] == []
@@ -277,7 +331,7 @@ async def test_deny_transitions_and_audits(fleet_client, db_pool):
 async def test_approve_requires_admin(enforce, app, fleet_client, db_pool):
     _, admin_key = await _seed_user_with_key(db_pool, "req-admin", "admin", "restricted")
     _, analyst_key = await _seed_user_with_key(db_pool, "an", "analyst", "internal")
-    out = await _enroll(fleet_client, token="x", headers=_hdr(admin_key))
+    out = await _enroll(fleet_client, headers=_hdr(admin_key))
     # propose as admin (enforce: unclassified POST needs admin anyway)
     p = (await _propose(fleet_client, out["id"], headers=_hdr(admin_key))).json()
     # analyst cannot approve -> 403
@@ -290,7 +344,7 @@ async def test_approve_requires_admin(enforce, app, fleet_client, db_pool):
 async def test_four_eyes_success_with_two_admins(enforce, app, fleet_client, db_pool):
     _, admin_a = await _seed_user_with_key(db_pool, "admin-a", "admin", "restricted")
     _, admin_b = await _seed_user_with_key(db_pool, "admin-b", "admin", "restricted")
-    out = await _enroll(fleet_client, token="x", headers=_hdr(admin_a))
+    out = await _enroll(fleet_client, headers=_hdr(admin_a))
     p = (await _propose(fleet_client, out["id"], headers=_hdr(admin_a))).json()
     # admin_a cannot self-approve
     r = await fleet_client.post(f"/v1/fleet/actions/{p['id']}/approve",
@@ -326,8 +380,7 @@ async def test_dry_run_action_cannot_be_applied(fleet_client, db_pool):
         assert r.status_code == 200
         assert r.json()["dry_run"] is True     # not promoted
         # heartbeat must NOT return a dry-run action as pending real work
-        hb = await fleet_client.post(f"/v1/fleet/{out['id']}/heartbeat",
-                                     headers=_atok(out), json={})
+        hb = await _hb(fleet_client, out)
         assert hb.json()["pending_actions"] == []
         # reporting 'applied' on a dry-run action is refused
         r = await fleet_client.post(
@@ -353,8 +406,7 @@ async def test_full_lifecycle_apply_then_revert(fleet_client, db_pool):
         assert r.status_code == 200 and r.json()["dry_run"] is False
 
         # heartbeat now returns it as pending real work
-        hb = await fleet_client.post(f"/v1/fleet/{out['id']}/heartbeat",
-                                     headers=_atok(out), json={})
+        hb = await _hb(fleet_client, out)
         pend = hb.json()["pending_actions"]
         assert len(pend) == 1 and pend[0]["id"] == p["id"]
 

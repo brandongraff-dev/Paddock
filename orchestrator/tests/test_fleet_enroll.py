@@ -513,6 +513,19 @@ def test_rfc8032_vectors_verify_and_tampering_does_not(pub, msg, sig):
     assert fe.verify_ed25519(pub_b, msg_b, b"") is False
 
 
+def test_a_signature_with_a_non_canonical_s_is_rejected():
+    """RFC 8032 requires S < L. S + L verifies under a lax verifier, which would make signatures malleable."""
+    sk = Ed25519PrivateKey.generate()
+    pub = sk.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    sig = sk.sign(b"message")
+    assert fe.verify_ed25519(pub, b"message", sig) is True
+    order = 2**252 + 27742317777372353535851937790883648493
+    s_int = int.from_bytes(sig[32:], "little")
+    assert s_int < order
+    malleated = sig[:32] + (s_int + order).to_bytes(32, "little")
+    assert fe.verify_ed25519(pub, b"message", malleated) is False
+
+
 def test_key_id_is_the_first_32_hex_of_the_sha256():
     pub = bytes.fromhex(_RFC[0][0])
     assert fe.key_id_for(pub) == hashlib.sha256(pub).hexdigest()[:32] and len(fe.key_id_for(pub)) == 32
@@ -699,6 +712,30 @@ async def test_rekey_of_a_revoked_agent_is_an_explicit_admin_decision(pool, db_p
     await _enroll(pool, full, "old-1")
     a = await _row(db_pool, "SELECT status, revoked_at, revoked_by, legacy FROM fleet_agents WHERE id = $1", aid)
     assert a["status"] == "enrolled" and a["revoked_at"] is None and a["revoked_by"] is None and a["legacy"] is False
+
+
+async def test_a_rekey_token_minted_before_the_revocation_cannot_undo_it(pool, db_pool):
+    aid, _ = await _seed_legacy_agent(db_pool)
+    full, _ = await _mint(pool, for_agent=aid)                       # minted while the agent was still trusted
+    await db_pool.execute("UPDATE fleet_agents SET status = 'revoked', revoked_at = NOW(), revoked_by = 'admin' "
+                          "WHERE id = $1", aid)
+    err = await _fail(pool, full, "old-1")
+    assert (err.status, err.detail) == GENERIC
+    a = await _row(db_pool, "SELECT status, revoked_at, legacy FROM fleet_agents WHERE id = $1", aid)
+    assert a["status"] == "revoked" and a["revoked_at"] is not None and a["legacy"] is True
+    assert await db_pool.fetchval("SELECT count(*) FROM fleet_agent_keys") == 0
+    assert await _uses(db_pool, full) == 0                           # the claim was rolled back with the refusal
+    # a token minted AFTER the revocation is the admin's explicit decision to bring the agent back
+    fresh, _ = await _mint(pool, for_agent=aid)
+    assert (await _enroll(pool, fresh, "old-1"))["agent_id"] == str(aid)
+
+
+async def test_an_undated_revocation_is_never_rekeyed(pool, db_pool):
+    aid, _ = await _seed_legacy_agent(db_pool, status="revoked")      # revoked_at IS NULL (a v1 row)
+    full, _ = await _mint(pool, for_agent=aid)
+    err = await _fail(pool, full, "old-1")
+    assert (err.status, err.detail) == GENERIC
+    assert await db_pool.fetchval("SELECT status FROM fleet_agents WHERE id = $1", aid) == "revoked"
 
 
 async def test_a_failed_rekey_rolls_everything_back(pool, db_pool):
@@ -957,6 +994,10 @@ async def test_preexisting_agents_are_marked_legacy_and_nothing_else_changes(emp
             assert r["silent_after_s"] == 300 and r["online"] is True and r["node_ref"] is None
             for col in ("status", "token_prefix", "token_hash", "enrolled_at", "last_seen"):
                 assert r[col] == before[host][col], (host, col)    # rows and credentials untouched
+            # only the v1 revoked agent gets (dated) a revoked_at: a re-key token must postdate a revocation
+            assert (r["revoked_at"] is not None) == (host == "v1-revoked"), host
+            if host == "v1-revoked":
+                assert r["revoked_at"] == before[host]["last_seen"]
         assert await con.fetchval("SELECT count(*) FROM agent_inventory") == 3     # history kept
         assert await con.fetchval("SELECT count(*) FROM fleet_agent_keys") == 0
         for t in ("fleet_enroll_tokens", "fleet_agent_keys", "agent_posture", "reach_node_facts"):

@@ -5,7 +5,9 @@ server did that at ingest); it only trusts ``signed: true`` and passes ``key_id`
 ``evidence_ref`` through into witnesses so a verifier can find the evidence again.
 
 Strictness: every known key is type-checked and anything malformed is a ``FactError`` (the graph
-loader turns it into a ``GraphError``); unknown keys are ignored. Semantic gaps are *not* errors:
+loader turns it into a ``GraphError``); unknown keys are ignored, except one that looks like a
+misspelt conflict marker (``conflicts``), which would otherwise read as "no conflict". Semantic gaps
+are *not* errors:
 a missing ``conf`` is read as ``approximate`` and a missing ``partial`` as ``True`` so that a
 builder that forgot them yields UNKNOWN rather than a pass.
 """
@@ -160,6 +162,11 @@ def parse_fact(collector: str, raw: Any, nid: str, budget: list[int]) -> Fact:
     what = f"node {nid!r} facts.{collector}"
     if not isinstance(raw, dict):
         raise FactError(f"{what}: a fact must be an object")
+    for k in raw:
+        # Unknown keys are tolerated (a newer builder may add informational ones) except a
+        # misspelled conflict marker, which would silently read as "no conflict".
+        if isinstance(k, str) and "conflict" in k.lower() and k != "conflict":
+            raise FactError(f"{what}: unknown key {k!r} (the conflict marker is 'conflict')")
     status = raw.get("status")
     if not isinstance(status, str) or status not in STATUSES:
         raise FactError(f"{what}: status must be one of {STATUSES}")

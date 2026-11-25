@@ -533,3 +533,232 @@ async def test_a_violated_result_without_the_unproven_list_closes_nothing(db_poo
     rep = await sync(db_pool, fake_redis, res, version=8)
     assert rep.closed == 0 and rep.close_skipped == "no_target_list"
     assert {r["status"] for r in await rows(db_pool)} == {"open"}
+
+
+# =========================================================================== #
+# P2: host-config verdicts (hop-less witnesses, one finding per (invariant, host))
+# =========================================================================== #
+
+HOST_INV = "std:server-ssh-hardened"
+AG1, AG2, AG3 = (f"agent:{uuid.UUID(int=i)}" for i in (1, 2, 3))
+
+
+def hw(node, *, clause="0.0.1", field="host.sshd.password_login_possible",
+       predicate="host.sshd.password_login_possible == false", op="==", expected="false", observed="true",
+       tier="configured", seq="5"):
+    """A host-config witness exactly as the library reports it (all-string detail, no hops)."""
+    return {"hops": [], "weakest_basis": tier, "confirmed": False, "detail": {
+        "node": node, "field": field, "clause": clause, "predicate": predicate, "op": op, "expected": expected,
+        "observed": observed, "tier": tier, "observed_at": "2026-12-01T08:30:00Z", "source": "host_fw",
+        "signed": "true", "key_id": "0f3a9c1d77b24e5a8c10d2e4b6a8f012", "seq": seq, "evidence_ref": f"posture:{seq}"}}
+
+
+def hres(verdict, witnesses=(), *, violating=(), unproven=(), blind=(), tier="configured", truncated=False,
+         digest="sha256:host"):
+    r = result(verdict, *witnesses, assertion="host-config", tier=tier, digest=digest)
+    r["invariant"] = HOST_INV
+    r["violating_targets"] = sorted(violating)
+    r["unproven_targets"] = sorted(unproven)
+    r["violating_truncated"] = truncated
+    r["blind_spots"] = [{"node": n, "reason": why, "relevant": True, "direction": "host", "collector": col}
+                        for n, why, col in blind]
+    return r
+
+
+async def hsync(pool, redis, res, **kw):
+    kw.setdefault("inv", HOST_INV)
+    return await sync(pool, redis, res, **kw)
+
+
+def by_target(fr):
+    return {json.loads(r["evidence"])["target_ref"]: r["status"] for r in fr}
+
+
+def test_target_of_a_host_witness_is_its_node():
+    assert fs.target_of("host-config", hw(AG1)) == AG1
+    assert fs.target_of("host-config", hw("asset:" + str(uuid.uuid4()))).startswith("asset:")
+    assert fs.target_of("host-config", {"hops": [], "detail": {}}) is None
+    assert fs.target_of("host-config", {"hops": [], "detail": {"node": ""}}) is None
+    assert fs.target_of("host-config", {"hops": [], "detail": {"node": 5}}) is None
+    # hops on a host witness are ignored: the host is the target, never a hop destination
+    odd = hw(AG1)
+    odd["hops"] = [hop("internet", "asset:other")]
+    assert fs.target_of("host-config", odd) == AG1
+
+
+def test_describe_a_host_witness_in_words_with_the_evidence():
+    text = fs.describe_witness("host-config", hw(AG1), {AG1: "web-1"})
+    for part in ("web-1", "host.sshd.password_login_possible == false", "found true", "required == false",
+                 "configured evidence", "signed", "key 0f3a9c1d77b24e5a8c10d2e4b6a8f012", "seq 5", "2026-12-01T08:30:00Z"):
+        assert part in text, part
+    assert AG1 not in text                                   # the label replaces the raw ref
+
+
+def test_agent_supplied_text_cannot_break_the_description():
+    nasty = hw(AG1, observed="yes\n\r\x00\x1b[31m" + "A" * 500 + " done", predicate="p\nq")
+    text = fs.describe_witness("host-config", nasty, {})
+    assert "\n" not in text and "\x00" not in text and "\x1b" not in text and " " not in text
+    assert len(text) < 700 and "..." in text
+
+
+def test_several_failing_clauses_of_one_host_fold_into_one_finding_item():
+    w1, w2 = hw(AG1, clause="0.0.1"), hw(AG1, clause="0.0.4", field="host.sshd.maxauthtries",
+                                         predicate="host.sshd.maxauthtries <= 4", op="<=", expected="4", observed="6")
+    w3 = hw(AG2)
+    res = hres("VIOLATED", [w1, w3, w2], violating=[AG1, AG2])
+    items, targets = fs.build_items(
+        invariant_id=HOST_INV, title="Servers do not allow password or root SSH login", assertion="host-config",
+        digest="sha256:d", severity="high", result=res, graph_version=3, proposed=["harden"],
+        labels={AG1: "web-1"}, live_assets=set())
+    assert targets == [AG1, AG2] and len(items) == 2
+    one, two = items
+    assert one["rule_id"] == f"invariant:{HOST_INV}@{AG1}" and two["rule_id"] == f"invariant:{HOST_INV}@{AG2}"
+    assert one["asset_kind"] == "org" and one["asset_value"] == "paddock-assurance" and "asset_id" not in one
+    assert "web-1" in one["title"] and "1) " in one["description"] and "2) " in one["description"]
+    assert "maxauthtries <= 4" in one["description"] and "found 6" in one["description"]
+    assert "1) " not in two["description"]
+    assert tuple(one["evidence"]) == fs.EVIDENCE_KEYS and not FORBIDDEN_KEYS & set(one["evidence"])
+    assert one["evidence"]["witness"] == w1 and one["evidence"]["target_ref"] == AG1
+    assert one["remediation"] == fs._REMEDIATION["host-config"] and "configuration" in one["remediation"]
+    assert not CVE_LIKE.search(json.dumps(one))
+
+
+def test_a_corroborated_host_is_an_asset_finding_with_the_plain_rule_id():
+    aid = uuid.uuid4()
+    items, _ = fs.build_items(
+        invariant_id=HOST_INV, title="t", assertion="host-config", digest="d", severity="high",
+        result=hres("VIOLATED", [hw(f"asset:{aid}")], violating=[f"asset:{aid}"]), graph_version=1,
+        proposed=[], labels={}, live_assets={aid})
+    (item,) = items
+    assert item["rule_id"] == f"invariant:{HOST_INV}" and item["asset_id"] == str(aid) and "asset_value" not in item
+
+
+async def test_a_host_violation_opens_one_finding_per_host_and_repeats_do_not_duplicate(db_pool, fake_redis):
+    res = hres("VIOLATED", [hw(AG1), hw(AG1, clause="0.0.4"), hw(AG2)], violating=[AG1, AG2])
+    rep = await hsync(db_pool, fake_redis, res)
+    assert (rep.opened, rep.targets) == (2, 2)
+    fr = await rows(db_pool)
+    assert by_target(fr) == {AG1: "open", AG2: "open"}
+    assert {r["a_kind"] for r in fr} == {"org"}
+    again = await hsync(db_pool, fake_redis, res, version=8)
+    assert (again.opened, again.updated) == (0, 2) and len(await rows(db_pool)) == 2
+
+
+async def test_a_hostname_titles_the_finding_when_the_agent_row_exists(db_pool, fake_redis):
+    aid = uuid.uuid4()
+    await db_pool.execute("INSERT INTO fleet_agents (id, hostname) VALUES ($1, 'web-7.example.com')", aid)
+    ref = f"agent:{aid}"
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(ref)], violating=[ref]))
+    (f,) = await rows(db_pool)
+    assert "web-7.example.com" in f["title"] and "web-7.example.com" in f["description"]
+
+
+async def test_unknown_for_a_host_never_opens_or_closes(db_pool, fake_redis):
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1)], violating=[AG1]))
+    rep = await hsync(db_pool, fake_redis, hres("UNKNOWN", unproven=[AG1], blind=[(AG1, "stale", "sshd")]), version=8)
+    assert rep.skipped == "unknown" and (rep.opened, rep.closed) == (0, 0)
+    assert by_target(await rows(db_pool)) == {AG1: "open"}
+
+
+async def test_a_violated_verdict_keeps_the_finding_of_a_host_that_is_merely_unknown(db_pool, fake_redis):
+    """AG1 violated and went silent (UNKNOWN) while AG2 still violates: AG1's finding stays open;
+    AG3 (checked and clean now) is the only one that closes."""
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1), hw(AG2), hw(AG3)], violating=[AG1, AG2, AG3]))
+    res = hres("VIOLATED", [hw(AG2)], violating=[AG2], unproven=[AG1], blind=[(AG1, "stale", "sshd")])
+    rep = await hsync(db_pool, fake_redis, res, version=8)
+    assert rep.closed == 1
+    assert by_target(await rows(db_pool)) == {AG1: "open", AG2: "open", AG3: "fixed"}
+
+
+async def test_a_host_blind_spot_alone_also_keeps_the_finding_open(db_pool, fake_redis):
+    """Defence in depth: an older library without ``unproven_targets`` entries for hosts still
+    names the host in a ``direction: host`` blind spot."""
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1), hw(AG2)], violating=[AG1, AG2]))
+    res = hres("VIOLATED", [hw(AG2)], violating=[AG2], blind=[(AG1, "unsigned", "sshd")])
+    rep = await hsync(db_pool, fake_redis, res, version=8)
+    assert rep.closed == 0 and by_target(await rows(db_pool)) == {AG1: "open", AG2: "open"}
+    assert fs._blind_targets(res) == [AG1]
+
+
+async def test_a_host_that_stops_violating_while_others_still_do_is_closed(db_pool, fake_redis):
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1), hw(AG2)], violating=[AG1, AG2]))
+    rep = await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG2)], violating=[AG2]), version=8)
+    assert rep.closed == 1 and by_target(await rows(db_pool)) == {AG1: "fixed", AG2: "open"}
+    (fixed,) = [r for r in await rows(db_pool) if r["status"] == "fixed"]
+    assert fixed["fix_verified_at"] is None                    # configured evidence is never "verified"
+
+
+async def test_holds_closes_every_host_finding_when_nothing_is_undecided(db_pool, fake_redis):
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1), hw(AG2)], violating=[AG1, AG2]))
+    rep = await hsync(db_pool, fake_redis, hres("HOLDS", tier="configured"), version=8)
+    assert rep.closed == 2 and rep.verified == 0
+    assert set(by_target(await rows(db_pool)).values()) == {"fixed"}
+
+
+async def test_holds_over_a_lower_coverage_floor_does_not_close_the_hosts_it_did_not_prove(db_pool, fake_redis):
+    """A custom floor below 1.0 lets HOLDS stand with unknown hosts. Those hosts' findings must
+    stay open: 'silent' is not 'fixed'. The decided host's finding closes."""
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1), hw(AG2)], violating=[AG1, AG2]))
+    res = hres("HOLDS", unproven=[AG1], blind=[(AG1, "stale", "sshd")])
+    rep = await hsync(db_pool, fake_redis, res, version=8)
+    assert rep.closed == 1 and by_target(await rows(db_pool)) == {AG1: "open", AG2: "fixed"}
+    # and the host comes back clean later: now it closes
+    rep = await hsync(db_pool, fake_redis, hres("HOLDS"), version=9)
+    assert rep.closed == 1 and set(by_target(await rows(db_pool)).values()) == {"fixed"}
+
+
+async def test_a_host_blind_spot_also_protects_a_holds_close(db_pool, fake_redis):
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1)], violating=[AG1]))
+    rep = await hsync(db_pool, fake_redis, hres("HOLDS", blind=[(AG1, "approximate", "firewall")]), version=8)
+    assert rep.closed == 0 and by_target(await rows(db_pool)) == {AG1: "open"}
+
+
+@pytest.mark.parametrize("why,patch", [
+    ("no list", lambda r: r.pop("unproven_targets")),
+    ("bad list", lambda r: r.update(unproven_targets=[1, 2])),
+    ("not a list", lambda r: r.update(unproven_targets="agent:x")),
+    ("truncated", lambda r: r.update(violating_truncated=True)),
+])
+async def test_a_host_holds_without_a_trustworthy_undecided_list_closes_nothing(db_pool, fake_redis, why, patch):
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1)], violating=[AG1]))
+    res = hres("HOLDS")
+    patch(res)
+    rep = await hsync(db_pool, fake_redis, res, version=8)
+    assert rep.closed == 0 and rep.close_skipped in ("no_target_list", "truncated"), why
+    assert by_target(await rows(db_pool)) == {AG1: "open"}
+
+
+async def test_the_p1_holds_still_closes_everything_even_with_blind_spots(db_pool, fake_redis):
+    """Unchanged for the reach assertions: HOLDS there is sound over unknown edges by construction."""
+    a = await mk_asset(db_pool)
+    await sync(db_pool, fake_redis, result("VIOLATED", reach_witness(f"asset:{a}")))
+    res = result("HOLDS", tier="observed")
+    res["unproven_targets"] = [f"asset:{a}"]
+    res["blind_spots"] = [{"node": f"asset:{a}", "reason": "no_sensor", "relevant": True, "direction": "in"}]
+    assert (await sync(db_pool, fake_redis, res, version=8)).closed == 1
+
+
+async def test_a_host_recurrence_reopens_the_fixed_finding(db_pool, fake_redis):
+    res = hres("VIOLATED", [hw(AG1)], violating=[AG1])
+    await hsync(db_pool, fake_redis, res)
+    await hsync(db_pool, fake_redis, hres("HOLDS"), version=8)
+    (fixed,) = await rows(db_pool)
+    assert fixed["status"] == "fixed"
+    rep = await hsync(db_pool, fake_redis, res, version=9, now=NOW + dt.timedelta(hours=1))
+    assert (rep.reopened, rep.opened) == (1, 0)
+    (back,) = await rows(db_pool)
+    assert back["id"] == fixed["id"] and back["status"] == "open"
+
+
+async def test_human_decisions_on_host_findings_survive(db_pool, fake_redis):
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1), hw(AG2)], violating=[AG1, AG2]))
+    await db_pool.execute("UPDATE findings SET status = 'accepted', status_by = 'alice', status_reason = 'known' "
+                          "WHERE evidence->>'target_ref' = $1", AG1)
+    await hsync(db_pool, fake_redis, hres("HOLDS"), version=8)
+    assert by_target(await rows(db_pool)) == {AG1: "accepted", AG2: "fixed"}
+
+
+async def test_a_stale_evaluator_cannot_close_host_findings(db_pool, fake_redis):
+    await hsync(db_pool, fake_redis, hres("VIOLATED", [hw(AG1)], violating=[AG1]))
+    rep = await hsync(db_pool, fake_redis, hres("HOLDS"), version=8, lease_owner="nobody")
+    assert rep.skipped == "lease_lost" and by_target(await rows(db_pool)) == {AG1: "open"}

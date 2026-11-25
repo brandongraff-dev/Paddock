@@ -73,6 +73,7 @@ from .growth import suppliers as growth_suppliers
 from .growth import trust as growth_trust
 from .growth.config import growth_settings
 from .growth.runner import growth_loop
+from . import fleet_monitor
 from . import sensors as sensors_svc
 from . import tenancy
 from .routers import sensors as sensors_router
@@ -144,6 +145,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.growth_task = growth_task
     # Sentry liveness: flags silent sensors and emits sensor.offline/online.
     sensor_task: asyncio.Task | None = asyncio.create_task(sensors_svc.monitor_loop(app))
+    # Fleet agent liveness: flags silent host agents and emits agent.offline/online.
+    fleet_agent_task: asyncio.Task | None = asyncio.create_task(fleet_monitor.fleet_agent_monitor_loop(app))
     # Provable containment: builds the reach graph and evaluates invariants per tenant.
     assurance_task: asyncio.Task | None = None
     if settings.assurance_enabled:
@@ -153,7 +156,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        for task in (scheduler_task, anchor_task, growth_task, sensor_task, assurance_task):
+        for task in (scheduler_task, anchor_task, growth_task, sensor_task, fleet_agent_task, assurance_task):
             if task is None:
                 continue
             task.cancel()

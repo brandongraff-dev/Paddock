@@ -12,7 +12,10 @@ This is the heart of the safety rails as seen from the host:
     agent is running dry, ``apply_action`` SIMULATES -- it calls the enforcer's
     ``simulate`` (never ``apply``) and mutates nothing.
   * SAFETY RAIL #5 (reversible): a real apply records the enforcer's revert plan
-    on the result; ``revert_action`` feeds that plan back to the enforcer.
+    on the result. On revert that plan is untrusted DATA from the server: the
+    enforcer re-derives the one fixed plan it could have produced from the
+    original typed action and refuses everything else (audit 7.4: a server-
+    supplied ``rm -rf`` argv used to be executed verbatim).
   * SAFETY RAIL #6 (allowed actions only): anything outside ALLOWED_ACTIONS is
     refused before it reaches the enforcer.
 """
@@ -22,13 +25,26 @@ import ipaddress
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Dict, Optional
 
 from . import ALLOWED_ACTIONS
 
-_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9_](-?[a-z0-9_]){0,62}\.)+[a-z]{2,63}$", re.I)
-_PORTSPEC_RE = re.compile(r"^(in|out)?:?(tcp|udp):(\d{1,5})$", re.I)
+_DOMAIN_RE = re.compile(r"(?=.{1,253}$)([a-z0-9_](-?[a-z0-9_]){0,62}\.)+[a-z]{2,63}", re.I)
+_PORTSPEC_RE = re.compile(r"(in|out)?:?(tcp|udp):(\d{1,5})", re.I)
 _REMOTEISH = ("://", "@", "ssh:", "\\\\")
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class EnforcerError(RuntimeError):
+    """An enforcer could not do what it was asked."""
+
+
+class NotSupportedError(EnforcerError):
+    """The running platform cannot apply this action (dry-run only)."""
+
+
+class RevertRefused(EnforcerError):
+    """A revert plan that this agent could not have produced (or cannot safely follow)."""
 
 
 class HostLocalError(ValueError):
@@ -53,26 +69,30 @@ def assert_host_local(action_type: str, target: str) -> str:
 
     Mirrors the orchestrator's guard so the agent independently refuses anything
     that is not strictly host-local -- defence in depth, not trust in the server.
+    The returned value is the CANONICAL form; enforcers build commands only from it.
     """
     if action_type not in ALLOWED_ACTIONS:
-        raise HostLocalError(f"action_type {action_type!r} is not allowed")
-    t = (target or "").strip()
+        raise HostLocalError("action_type %r is not allowed" % (action_type,))
+    t = (target or "").strip() if isinstance(target, str) else ""
     if not t:
         raise HostLocalError("target is required")
+    if _CONTROL_RE.search(t):
+        raise HostLocalError("target must not contain control characters")
     low = t.lower()
     for bad in _REMOTEISH:
         if bad in low:
             raise HostLocalError(
-                f"target {t!r} looks like a remote reference; actions are host-local only"
+                "target %r looks like a remote reference; actions are host-local only" % t
             )
     if action_type == "block_ip":
+        if "%" in t:
+            raise HostLocalError("block_ip target must be a bare IP (no zone id)")
         try:
-            ipaddress.ip_address(t)
+            return str(ipaddress.ip_address(t))
         except ValueError as exc:
-            raise HostLocalError(f"block_ip target must be a bare IP: {exc}") from exc
-        return t
+            raise HostLocalError("block_ip target must be a bare IP: %s" % exc) from exc
     if action_type == "block_domain":
-        if not _DOMAIN_RE.match(t):
+        if not _DOMAIN_RE.fullmatch(t):
             raise HostLocalError("block_domain target must be a bare domain name")
         return low
     if action_type == "quarantine_file":
@@ -82,12 +102,16 @@ def assert_host_local(action_type: str, target: str) -> str:
             raise HostLocalError("quarantine_file target must not contain '..'")
         return t
     if action_type == "firewall_rule":
-        if not _PORTSPEC_RE.match(t):
+        m = _PORTSPEC_RE.fullmatch(t)
+        if not m:
             raise HostLocalError("firewall_rule target must be a local port spec like 'in:tcp:22'")
-        return low
+        port = int(m.group(3))
+        if not 1 <= port <= 65535:
+            raise HostLocalError("firewall_rule port must be 1-65535")
+        return "%s:%s:%d" % ((m.group(1) or "in").lower(), m.group(2).lower(), port)
     if action_type == "revert":
         return t
-    raise HostLocalError(f"unknown action_type {action_type!r}")
+    raise HostLocalError("unknown action_type %r" % (action_type,))
 
 
 @dataclass
@@ -98,12 +122,12 @@ class Action:
     target: str
     status: str
     dry_run: bool = True
-    reason: str | None = None
-    revert_of: str | None = None
-    result: dict[str, Any] = field(default_factory=dict)
+    reason: Optional[str] = None
+    revert_of: Optional[str] = None
+    result: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_server(cls, d: dict[str, Any]) -> "Action":
+    def from_server(cls, d: Dict[str, Any]) -> "Action":
         return cls(
             id=str(d["id"]),
             action_type=d["action_type"],
@@ -122,8 +146,25 @@ class Outcome:
     status: str                      # 'applied' | 'failed' | 'simulated'
     dry_run: bool
     applied: bool
-    output: dict[str, Any]
-    revert: dict[str, Any] | None = None
+    output: Dict[str, Any]
+    revert: Optional[Dict[str, Any]] = None
+
+
+def _refusal(simulate_only: bool, code: str, detail: str) -> Outcome:
+    """A refusal is a ``failed`` outcome for a real action; a dry run only ever simulates (and so never
+    changes server state)."""
+    if simulate_only:
+        return Outcome(status="simulated", dry_run=True, applied=False,
+                       output={"dry_run": True, "refused": code, "detail": detail})
+    return Outcome(status="failed", dry_run=False, applied=False,
+                   output={"error": code, "detail": detail})
+
+
+def _is_ipv6(target: str) -> bool:
+    try:
+        return ipaddress.ip_address(target).version == 6
+    except ValueError:
+        return False
 
 
 def apply_action(action: Action, enforcer, *, agent_dry_run: bool) -> Outcome:
@@ -133,24 +174,34 @@ def apply_action(action: Action, enforcer, *, agent_dry_run: bool) -> Outcome:
     approved, or :class:`HostLocalError` if the target is not host-local.
     """
     if action.action_type not in ALLOWED_ACTIONS:
-        raise ActionError(f"action_type {action.action_type!r} is not allowed")
+        raise ActionError("action_type %r is not allowed" % (action.action_type,))
     # RAIL #2: cannot apply without an explicit server approval.
     if action.status != Status.APPROVED.value:
         raise ActionError(
-            f"cannot apply action {action.id}: status is '{action.status}', not 'approved'"
+            "cannot apply action %s: status is '%s', not 'approved'" % (action.id, action.status)
         )
     # RAIL #1: host-local only (also re-validated independently of the server).
-    assert_host_local(action.action_type, action.target)
+    target = assert_host_local(action.action_type, action.target)
 
     # RAIL #3: dry-run unless the server approved it for real AND the agent is
     # not forced into dry-run. A dry run SIMULATES and mutates nothing.
     simulate_only = action.dry_run or agent_dry_run
+
+    # The iptables back end is IPv4-only: refuse an IPv6 block loudly instead of failing silently.
+    if action.action_type == "block_ip" and _is_ipv6(target):
+        return _refusal(simulate_only, "ipv6_not_supported",
+                        "block_ip for IPv6 is not supported (the enforcer drives IPv4 iptables); "
+                        "nothing was applied")
+
     if simulate_only:
-        plan = enforcer.simulate(action.action_type, action.target)
+        try:
+            plan = enforcer.simulate(action.action_type, target)
+        except EnforcerError as exc:
+            return _refusal(True, "refused", str(exc))
         return Outcome(status="simulated", dry_run=True, applied=False, output=plan)
 
     try:
-        applied = enforcer.apply(action.action_type, action.target)
+        applied = enforcer.apply(action.action_type, target)
     except Exception as exc:  # noqa: BLE001 -- report failure, never crash the loop
         return Outcome(status="failed", dry_run=False, applied=False,
                        output={"error": str(exc)})
@@ -163,11 +214,30 @@ def apply_action(action: Action, enforcer, *, agent_dry_run: bool) -> Outcome:
 
 
 def revert_action(action: Action, enforcer, *, agent_dry_run: bool) -> Outcome:
-    """Undo an applied block using the recorded revert plan (RAIL #5)."""
-    plan = action.result.get("revert") or {}
-    simulate_only = agent_dry_run
+    """Undo an applied block (RAIL #5).
+
+    The plan in ``action.result["revert"]`` is **untrusted server data**. The enforcer re-derives the
+    trusted plan from the typed action it describes (``validate_revert``) and the agent only ever
+    executes that; a plan the agent could not have produced is refused and nothing runs.
+    """
+    if action.action_type != "revert":
+        raise ActionError("revert_action needs a 'revert' action, not %r" % (action.action_type,))
+    # RAIL #2 applies to reverts too: no unapproved revert touches the host.
+    if action.status != Status.APPROVED.value:
+        raise ActionError(
+            "cannot revert via action %s: status is '%s', not 'approved'" % (action.id, action.status)
+        )
+    simulate_only = action.dry_run or agent_dry_run
+    untrusted = (action.result or {}).get("revert")
+    try:
+        plan = enforcer.validate_revert(untrusted)
+    except EnforcerError as exc:
+        return _refusal(simulate_only, "revert_plan_rejected", str(exc))
     if simulate_only:
-        preview = enforcer.simulate_revert(plan)
+        try:
+            preview = enforcer.simulate_revert(plan)
+        except EnforcerError as exc:
+            return _refusal(True, "revert_plan_rejected", str(exc))
         return Outcome(status="simulated", dry_run=True, applied=False, output=preview)
     try:
         out = enforcer.revert(plan)

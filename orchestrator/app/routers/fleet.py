@@ -1,7 +1,8 @@
-"""Fleet agents + GATED defensive enforcement (schema 014).
+"""Fleet agents + GATED defensive enforcement (schema 014) + signed host evidence (schema 041).
 
-A lightweight host agent enrolls here, reports inventory, and can apply
-HOST-LOCAL defensive blocks -- but only through a strict, auditable gate:
+A host agent enrolls here with a per-tenant one-time token, proves possession of an Ed25519 key, and from then on
+speaks through SIGNED envelopes (docs/ASSURANCE_P2.md section 2): heartbeat, posture, key rotation. It can also
+apply HOST-LOCAL defensive blocks, but only through a strict, auditable gate:
 
     propose  --(admin approve, four-eyes)-->  approved  --(agent)-->  applied
        |                                          |                      |
@@ -15,9 +16,19 @@ remote host), is fully reversible (each applied block records how to revert and
 ``revert`` is a first-class action), and writes every transition to the
 tamper-evident audit log.
 
-This router holds inline Pydantic models (we do not touch shared models.py) and
-is wired by hand in production (see docs/FLEET_WIRING.md) -- main.py is not
-edited here.
+Audiences (see ``auth._RULES``):
+
+* **agents** (``X-Agent-Token: fat_...`` -> the *agent principal*, capability ``agent``, held by no role, key or
+  scope): ``/{id}/heartbeat``, ``/{id}/posture``, ``/{id}/keys/rotate``, ``/{id}/inventory`` (v1, unsigned, never
+  evidence) and ``/actions/{id}/result``. Every handler asserts ``principal.agent_id`` equals the id it acts on.
+* **enrollment** (``POST /enroll``): public to the middleware, authenticated here by the ``fet_`` token.
+* **admins**: enrollment tokens, agent and key revocation, the action gate.
+* **triage**: the full latest posture of one agent. ``GET /agents[/{id}]`` stays a viewer-safe summary.
+
+Signature verification, replay protection and persistence live in ``app/fleet_posture.py``; token and key
+binding in ``app/fleet_enroll.py``; liveness in ``app/fleet_monitor.py``.
+
+This router holds inline Pydantic models (we do not touch shared models.py).
 
 Allowed action types ONLY: block_ip, block_domain, quarantine_file,
 firewall_rule, revert. Nothing else. No scanning, no offensive capability.
@@ -29,22 +40,21 @@ Network quarantine (schema 025) reuses this exact gate: a
 """
 from __future__ import annotations
 
-import hmac
 import ipaddress
+import json
 import logging
 import os
 import re
-import secrets
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, StringConstraints, ValidationError
 
-from .. import audit
-from .. import auth as auth_svc
-from ..auth import Principal, current_principal, require
+from .. import audit, fleet_enroll, fleet_monitor, fleet_posture
+from ..auth import Principal, client_ip, current_principal, require
 from ..db import get_pool
 
 logger = logging.getLogger(__name__)
@@ -70,35 +80,10 @@ ACTION_STATUSES: frozenset[str] = frozenset(
 # An agent is "stale" if we have not heard from it in this long.
 STALE_AFTER_SEC = 180
 
-# Agent credential: fat_<prefix>_<secret>. Only the sha256 is ever stored, in
-# fleet_agents.token_hash (mirrors the api_keys pattern in auth.py).
-_AGENT_TOKEN_SCHEME = "fat"
-
-
-def _enroll_secret() -> str | None:
-    """Shared enrollment bootstrap secret (env), or None in dev.
-
-    When ``FLEET_ENROLL_TOKEN`` is set, an enrollment must present exactly that
-    token. When unset (dev / tests) any non-empty token is accepted and the
-    event is logged -- the gate that actually matters is approve-before-apply,
-    not enrollment strength.
-    """
-    v = os.environ.get("FLEET_ENROLL_TOKEN")
-    return v or None
-
-
 def _allow_self_approve() -> bool:
     """Four-eyes toggle. Default False: approver must differ from requester."""
     return (os.environ.get("FLEET_ALLOW_SELF_APPROVE", "").strip().lower()
             in {"1", "true", "yes", "on"})
-
-
-def generate_agent_token() -> tuple[str, str, str]:
-    """Return (full_token, prefix, token_hash). Full token shown once."""
-    prefix = secrets.token_hex(4)
-    secret = secrets.token_urlsafe(32)
-    full = f"{_AGENT_TOKEN_SCHEME}_{prefix}_{secret}"
-    return full, prefix, auth_svc.hash_api_key(full)
 
 
 # --------------------------------------------------------------------------- #
@@ -164,29 +149,106 @@ def assert_host_local(action_type: str, target: str) -> str:
 # --------------------------------------------------------------------------- #
 
 class EnrollIn(BaseModel):
+    """``POST /v1/fleet/enroll``. The token travels in the body, never in a header or URL."""
     model_config = {"extra": "forbid"}
+    token: str = Field(min_length=1, max_length=256, description="per-tenant enrollment token (fet_...)")
     hostname: str = Field(min_length=1, max_length=253)
-    platform: str = Field(description="linux | windows | macos")
-    token: str = Field(min_length=1, description="enrollment bootstrap token")
-    agent_version: str | None = None
-    labels: list[str] = Field(default_factory=list)
-    capabilities: list[str] = Field(default_factory=lambda: ["inventory"])
+    public_key_b64: str = Field(min_length=1, max_length=128, description="raw 32-byte Ed25519 public key")
+    proof_b64: str = Field(min_length=1, max_length=256,
+                           description="the key's signature over 'paddock-enroll/v1\\n<token prefix>\\n<hostname>'")
+    agent_version: str | None = Field(default=None, max_length=64)
+    platform: str = Field(default="linux", max_length=16, description="linux | windows | macos")
+    capabilities: list[Annotated[str, StringConstraints(max_length=32)]] | None = Field(
+        default=None, max_length=16)
 
 
 class EnrollOut(BaseModel):
-    id: UUID
+    agent_id: UUID
+    agent_token: str = Field(description="shown ONCE; store it 0600 on the host")
+    key_id: str
+    tenant_id: UUID
+    server_time: str
     hostname: str
-    platform: str | None
-    status: str
-    agent_token: str = Field(description="shown ONCE; store it securely on the host")
     token_prefix: str
-    capabilities: list[str]
+    rekey: bool = Field(description="true when this enrollment rebound an existing agent (history kept)")
 
 
-class HeartbeatIn(BaseModel):
+class TokenMintIn(BaseModel):
     model_config = {"extra": "forbid"}
-    agent_version: str | None = None
-    status: str | None = Field(default=None, description="agent-reported health note")
+    label: str | None = Field(default=None, max_length=128)
+    labels: list[str] = Field(default_factory=list, max_length=fleet_enroll.MAX_LABELS,
+                              description="labels given to the agents this token enrolls")
+    max_uses: int = Field(default=1, ge=1, le=fleet_enroll.MAX_USES_LIMIT)
+    ttl_minutes: int = Field(default=fleet_enroll.DEFAULT_TTL_MINUTES, ge=1,
+                             le=fleet_enroll.MAX_TTL_MINUTES_SINGLE,
+                             description="at most 24 h when max_uses > 1")
+    for_agent: UUID | None = Field(
+        default=None, description="re-key token: rebinds this EXISTING agent (history kept); single use")
+
+
+class TokenOut(BaseModel):
+    id: UUID
+    token_prefix: str
+    label: str
+    labels: list[str]
+    max_uses: int
+    uses: int
+    for_agent: UUID | None
+    created_by: str | None
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    revoked_by: str | None
+    state: str = Field(description="pending | active | used | expired | revoked")
+
+
+class TokenCreated(TokenOut):
+    token: str = Field(description="the enrollment token; shown ONCE")
+
+
+class RevokeIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    reason: str | None = Field(default=None, max_length=512)
+
+
+class PostureAck(BaseModel):
+    ok: bool
+    seq: int
+    stored: bool = Field(description="a posture row was written (content changed, or the hourly refresh)")
+    changed: bool = Field(description="the content digest differs from the last stored posture")
+    idempotent: bool = False
+    server_time: str
+
+
+class RotateAck(BaseModel):
+    ok: bool
+    key_id: str = Field(description="the new, now active, key id")
+    server_time: str
+
+
+class EnvelopeDoc(BaseModel):
+    """Documentation of the signed envelope (docs/ASSURANCE_P2.md section 2). The handler parses the raw bytes
+    itself (strict JSON, duplicate keys refused); this model only describes them."""
+    v: int
+    alg: str = "ed25519"
+    kid: str
+    agent_id: UUID
+    tenant_id: UUID
+    kind: Literal["posture", "heartbeat", "rotate"]
+    seq: int = Field(ge=1)
+    issued_at: str
+    nonce: str
+    payload_type: str
+    payload_sha256: str
+    payload_len: int
+    collectors: dict[str, str]
+    payload_b64: str
+    sig: str
+
+
+def _envelope_body_doc() -> dict[str, Any]:
+    return {"requestBody": {"required": True, "content": {
+        "application/json": {"schema": EnvelopeDoc.model_json_schema()}}}}
 
 
 class PendingAction(BaseModel):
@@ -206,13 +268,16 @@ class HeartbeatOut(BaseModel):
     last_seen: datetime
     # Approved, real (dry_run=false) work the agent should carry out now.
     pending_actions: list[PendingAction] = Field(default_factory=list)
+    server_time: str | None = None
+    idempotent: bool = False
 
 
 class InventoryIn(BaseModel):
+    """The v1 inventory body (Fleet page only). UNSIGNED: it is never evidence for an invariant."""
     model_config = {"extra": "forbid"}
     os_info: dict[str, Any] = Field(default_factory=dict)
-    packages: list[dict[str, Any]] = Field(default_factory=list)
-    listeners: list[dict[str, Any]] = Field(default_factory=list)
+    packages: list[dict[str, Any]] = Field(default_factory=list, max_length=20000)
+    listeners: list[dict[str, Any]] = Field(default_factory=list, max_length=5000)
     posture: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -220,6 +285,7 @@ class InventoryOut(BaseModel):
     ok: bool
     inventory_id: UUID
     collected_at: datetime
+    signed: bool = Field(default=False, description="always false: the v1 inventory is never evidence")
 
 
 class AgentOut(BaseModel):
@@ -233,6 +299,13 @@ class AgentOut(BaseModel):
     last_seen: datetime | None
     enrolled_at: datetime
     stale: bool
+    # schema 041
+    online: bool = True
+    legacy: bool = Field(default=False, description="a v1 agent without a key: it must re-enroll")
+    node_ref: str | None = None
+    silent_after_s: int = 300
+    key_id: str | None = Field(default=None, description="the agent's active signing key")
+    last_posture_at: datetime | None = None
 
 
 class InventorySnapshot(BaseModel):
@@ -242,11 +315,47 @@ class InventorySnapshot(BaseModel):
     packages: list[dict[str, Any]]
     listeners: list[dict[str, Any]]
     posture: dict[str, Any]
+    signed: bool = Field(default=False, description="always false: the v1 inventory is never evidence")
+
+
+class KeyOut(BaseModel):
+    key_id: str
+    alg: str
+    status: str
+    last_seq: int
+    created_at: datetime
+    retired_at: datetime | None = None
+    revoked_at: datetime | None = None
+    revoke_reason: str | None = None
 
 
 class AgentDetailOut(AgentOut):
     inventory: InventorySnapshot | None = None
     action_counts: dict[str, int] = Field(default_factory=dict)
+    keys: list[KeyOut] = Field(default_factory=list)
+    identity: dict[str, Any] = Field(default_factory=dict, description="claimed identity (hostname, ips, basis)")
+
+
+class PostureOut(BaseModel):
+    """The full latest signed posture of an agent (``triage``). Tier is ``configured`` at best: signed is not true."""
+    agent_id: UUID
+    key_id: str
+    key_status: str | None = Field(description="status of the key that signed it (a revoked key's posture is untrusted)")
+    seq: int
+    schema_version: int
+    collected_at: datetime
+    received_at: datetime
+    signed: bool
+    tier: str
+    payload_sha256: str
+    size_bytes: int
+    header: dict[str, Any]
+    payload: dict[str, Any] | None
+    agent_status: str
+    online: bool
+    last_seen: datetime | None
+    silent_after_s: int
+    node_ref: str | None
 
 
 class ActionProposeIn(BaseModel):
@@ -356,9 +465,14 @@ def _stale(last_seen: datetime | None) -> bool:
     return (datetime.now(timezone.utc) - ref).total_seconds() > STALE_AFTER_SEC
 
 
-def _effective_status(db_status: str, last_seen: datetime | None) -> str:
+def _effective_status(db_status: str, last_seen: datetime | None, online: bool = True,
+                      legacy: bool = False) -> str:
     if db_status in ("revoked", "enrolled"):
         return db_status
+    if legacy:
+        return "stale"          # a v1 agent can no longer report: it only ages
+    if not online:
+        return "offline"
     return "stale" if _stale(last_seen) else db_status
 
 
@@ -392,211 +506,281 @@ async def _audit(
         logger.exception("fleet_audit_failed", extra={"action": action, "id": resource_id})
 
 
-async def _require_agent(pool, agent_id: UUID, token: str | None) -> dict[str, Any]:
-    """Authenticate an agent-facing call by its minted credential (defence in depth).
+def _assert_agent(principal: Principal, agent_id: UUID | str) -> None:
+    """The caller must BE the agent it acts on: an agent principal (capability ``agent``, which no user, key or
+    service credential holds) whose ``agent_id`` equals ``agent_id``. Anything else is a 403, so one agent can never
+    act as, or post evidence for, another, and an admin key can never post agent evidence."""
+    if (principal.kind != "agent" or not principal.has("agent")
+            or principal.agent_id is None or principal.agent_id != str(agent_id)):
+        raise HTTPException(status_code=403, detail="this route is for the agent itself")
 
-    The governance middleware already gates the route; this additionally proves
-    the caller is *this* agent, so one agent can never act as another.
-    """
-    if not token:
-        raise HTTPException(status_code=401, detail="missing agent token")
-    token_hash = auth_svc.hash_api_key(token.strip())
-    async with pool.acquire() as con:
-        row = await con.fetchrow(
-            "SELECT id, hostname, platform, status, token_hash FROM fleet_agents WHERE id = $1",
-            agent_id,
-        )
-    if row is None:
-        raise HTTPException(status_code=404, detail="agent not found")
-    if row["status"] == "revoked":
-        raise HTTPException(status_code=403, detail="agent revoked")
-    stored = row["token_hash"]
-    if not stored or not hmac.compare_digest(stored, token_hash):
-        raise HTTPException(status_code=401, detail="invalid agent token")
-    return dict(row)
+
+def _agent_principal(agent_id: UUID, principal: Principal = Depends(current_principal)) -> Principal:
+    _assert_agent(principal, agent_id)
+    return principal
+
+
+def _rejection_response(rej: fleet_posture.Rejection, headers: dict[str, str] | None = None) -> JSONResponse:
+    return JSONResponse(rej.response_body(), status_code=rej.status, headers=headers)
+
+
+async def _read_body(request: Request, limit: int) -> bytes:
+    """The raw request body, never more than ``limit`` bytes (declared length first, then the stream)."""
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > limit:
+        raise fleet_posture.Rejection(413, "body_too_large", f"the body exceeds {limit} bytes")
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise fleet_posture.Rejection(413, "body_too_large", f"the body exceeds {limit} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _ingest(request: Request, pool, principal: Principal, agent_id: UUID, kind: str):
+    """The shared body of heartbeat / posture / rotate: rate limit, capped read, then ``fleet_posture`` checks 1-10.
+    Returns ``(IngestResult, None)`` or ``(None, JSONResponse)``."""
+    route = "rotate" if kind == "rotate" else kind
+    tenant = str(principal.tenant_id)
+    if fleet_posture.rate_limited(route, agent_id):
+        rej = fleet_posture.Rejection(429, "rate_limited", "too many requests from this agent; slow down")
+        return None, _rejection_response(rej, {"Retry-After": "60"})
+    rid = getattr(request.state, "request_id", None)
+    ip = client_ip(request)
+    try:
+        body = await _read_body(request, fleet_posture.MAX_BODY_BYTES)
+    except fleet_posture.Rejection as rej:
+        await fleet_posture.record_rejection(pool, tenant_id=tenant, agent_id=agent_id, rej=rej,
+                                             request_id=rid, client_ip=ip, kind=kind, actor=principal.actor)
+        return None, _rejection_response(rej)
+    try:
+        res = await fleet_posture.ingest_envelope(
+            pool, agent_id=agent_id, tenant_id=tenant, kind=kind, body=body,
+            content_encoding=request.headers.get("content-encoding"), client_ip=ip, request_id=rid,
+            actor=principal.actor)
+    except fleet_posture.Rejection as rej:
+        return None, _rejection_response(rej)
+    if res.came_online:
+        await fleet_monitor.emit_transition(
+            pool, {"id": agent_id, "tenant_id": tenant, "hostname": res.agent.get("hostname", "")},
+            "online", at=res.server_time)
+    return res, None
+
+
+def _pending(rows: list[dict[str, Any]]) -> list[PendingAction]:
+    return [
+        PendingAction(
+            id=p["id"], action_type=p["action_type"], target=p["target"], dry_run=p["dry_run"],
+            status=p["status"], reason=p["reason"], revert_of=p["revert_of"], result=_as_dict(p["result"]))
+        for p in rows
+    ]
 
 
 # --------------------------------------------------------------------------- #
-# Enrollment
+# Enrollment (public to the middleware; authenticated here by the fet_ token)
 # --------------------------------------------------------------------------- #
 
 @router.post("/enroll", response_model=EnrollOut, status_code=status.HTTP_201_CREATED)
-async def enroll(
-    body: EnrollIn,
-    request: Request,
-    pool=Depends(get_pool),
-    principal: Principal = Depends(current_principal),
-):
-    """Enroll a host agent. Validates the bootstrap token, mints an agent id +
-    a one-time credential (only its sha256 is stored), upserts by hostname."""
-    secret = _enroll_secret()
-    if secret is not None:
-        if not hmac.compare_digest(body.token, secret):
-            raise HTTPException(status_code=401, detail="invalid enrollment token")
-    else:
-        logger.warning(
-            "FLEET_ENROLL_TOKEN unset -- accepting enrollment for %r without a "
-            "shared secret (dev mode). Set FLEET_ENROLL_TOKEN in production.",
-            body.hostname,
-        )
-
-    platform = body.platform.lower().strip()
-    if platform not in ("linux", "windows", "macos"):
-        raise HTTPException(status_code=422, detail="platform must be linux|windows|macos")
-
-    full, prefix, token_hash = generate_agent_token()
-    caps = sorted({c for c in (body.capabilities or ["inventory"]) if c}) or ["inventory"]
-
-    async with pool.acquire() as con:
-        row = await con.fetchrow(
-            """
-            INSERT INTO fleet_agents
-                (hostname, platform, agent_version, labels, capabilities,
-                 status, token_prefix, token_hash, enrolled_by)
-            VALUES ($1,$2,$3,$4::text[],$5::text[],'enrolled',$6,$7,$8)
-            ON CONFLICT (tenant_id, hostname) DO UPDATE SET
-                platform = EXCLUDED.platform,
-                agent_version = EXCLUDED.agent_version,
-                labels = EXCLUDED.labels,
-                capabilities = EXCLUDED.capabilities,
-                status = 'enrolled',
-                token_prefix = EXCLUDED.token_prefix,
-                token_hash = EXCLUDED.token_hash,
-                enrolled_by = EXCLUDED.enrolled_by,
-                enrolled_at = NOW()
-            RETURNING id, hostname, platform, status, capabilities
-            """,
-            body.hostname, platform, body.agent_version, list(body.labels),
-            caps, prefix, token_hash, principal.actor,
-        )
-
-    await _audit(
-        request, pool, action="enroll", resource_type="fleet_agent",
-        resource_id=str(row["id"]), actor=principal.actor, actor_role=principal.role,
-        details={"hostname": body.hostname, "platform": platform, "token_prefix": prefix},
-    )
+async def enroll(body: EnrollIn, request: Request, pool=Depends(get_pool)):
+    """Redeem a per-tenant enrollment token, bind an Ed25519 key (proof of possession required) and receive the
+    agent credential, ONCE. Every token failure is the same generic 401; failures are rate limited and lock the
+    client out; a taken hostname or key is a 409 that does not spend the token. A ``for_agent`` (re-key) token
+    rebinds an existing agent and keeps its history. The body (it holds the token) is never logged."""
+    try:
+        out = await fleet_enroll.enroll_agent(
+            pool, token=body.token, hostname=body.hostname, public_key_b64=body.public_key_b64,
+            proof_b64=body.proof_b64, agent_version=body.agent_version, platform=body.platform,
+            capabilities=body.capabilities, client_ip=client_ip(request))
+    except fleet_enroll.EnrollError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=exc.status, detail=exc.detail, headers=headers) from exc
     return EnrollOut(
-        id=row["id"], hostname=row["hostname"], platform=row["platform"],
-        status=row["status"], agent_token=full, token_prefix=prefix,
-        capabilities=list(row["capabilities"] or []),
-    )
+        agent_id=out["agent_id"], agent_token=out["agent_token"], key_id=out["key_id"],
+        tenant_id=out["tenant_id"], server_time=out["server_time"], hostname=out["hostname"],
+        token_prefix=out["token_prefix"], rekey=out["rekey"])
 
 
 # --------------------------------------------------------------------------- #
-# Heartbeat (agent-auth) -- updates last_seen + returns approved, real work
+# Enrollment tokens (admin)
 # --------------------------------------------------------------------------- #
 
-@router.post("/{agent_id}/heartbeat", response_model=HeartbeatOut)
-async def heartbeat(
-    agent_id: UUID,
-    body: HeartbeatIn,
-    pool=Depends(get_pool),
-    x_agent_token: str | None = Header(default=None, alias="X-Agent-Token"),
-):
-    await _require_agent(pool, agent_id, x_agent_token)
-    async with pool.acquire() as con:
-        row = await con.fetchrow(
-            """
-            UPDATE fleet_agents
-               SET last_seen = NOW(), status = 'online',
-                   agent_version = COALESCE($2, agent_version)
-             WHERE id = $1
-         RETURNING id, status, last_seen
-            """,
-            agent_id, body.agent_version,
-        )
-        # Pull the work the agent may actually carry out: approved AND real
-        # (dry_run = false). Dry-run simulations are driven by the operator CLI,
-        # never auto-applied by the run loop.
-        pend = await con.fetch(
-            """
-            SELECT id, action_type, target, dry_run, status, reason, revert_of, result
-              FROM agent_actions
-             WHERE agent_id = $1 AND status = 'approved' AND dry_run = FALSE
-             ORDER BY created_at ASC
-            """,
-            agent_id,
-        )
-    pending = [
-        PendingAction(
-            id=p["id"], action_type=p["action_type"], target=p["target"],
-            dry_run=p["dry_run"], status=p["status"], reason=p["reason"],
-            revert_of=p["revert_of"], result=_as_dict(p["result"]),
-        )
-        for p in pend
-    ]
-    return HeartbeatOut(id=row["id"], status=row["status"], last_seen=row["last_seen"],
-                        pending_actions=pending)
+def _token_out(view: dict[str, Any]) -> dict[str, Any]:
+    return {k: view[k] for k in TokenOut.model_fields}
+
+
+@router.post("/enroll-tokens", response_model=TokenCreated, status_code=201,
+             dependencies=[Depends(require("admin"))])
+async def mint_enroll_token(body: TokenMintIn, request: Request, pool=Depends(get_pool),
+                            principal: Principal = Depends(current_principal)):
+    """Mint a per-tenant enrollment token. Shown ONCE; only its sha256 is stored. Single use by default;
+    ``max_uses`` up to 50 needs a ttl of at most 24 h (cloud-init fleets). ``for_agent`` mints a re-key token."""
+    try:
+        full, view = await fleet_enroll.mint_token(
+            pool, actor=principal.actor, label=body.label, labels=body.labels, max_uses=body.max_uses,
+            ttl_minutes=body.ttl_minutes, for_agent=body.for_agent)
+    except fleet_enroll.TokenPolicyError as exc:
+        raise HTTPException(status_code=404 if exc.code == "not_found" else 422, detail=exc.detail) from exc
+    await _audit(request, pool, action="fleet.enroll_token.create", resource_type="fleet_enroll_token",
+                 resource_id=str(view["id"]), actor=principal.actor, actor_role=principal.role,
+                 details={"prefix": view["token_prefix"], "max_uses": view["max_uses"],
+                          "ttl_minutes": body.ttl_minutes, "labels": view["labels"],
+                          "for_agent": str(view["for_agent"]) if view["for_agent"] else None})
+    return TokenCreated(token=full, **_token_out(view))
+
+
+@router.get("/enroll-tokens", response_model=list[TokenOut], dependencies=[Depends(require("admin"))])
+async def list_enroll_tokens(request: Request, pool=Depends(get_pool),
+                             principal: Principal = Depends(current_principal),
+                             limit: int = Query(default=100, ge=1, le=500)):
+    """Token metadata (prefix, uses, state): never the token or its hash. Listing is audited."""
+    rows = await fleet_enroll.list_tokens(pool, limit=limit)
+    await _audit(request, pool, action="fleet.enroll_token.list", resource_type="fleet_enroll_token",
+                 resource_id="*", actor=principal.actor, actor_role=principal.role,
+                 details={"returned": len(rows)})
+    return [TokenOut(**_token_out(v)) for v in rows]
+
+
+@router.get("/enroll-tokens/{token_id}", response_model=TokenOut, dependencies=[Depends(require("admin"))])
+async def get_enroll_token(token_id: UUID, pool=Depends(get_pool)):
+    view = await fleet_enroll.get_token(pool, token_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="token not found")
+    return TokenOut(**_token_out(view))
+
+
+@router.delete("/enroll-tokens/{token_id}", status_code=204, dependencies=[Depends(require("admin"))])
+async def revoke_enroll_token(token_id: UUID, request: Request, pool=Depends(get_pool),
+                              principal: Principal = Depends(current_principal)):
+    if not await fleet_enroll.revoke_token(pool, token_id, principal.actor):
+        raise HTTPException(status_code=404, detail="token not found, already used up or already revoked")
+    await _audit(request, pool, action="fleet.enroll_token.revoke", resource_type="fleet_enroll_token",
+                 resource_id=str(token_id), actor=principal.actor, actor_role=principal.role, details={})
 
 
 # --------------------------------------------------------------------------- #
-# Inventory (agent-auth)
+# Signed evidence (agent principal): heartbeat, posture, key rotation
+# --------------------------------------------------------------------------- #
+
+@router.post("/{agent_id}/heartbeat", response_model=HeartbeatOut, openapi_extra=_envelope_body_doc())
+async def heartbeat(agent_id: UUID, request: Request, pool=Depends(get_pool),
+                    principal: Principal = Depends(_agent_principal)):
+    """A SIGNED ``kind=heartbeat`` envelope. The only proof of life: an unsigned (stolen bearer) call can never
+    refresh ``last_seen``. The reply lists the approved, real work for this host."""
+    res, err = await _ingest(request, pool, principal, agent_id, "heartbeat")
+    if err is not None:
+        return err
+    a = res.agent
+    return HeartbeatOut(id=a["id"], status=a["status"], last_seen=a["last_seen"],
+                        pending_actions=_pending(res.pending_actions), server_time=res.server_time,
+                        idempotent=res.idempotent)
+
+
+@router.post("/{agent_id}/posture", response_model=PostureAck, openapi_extra=_envelope_body_doc())
+async def post_posture(agent_id: UUID, request: Request, pool=Depends(get_pool),
+                       principal: Principal = Depends(_agent_principal)):
+    """A SIGNED ``kind=posture`` envelope (paddock.host.posture/v2). Verified, replay-protected and schema-checked
+    (docs/ASSURANCE_P2.md section 2); a rejected envelope leaves the previous posture in place."""
+    res, err = await _ingest(request, pool, principal, agent_id, "posture")
+    if err is not None:
+        return err
+    return PostureAck(ok=True, seq=res.seq, stored=res.stored, changed=res.changed,
+                      idempotent=res.idempotent, server_time=res.server_time)
+
+
+@router.post("/{agent_id}/keys/rotate", response_model=RotateAck, openapi_extra=_envelope_body_doc())
+async def rotate_key(agent_id: UUID, request: Request, pool=Depends(get_pool),
+                     principal: Principal = Depends(_agent_principal)):
+    """A ``kind=rotate`` envelope signed by the CURRENT key carrying the new key and its proof of possession.
+    The old key becomes ``rotated`` in the same transaction the new one becomes ``active``."""
+    res, err = await _ingest(request, pool, principal, agent_id, "rotate")
+    if err is not None:
+        return err
+    return RotateAck(ok=True, key_id=res.new_key_id or "", server_time=res.server_time)
+
+
+# --------------------------------------------------------------------------- #
+# Inventory (v1, agent principal): UNSIGNED, a Fleet-page convenience, never evidence
 # --------------------------------------------------------------------------- #
 
 @router.post("/{agent_id}/inventory", response_model=InventoryOut, status_code=201)
-async def post_inventory(
-    agent_id: UUID,
-    body: InventoryIn,
-    pool=Depends(get_pool),
-    x_agent_token: str | None = Header(default=None, alias="X-Agent-Token"),
-):
-    import json
-    await _require_agent(pool, agent_id, x_agent_token)
+async def post_inventory(agent_id: UUID, request: Request, pool=Depends(get_pool),
+                         principal: Principal = Depends(_agent_principal)):
+    """The v1 inventory. Accepted only from an enrolled (non-legacy, non-revoked) agent, stored marked
+    ``signed: false`` and NEVER used as evidence: it does not refresh ``last_seen`` (only a signed envelope can
+    prove life) and no builder reads it."""
+    if fleet_posture.rate_limited("inventory", agent_id):
+        return JSONResponse({"detail": "too many requests from this agent; slow down"}, status_code=429,
+                            headers={"Retry-After": "60"})
+    try:
+        raw = await _read_body(request, 4 * 1024 * 1024)
+    except fleet_posture.Rejection as rej:
+        return _rejection_response(rej)
+    try:
+        body = InventoryIn.model_validate_json(raw)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=[{"loc": e["loc"], "type": e["type"]}
+                                                     for e in exc.errors()[:10]]) from exc
+    posture = {**body.posture, "_evidence": {"signed": False, "tier": "declared"}}
     async with pool.acquire() as con:
         row = await con.fetchrow(
             """
             INSERT INTO agent_inventory (agent_id, os_info, packages, listeners, posture)
-            VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb)
+            SELECT a.id, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb
+              FROM fleet_agents a
+             WHERE a.id = $1 AND a.status <> 'revoked' AND a.legacy = FALSE
             RETURNING id, collected_at
             """,
             agent_id, json.dumps(body.os_info), json.dumps(body.packages),
-            json.dumps(body.listeners), json.dumps(body.posture),
+            json.dumps(body.listeners), json.dumps(posture),
         )
-        await con.execute(
-            "UPDATE fleet_agents SET last_seen = NOW() WHERE id = $1", agent_id
-        )
-    return InventoryOut(ok=True, inventory_id=row["id"], collected_at=row["collected_at"])
+    if row is None:
+        raise HTTPException(status_code=403, detail="this agent is revoked or must re-enroll")
+    return InventoryOut(ok=True, inventory_id=row["id"], collected_at=row["collected_at"], signed=False)
 
 
 # --------------------------------------------------------------------------- #
 # Agents list / detail
 # --------------------------------------------------------------------------- #
 
+_AGENT_COLS = (
+    "a.id, a.hostname, a.platform, a.agent_version, a.labels, a.capabilities, a.status, a.last_seen, "
+    "a.enrolled_at, a.online, a.legacy, a.node_ref, a.silent_after_s, a.last_posture_at, a.identity, "
+    "(SELECT k.key_id FROM fleet_agent_keys k WHERE k.agent_id = a.id AND k.status = 'active' "
+    " ORDER BY k.created_at DESC LIMIT 1) AS key_id"
+)
+
+
+def _agent_out(r: Any) -> AgentOut:
+    return AgentOut(
+        id=r["id"], hostname=r["hostname"], platform=r["platform"],
+        agent_version=r["agent_version"], labels=list(r["labels"] or []),
+        capabilities=list(r["capabilities"] or []),
+        status=_effective_status(r["status"], r["last_seen"], r["online"], r["legacy"]),
+        last_seen=r["last_seen"], enrolled_at=r["enrolled_at"],
+        stale=_stale(r["last_seen"]), online=r["online"], legacy=r["legacy"], node_ref=r["node_ref"],
+        silent_after_s=r["silent_after_s"], key_id=r["key_id"], last_posture_at=r["last_posture_at"],
+    )
+
+
+def _public_identity(raw: Any) -> dict[str, Any]:
+    """The claimed identity without the ingest bookkeeping (``_ingest``)."""
+    ident = _as_dict(raw)
+    return {k: v for k, v in ident.items() if not k.startswith("_")}
+
+
 @router.get("/agents", response_model=list[AgentOut])
 async def list_agents(pool=Depends(get_pool)):
     async with pool.acquire() as con:
-        rows = await con.fetch(
-            """
-            SELECT id, hostname, platform, agent_version, labels, capabilities,
-                   status, last_seen, enrolled_at
-              FROM fleet_agents
-             ORDER BY hostname ASC
-            """
-        )
-    out: list[AgentOut] = []
-    for r in rows:
-        out.append(AgentOut(
-            id=r["id"], hostname=r["hostname"], platform=r["platform"],
-            agent_version=r["agent_version"], labels=list(r["labels"] or []),
-            capabilities=list(r["capabilities"] or []),
-            status=_effective_status(r["status"], r["last_seen"]),
-            last_seen=r["last_seen"], enrolled_at=r["enrolled_at"],
-            stale=_stale(r["last_seen"]),
-        ))
-    return out
+        rows = await con.fetch(f"SELECT {_AGENT_COLS} FROM fleet_agents a ORDER BY a.hostname ASC")
+    return [_agent_out(r) for r in rows]
 
 
 @router.get("/agents/{agent_id}", response_model=AgentDetailOut)
 async def get_agent(agent_id: UUID, pool=Depends(get_pool)):
     async with pool.acquire() as con:
-        r = await con.fetchrow(
-            """
-            SELECT id, hostname, platform, agent_version, labels, capabilities,
-                   status, last_seen, enrolled_at
-              FROM fleet_agents WHERE id = $1
-            """,
-            agent_id,
-        )
+        r = await con.fetchrow(f"SELECT {_AGENT_COLS} FROM fleet_agents a WHERE a.id = $1", agent_id)
         if r is None:
             raise HTTPException(status_code=404, detail="agent not found")
         inv = await con.fetchrow(
@@ -619,16 +803,68 @@ async def get_agent(agent_id: UUID, pool=Depends(get_pool)):
             packages=_as_dict_list(inv["packages"]),
             listeners=_as_dict_list(inv["listeners"]),
             posture=_as_dict(inv["posture"]),
+            signed=False,
         )
+    keys = [KeyOut(**k) for k in await fleet_posture.list_keys(pool, agent_id)]
     return AgentDetailOut(
-        id=r["id"], hostname=r["hostname"], platform=r["platform"],
-        agent_version=r["agent_version"], labels=list(r["labels"] or []),
-        capabilities=list(r["capabilities"] or []),
-        status=_effective_status(r["status"], r["last_seen"]),
-        last_seen=r["last_seen"], enrolled_at=r["enrolled_at"],
-        stale=_stale(r["last_seen"]), inventory=snapshot,
+        **_agent_out(r).model_dump(), inventory=snapshot,
         action_counts={c["status"]: int(c["c"]) for c in counts},
+        keys=keys, identity=_public_identity(r["identity"]),
     )
+
+
+@router.get("/agents/{agent_id}/posture", response_model=PostureOut)
+async def get_agent_posture(agent_id: UUID, request: Request, pool=Depends(get_pool)):
+    """The full latest SIGNED posture (``triage``): firewall rules, listeners, sshd and patch state. Reading it
+    is audited. ``tier`` is ``configured`` at best (E2): signed is not true."""
+    request.state.audit_restricted = True
+    async with pool.acquire() as con:
+        r = await con.fetchrow(f"SELECT {_AGENT_COLS} FROM fleet_agents a WHERE a.id = $1", agent_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    p = await fleet_posture.latest_posture(pool, agent_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="no signed posture has been accepted for this agent yet")
+    return PostureOut(
+        **{k: p[k] for k in ("agent_id", "key_id", "key_status", "seq", "schema_version", "collected_at",
+                             "received_at", "signed", "tier", "payload_sha256", "size_bytes", "header",
+                             "payload")},
+        agent_status=_effective_status(r["status"], r["last_seen"], r["online"], r["legacy"]),
+        online=r["online"], last_seen=r["last_seen"], silent_after_s=r["silent_after_s"],
+        node_ref=r["node_ref"])
+
+
+@router.post("/agents/{agent_id}/revoke", response_model=AgentOut, dependencies=[Depends(require("admin"))])
+async def revoke_agent(agent_id: UUID, body: RevokeIn, request: Request, pool=Depends(get_pool),
+                       principal: Principal = Depends(current_principal)):
+    """Revoke an agent NOW: its credential and every key stop working on the very next call, its pending re-key
+    tokens are revoked, and the host drops out of the reach graph's coverage. Nothing is cached."""
+    out = await fleet_posture.revoke_agent(
+        pool, agent_id, actor=principal.actor, actor_role=principal.role, reason=body.reason or "",
+        client_ip=client_ip(request), request_id=getattr(request.state, "request_id", None))
+    if out == "not_found":
+        raise HTTPException(status_code=404, detail="agent not found")
+    if out == "already_revoked":
+        raise HTTPException(status_code=409, detail="agent is already revoked")
+    async with pool.acquire() as con:
+        r = await con.fetchrow(f"SELECT {_AGENT_COLS} FROM fleet_agents a WHERE a.id = $1", agent_id)
+    return _agent_out(r)
+
+
+@router.post("/agents/{agent_id}/keys/{key_id}/revoke", dependencies=[Depends(require("admin"))])
+async def revoke_agent_key(agent_id: UUID, request: Request, body: RevokeIn,
+                           key_id: str = Path(pattern=r"^[0-9a-f]{32}$"), pool=Depends(get_pool),
+                           principal: Principal = Depends(current_principal)):
+    """Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key
+    leaves the agent unable to post until an admin mints it a re-key token."""
+    out = await fleet_posture.revoke_key(
+        pool, agent_id, key_id, actor=principal.actor, actor_role=principal.role, reason=body.reason or "",
+        client_ip=client_ip(request), request_id=getattr(request.state, "request_id", None))
+    if out == "not_found":
+        raise HTTPException(status_code=404, detail="agent or key not found")
+    if out == "already_revoked":
+        raise HTTPException(status_code=409, detail="key is already revoked")
+    return {"ok": True, "agent_id": str(agent_id), "key_id": key_id, "status": "revoked"}
 
 
 def _as_dict_list(v: Any) -> list[dict[str, Any]]:
@@ -665,9 +901,14 @@ async def propose_action(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     async with pool.acquire() as con:
-        agent = await con.fetchrow("SELECT id FROM fleet_agents WHERE id = $1", body.agent_id)
+        agent = await con.fetchrow(
+            "SELECT id, status, legacy FROM fleet_agents WHERE id = $1", body.agent_id)
         if agent is None:
             raise HTTPException(status_code=404, detail="agent not found")
+        if agent["status"] == "revoked" or agent["legacy"]:
+            # It could never receive the action (a revoked or legacy agent is refused on every agent route).
+            raise HTTPException(status_code=409,
+                                detail="agent is revoked or must re-enroll; it cannot receive actions")
         row = await con.fetchrow(
             """
             INSERT INTO agent_actions
@@ -842,13 +1083,12 @@ async def post_result(
     body: ResultIn,
     request: Request,
     pool=Depends(get_pool),
-    x_agent_token: str | None = Header(default=None, alias="X-Agent-Token"),
+    principal: Principal = Depends(current_principal),
 ):
     """Agent reports the outcome of a real apply. Guards enforce rails #2 + #3:
     an action may only be reported ``applied`` when it is ``approved`` AND
     ``dry_run = false``. A dry-run can never mutate, so it can never be
-    ``applied`` here."""
-    import json
+    ``applied`` here. Principal-bound: only the agent the action belongs to may report on it."""
     async with pool.acquire() as con:
         cur = await con.fetchrow(
             "SELECT agent_id, status, dry_run, action_type, revert_of FROM agent_actions WHERE id = $1",
@@ -856,7 +1096,7 @@ async def post_result(
         )
         if cur is None:
             raise HTTPException(status_code=404, detail="action not found")
-        await _require_agent(pool, cur["agent_id"], x_agent_token)
+        _assert_agent(principal, cur["agent_id"])
 
         if cur["status"] != "approved":
             raise HTTPException(
@@ -886,13 +1126,15 @@ async def post_result(
                SET status = $2,
                    applied_at = CASE WHEN $2 = 'applied' THEN NOW() ELSE applied_at END,
                    result = result || $3::jsonb
-             WHERE id = $1
+             WHERE id = $1 AND status = 'approved'
          RETURNING id, agent_id, action_type, target, reason, indicator_id,
                    finding_id, dry_run, status, requested_by, approved_by,
                    result, created_at, decided_at, applied_at, revert_of
             """,
             action_id, body.status, json.dumps(result_payload),
         )
+        if row is None:     # a concurrent report won the race
+            raise HTTPException(status_code=409, detail="action is no longer 'approved'")
 
         # When a REVERT action completes, the original action becomes 'reverted'.
         if (body.status == "applied" and cur["action_type"] == "revert"

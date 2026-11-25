@@ -12,6 +12,12 @@ replicas never build or evaluate the same tenant twice:
 3. **Record**: ``invariants.last_*``, a ``invariant_runs`` row on a verdict or digest change (or
    when the last row is a day old), then the findings (``findings_sync``).
 
+Rebuild requests: posture ingest and the API ask for a rebuild by setting
+``assurance_state.last_build_at = NULL``; a NULL (or never-built) tenant is always due on the next
+tick. The build is stamped BEFORE the builders read anything, so a request that arrives while a
+build runs is not overwritten by that build's own stamp. Builders receive the options they declare
+(``max_age``, ``window``, ``agent_posture_max_age``: how old an agent posture may be and still count).
+
 Soundness notes: a stored definition is compiled from its YAML (plans are cached by
 ``(invariant_id, digest, yaml hash)`` so an unchanged one is never recompiled, and a compile that
 is needed runs off the event loop); one that does not compile is recorded as ``UNKNOWN`` /
@@ -76,6 +82,10 @@ TENANT_BUDGET_S = 30.0
 TENANT_HARD_TIMEOUT_S = 900.0
 BUILDER_TIMEOUT_S = 180.0
 HEARTBEAT = timedelta(days=1)
+#: Builders that read agent postures ignore a posture older than this (``agent_posture_max_age``
+#: builder option). Matches the std host invariants' ``max_age`` (6h); ``settings`` may override it
+#: with ``assurance_agent_posture_max_age_h``.
+AGENT_POSTURE_MAX_AGE_H = 6
 MAX_STORED_BLIND_SPOTS = 200
 PROCESS_ID = f"{socket.gethostname()}:{os.getpid()}"
 
@@ -93,6 +103,15 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _agent_posture_max_age() -> timedelta:
+    raw = getattr(settings, "assurance_agent_posture_max_age_h", AGENT_POSTURE_MAX_AGE_H)
+    try:
+        hours = int(raw)
+    except (TypeError, ValueError):
+        hours = AGENT_POSTURE_MAX_AGE_H
+    return timedelta(hours=hours if hours > 0 else AGENT_POSTURE_MAX_AGE_H)
 
 
 def last_build(tenant_id: str) -> dict[str, dict[str, Any]]:
@@ -431,6 +450,7 @@ async def _run_builder(pool: Any, mod: Any, now: datetime, opts: dict[str, Any])
         rep = await store.persist_build(conn, out, now)
     return {"ok": True, "changed": rep.changed, "edges_added": rep.edges_added,
             "edges_removed": rep.edges_removed, "coverage_changed": rep.coverage_changed,
+            "facts_changed": rep.facts_changed, "facts_stored": rep.facts_stored,
             "nodes_added": rep.nodes_added, "nodes_removed": rep.nodes_removed, "skipped": rep.skipped,
             "notes": list(rep.notes)[:50], "graph_version": rep.graph_version}
 
@@ -448,8 +468,22 @@ async def build_tenant(pool: Any, tenant_id: str, *, now: Optional[datetime] = N
     opts = {
         "max_age": timedelta(hours=settings.assurance_external_max_age_h),
         "window": timedelta(hours=settings.assurance_edge_window_h),
+        "agent_posture_max_age": _agent_posture_max_age(),
     }
     with tenancy.tenant_context(tenant_id):
+        # Stamp the build BEFORE the builders read anything. Ingest (a new agent posture) and the
+        # API ask for a rebuild by setting ``last_build_at = NULL`` at any moment; stamping at the
+        # END would overwrite a request that arrived while we built, and the posture it announced
+        # would then wait out the whole rebuild interval. A request that lands after this stamp
+        # survives, so the next tick rebuilds. (A pass that dies half-way is retried at the normal
+        # interval, not hot.)
+        try:
+            async with pool.acquire() as conn:
+                await store.touch_build(conn, now)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 -- the builders still run; the old stamp makes the next tick rebuild sooner
+            logger.exception("assurance_build_stamp_failed", extra={"tenant": tenant_id})
         for mod in mods:
             name = getattr(mod, "SOURCE", getattr(mod, "__name__", "?"))
             try:
@@ -466,8 +500,6 @@ async def build_tenant(pool: Any, tenant_id: str, *, now: Optional[datetime] = N
                 await store.prune_flow_obs(conn, now - 3 * timedelta(hours=settings.assurance_edge_window_h))
         except Exception:  # noqa: BLE001
             logger.exception("assurance_flow_prune_failed", extra={"tenant": tenant_id})
-        async with pool.acquire() as conn:
-            await store.touch_build(conn, now)
     return summary
 
 
@@ -536,6 +568,8 @@ def _diagnostics(snap: _Snapshot, summary: dict[str, Any]) -> dict[str, Any]:
         "graph_ok": snap.graph is not None, "graph_reason": snap.reason,
         "cidr_unexpanded": unexpanded[:50], "cidr_unexpanded_count": len(unexpanded),
         "zone_conflicts": dict(list((getattr(diag, "zone_conflicts", None) or {}).items())[:50]),
+        "facts_dropped": int(getattr(diag, "facts_dropped", 0) or 0),
+        "fact_issues": list(getattr(diag, "fact_issues", None) or [])[:20],
     }
 
 

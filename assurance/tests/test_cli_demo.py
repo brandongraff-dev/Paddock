@@ -86,6 +86,9 @@ def test_input_errors_exit_3(capsys, argv):
     assert code == 3 and err.startswith("error:")
 
 
-def test_std_lists_four(capsys):
+def test_std_lists_the_shipped_invariants(capsys):
+    """Four P1 invariants plus the two P2 host-config ones."""
     code, out, _ = run(capsys, "std")
-    assert code == 0 and out.split() == sorted([*STD, "std:coverage-complete"])
+    assert code == 0 and out.split() == sorted([*STD, "std:coverage-complete",
+                                                "std:server-ssh-hardened",
+                                                "std:server-default-deny-inbound"])

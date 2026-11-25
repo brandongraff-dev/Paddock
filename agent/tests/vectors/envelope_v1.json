@@ -1,0 +1,424 @@
+{
+  "agent_id": "11111111-1111-4111-8111-111111111111",
+  "b64": "URL-safe base64, no padding, for nonce / payload_b64 / sig / public keys / proofs",
+  "canon": "json.dumps(x, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode('utf-8')",
+  "cases": [
+    {
+      "body_json": "{\"agent_id\":\"11111111-1111-4111-8111-111111111111\",\"alg\":\"ed25519\",\"collectors\":{\"agent\":\"0.2.0\",\"firewall\":\"1\",\"listeners\":\"1\",\"patch\":\"1\",\"self\":\"1\",\"sshd\":\"1\"},\"issued_at\":\"2026-11-24T19:00:00Z\",\"kid\":\"44d8edcaef9badfc26a69ac43c4fbe1d\",\"kind\":\"posture\",\"nonce\":\"AAECAwQFBgcICQoLDA0ODw\",\"payload_b64\":\"eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0\",\"payload_len\":170,\"payload_sha256\":\"7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145\",\"payload_type\":\"paddock.host.posture/v2\",\"seq\":7,\"sig\":\"-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw\",\"tenant_id\":\"22222222-2222-4222-8222-222222222222\",\"v\":1}",
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "header": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "name": "posture",
+      "payload_hex": "7b22636f6c6c65637465645f6174223a22323032362d31312d32345431393a30303a30305a222c22736368656d61223a322c2273656374696f6e73223a7b2273656c66223a7b22636f6e66223a226578616374222c227061727469616c223a66616c73652c2273223a226f6b222c2276223a7b226167656e745f76657273696f6e223a22302e322e30222c22686f73746e616d655f6e6f7465223a22636166c3a920e29883227d7d7d7d",
+      "payload_utf8": "{\"collected_at\":\"2026-11-24T19:00:00Z\",\"schema\":2,\"sections\":{\"self\":{\"conf\":\"exact\",\"partial\":false,\"s\":\"ok\",\"v\":{\"agent_version\":\"0.2.0\",\"hostname_note\":\"café ☃\"}}}}",
+      "signature_b64url": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+      "signature_hex": "faeccdb1199c17cefbce84d131efcaca6a4416a9250ac07446ffe5764077233873befa20303490ef6ad23e3daf6220bcbb284b6cdaa9eb920afbdf414fef420b",
+      "signing_input_hex": "706164646f636b2d6167656e742d656e76656c6f70652f76310a7b226167656e745f6964223a2231313131313131312d313131312d343131312d383131312d313131313131313131313131222c22616c67223a2265643235353139222c22636f6c6c6563746f7273223a7b226167656e74223a22302e322e30222c226669726577616c6c223a2231222c226c697374656e657273223a2231222c227061746368223a2231222c2273656c66223a2231222c2273736864223a2231227d2c226973737565645f6174223a22323032362d31312d32345431393a30303a30305a222c226b6964223a223434643865646361656639626164666332366136396163343363346662653164222c226b696e64223a22706f7374757265222c226e6f6e6365223a2241414543417751464267634943516f4c4441304f4477222c227061796c6f61645f6c656e223a3137302c227061796c6f61645f736861323536223a2237343435666234356331653635663931363263633262616232373937623038303434386565353434323733623063613839383066316664363532313436313435222c227061796c6f61645f74797065223a22706164646f636b2e686f73742e706f73747572652f7632222c22736571223a372c2274656e616e745f6964223a2232323232323232322d323232322d343232322d383232322d323232323232323232323232222c2276223a317d",
+      "signing_input_utf8": "paddock-agent-envelope/v1\n{\"agent_id\":\"11111111-1111-4111-8111-111111111111\",\"alg\":\"ed25519\",\"collectors\":{\"agent\":\"0.2.0\",\"firewall\":\"1\",\"listeners\":\"1\",\"patch\":\"1\",\"self\":\"1\",\"sshd\":\"1\"},\"issued_at\":\"2026-11-24T19:00:00Z\",\"kid\":\"44d8edcaef9badfc26a69ac43c4fbe1d\",\"kind\":\"posture\",\"nonce\":\"AAECAwQFBgcICQoLDA0ODw\",\"payload_len\":170,\"payload_sha256\":\"7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145\",\"payload_type\":\"paddock.host.posture/v2\",\"seq\":7,\"tenant_id\":\"22222222-2222-4222-8222-222222222222\",\"v\":1}"
+    },
+    {
+      "body_json": "{\"agent_id\":\"11111111-1111-4111-8111-111111111111\",\"alg\":\"ed25519\",\"collectors\":{\"agent\":\"0.2.0\"},\"issued_at\":\"2026-11-24T19:00:30Z\",\"kid\":\"44d8edcaef9badfc26a69ac43c4fbe1d\",\"kind\":\"heartbeat\",\"nonce\":\"EBESExQVFhcYGRobHB0eHw\",\"payload_b64\":\"eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJzdGF0dXMiOiJvayJ9\",\"payload_len\":39,\"payload_sha256\":\"4fceba940158aa9a7be248ef6434ae23f175ba1488f82a87503e58d494d5e381\",\"payload_type\":\"paddock.host.heartbeat/v1\",\"seq\":8,\"sig\":\"nwo67njJn7adAsgrccsogxkRk3TsLCNXN6IUq88jTDP18V9nr7gbW3Q66o9NFKzCYKCYsfSKy2Ic6FLEnKPHBg\",\"tenant_id\":\"22222222-2222-4222-8222-222222222222\",\"v\":1}",
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0"
+        },
+        "issued_at": "2026-11-24T19:00:30Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "heartbeat",
+        "nonce": "EBESExQVFhcYGRobHB0eHw",
+        "payload_b64": "eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJzdGF0dXMiOiJvayJ9",
+        "payload_len": 39,
+        "payload_sha256": "4fceba940158aa9a7be248ef6434ae23f175ba1488f82a87503e58d494d5e381",
+        "payload_type": "paddock.host.heartbeat/v1",
+        "seq": 8,
+        "sig": "nwo67njJn7adAsgrccsogxkRk3TsLCNXN6IUq88jTDP18V9nr7gbW3Q66o9NFKzCYKCYsfSKy2Ic6FLEnKPHBg",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "header": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0"
+        },
+        "issued_at": "2026-11-24T19:00:30Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "heartbeat",
+        "nonce": "EBESExQVFhcYGRobHB0eHw",
+        "payload_len": 39,
+        "payload_sha256": "4fceba940158aa9a7be248ef6434ae23f175ba1488f82a87503e58d494d5e381",
+        "payload_type": "paddock.host.heartbeat/v1",
+        "seq": 8,
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "name": "heartbeat",
+      "payload_hex": "7b226167656e745f76657273696f6e223a22302e322e30222c22737461747573223a226f6b227d",
+      "payload_utf8": "{\"agent_version\":\"0.2.0\",\"status\":\"ok\"}",
+      "signature_b64url": "nwo67njJn7adAsgrccsogxkRk3TsLCNXN6IUq88jTDP18V9nr7gbW3Q66o9NFKzCYKCYsfSKy2Ic6FLEnKPHBg",
+      "signature_hex": "9f0a3aee78c99fb69d02c82b71cb288319119374ec2c235737a214abcf234c33f5f15f67afb81b5b743aea8f4d14acc260a098b1f48acb621ce852c49ca3c706",
+      "signing_input_hex": "706164646f636b2d6167656e742d656e76656c6f70652f76310a7b226167656e745f6964223a2231313131313131312d313131312d343131312d383131312d313131313131313131313131222c22616c67223a2265643235353139222c22636f6c6c6563746f7273223a7b226167656e74223a22302e322e30227d2c226973737565645f6174223a22323032362d31312d32345431393a30303a33305a222c226b6964223a223434643865646361656639626164666332366136396163343363346662653164222c226b696e64223a22686561727462656174222c226e6f6e6365223a2245424553457851564668635947526f62484230654877222c227061796c6f61645f6c656e223a33392c227061796c6f61645f736861323536223a2234666365626139343031353861613961376265323438656636343334616532336631373562613134383866383261383735303365353864343934643565333831222c227061796c6f61645f74797065223a22706164646f636b2e686f73742e6865617274626561742f7631222c22736571223a382c2274656e616e745f6964223a2232323232323232322d323232322d343232322d383232322d323232323232323232323232222c2276223a317d",
+      "signing_input_utf8": "paddock-agent-envelope/v1\n{\"agent_id\":\"11111111-1111-4111-8111-111111111111\",\"alg\":\"ed25519\",\"collectors\":{\"agent\":\"0.2.0\"},\"issued_at\":\"2026-11-24T19:00:30Z\",\"kid\":\"44d8edcaef9badfc26a69ac43c4fbe1d\",\"kind\":\"heartbeat\",\"nonce\":\"EBESExQVFhcYGRobHB0eHw\",\"payload_len\":39,\"payload_sha256\":\"4fceba940158aa9a7be248ef6434ae23f175ba1488f82a87503e58d494d5e381\",\"payload_type\":\"paddock.host.heartbeat/v1\",\"seq\":8,\"tenant_id\":\"22222222-2222-4222-8222-222222222222\",\"v\":1}"
+    },
+    {
+      "body_json": "{\"agent_id\":\"11111111-1111-4111-8111-111111111111\",\"alg\":\"ed25519\",\"collectors\":{\"agent\":\"0.2.0\"},\"issued_at\":\"2026-11-24T19:01:00Z\",\"kid\":\"44d8edcaef9badfc26a69ac43c4fbe1d\",\"kind\":\"rotate\",\"nonce\":\"ICEiIyQlJicoKSorLC0uLw\",\"payload_b64\":\"eyJuZXdfa2V5X2lkIjoiMzYwNDNlYjBlYmI4MDY4MDEyNWNjZmZiYzU2ZjE3MTUiLCJuZXdfcHVibGljX2tleV9iNjQiOiJwem04SHg2RFU2VTJzU0JlYVVIaW45WFp3SUhXUDRiWXhsMTFEVkVFbTBnIiwicHJvb2ZfYjY0IjoidnVJZnBYNzZFNUpOdVVfa1N6TVFrbWczXzE0T25nYTR2TGl3eGduRTI4LXFhVmpDZnZhVHd4bmxpS1p1OVFJY0NlSFFjTlUzVnVPc1ozVGtaQ0l3RHcifQ\",\"payload_len\":217,\"payload_sha256\":\"8965cefc13e0d15c1c2bee430edc021373b0f5da68be7e5e602e006f10dab632\",\"payload_type\":\"paddock.agent.key-rotate/v1\",\"seq\":9,\"sig\":\"F31_3ilp_obmtP6_IfmX9IhXi3iXLRJ_XZxGmMxEv8sR2mzZRD8th8Qjj_Ga03eD8vv2KFs7QKl1jw3ap-_zCg\",\"tenant_id\":\"22222222-2222-4222-8222-222222222222\",\"v\":1}",
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0"
+        },
+        "issued_at": "2026-11-24T19:01:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "rotate",
+        "nonce": "ICEiIyQlJicoKSorLC0uLw",
+        "payload_b64": "eyJuZXdfa2V5X2lkIjoiMzYwNDNlYjBlYmI4MDY4MDEyNWNjZmZiYzU2ZjE3MTUiLCJuZXdfcHVibGljX2tleV9iNjQiOiJwem04SHg2RFU2VTJzU0JlYVVIaW45WFp3SUhXUDRiWXhsMTFEVkVFbTBnIiwicHJvb2ZfYjY0IjoidnVJZnBYNzZFNUpOdVVfa1N6TVFrbWczXzE0T25nYTR2TGl3eGduRTI4LXFhVmpDZnZhVHd4bmxpS1p1OVFJY0NlSFFjTlUzVnVPc1ozVGtaQ0l3RHcifQ",
+        "payload_len": 217,
+        "payload_sha256": "8965cefc13e0d15c1c2bee430edc021373b0f5da68be7e5e602e006f10dab632",
+        "payload_type": "paddock.agent.key-rotate/v1",
+        "seq": 9,
+        "sig": "F31_3ilp_obmtP6_IfmX9IhXi3iXLRJ_XZxGmMxEv8sR2mzZRD8th8Qjj_Ga03eD8vv2KFs7QKl1jw3ap-_zCg",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "header": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0"
+        },
+        "issued_at": "2026-11-24T19:01:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "rotate",
+        "nonce": "ICEiIyQlJicoKSorLC0uLw",
+        "payload_len": 217,
+        "payload_sha256": "8965cefc13e0d15c1c2bee430edc021373b0f5da68be7e5e602e006f10dab632",
+        "payload_type": "paddock.agent.key-rotate/v1",
+        "seq": 9,
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "name": "rotate",
+      "payload_hex": "7b226e65775f6b65795f6964223a223336303433656230656262383036383031323563636666626335366631373135222c226e65775f7075626c69635f6b65795f623634223a22707a6d38487836445536553273534265615548696e39585a7749485750346259786c3131445645456d3067222c2270726f6f665f623634223a22767549667058373645354a4e75555f6b537a4d516b6d67335f31344f6e676134764c697778676e4532382d7161566a436676615477786e6c694b5a753951496343654851634e553356754f735a33546b5a4349774477227d",
+      "payload_utf8": "{\"new_key_id\":\"36043eb0ebb80680125ccffbc56f1715\",\"new_public_key_b64\":\"pzm8Hx6DU6U2sSBeaUHin9XZwIHWP4bYxl11DVEEm0g\",\"proof_b64\":\"vuIfpX76E5JNuU_kSzMQkmg3_14Onga4vLiwxgnE28-qaVjCfvaTwxnliKZu9QIcCeHQcNU3VuOsZ3TkZCIwDw\"}",
+      "signature_b64url": "F31_3ilp_obmtP6_IfmX9IhXi3iXLRJ_XZxGmMxEv8sR2mzZRD8th8Qjj_Ga03eD8vv2KFs7QKl1jw3ap-_zCg",
+      "signature_hex": "177d7fde2969fe86e6b4febf21f997f488578b78972d127f5d9c4698cc44bfcb11da6cd9443f2d87c4238ff19ad37783f2fbf6285b3b40a9758f0ddaa7eff30a",
+      "signing_input_hex": "706164646f636b2d6167656e742d656e76656c6f70652f76310a7b226167656e745f6964223a2231313131313131312d313131312d343131312d383131312d313131313131313131313131222c22616c67223a2265643235353139222c22636f6c6c6563746f7273223a7b226167656e74223a22302e322e30227d2c226973737565645f6174223a22323032362d31312d32345431393a30313a30305a222c226b6964223a223434643865646361656639626164666332366136396163343363346662653164222c226b696e64223a22726f74617465222c226e6f6e6365223a22494345694979516c4a69636f4b536f724c4330754c77222c227061796c6f61645f6c656e223a3231372c227061796c6f61645f736861323536223a2238393635636566633133653064313563316332626565343330656463303231333733623066356461363862653765356536303265303036663130646162363332222c227061796c6f61645f74797065223a22706164646f636b2e6167656e742e6b65792d726f746174652f7631222c22736571223a392c2274656e616e745f6964223a2232323232323232322d323232322d343232322d383232322d323232323232323232323232222c2276223a317d",
+      "signing_input_utf8": "paddock-agent-envelope/v1\n{\"agent_id\":\"11111111-1111-4111-8111-111111111111\",\"alg\":\"ed25519\",\"collectors\":{\"agent\":\"0.2.0\"},\"issued_at\":\"2026-11-24T19:01:00Z\",\"kid\":\"44d8edcaef9badfc26a69ac43c4fbe1d\",\"kind\":\"rotate\",\"nonce\":\"ICEiIyQlJicoKSorLC0uLw\",\"payload_len\":217,\"payload_sha256\":\"8965cefc13e0d15c1c2bee430edc021373b0f5da68be7e5e602e006f10dab632\",\"payload_type\":\"paddock.agent.key-rotate/v1\",\"seq\":9,\"tenant_id\":\"22222222-2222-4222-8222-222222222222\",\"v\":1}"
+    }
+  ],
+  "description": "Deterministic vectors for paddock agent envelope v1 (docs/ASSURANCE_P2.md section 2). Regenerate: cd agent && python -m tests.vector_gen --write",
+  "enroll": {
+    "hostname": "web-01.example.internal",
+    "key_id": "44d8edcaef9badfc26a69ac43c4fbe1d",
+    "proof_b64url": "eUaLUXTMGQceFIHEA9JGfqaaZC5u_hIiNEOybBFXY3QyadjUOLa_jrykDm3XhcRyPG7d49ZfCVt2WTy9hORiCg",
+    "proof_message_utf8": "paddock-enroll/v1\n0123456789ab\nweb-01.example.internal",
+    "public_key_b64url": "Bey_T5qOsgX-HWd-7I0MfhUymQ3mwO2lp5gAzvGKUKA",
+    "request_body": {
+      "agent_version": "0.2.0",
+      "capabilities": [
+        "block",
+        "inventory",
+        "posture",
+        "quarantine"
+      ],
+      "hostname": "web-01.example.internal",
+      "proof_b64": "eUaLUXTMGQceFIHEA9JGfqaaZC5u_hIiNEOybBFXY3QyadjUOLa_jrykDm3XhcRyPG7d49ZfCVt2WTy9hORiCg",
+      "public_key_b64": "Bey_T5qOsgX-HWd-7I0MfhUymQ3mwO2lp5gAzvGKUKA",
+      "token": "fet_0123456789ab_PsGoYw-bAKOWL6pvlCmefbyGxdrl0_8HFA1faWkAo9k"
+    },
+    "token": "fet_0123456789ab_PsGoYw-bAKOWL6pvlCmefbyGxdrl0_8HFA1faWkAo9k",
+    "token_prefix": "0123456789ab"
+  },
+  "key": {
+    "key_id": "44d8edcaef9badfc26a69ac43c4fbe1d",
+    "public_key_b64url": "Bey_T5qOsgX-HWd-7I0MfhUymQ3mwO2lp5gAzvGKUKA",
+    "public_key_hex": "05ecbf4f9a8eb205fe1d677eec8d0c7e1532990de6c0eda5a79800cef18a50a0",
+    "seed_hex": "fb8673d7dfa72a53c4fd21ad02045a1adeb00552463c573c237ef1a7bab3ac6f"
+  },
+  "key2": {
+    "key_id": "36043eb0ebb80680125ccffbc56f1715",
+    "public_key_b64url": "pzm8Hx6DU6U2sSBeaUHin9XZwIHWP4bYxl11DVEEm0g",
+    "public_key_hex": "a739bc1f1e8353a536b1205e6941e29fd5d9c081d63f86d8c65d750d51049b48",
+    "seed_hex": "8b2f2d0b1349e6c127c0d5f483a33900436d5066cefe2e2ca48b8a7346a849af"
+  },
+  "negative": [
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDI319fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "fails_at": "payload_sha256",
+      "name": "payload_tampered_same_length"
+    },
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 171,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "fails_at": "payload_len",
+      "name": "payload_len_wrong"
+    },
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 8,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "fails_at": "signature",
+      "name": "seq_changed"
+    },
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "heartbeat",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "fails_at": "signature",
+      "name": "kind_changed"
+    },
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "33333333-3333-4333-8333-333333333333",
+        "v": 1
+      },
+      "fails_at": "signature",
+      "name": "tenant_changed"
+    },
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "36043eb0ebb80680125ccffbc56f1715",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "fails_at": "signature",
+      "name": "kid_changed"
+    },
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:00Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoXRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "fails_at": "signature",
+      "name": "signature_bit_flipped"
+    },
+    {
+      "envelope": {
+        "agent_id": "11111111-1111-4111-8111-111111111111",
+        "alg": "ed25519",
+        "collectors": {
+          "agent": "0.2.0",
+          "firewall": "1",
+          "listeners": "1",
+          "patch": "1",
+          "self": "1",
+          "sshd": "1"
+        },
+        "issued_at": "2026-11-24T19:00:01Z",
+        "kid": "44d8edcaef9badfc26a69ac43c4fbe1d",
+        "kind": "posture",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "payload_b64": "eyJjb2xsZWN0ZWRfYXQiOiIyMDI2LTExLTI0VDE5OjAwOjAwWiIsInNjaGVtYSI6Miwic2VjdGlvbnMiOnsic2VsZiI6eyJjb25mIjoiZXhhY3QiLCJwYXJ0aWFsIjpmYWxzZSwicyI6Im9rIiwidiI6eyJhZ2VudF92ZXJzaW9uIjoiMC4yLjAiLCJob3N0bmFtZV9ub3RlIjoiY2Fmw6kg4piDIn19fX0",
+        "payload_len": 170,
+        "payload_sha256": "7445fb45c1e65f9162cc2bab2797b080448ee544273b0ca8980f1fd652146145",
+        "payload_type": "paddock.host.posture/v2",
+        "seq": 7,
+        "sig": "-uzNsRmcF877zoTRMe_KympEFqklCsB0Rv_ldkB3IzhzvvogMDSQ72rSPj2vYiC8uyhLbNqp65IK-99BT-9CCw",
+        "tenant_id": "22222222-2222-4222-8222-222222222222",
+        "v": 1
+      },
+      "fails_at": "signature",
+      "name": "issued_at_changed"
+    }
+  ],
+  "rotate": {
+    "new_key_id": "36043eb0ebb80680125ccffbc56f1715",
+    "old_key_id": "44d8edcaef9badfc26a69ac43c4fbe1d",
+    "payload_json": "{\"new_key_id\":\"36043eb0ebb80680125ccffbc56f1715\",\"new_public_key_b64\":\"pzm8Hx6DU6U2sSBeaUHin9XZwIHWP4bYxl11DVEEm0g\",\"proof_b64\":\"vuIfpX76E5JNuU_kSzMQkmg3_14Onga4vLiwxgnE28-qaVjCfvaTwxnliKZu9QIcCeHQcNU3VuOsZ3TkZCIwDw\"}",
+    "proof_message_utf8": "paddock-rotate/v1\n11111111-1111-4111-8111-111111111111\n44d8edcaef9badfc26a69ac43c4fbe1d\n36043eb0ebb80680125ccffbc56f1715"
+  },
+  "signing_prefix_utf8": "paddock-agent-envelope/v1\n",
+  "tenant_id": "22222222-2222-4222-8222-222222222222"
+}

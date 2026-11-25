@@ -156,11 +156,17 @@ BEGIN
       UPDATE fleet_agents SET legacy = TRUE
        WHERE legacy = FALSE
          AND NOT EXISTS (SELECT 1 FROM fleet_agent_keys k WHERE k.agent_id = fleet_agents.id);
+      -- v1 revoked agents carry no revoked_at; date them (a re-key token only re-activates a revoked agent
+      -- when it was minted after the revocation, so an undated revocation would otherwise be permanent).
+      UPDATE fleet_agents SET revoked_at = COALESCE(last_seen, enrolled_at)
+       WHERE status = 'revoked' AND revoked_at IS NULL;
     END LOOP;
     PERFORM set_config('app.tenant_id', '', true);
   ELSE
     UPDATE fleet_agents SET legacy = TRUE
      WHERE legacy = FALSE
        AND NOT EXISTS (SELECT 1 FROM fleet_agent_keys k WHERE k.agent_id = fleet_agents.id);
+    UPDATE fleet_agents SET revoked_at = COALESCE(last_seen, enrolled_at)
+     WHERE status = 'revoked' AND revoked_at IS NULL;
   END IF;
 END $$;

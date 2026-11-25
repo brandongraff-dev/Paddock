@@ -8,10 +8,11 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from . import hostexpr as X
 from .model import Invariant
 
 MAX_BYTES = 64 * 1024
-MAX_DEPTH = 12
+MAX_DEPTH = 14      # a host-config assert nests two document levels per all/any/not (6 levels allowed)
 # A flow collection (``[`` / ``{``) nests without indentation, so a tiny document can be thousands
 # of levels deep, and PyYAML's cost on that is superlinear (about 2 ms per level before it finally
 # raises RecursionError). The post-parse ``_depth`` check can never help, so the depth is bounded
@@ -94,6 +95,10 @@ def parse_invariant(text: str) -> Invariant:
 def canonical_json(inv: Invariant) -> str:
     """Defaults included and set-like lists sorted, so equal meaning gives equal bytes."""
     data = inv.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if inv.expr is not None:
+        # host-config: the digest covers the structured canonical tree (sorted children, collapsed
+        # singletons, normalised literals), never the author's text, spacing or ordering.
+        data["assert"] = X.to_json(inv.expr)
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 

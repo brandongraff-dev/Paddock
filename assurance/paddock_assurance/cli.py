@@ -1,5 +1,8 @@
 """``paddock-invariants``: lint, explain and test invariants against a reach-graph file.
 
+Host-config invariants (``assert:`` is a predicate or ``{all|any|not: ...}`` over host facts) are
+linted, evaluated and explained the same way; ``fields`` lists what a predicate may read.
+
 Exit codes (``test``): 0 every invariant HOLDS, 1 any VIOLATED, 2 none violated but some UNKNOWN
 or EXPIRED, 3 bad input. ``lint``: 0 ok, 3 invalid. A ``covered`` invariant that finds uncovered
 nodes is VIOLATED (exit 1) like any other: the gap is the counterexample.
@@ -13,7 +16,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .compile import CompileError, Plan, compile_text
+from . import hostexpr as X
+from . import hostfields as HF
+from .compile import CompileError, Plan, PlanKind, compile_text
 from .evaluate import Verdict, evaluate
 from .graph import GraphError, ReachGraph
 from .parse import ParseError
@@ -87,6 +92,20 @@ def cmd_lint(a: argparse.Namespace) -> int:
     plans = _plans(a.invariants)
     for label, plan in plans:
         print(f"ok  {plan.id}  {plan.digest[:19]}…  ({label})")
+        if plan.kind is PlanKind.HOSTCONFIG and plan.expr is not None:
+            print(f"      host-config: {X.to_text(plan.expr)}")
+            print(f"      reads facts from: {', '.join(plan.collectors)}")
+    return EXIT_OK
+
+
+def cmd_fields(_: argparse.Namespace) -> int:
+    """The closed registry of host fields a host-config predicate may read."""
+    for spec in HF.catalog():
+        flags = " derived" if spec.derived else ""
+        shown = spec.display(("<" + spec.param.name + ">",) if spec.param else ())
+        print(f"{shown:<46} "
+              f"{spec.type:<10} {spec.collector:<10} max tier {spec.max_tier.value}{flags}")
+        print(f"    {spec.doc}")
     return EXIT_OK
 
 
@@ -130,6 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     lint.set_defaults(fn=cmd_lint)
     st = sub.add_parser("std", help="list the shipped standard invariants")
     st.set_defaults(fn=cmd_std)
+    fl = sub.add_parser("fields", help="list the host fields a host-config predicate may read")
+    fl.set_defaults(fn=cmd_fields)
     t = sub.add_parser("test", help="evaluate invariants against a reach-graph JSON file")
     t.add_argument("invariants", nargs="+", help="YAML file or std:<id>")
     t.add_argument("--graph", required=True, help="reach-graph JSON")

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from paddock_agent.platform_block import BaseEnforcer
+from paddock_agent.platform_block import BaseEnforcer, RevertRefused
 
 
 class RecordingEnforcer(BaseEnforcer):
@@ -29,6 +29,12 @@ class RecordingEnforcer(BaseEnforcer):
     def simulate(self, action_type: str, target: str) -> dict[str, Any]:
         self.calls.append(("simulate", self._key(action_type, target)))
         return {"would": self._plan(action_type, target), "dry_run": True}
+
+    def validate_revert(self, plan: Any) -> dict[str, Any]:
+        # The fake knows exactly one plan shape; anything else is refused like the real enforcer does.
+        if not isinstance(plan, dict) or plan.get("mechanism") != "fake" or not isinstance(plan.get("key"), str):
+            raise RevertRefused("not a plan this fake could have produced")
+        return {"mechanism": "fake", "key": plan["key"]}
 
     def simulate_revert(self, plan: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("simulate_revert", plan.get("key")))

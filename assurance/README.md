@@ -1,4 +1,4 @@
-# paddock-assurance (0.2)
+# paddock-assurance (0.3)
 
 **Provable containment.** Declare what must never be reachable, then search for a
 counterexample. Scope and design: [`docs/PROVABLE_CONTAINMENT_MVP.md`](../docs/PROVABLE_CONTAINMENT_MVP.md);
@@ -13,7 +13,8 @@ library; the library itself knows nothing about the platform. Version 0.2 made c
 cd assurance
 pip install -e '.[test]'
 
-paddock-invariants std                      # the four shipped invariants
+paddock-invariants std                      # the six shipped invariants
+paddock-invariants fields                   # the host fields a host-config predicate may read
 paddock-invariants lint std:no-internet-to-datastore
 paddock-invariants test std:no-internet-to-datastore std:guest-cannot-reach-pos \
     std:public-ports-allowlist --graph examples/estate-violated.json     # exit 1, with witnesses
@@ -25,7 +26,7 @@ pytest -q
 Exit codes for `test`: `0` all hold, `1` any violated, `2` none violated but some `UNKNOWN`
 or `EXPIRED`, `3` bad input.
 
-## The four invariants
+## The six invariants
 
 | id | Says |
 |---|---|
@@ -33,6 +34,8 @@ or `EXPIRED`, `3` bad input.
 | `std:guest-cannot-reach-pos` | Nothing in zone `guest` can reach anything in zone `pos`, through any chain of devices. |
 | `std:public-ports-allowlist` | Everything the internet can connect to is limited to 80 and 443, unless an expiring, reasoned exception says otherwise. |
 | `std:coverage-complete` | Every host, cloud instance, database, load balancer and device is covered **both inbound and outbound** by fresh evidence of at least `configured` strength. Each gap is named with its direction and reason. |
+| `std:server-ssh-hardened` | (host-config) Every server tagged `agent` or `server` has no SSH server, or no password login, no root login, no empty passwords, public keys on and at most 4 attempts, judged from signed agent facts. |
+| `std:server-default-deny-inbound` | (host-config) Every such server's host firewall drops or rejects inbound by default in **every enabled address family** (IPv6 included), from an exact firewall model. |
 
 ## How a verdict is reached
 
@@ -122,6 +125,134 @@ Otherwise `VIOLATED` with one **hop-less** witness per uncovered node
 weak evidence, then quiet sensors. An empty selector is `UNKNOWN`. The graph-wide
 `coverage.require` floor does not apply (the assertion *is* the coverage statement).
 
+## Host-config invariants (0.3)
+
+`assert:` is one of the three literals above, **or** a predicate over the signed facts an agent
+reports about a host: a string, or a mapping `{all|any|not: ...}`. `subjects.to` selects the hosts
+(same `Selector`); `from`, `ports`, `allow` and `via` are not allowed. The result's `assertion` is
+`host-config` and `PlanKind` is `HOSTCONFIG`.
+
+```yaml
+id: std:server-ssh-hardened
+subjects: { to: { tag: [agent, server] } }       # a declared `server` without an agent is UNKNOWN (no_agent)
+assert:
+  any:
+    - host.sshd.installed == false
+    - all:
+        - host.sshd.password_login_possible == false
+        - host.sshd.root_login_possible == false
+        - host.sshd.permitemptypasswords == "no"
+        - host.sshd.pubkeyauthentication == "yes"
+        - host.sshd.maxauthtries <= 4
+evidence: { min_tier: configured, max_age: 6h }
+coverage: { require: 1.0 }
+```
+
+**Predicate grammar** (hand-written tokenizer and parser, no `eval`, no regular expressions;
+at most 200 characters per predicate, 120 tokens, depth 6, 64 leaves, lists of 64):
+
+```
+pred := path OP literal | path 'in' list | path 'subset_of' list | 'count(' path ')' CMP INT
+path := ident ('.' ident | '(' INT ')')*            host.listener(22).exists
+OP   := == != < <= > >=        literal := "text" | 'text' | INT | true | false
+```
+
+Types: `str` (case-insensitive, closed vocabulary where the field has one), `int`, `bool`,
+`set<str>` (case-sensitive names), `set<cidr>`. `==`/`!=` work on every type, `<` `<=` `>` `>=` on
+`int`, `in` on `int` and `str` (membership in a list), `subset_of` on sets, `count(set)` compares
+with an integer. Anything outside the grammar is a parse error; an unknown field, a bad parameter
+(ports 1-65535), an operator the type does not allow or a literal outside a field's vocabulary is
+too. `paddock-invariants fields` lists the registry. **Registry** (closed; every row has a name,
+parameters, type, collector, `max_tier`, and what a missing value means):
+
+| field | type | collector | notes |
+|---|---|---|---|
+| `host.sshd.installed` | bool | sshd | `false` needs the sshd fact to say tool_missing **and** a usable, complete, fully attributed listener table with no listener on 22 or named like an SSH server |
+| `host.sshd.password_login_possible` | bool | sshd | derived: `passwordauthentication yes`, or `kbdinteractiveauthentication yes` with `usepam yes` and no public-key-only `authenticationmethods`; **any** Match probe delta counts |
+| `host.sshd.root_login_possible` | bool | sshd | derived: `permitrootlogin yes` in the base config or any probe delta (key-only `prohibit-password` is not counted) |
+| `host.sshd.{passwordauthentication, kbdinteractiveauthentication, permitemptypasswords, pubkeyauthentication, usepam}` | str | sshd | `yes`/`no`; a key a Match block changes has no single value (`match_override`) |
+| `host.sshd.permitrootlogin` | str | sshd | `without-password` reads as `prohibit-password` |
+| `host.sshd.authenticationmethods`, `host.sshd.maxauthtries` | str, int | sshd | |
+| `host.sshd.{allowusers, allowgroups}` | set<str> | sshd | absent in an exact `sshd -T` fact = empty set |
+| `host.fw.default_inbound_all_families` | str | firewall | derived: `deny` only if the model is `exact` and **every enabled family** has an effective default of drop/reject; `allow` if an enabled family accepts (ip6 accepting while IPv6 is on is `allow`); otherwise no value |
+| `host.fw.engine`, `host.fw.ipv6_enabled` | str, bool | firewall | |
+| `host.listener(PORT).{exists, wildcard}`, `.process` | bool, set<str> | listeners | a positive survives a partial table, a negative needs a complete one; `.process` needs full attribution |
+| `host.listeners.count`, `host.listeners.addresses` | int, set<cidr> | listeners | complete table only |
+| `host.patch.{security_updates_pending, reboot_required}` | int, bool | patch | |
+
+Every field's `max_tier` is `configured`: an agent-signed fact is never lifted, so `min_tier:
+observed` on a host-config invariant is a **compile error** (it could never hold).
+
+**Canonical form and digest.** The parser returns a canonical tree: `all`/`any` children sorted by
+their canonical JSON, single-child `all`/`any` collapsed, set literals sorted and de-duplicated,
+case-folded strings lower-cased. The digest covers that structure (`parse.canonical_json` puts it
+under `assert`), so it ignores whitespace, quoting, key order and sibling order and changes with any
+field, parameter, operator, literal, `not` or combinator. The shipped std digests are pinned in
+`tests/test_stdlib_host.py`: changing a std invariant is a new id.
+
+**Facts in the graph document.** `nodes[].facts.<collector>` (at most 16 collectors per node, lists
+of at most 5000 rows, no floats, strict types, `GraphError` on anything malformed):
+
+```json
+{"id": "web-1", "kind": "host", "tags": ["agent", "server"],
+ "facts": {"sshd": {"status": "ok", "tier": "configured", "observed_at": "2026-12-01T08:30:00Z",
+                    "signed": true, "source": "agent", "key_id": "0f3a...", "seq": 7,
+                    "evidence_ref": "posture:7", "conf": "exact", "partial": false,
+                    "conflict": null, "reason": "", "data": {"...": "the collector section value"}}}}
+```
+
+`status` is `ok | error | unavailable` (`reason` says why when it is not `ok`); `conf` and `partial`
+default to the weak answer (`approximate`, `true`) when absent; `conflict` is absent/false, `true`,
+or a non-empty object/list (any other value, and a misspelt `conflicts` key, is rejected). The
+library never verifies a signature (the server did at ingest): it trusts `signed: true` and carries
+`key_id`, `seq` and `evidence_ref` into witnesses so a verifier can find the evidence again. The
+`data` shapes the accessors read are the collectors' section values (`sshd`: `installed`, `config`,
+`probes.deltas[].delta`, `match.unprobed`, `source`; `firewall`: `backend`, `ipv6_enabled`,
+`families.{ip4,ip6}.{read,effective_default}`, `flat_view.confidence`, `dataplane`,
+`opaque_features`; `listeners`: `count`, `listeners[]`, `attribution.status`; `patch`:
+`pending.{state,security}`, `reboot.{state,required}`).
+
+**Three-valued logic (Kleene strong).** `all`: a false dominates, else an unknown, else true.
+`any`: a true dominates, else an unknown, else false. `not` swaps true and false and leaves unknown
+alone. A **leaf is unknown unless its collector fact is usable**: `status == ok`, `signed`, tier
+(capped at the field's `max_tier`) at least `min_tier`, fresh (`now - observed_at <= max_age`, not
+more than 5 minutes in the future), no `conflict`, `conf == exact` and complete where the field
+needs it, and the accessor produced a value. **An unusable fact is never false**: a stale violating
+value is unknown, so the open finding stays open and nothing is closed on silence. A repeated leaf
+is unknown wherever it is unknown (`A or not A` is unknown, never true).
+
+**Per host, then the estate.** `VIOLATED` if any host is false; else `UNKNOWN`
+(`hosts_unknown:<n>`) if any host is unknown; else `HOLDS`. A violating host always beats an
+unknown one. An empty selection is `UNKNOWN` (`empty_selector:to`). A host invariant that does not
+state `coverage.require` gets **1.0**; an explicit lower floor lets a `HOLDS` stand when
+passing/selected reaches it (at least one host must pass; the unknown hosts are blind spots and in
+`unproven_targets`; the reasons are `no_counterexample, hosts_unknown:<n>`).
+
+**What a result carries.**
+
+- `witnesses`: hop-less, `weakest_basis` = the fact's tier, `confirmed: false`, and a `detail` with
+  exactly these all-string keys: `node, field, clause, predicate, op, expected, observed, tier,
+  observed_at, source, signed, key_id, seq, evidence_ref` (`clause` is the position in the canonical
+  tree, `0` for a lone predicate, `0.1` for the second child; `predicate` is the canonical text,
+  wrapped in `not(...)` for a clause under `not`; `op` is `count<=` etc. for `count()`). At most 3
+  per host and 50 overall (one clause per host first, so many violating hosts all show up);
+  `violating_targets` lists every violating host.
+- `blind_spots`: one row per undecided host and collector, `direction: "host"`, `collector` set
+  (omitted for P1 rows), `relevant: true`, `reason` the most fundamental one (`no_agent`,
+  `no_sensor`, `unavailable`, `collector_error`, `unsigned`, `evidence_conflict`, `approximate`,
+  `partial`, `match_override`, `no_value`, `tier_below_min`, `future_timestamp`, `stale`).
+- `hosts`: `{selected, holds, violated, unknown}` (only for host-config results).
+- `unproven_targets`: the unknown hosts (never read "absent from `violating_targets`" as safe).
+- `evidence_tier` = the weakest tier among the facts the `HOLDS` relied on; `valid_until` =
+  `min(observed_at) + max_age` over them (an `any` relies on its single best true branch; a
+  `host.sshd.installed == false` also relies on the listener table that corroborated it).
+
+```bash
+paddock-invariants test std:server-ssh-hardened std:server-default-deny-inbound \
+    --graph examples/estate-hosts-violated.json          # exit 1: web-2 allows passwords, app-2 accepts inbound
+paddock-invariants test std:server-ssh-hardened --graph examples/estate-hosts-clean.json   # exit 0
+```
+
 ## Reach-graph file
 
 ```json
@@ -161,6 +292,14 @@ enforcement with confirm-or-revert (P4), in-zone confirmation probes (P5), the d
 NACLs, route tables, egress rules and peering are not modelled: a source that does not read them
 must not claim `out` coverage. `evidence.confirm` is accepted and recorded but nothing is
 actively confirmed yet.
+
+## Changes from 0.2
+
+- Host-config assertions (above): `PlanKind.HOSTCONFIG`, `Invariant.expr`, `Plan.expr`,
+  `Plan.collectors`, `Node.host` (`HostFacts`), `Result.hosts`, `BlindSpot.collector`,
+  `BlindSpot.direction == "host"`, `ReachGraph` loads `nodes[].facts`. All additive: P1
+  invariants keep their digests and `Result.to_dict()` keeps its keys.
+- The invariant document may now nest 14 levels (an `all`/`any`/`not` costs two).
 
 ## Changes from 0.1
 

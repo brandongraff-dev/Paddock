@@ -11,6 +11,8 @@ outbound_log               started_at      180 d (RETENTION_OUTBOUND_LOG_DAYS)
 integration_deliveries     updated_at      90 d  (RETENTION_INTEGRATION_DELIVERIES_DAYS)
                                            only terminal rows: sent/dead/skipped
 observation tables         auto-detected   30 d  (RETENTION_OBSERVATIONS_DAYS)
+agent_inventory (v1)       collected_at    30 d  (RETENTION_AGENT_INVENTORY_DAYS)
+agent_posture (signed)     received_at     90 d  (RETENTION_AGENT_POSTURE_DAYS)
 RETENTION_EXTRA entries    as given        as given ("table:col:days,...")
 =========================  ==============  ==================================
 
@@ -28,6 +30,7 @@ per-table counts.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -52,6 +55,20 @@ OBSERVATION_TABLE_CANDIDATES = (
     "asset_observations",
 )
 _OBS_TS_COLUMNS = ("observed_at", "last_seen", "ts", "created_at")
+
+
+# Fleet agent v2 (docs/ASSURANCE_P2.md E8): the v1 inventory history and the signed posture history are bounded
+# by default. The posture ROW is only written when the content digest changes or at most hourly, so 90 days is a
+# few thousand rows per host at worst. A purged posture only ever turns into silence (UNKNOWN), never a pass.
+AGENT_INVENTORY_DAYS_DEFAULT = 30
+AGENT_POSTURE_DAYS_DEFAULT = 90
+
+
+def _env_days(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name) or default)
+    except ValueError:
+        return default
 
 
 class RetentionPolicyError(ValueError):
@@ -98,6 +115,10 @@ def configured_policies() -> list[Policy]:
             s.retention_integration_deliveries_days,
             where="status IN ('sent', 'dead', 'skipped')",
         ),
+        Policy("agent_inventory", "collected_at",
+               _env_days("RETENTION_AGENT_INVENTORY_DAYS", AGENT_INVENTORY_DAYS_DEFAULT)),
+        Policy("agent_posture", "received_at",
+               _env_days("RETENTION_AGENT_POSTURE_DAYS", AGENT_POSTURE_DAYS_DEFAULT)),
     ]
     pols += parse_extra(s.retention_extra)
     return pols

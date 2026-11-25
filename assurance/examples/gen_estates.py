@@ -55,3 +55,56 @@ here = Path(__file__).parent
 for name, v in (("estate-clean.json", False), ("estate-violated.json", True)):
     (here / name).write_text(json.dumps(estate(v), indent=2) + "\n")
     print("wrote", name)
+
+
+# ------------------------------------------------------------------------------------------
+# host-config estates: signed agent facts on server nodes (``nodes[].facts.<collector>``)
+
+def _fact(data, *, conf="exact", partial=False, seq=1, tier="configured", seen=SEEN, signed=True,
+          status="ok"):
+    return {"status": status, "tier": tier, "observed_at": seen, "signed": signed,
+            "source": "agent", "key_id": "0f3a9c1d77b24e5a8c10d2e4b6a8f012", "seq": seq,
+            "evidence_ref": f"posture:{seq}", "conf": conf, "partial": partial, "data": data}
+
+
+def _sshd(password="no", root="no", seq=1, **kw):
+    cfg = {"passwordauthentication": password, "kbdinteractiveauthentication": "no",
+           "permitrootlogin": root, "pubkeyauthentication": "yes", "permitemptypasswords": "no",
+           "usepam": "yes", "maxauthtries": 3, "authenticationmethods": "any", "port": [22]}
+    return _fact({"installed": True, "source": "sshd_T", "config": cfg,
+                  "probes": {"deltas": []}, "match": {"blocks": 0, "unprobed": False}}, seq=seq, **kw)
+
+
+def _firewall(default="drop", seq=1, **kw):
+    fam = {"read": True, "effective_default": default}
+    return _fact({"backend": "nft", "ipv6_enabled": True, "families": {"ip4": fam, "ip6": fam},
+                  "flat_view": {"default_input_policy": default, "confidence": "exact"},
+                  "opaque_features": [], "dataplane": []}, seq=seq, **kw)
+
+
+def _listeners(ports=(22, 443), seq=1, **kw):
+    rows = [{"proto": "tcp", "ip": "0.0.0.0", "port": p, "bind_class": "wildcard4",
+             "comm": "sshd" if p == 22 else "nginx"} for p in ports]
+    return _fact({"count": len(rows), "listeners": rows, "attribution": {"status": "ok"}},
+                 seq=seq, **kw)
+
+
+def server(id_, zone="prod", *, ssh=None, fw=None, lst=None, tags=("agent", "server")):
+    facts = {"sshd": ssh or _sshd(), "firewall": fw or _firewall(), "listeners": lst or _listeners()}
+    return {"id": id_, "kind": "host", "zone": zone, "tags": list(tags), "facts": facts}
+
+
+def host_estate(violated: bool) -> dict:
+    nodes = [server("web-1", "dmz"), server("app-1"), server("db-1")]
+    if violated:
+        nodes += [
+            server("web-2", "dmz", ssh=_sshd(password="yes", seq=5)),          # password SSH
+            server("app-2", fw=_firewall(default="accept", seq=3)),             # default-accept
+            {"id": "batch-1", "kind": "host", "zone": "prod", "tags": ["server"]},   # no agent
+        ]
+    return {"version": 1, "now": NOW, "nodes": nodes, "edges": []}
+
+
+for name, v in (("estate-hosts-clean.json", False), ("estate-hosts-violated.json", True)):
+    (here / name).write_text(json.dumps(host_estate(v), indent=2) + "\n")
+    print("wrote", name)

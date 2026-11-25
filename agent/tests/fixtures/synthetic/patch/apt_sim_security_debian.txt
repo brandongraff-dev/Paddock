@@ -1,0 +1,13 @@
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+The following packages will be upgraded:
+  libssl3 openssl tzdata
+2 upgraded, 1 newly installed, 1 to remove and 1 not upgraded.
+Inst libssl3 [3.0.11-1~deb12u1] (3.0.15-1~deb12u1 Debian-Security:12/stable-security [amd64])
+Inst openssl [3.0.11-1~deb12u1] (3.0.15-1~deb12u1 Debian-Security:12/stable-security [amd64]) []
+Inst tzdata [2024a-0+deb12u1] (2024b-0+deb12u1 Debian:12.7/stable-updates [all])
+Inst newpkg (1.0-1 Debian:12.7/stable [amd64])
+Inst foo [1.0] (1.1 Weird:1/stable-security-tools [amd64])
+Remv oldpkg [1.0]

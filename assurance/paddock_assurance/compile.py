@@ -4,7 +4,10 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 
+from . import hostexpr as X
+from . import hostfields as HF
 from . import ports as P
 from .model import Invariant, Tier, parse_duration
 from .parse import digest, parse_invariant
@@ -18,6 +21,7 @@ class PlanKind(str, Enum):
     REACH = "REACH"                  # assert: unreachable
     EXPOSURE_SET = "EXPOSURE_SET"    # assert: exposes-only
     COVERED = "COVERED"              # assert: covered
+    HOSTCONFIG = "HOSTCONFIG"        # assert: <predicate> | {all|any|not: ...} over host facts
 
 
 @dataclass(frozen=True)
@@ -32,13 +36,37 @@ class Plan:
     allowed_ports: P.Intervals
     max_hops: int
     coverage_required: float
+    # HOSTCONFIG only: the canonical tree and the collectors whose facts it reads.
+    expr: Optional[X.Node] = None
+    collectors: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
         return self.invariant.id
 
 
+def _compile_host(inv: Invariant) -> Plan:
+    tree = inv.expr
+    assert tree is not None
+    leaves = X.leaves(tree)
+    for lf in leaves:
+        spec = HF.REGISTRY[lf.field]
+        if inv.evidence.min_tier.rank > spec.max_tier.rank:
+            raise CompileError(
+                f"evidence.min_tier {inv.evidence.min_tier.value} is above the strongest evidence "
+                f"{spec.name} can ever have ({spec.max_tier.value}: an agent-signed fact is never "
+                "lifted), so this invariant could never hold")
+    return Plan(
+        invariant=inv, digest=digest(inv), kind=PlanKind.HOSTCONFIG,
+        max_age=parse_duration(inv.evidence.max_age), min_tier=inv.evidence.min_tier,
+        protocols=frozenset(), via_ports=None, allowed_ports=(), max_hops=1,
+        coverage_required=inv.coverage.require, expr=tree,
+        collectors=tuple(sorted({HF.REGISTRY[lf.field].collector for lf in leaves})))
+
+
 def compile_invariant(inv: Invariant) -> Plan:
+    if inv.assert_ == "host-config":
+        return _compile_host(inv)
     kind = {"unreachable": PlanKind.REACH, "exposes-only": PlanKind.EXPOSURE_SET,
             "covered": PlanKind.COVERED}[inv.assert_]
     if kind is PlanKind.EXPOSURE_SET and set(inv.via.protocols) == {"icmp"}:

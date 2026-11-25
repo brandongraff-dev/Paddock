@@ -28,6 +28,12 @@ Rules, and why they are what they are:
   (its lease lapsed while it ran) therefore can never close or verify a finding that a newer
   evaluator just opened. Opening and refreshing findings is not fenced beyond a pre-check: a
   stale VIOLATED is noise, never a false all-clear.
+* ``host-config`` (P2) verdicts have hop-less witnesses (``detail.node`` is the host). One finding
+  per (invariant, host): several failing clauses of one host are folded into ONE finding (the
+  first clause is the evidence, all of them are in the description). A host that is merely
+  ``UNKNOWN`` (no agent, silent, stale, unsigned, approximate, in conflict) keeps its open
+  finding, both under a VIOLATED verdict (``unproven_targets``) and under a HOLDS that a lower
+  coverage floor let stand with unknown hosts (those hosts are not closed by the HOLDS).
 * The evidence has a **constant key set** (the upsert merges evidence with ``||``, so a varying
   key set would leave stale keys behind) and never carries ``url`` / ``matched_at`` / a CVE-like
   string: those keys steer verification jobs and CVE de-duplication, which are meaningless here.
@@ -39,6 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -54,6 +61,8 @@ ACTOR = "system:assurance"
 RULE_PREFIX = "invariant:"
 ESTATE_KIND = "org"
 ESTATE_VALUE = "paddock-assurance"
+#: assertions whose witnesses have no hops: the node is ``detail.node``.
+HOPLESS_ASSERTIONS = frozenset({"covered", "host-config"})
 REOPEN_REASON = "invariant violated again"
 VERIFYING_TIERS = frozenset({"observed", "tested"})
 _MAX_RULE_ID = 256
@@ -102,9 +111,10 @@ class _NullRedis:
 # --------------------------------------------------------------------------------------------
 
 def target_of(assertion: str, witness: dict[str, Any]) -> Optional[str]:
-    """The root-cause node a witness is about: the last hop's destination, or for ``covered`` the
-    blind node itself. ``None`` for a witness we cannot place (never invent a target)."""
-    if assertion == "covered":
+    """The root-cause node a witness is about: the last hop's destination, or for ``covered`` and
+    ``host-config`` (hop-less witnesses) the node in ``detail.node``. ``None`` for a witness we
+    cannot place (never invent a target)."""
+    if assertion in HOPLESS_ASSERTIONS:
         node = (witness.get("detail") or {}).get("node")
         return node if isinstance(node, str) and node else None
     hops = witness.get("hops") or []
@@ -120,6 +130,16 @@ def asset_uuid(ref: str) -> Optional[uuid.UUID]:
         return None
     try:
         return uuid.UUID(ref[len("asset:"):])
+    except ValueError:
+        return None
+
+
+def agent_uuid(ref: str) -> Optional[uuid.UUID]:
+    """``agent:<uuid>`` -> UUID; any other node reference -> None."""
+    if not ref.startswith("agent:"):
+        return None
+    try:
+        return uuid.UUID(ref[len("agent:"):])
     except ValueError:
         return None
 
@@ -155,9 +175,52 @@ def _hop_text(hop: dict[str, Any], labels: dict[str, str]) -> str:
            f" ({what}{'; ' if what and meta else ''}{meta})"
 
 
+_CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
+
+
+def _text(value: Any, limit: int = 160) -> str:
+    """A witness value as one short, single-line, printable string (agent-supplied text is data:
+    never let it break the layout or smuggle a newline into a finding)."""
+    s = _CTRL.sub(" ", str(value if value is not None else "")).strip()
+    return s if len(s) <= limit else s[:limit - 1] + "..."
+
+
+def _host_clause(detail: dict[str, Any]) -> str:
+    predicate = _text(detail.get("predicate") or detail.get("field") or "a host-config clause")
+    observed = _text(detail.get("observed"), 80)
+    op, expected = _text(detail.get("op"), 20), _text(detail.get("expected"), 80)
+    need = f"{op} {expected}".strip()
+    return f"{predicate} (found {observed or 'nothing'}{'; required ' + need if need else ''})"
+
+
+def _host_evidence(detail: dict[str, Any]) -> str:
+    bits = [f"{_text(detail.get('tier'), 20) or 'unknown'} evidence"]
+    if detail.get("signed") == "true":
+        bits.append("signed by the host's agent")
+    if detail.get("key_id"):
+        bits.append(f"key {_text(detail['key_id'], 64)}")
+    if detail.get("seq"):
+        bits.append(f"seq {_text(detail['seq'], 20)}")
+    if detail.get("observed_at"):
+        bits.append(f"as of {_text(detail['observed_at'], 32)}")
+    return ", ".join(bits)
+
+
+def describe_host_witnesses(witnesses: Sequence[dict[str, Any]], labels: dict[str, str]) -> str:
+    """One host, one or more failing clauses, in words. ``witnesses`` all have the same node."""
+    details = [w.get("detail") or {} for w in witnesses] or [{}]
+    node = _label(_text(details[0].get("node"), 128), labels)
+    clauses = "; ".join(f"{i}) {_host_clause(d)}" if len(details) > 1 else _host_clause(d)
+                        for i, d in enumerate(details, 1))
+    return (f"{node} does not meet the required configuration: {clauses}. "
+            f"Evidence: {_host_evidence(details[0])}.")
+
+
 def describe_witness(assertion: str, witness: dict[str, Any], labels: dict[str, str]) -> str:
     """The witness in words (what a person reads in the finding)."""
     detail = witness.get("detail") or {}
+    if assertion == "host-config":
+        return describe_host_witnesses([witness], labels)
     if assertion == "covered":
         node = _label(detail.get("node", ""), labels)
         direction = detail.get("direction", "both")
@@ -189,6 +252,10 @@ def describe_witness(assertion: str, witness: dict[str, Any], labels: dict[str, 
 
 
 _REMEDIATION = {
+    "host-config": ("Change the host's configuration so the clause above holds (for the SSH and firewall "
+                    "invariants: edit sshd_config / the firewall policy, then reload the service). The "
+                    "agent reports the new configuration on its next posture and this finding closes by "
+                    "itself when the invariant holds; a host that goes silent stays open."),
     "covered": ("Close the gap: sync the missing configuration source or deploy a sensor that sees "
                 "this node in the missing direction, then wait for the next evaluation. Until "
                 "then other invariants cannot rule out connections at this node."),
@@ -209,6 +276,12 @@ def build_items(
     items: list[dict[str, Any]] = []
     targets: list[str] = []
     seen: set[str] = set()
+    by_host: dict[str, list[dict[str, Any]]] = {}
+    if assertion == "host-config":         # every failing clause of a host goes in its one finding
+        for w in result.get("witnesses") or []:
+            t = target_of(assertion, w)
+            if t is not None:
+                by_host.setdefault(t, []).append(w)
     for w in result.get("witnesses") or []:
         target = target_of(assertion, w)
         if target is None or target in seen:
@@ -226,7 +299,8 @@ def build_items(
             "rule_source": "invariant",
             "severity": severity,
             "title": f"{title}: {_label(target, labels)}"[:_MAX_TITLE],
-            "description": describe_witness(assertion, w, labels),
+            "description": (describe_host_witnesses(by_host[target], labels) if assertion == "host-config"
+                            else describe_witness(assertion, w, labels)),
             "remediation": _REMEDIATION.get(assertion, _REMEDIATION["unreachable"]),
             "evidence": evidence,
             "metadata": {"invariant_id": invariant_id, "target_ref": target,
@@ -256,12 +330,25 @@ async def _asset_labels(pool, result: dict[str, Any], assertion: str) -> tuple[d
         if t:
             refs.add(t)
     ids = sorted({a for r in refs if (a := asset_uuid(r)) is not None})
-    if not ids:
+    agents = sorted({a for r in refs if (a := agent_uuid(r)) is not None})
+    if not ids and not agents:
         return {}, set()
+    labels: dict[str, str] = {}
+    live: set[uuid.UUID] = set()
     async with pool.acquire() as con:
-        rows = await con.fetch("SELECT id, value FROM assets WHERE id = ANY($1::uuid[])", ids)
-    live = {r["id"] for r in rows}
-    return {f"asset:{r['id']}": r["value"] for r in rows}, live
+        if ids:
+            rows = await con.fetch("SELECT id, value FROM assets WHERE id = ANY($1::uuid[])", ids)
+            live = {r["id"] for r in rows}
+            labels = {f"asset:{r['id']}": r["value"] for r in rows}
+        if agents:
+            try:       # a managed host is shown by its hostname (display only, never a target)
+                for r in await con.fetch("SELECT id, hostname FROM fleet_agents WHERE id = ANY($1::uuid[])",
+                                         agents):
+                    if r["hostname"]:
+                        labels[f"agent:{r['id']}"] = _text(r["hostname"], 100)
+            except Exception:  # noqa: BLE001 -- a label is cosmetic
+                logger.exception("assurance_agent_labels_failed")
+    return labels, live
 
 
 async def _publish(redis: Any, event: dict[str, Any]) -> None:
@@ -308,6 +395,7 @@ WITH due AS (
      WHERE rule_source = 'invariant'
        AND (rule_id = $1::text OR starts_with(rule_id, $2::text))
        AND status IN ('open', 'triaged') AND suppressed_by IS NULL
+       AND NOT COALESCE((evidence->>'target_ref') = ANY($7::text[]), false)
      FOR UPDATE
 )
 UPDATE findings f
@@ -317,6 +405,10 @@ UPDATE findings f
   FROM due WHERE f.id = due.id
 RETURNING f.id, due.status AS from_status
 """
+
+#: ``$7`` (``_CLOSE_SQL``) = targets the HOLDS must leave open: for ``host-config``, the hosts a
+#: lower coverage floor let the verdict stand over without being proven (no agent, silent, stale,
+#: unsigned, approximate, in conflict). Empty for every other assertion: HOLDS closes all, as in P1.
 
 #: Like ``_CLOSE_SQL`` but only for findings whose target is provably no longer violating:
 #: ``$7`` = every target the evaluator still finds violating, ``$8`` = targets it cannot see into.
@@ -370,16 +462,19 @@ async def _after_close(pool, redis: Any, rows: list[Any], verified: bool, tier: 
 
 
 async def _close_all(pool, redis: Any, invariant_id: str, tier: Optional[str], graph_version: int,
-                     now: datetime, rep: SyncReport, lease_owner: Optional[str] = None) -> None:
+                     now: datetime, rep: SyncReport, lease_owner: Optional[str] = None,
+                     keep: Sequence[str] = ()) -> None:
     verified = tier in VERIFYING_TIERS
     reason = (f"invariant holds at graph version {graph_version}"
               f" (evidence: {tier or 'none'}{'' if verified else ', not enough to verify'})")
+    if keep:
+        reason += f"; {len(keep)} undecided target(s) left open"
     base = f"{RULE_PREFIX}{invariant_id}"
     async with pool.acquire() as con:
         async with con.transaction():
             if not await _fenced(con, lease_owner, graph_version, rep):
                 return
-            rows = await con.fetch(_CLOSE_SQL, base, base + "@", reason, ACTOR, now, verified)
+            rows = await con.fetch(_CLOSE_SQL, base, base + "@", reason, ACTOR, now, verified, list(keep))
             for r in rows:
                 await lifecycle.record_history(con, r["id"], r["from_status"], "fixed", reason, None, ACTOR)
     await _after_close(pool, redis, rows, verified, tier, "invariant_holds", rep)
@@ -394,9 +489,20 @@ def _blind_targets(result: dict[str, Any]) -> list[str]:
             continue
         if b.get("relevant") is False:
             continue
-        if b.get("direction", "both") in ("in", "both"):
+        if b.get("direction", "both") in ("in", "both", "host"):   # 'host': host-config facts
             out.add(b["node"])
     return sorted(out)
+
+
+def _undecided_hosts(result: dict[str, Any]) -> Optional[list[str]]:
+    """Hosts a ``host-config`` HOLDS stood over without proving them (the library lists them in
+    ``unproven_targets``; their blind spots are added too). ``None`` when that list cannot be
+    trusted (absent, malformed or truncated): then a HOLDS closes nothing."""
+    unproven = result.get("unproven_targets")
+    if (not isinstance(unproven, list) or not all(isinstance(t, str) for t in unproven)
+            or result.get("violating_truncated")):
+        return None
+    return sorted(set(unproven) | set(_blind_targets(result)))
 
 
 async def _close_resolved(pool, redis: Any, invariant_id: str, result: dict[str, Any], graph_version: int,
@@ -449,8 +555,15 @@ async def sync_findings(
         rep.skipped = "unknown"
         return rep
     if verdict == "HOLDS":
+        keep: list[str] = []
+        if assertion == "host-config":
+            held = _undecided_hosts(result)
+            if held is None:
+                rep.close_skipped = "no_target_list" if not result.get("violating_truncated") else "truncated"
+                return rep
+            keep = held
         await _close_all(pool, redis, invariant_id, result.get("evidence_tier"), graph_version, now, rep,
-                         lease_owner)
+                         lease_owner, keep)
         return rep
     if verdict != "VIOLATED":
         rep.skipped = "unrecognised_verdict"

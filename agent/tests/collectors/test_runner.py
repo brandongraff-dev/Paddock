@@ -129,3 +129,12 @@ def test_ctx_deadline(tmp_path):
         ctx.check()
     assert ctx.run(["x"])["timed_out"] is True
     put(str(tmp_path), "x", "y")
+
+
+def test_ctx_accepts_str_salt_and_datetime_now():
+    import datetime
+    when = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+    ctx = Ctx("/x", "1", machine_salt="salt", now=when)
+    assert ctx.machine_salt == b"salt" and ctx.now_iso() == "2026-01-02T03:04:05Z"
+    assert Ctx("/x", "1", now=lambda: 86400).now_iso() == "1970-01-02T00:00:00Z"
+    assert Ctx("/x", "1", now=1.9).now_s() == 1  # floats are truncated, never stored

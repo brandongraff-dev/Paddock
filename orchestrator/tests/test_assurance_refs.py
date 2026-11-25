@@ -24,3 +24,15 @@ def test_bad_refs_rejected(bad):
 def test_tags():
     assert refs.is_valid_tag("app-tier") and refs.is_valid_tag("zone")
     assert not refs.is_valid_tag("App Tier") and not refs.is_valid_tag("")
+
+
+def test_agent_refs():
+    u = uuid.uuid4()
+    assert refs.agent_ref(str(u).upper()) == f"agent:{u}"
+    assert refs.parse_ref(f"agent:{u}") == ("agent", str(u))
+    assert refs.is_valid_ref(f"agent:{u}")
+    assert refs.KINDS.count("host") == 1 and "agent" not in refs.KINDS      # an agent node is kind 'host'
+    for bad in ("agent:", "agent:123", f"agent:{str(u).upper()}", f"agent:{u.hex}", f"AGENT:{u}", f"agent:{u} "):
+        assert not refs.is_valid_ref(bad), bad
+    with pytest.raises(refs.RefError):
+        refs.agent_ref("not-a-uuid")

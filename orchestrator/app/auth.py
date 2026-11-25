@@ -128,6 +128,9 @@ class Principal:
     # Set only for an MSP user acting inside a customer tenant (app/msp): who
     # is really acting and for which MSP. ``tenant_id`` is then the customer.
     msp_delegation: dict[str, Any] | None = None
+    # Set only for an enrolled host agent (kind == "agent", capability "agent"): the one agent
+    # row this credential speaks for. Handlers assert it equals the path id (docs/ASSURANCE_P2.md 6).
+    agent_id: str | None = None
 
     @property
     def clearance_rank(self) -> int:
@@ -295,11 +298,20 @@ def verify_jwt(token: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 class AuthError(Exception):
-    """A presented credential was invalid (-> 401)."""
+    """A presented credential was invalid (-> 401 unless ``status`` says otherwise).
 
-    def __init__(self, detail: str) -> None:
+    ``body`` adds machine-readable keys to the JSON answer (``{"error": "re_enroll_required"}``);
+    ``principal`` is for the audit trail ONLY (it names the tenant/actor a refused-but-recognised
+    credential belongs to) and never authorises anything.
+    """
+
+    def __init__(self, detail: str, *, status: int = 401, body: dict[str, Any] | None = None,
+                 principal: "Principal | None" = None) -> None:
         super().__init__(detail)
         self.detail = detail
+        self.status = status
+        self.body = body or {}
+        self.principal = principal
 
 
 def _extract_credentials(request: Request) -> tuple[str | None, str | None]:
@@ -455,6 +467,71 @@ async def _principal_from_scim_token(request: Request, token: str) -> Principal:
     )
 
 
+# Compared against when the prefix is unknown or malformed, so "no such agent" and "wrong secret" cost the same.
+_AGENT_DUMMY_HASH = hashlib.sha256(b"fleet-agent-dummy").hexdigest()
+
+
+async def _principal_from_agent_token(request: Request, token: str) -> Principal:
+    """``X-Agent-Token: fat_<prefix>_<secret>`` -> an **agent** principal (docs/ASSURANCE_P2.md section 6).
+
+    ``agent`` is a capability of its own: it is NOT a role, is in no ``ROLE_CAPABILITIES`` entry and is not
+    a valid API-key scope, so no user, key or service credential can ever hold it and an agent credential
+    can never satisfy ``read``/``triage``/``admin``. Nothing is written here: only a SIGNED envelope counts
+    as proof of life, so a stolen bearer token alone must not refresh ``last_seen``.
+
+    Order: well-formed prefix -> cross-tenant lookup (``auth_lookup``, SELECT-only policy) -> constant-time
+    sha256 compare -> revoked -> legacy (a v1 agent without a key: ``403 re_enroll_required``, rows and history
+    kept) -> tenant active. Unknown prefix and wrong secret are the same 401.
+    """
+    from . import fleet_enroll
+
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise AuthError("auth backend unavailable")
+    prefix = fleet_enroll.split_agent_token(token)
+    row = None
+    if prefix is not None:
+        with tenancy.auth_lookup():
+            async with pool.acquire() as con:
+                row = await con.fetchrow(
+                    """
+                    SELECT a.id, a.tenant_id, a.hostname, a.status, a.legacy, a.revoked_at, a.token_hash,
+                           t.status AS tenant_status
+                      FROM fleet_agents a LEFT JOIN tenants t ON t.id = a.tenant_id
+                     WHERE a.token_prefix = $1
+                    """,
+                    prefix,
+                )
+    if row is None:
+        fleet_enroll.hash_matches(_AGENT_DUMMY_HASH, token or "")
+        raise AuthError("invalid agent token")
+    if not fleet_enroll.hash_matches(row["token_hash"], token):
+        raise AuthError("invalid agent token")
+    if row["tenant_status"] != "active":
+        raise AuthError("tenant suspended")
+    # The secret was right: this is the real agent, so the refusals below may say why. The principal on the
+    # error is for the audit chain of the agent's own tenant; it carries no capability.
+    ghost = Principal(
+        actor=f"agent:{row['hostname']}", role="agent", clearance="public", capabilities=frozenset(),
+        kind="agent", tenant_id=str(row["tenant_id"]), agent_id=str(row["id"]),
+    )
+    if row["status"] == "revoked" or row["revoked_at"] is not None:
+        raise AuthError("agent revoked", status=403, body={"error": "agent_revoked"}, principal=ghost)
+    if row["legacy"]:
+        raise AuthError(
+            "this agent predates signed evidence; re-enroll it with a new enrollment token",
+            status=403, body={"error": "re_enroll_required"}, principal=ghost)
+    return Principal(
+        actor=f"agent:{row['hostname']}",
+        role="agent",
+        clearance="public",
+        capabilities=frozenset({"agent"}),   # never capabilities_for(): "agent" is not a role
+        kind="agent",
+        tenant_id=str(row["tenant_id"]),
+        agent_id=str(row["id"]),
+    )
+
+
 # Service-key routes whose tenant comes from a second credential, not from the
 # caller: otdiscovery brackets a managed sensor's upload with claim/done, and
 # the orchestrator resolves the tenant from the sensor's own credential
@@ -470,6 +547,12 @@ async def resolve_principal(request: Request) -> Principal | None:
     Raises ``AuthError`` when a credential IS presented but is invalid.
     """
     api_key, token = _extract_credentials(request)
+    agent_token = request.headers.get("x-agent-token")
+    if agent_token is not None:
+        # An agent credential, when presented, is the ONLY credential considered: it can never be combined
+        # with (or upgraded by) a user/key/service credential on the same request. An invalid one is a 401
+        # even on a public route.
+        return await _principal_from_agent_token(request, agent_token.strip())
     if token and token.startswith(SCIM_TOKEN_PREFIX):
         return await _principal_from_scim_token(request, token)
     if api_key:
@@ -637,6 +720,24 @@ _rule("POST", r"/v1/sensors/ingest/(claim|done)", "write")
 # every write to the deny-closed `admin` default.
 _rule("GET", r"/v1/sensors/tokens", "admin")
 
+# --- Fleet agents v2 (schema 041, docs/ASSURANCE_P2.md sections 2 and 6) ------ #
+# Anchored UUID patterns, never `_ANY`, so they cannot shadow `/v1/fleet/actions/...`. Anything that does
+# not match falls to the deny-closed default (POST -> admin), and every agent handler additionally asserts
+# `principal.kind == "agent"` and `principal.agent_id == <path id>`.
+_UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+# Enrollment authenticates in the handler by the per-tenant `fet_` token (public to the middleware).
+_rule("POST", r"/v1/fleet/enroll", None)
+# Only the agent principal (capability "agent", held by no role/key/scope) speaks for an agent.
+_rule("POST", rf"/v1/fleet/{_UUID}/(heartbeat|posture|inventory|keys/rotate)", "agent")
+_rule("POST", rf"/v1/fleet/actions/{_UUID}/result", "agent")
+# Token metadata + revocation are admin-only; GET would otherwise default to `read`.
+_rule("GET POST DELETE", rf"/v1/fleet/enroll-tokens(/{_ANY})?", "admin")
+_rule("POST", rf"/v1/fleet/agents/{_ANY}/revoke", "admin")
+_rule("POST", rf"/v1/fleet/agents/{_ANY}/keys/{_ANY}/revoke", "admin")
+# The full latest posture reveals a host's firewall/listeners/patch state: triage, not read. `_ANY` on purpose:
+# a malformed id must not drop to the weaker default `read` for GET.
+_rule("GET", rf"/v1/fleet/agents/{_ANY}/posture", "triage")
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.
@@ -703,7 +804,12 @@ _NO_WRITE_AHEAD = frozenset({"/v1/scope/check", "/v1/billing/webhook"})
 # ones are not audited per request; rejected/denied ones still are, and the
 # lifecycle actions (token create/revoke, enroll, sensor revoke/update) are
 # audited by their handlers.
-_SENSOR_DATA_PLANE = re.compile(r"^/v1/sensors/(heartbeat|ingest/(claim|done))/?$")
+# Fleet agent heartbeat (every ~30 s) and posture (every ~5 min) are the same kind of traffic and are exempt
+# the same way; a rejected one is audited twice over (here, and as `fleet.evidence.rejected` by the handler).
+_SENSOR_DATA_PLANE = re.compile(
+    r"^/v1/(sensors/(heartbeat|ingest/(claim|done))"
+    r"|fleet/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/(heartbeat|posture))/?$"
+)
 
 
 #: anonymous requests per client per minute on public routes (Stripe's webhook
@@ -777,7 +883,7 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         try:
             principal = await resolve_principal(request)
         except AuthError as exc:
-            return await self._deny(request, 401, exc.detail, None)
+            return await self._deny(request, exc.status, exc.detail, exc.principal, body=exc.body)
 
         if principal is None and settings.auth_mode == "dev":
             principal = dev_principal()
@@ -911,6 +1017,7 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         status_code: int,
         detail: str,
         principal: Principal | None,
+        body: dict[str, Any] | None = None,
     ) -> JSONResponse:
         rid = getattr(request.state, "request_id", None)
         if request.url.path.startswith("/scim/"):
@@ -926,7 +1033,7 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": "Bearer"} if status_code == 401 else None,
             )
         else:
-            resp = JSONResponse({"detail": detail}, status_code=status_code)
+            resp = JSONResponse({**(body or {}), "detail": detail}, status_code=status_code)
         if rid:
             resp.headers["X-Request-ID"] = rid
         await self._audit(request, principal, status_code, denied=True)

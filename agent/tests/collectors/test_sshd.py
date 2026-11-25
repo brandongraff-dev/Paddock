@@ -244,7 +244,7 @@ def test_match_group_and_address_blocks_are_probed(tmp_path):
     assert v["match"]["unprobed"] is False and sec["conf"] == "exact"
     assert {"10.0.0.0", "10.1.0.0", "10.2.0.0", "11.0.0.0", "203.0.113.7"} <= seen_addrs
     alice = [x for x in v["probes"]["deltas"] if x["user"] == "alice"]
-    assert len(alice) == v["probes"]["planned"] // 5 and all(
+    assert len(alice) == v["probes"]["planned"] // 6 and all(  # root, 3 login users, deploy, nonexistent
         x["delta"] == {"passwordauthentication": "yes"} for x in alice)
     assert all(x["user"] == "alice" for x in v["probes"]["deltas"])
 
@@ -264,9 +264,24 @@ def test_more_than_twenty_login_users_with_match_user_is_approximate(tmp_path):
     runner = sshd_runner(fixture(S + "sshd_T.hardened.txt"))
     ctx = make_ctx(tmp_path, runner=runner, files={"/etc/ssh/sshd_config": cfg, "/etc/passwd": passwd}, bins=BINS)
     sec = sshd.collect(ctx)
-    assert sec["v"]["probes"]["users_total"] == 25 and sec["v"]["probes"]["users_probed"] == 21
+    assert sec["v"]["probes"]["users_total"] == 25 and sec["v"]["probes"]["users_probed"] == 22
     assert sec["conf"] == "approximate" and "users_over_cap" in sec["v"]["match"]["unprobed_reasons"]
-    assert not any("user=u24," in " ".join(c) for c in runner.calls)
+    # a literal `Match User` name is probed even beyond the 20-user cap; the other users stay unprobed
+    assert any("user=u24," in " ".join(c) for c in runner.calls)
+    assert not any("user=u23," in " ".join(c) for c in runner.calls)
+
+
+def test_match_user_naming_a_nologin_account_is_probed(tmp_path):
+    hardened = fixture(S + "sshd_T.hardened.txt")
+    pw_yes = hardened.replace("passwordauthentication no", "passwordauthentication yes")
+    passwd = fixture(S + "passwd.sample") + "svc:x:998:998::/srv:/usr/sbin/nologin\n"
+    cfg = "PasswordAuthentication no\nMatch User svc,!bob,*admin\n  PasswordAuthentication yes\n"
+    runner = sshd_runner(hardened, lambda u, a: pw_yes if u == "svc" else hardened)
+    ctx = make_ctx(tmp_path, runner=runner, files={"/etc/ssh/sshd_config": cfg, "/etc/passwd": passwd},
+                   bins=BINS)
+    sec = sshd.collect(ctx)
+    assert sshd.match_user_names([[("user", "svc,!bob,*admin")]]) == ["svc"]
+    assert {x["user"] for x in sec["v"]["probes"]["deltas"]} == {"svc"}
 
 
 def test_probe_failure_is_never_exact(tmp_path):

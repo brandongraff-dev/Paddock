@@ -2,6 +2,9 @@
 
   internet            the public internet (one per tenant; never an assets row)
   asset:<uuid>        an assets row (cloud instance/db/lb, device, host)
+  agent:<uuid>        a managed host known only through its Paddock agent (a fleet_agents row;
+                      kind ``host``). Replaced by ``asset:<uuid>`` only when the agent is
+                      corroborated as one cloud instance (docs/ASSURANCE_P2.md E3)
   ip:<addr>           a host with no asset row (canonical, compressed, lowercase)
   cidr:<net>          a network (security-group source ranges, declared zones)
 
@@ -16,7 +19,7 @@ from typing import Optional
 
 INTERNET = "internet"
 KINDS = ("internet", "host", "cloud_instance", "cloud_db", "cloud_lb", "device", "ip", "cidr")
-_PREFIXES = ("asset", "ip", "cidr")
+_PREFIXES = ("asset", "agent", "ip", "cidr")
 _MAX_REF = 128
 
 
@@ -29,6 +32,14 @@ def asset_ref(asset_id: "uuid.UUID | str") -> str:
         return f"asset:{uuid.UUID(str(asset_id))}"
     except ValueError as exc:
         raise RefError(f"bad asset id {asset_id!r}") from exc
+
+
+def agent_ref(agent_id: "uuid.UUID | str") -> str:
+    """``agent:<uuid>``: canonical (lowercase, hyphenated) like ``asset_ref``."""
+    try:
+        return f"agent:{uuid.UUID(str(agent_id))}"
+    except ValueError as exc:
+        raise RefError(f"bad agent id {agent_id!r}") from exc
 
 
 def ip_ref(addr: str) -> str:
@@ -54,7 +65,7 @@ def parse_ref(ref: str) -> tuple[str, Optional[str]]:
     prefix, sep, value = ref.partition(":")
     if not sep or prefix not in _PREFIXES or not value:
         raise RefError(f"bad ref {ref!r}")
-    canon = {"asset": asset_ref, "ip": ip_ref, "cidr": cidr_ref}[prefix](value)
+    canon = {"asset": asset_ref, "agent": agent_ref, "ip": ip_ref, "cidr": cidr_ref}[prefix](value)
     if canon != ref:
         raise RefError(f"non-canonical ref {ref!r} (expected {canon!r})")
     return prefix, value

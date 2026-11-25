@@ -46,6 +46,9 @@ def reason_rank(reason: str) -> int:
 @dataclass(frozen=True)
 class Known:
     value: Any
+    # Other facts the value rests on (a corroborating collector): they expire too, so the verdict's
+    # tier and valid_until must account for them.
+    also: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -69,12 +72,18 @@ class FieldSpec:
     type: str                         # one of TYPES
     collector: str
     max_tier: Tier
-    accessor: Callable[[Fact, tuple, HostFacts], Outcome]
+    accessor: Callable[[Fact, tuple, "HostCtx"], Outcome]
     doc: str
     param: Optional[ParamSpec] = None  # the parameter sits right after segment ``param_after``
     param_after: int = 1
     absent: str = "unknown"           # what a missing key means: "unknown" or "empty" (set fields)
     derived: bool = False
+    choices: Optional[frozenset] = None   # str fields: the closed vocabulary a literal may use
+    aliases: Mapping[str, str] = None  # type: ignore[assignment]  # literal spellings folded to a choice
+
+    def __post_init__(self) -> None:
+        if self.aliases is None:
+            object.__setattr__(self, "aliases", {})
 
     def display(self, params: tuple = ()) -> str:
         """``host.listener(22).exists``: the canonical spelling."""
@@ -149,8 +158,8 @@ def _sshd_state(fact: Fact) -> Union[tuple[Mapping[str, Any], list[Mapping[str, 
     return cfg, deltas, variants
 
 
-def _sshd_scalar(key: str, allowed: Optional[frozenset]) -> Callable[[Fact, tuple, HostFacts], Outcome]:
-    def acc(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _sshd_scalar(key: str, allowed: Optional[frozenset]) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
+    def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
         bad = _need(fact, exact=True)
         if bad:
             return bad
@@ -172,8 +181,8 @@ def _sshd_scalar(key: str, allowed: Optional[frozenset]) -> Callable[[Fact, tupl
     return acc
 
 
-def _sshd_int(key: str) -> Callable[[Fact, tuple, HostFacts], Outcome]:
-    def acc(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _sshd_int(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
+    def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
         bad = _need(fact, exact=True)
         if bad:
             return bad
@@ -190,9 +199,9 @@ def _sshd_int(key: str) -> Callable[[Fact, tuple, HostFacts], Outcome]:
     return acc
 
 
-def _sshd_list(key: str) -> Callable[[Fact, tuple, HostFacts], Outcome]:
+def _sshd_list(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
     """A set of names; absent means "not configured" (the empty set) in an exact ``sshd -T`` fact."""
-    def acc(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+    def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
         bad = _need(fact, exact=True)
         if bad:
             return bad
@@ -258,8 +267,8 @@ def _root_possible(c: Mapping[str, Any]) -> Tri:
     return v == "yes"
 
 
-def _sshd_derived(fn: Callable[[Mapping[str, Any]], Tri]) -> Callable[[Fact, tuple, HostFacts], Outcome]:
-    def acc(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _sshd_derived(fn: Callable[[Mapping[str, Any]], Tri]) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
+    def acc(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
         bad = _need(fact, exact=True)
         if bad:
             return bad
@@ -272,24 +281,54 @@ def _sshd_derived(fn: Callable[[Mapping[str, Any]], Tri]) -> Callable[[Fact, tup
     return acc
 
 
+def _listener_rows(lf: Fact) -> Optional[list]:
+    rows = lf.data.get("listeners")
+    if not _is_seq(rows):
+        return None
+    return list(rows)
+
+
 def _sshd_seen_elsewhere(host: HostFacts) -> bool:
     """Does the listeners fact (usable or not) show an SSH server? Used only to veto
     ``installed == false``: it can turn that claim into UNKNOWN, never the other way."""
     lf = host.get("listeners")
     if lf is None or lf.status != "ok":
         return False
-    rows = lf.data.get("listeners")
-    if not _is_seq(rows):
-        return False
+    rows = _listener_rows(lf)
+    if rows is None:
+        return True            # a listener table we cannot read cannot clear sshd either
     for r in rows:
         if not _is_map(r):
-            continue
+            return True
         if r.get("port") == 22 or r.get("comm") in _SSHD_COMMS:
             return True
     return False
 
 
-def _sshd_installed(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _absence_corroborated(ctx: "HostCtx") -> Optional[str]:
+    """Why "no sshd" cannot be believed, else ``None``.
+
+    ``tool_missing`` only says no ``sshd`` was found in the usual places; a daemon in an unusual
+    path, or dropbear, would be missed. So the claim also needs a *usable* (signed, fresh, no
+    conflict) listener table that is complete, fully attributed to processes and shows nothing
+    on port 22 or named like an SSH server. Anything less is UNKNOWN, never "not installed"."""
+    if ctx.host.get("listeners") is None:
+        return "no_sensor"
+    lf = ctx.usable("listeners")
+    if lf is None:
+        return ctx.why_unusable("listeners")
+    if lf.status != "ok":
+        return "unavailable" if lf.status == "unavailable" else "collector_error"
+    rows = _listener_rows(lf)
+    if rows is None or not _complete(lf, rows):
+        return "partial"
+    att = lf.data.get("attribution")
+    if not _is_map(att) or att.get("status") != "ok":
+        return "partial"
+    return None
+
+
+def _sshd_installed(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     if fact.status == "ok":
         v = fact.data.get("installed")
         if v is True:
@@ -302,11 +341,15 @@ def _sshd_installed(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
         return Unknown("unavailable")
     else:
         return Unknown("collector_error")
-    # "no sshd binary was found": a claim of absence. Contradicted by a listener that looks like
-    # sshd, it is not trusted.
-    if _sshd_seen_elsewhere(host):
+    # "no sshd binary was found": a claim of absence. A listener that looks like sshd contradicts
+    # it, and without a usable, complete listener table it cannot be corroborated.
+    if _sshd_seen_elsewhere(ctx.host):
         return Unknown("evidence_conflict")
-    return Known(False)
+    why = _absence_corroborated(ctx)
+    if why:
+        return Unknown(why)
+    lf = ctx.usable("listeners")
+    return Known(False, also=(lf,) if lf is not None else ())
 
 
 # --------------------------------------------------------------------------------------------
@@ -315,9 +358,10 @@ def _sshd_installed(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
 _FW_DEFAULTS = frozenset(["accept", "drop", "reject", "unknown"])
 
 
-def _fw_default_all(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
-    """``deny`` only if every *enabled* family's effective default is drop/reject and the model is
-    exact; ``allow`` if one accepts (exact model); otherwise unknown."""
+def _fw_default_all(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
+    """``deny`` only if the model is exact and every *enabled* family's effective default is
+    drop/reject; ``allow`` if an enabled family accepts (exact model); otherwise unknown. IPv6
+    counts whenever it is enabled: ip4 dropping while ip6 accepts is ``allow``."""
     bad = _need(fact, exact=True)
     if bad:
         return bad
@@ -334,17 +378,17 @@ def _fw_default_all(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
     defaults = []
     for name in ("ip4",) + (("ip6",) if v6 else ()):
         f = fams.get(name)
-        if not _is_map(f) or f.get("read") is not True or f.get("effective_default") not in _FW_DEFAULTS:
+        if not _is_map(f) or f.get("effective_default") not in _FW_DEFAULTS:
             return Unknown("no_value")
-        defaults.append(f["effective_default"])
-    if all(x in ("drop", "reject") for x in defaults):
+        defaults.append((f.get("read") is True, f["effective_default"]))
+    if all(r and x in ("drop", "reject") for r, x in defaults):
         return Known("deny")
-    if any(x == "accept" for x in defaults):
+    if any(r and x == "accept" for r, x in defaults):
         return Known("allow")
     return Unknown("no_value")
 
 
-def _fw_engine(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _fw_engine(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     bad = _need(fact, exact=False)
     if bad:
         return bad
@@ -354,7 +398,7 @@ def _fw_engine(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
     return Known(v)
 
 
-def _fw_ipv6(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _fw_ipv6(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     bad = _need(fact, exact=False)
     if bad:
         return bad
@@ -390,7 +434,7 @@ def _at_port(rows: list, port: int) -> list:
     return [r for r in rows if r["port"] == port]
 
 
-def _listener_exists(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _listener_exists(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     rows = _rows(fact)
     if isinstance(rows, Unknown):
         return rows
@@ -399,7 +443,7 @@ def _listener_exists(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
     return Known(False) if _complete(fact, rows) else Unknown("partial")
 
 
-def _listener_wildcard(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _listener_wildcard(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     rows = _rows(fact)
     if isinstance(rows, Unknown):
         return rows
@@ -409,7 +453,7 @@ def _listener_wildcard(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
     return Known(False) if _complete(fact, rows) else Unknown("partial")
 
 
-def _listener_process(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _listener_process(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     rows = _rows(fact)
     if isinstance(rows, Unknown):
         return rows
@@ -427,14 +471,14 @@ def _listener_process(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
     return Known(frozenset(comms))
 
 
-def _listeners_count(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _listeners_count(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     rows = _rows(fact)
     if isinstance(rows, Unknown):
         return rows
     return Known(len(rows)) if _complete(fact, rows) else Unknown("partial")
 
 
-def _listeners_addresses(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _listeners_addresses(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     rows = _rows(fact)
     if isinstance(rows, Unknown):
         return rows
@@ -462,7 +506,7 @@ def _patch_block(fact: Fact, name: str) -> Union[Mapping[str, Any], Unknown]:
     return b
 
 
-def _patch_security(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _patch_security(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     b = _patch_block(fact, "pending")
     if isinstance(b, Unknown):
         return b
@@ -470,7 +514,7 @@ def _patch_security(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
     return Known(v) if type(v) is int and 0 <= v <= 10**9 else Unknown("no_value")
 
 
-def _patch_reboot(fact: Fact, params: tuple, host: HostFacts) -> Outcome:
+def _patch_reboot(fact: Fact, params: tuple, ctx: "HostCtx") -> Outcome:
     b = _patch_block(fact, "reboot")
     if isinstance(b, Unknown):
         return b
@@ -498,19 +542,23 @@ def _specs() -> list[FieldSpec]:
                   "any probed user/address allows PermitRootLogin yes (key-only root login, "
                   "prohibit-password, is not counted)", derived=True),
         FieldSpec("host.sshd.passwordauthentication", "str", "sshd", CFG,
-                  _sshd_scalar("passwordauthentication", _YESNO), "sshd -T passwordauthentication"),
+                  _sshd_scalar("passwordauthentication", _YESNO), "sshd -T passwordauthentication",
+                  choices=_YESNO),
         FieldSpec("host.sshd.kbdinteractiveauthentication", "str", "sshd", CFG,
                   _sshd_scalar("kbdinteractiveauthentication", _YESNO),
-                  "sshd -T kbdinteractiveauthentication"),
+                  "sshd -T kbdinteractiveauthentication", choices=_YESNO),
         FieldSpec("host.sshd.permitrootlogin", "str", "sshd", CFG,
                   _sshd_scalar("permitrootlogin", _ROOT_LOGIN),
-                  "sshd -T permitrootlogin (without-password reads as prohibit-password)"),
+                  "sshd -T permitrootlogin (without-password reads as prohibit-password)",
+                  choices=_ROOT_LOGIN, aliases={"without-password": "prohibit-password"}),
         FieldSpec("host.sshd.permitemptypasswords", "str", "sshd", CFG,
-                  _sshd_scalar("permitemptypasswords", _YESNO), "sshd -T permitemptypasswords"),
+                  _sshd_scalar("permitemptypasswords", _YESNO), "sshd -T permitemptypasswords",
+                  choices=_YESNO),
         FieldSpec("host.sshd.pubkeyauthentication", "str", "sshd", CFG,
-                  _sshd_scalar("pubkeyauthentication", _YESNO), "sshd -T pubkeyauthentication"),
+                  _sshd_scalar("pubkeyauthentication", _YESNO), "sshd -T pubkeyauthentication",
+                  choices=_YESNO),
         FieldSpec("host.sshd.usepam", "str", "sshd", CFG, _sshd_scalar("usepam", _YESNO),
-                  "sshd -T usepam"),
+                  "sshd -T usepam", choices=_YESNO),
         FieldSpec("host.sshd.authenticationmethods", "str", "sshd", CFG,
                   _sshd_scalar("authenticationmethods", None), "sshd -T authenticationmethods"),
         FieldSpec("host.sshd.maxauthtries", "int", "sshd", CFG, _sshd_int("maxauthtries"),
@@ -521,9 +569,11 @@ def _specs() -> list[FieldSpec]:
                   "sshd -T allowgroups (empty: not configured)", absent="empty"),
         FieldSpec("host.fw.default_inbound_all_families", "str", "firewall", CFG, _fw_default_all,
                   "deny: every enabled family drops or rejects inbound by default (exact model); "
-                  "allow: some family accepts; otherwise unknown", derived=True),
+                  "allow: some family accepts; otherwise unknown", derived=True,
+                  choices=frozenset(["deny", "allow"])),
         FieldSpec("host.fw.engine", "str", "firewall", CFG, _fw_engine,
-                  "nft | legacy | mixed | none"),
+                  "nft | legacy | mixed | none",
+                  choices=frozenset(["nft", "legacy", "mixed", "none"])),
         FieldSpec("host.fw.ipv6_enabled", "bool", "firewall", CFG, _fw_ipv6,
                   "the host has a global-capable IPv6 stack"),
         FieldSpec("host.listener.exists", "bool", "listeners", CFG, _listener_exists,
@@ -563,6 +613,7 @@ class Resolved:
     reason: str = ""
     fact: Optional[Fact] = None
     tier: Optional[Tier] = None       # effective tier: the fact's, capped at the field's max_tier
+    also: tuple = ()                  # corroborating facts the value rests on (see ``Known.also``)
 
 
 def trust_problem(fact: Fact, tier: Tier, now: dt.datetime, min_tier: Tier,
@@ -591,8 +642,36 @@ def _type_ok(typ: str, v: Any) -> bool:
     return isinstance(v, frozenset)
 
 
+class HostCtx:
+    """One host as seen by one evaluation: its facts, the clock and the invariant's evidence policy.
+
+    Accessors that need a second collector to corroborate a claim (an absence) must go through
+    ``usable``: a stale, unsigned or conflicting fact never corroborates anything."""
+
+    def __init__(self, host: HostFacts, now: dt.datetime, min_tier: Tier,
+                 max_age: dt.timedelta) -> None:
+        self.host = host
+        self.now = now
+        self.min_tier = min_tier
+        self.max_age = max_age
+
+    def why_unusable(self, collector: str) -> str:
+        fact = self.host.get(collector)
+        if fact is None:
+            return "no_sensor"
+        tier = fact.tier if fact.tier.rank <= CFG.rank else CFG
+        return trust_problem(fact, tier, self.now, self.min_tier, self.max_age) or ""
+
+    def usable(self, collector: str) -> Optional[Fact]:
+        fact = self.host.get(collector)
+        if fact is None or self.why_unusable(collector):
+            return None
+        return fact
+
+
 def resolve(spec: FieldSpec, params: tuple, host: Optional[HostFacts], now: dt.datetime,
             min_tier: Tier, max_age: dt.timedelta) -> Resolved:
+    """The value of ``spec(params)`` on ``host``, or why there is none. Never raises."""
     if host is None:
         return Resolved(False, reason="no_agent")
     fact = host.get(spec.collector)
@@ -603,11 +682,11 @@ def resolve(spec: FieldSpec, params: tuple, host: Optional[HostFacts], now: dt.d
     if why is not None:
         return Resolved(False, reason=why, fact=fact, tier=tier)
     try:
-        out = spec.accessor(fact, params, host)
+        out = spec.accessor(fact, params, HostCtx(host, now, min_tier, max_age))
     except Exception:                       # noqa: BLE001 - an accessor bug must read as UNKNOWN
         return Resolved(False, reason="no_value", fact=fact, tier=tier)
     if isinstance(out, Known) and _type_ok(spec.type, out.value):
-        return Resolved(True, out.value, "", fact, tier)
+        return Resolved(True, out.value, "", fact, tier, tuple(out.also))
     if isinstance(out, Unknown):
         return Resolved(False, reason=out.reason, fact=fact, tier=tier)
     return Resolved(False, reason="no_value", fact=fact, tier=tier)

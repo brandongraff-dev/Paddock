@@ -1,0 +1,24 @@
+apiVersion: paddock.dev/invariant/v1
+id: std:server-ssh-hardened
+title: Servers do not allow password or root SSH login
+description: >
+  Every managed server either has no SSH server, or its effective sshd configuration (sshd -T,
+  probed per user and address so Match blocks count) allows no password login and no root login,
+  refuses empty passwords, accepts public keys and limits authentication attempts to four.
+  Judged from signed, fresh agent facts only. A server whose facts are missing, stale, unsigned,
+  partial or approximate is UNKNOWN, never a pass. Servers are the hosts tagged agent or server:
+  a declared server without an agent is UNKNOWN (no_agent), not out of scope.
+severity: high
+subjects:
+  to: { tag: [agent, server] }
+assert:
+  any:
+    - host.sshd.installed == false
+    - all:
+        - host.sshd.password_login_possible == false
+        - host.sshd.root_login_possible == false
+        - host.sshd.permitemptypasswords == "no"
+        - host.sshd.pubkeyauthentication == "yes"
+        - host.sshd.maxauthtries <= 4
+evidence: { min_tier: configured, max_age: 6h }
+coverage: { require: 1.0 }

@@ -1,0 +1,4 @@
+RHSA-2024:5101 Important/Sec. openssl-1:3.0.7-28.el9_4.x86_64
+RHSA-2024:5101 Important/Sec. openssl-libs-1:3.0.7-28.el9_4.x86_64
+RHSA-2024:4999 Moderate/Sec.  kernel-core-5.14.0-427.28.1.el9_4.x86_64
+RHBA-2024:1111 bugfix         tzdata-2024a-1.el9.noarch

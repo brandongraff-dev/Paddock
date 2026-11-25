@@ -380,7 +380,7 @@ def test_iptables_ipv6_rules():
 def test_tables_other_than_filter_input_are_not_modelled_but_noted():
     m = ipt(["-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT"], extra_tables="*mangle\n:INPUT ACCEPT [0:0]\n-A INPUT -j DROP\nCOMMIT\n")
     assert default(m) == "drop" and m["rule_count"] == 1
-    assert m["other_hooks"] == ["forward"]
+    assert m["other_hooks"] == ["forward", "output"]  # the mangle INPUT -j DROP is NOT modelled
 
 
 # ---------------------------------------------------------------- nft parsing
@@ -541,3 +541,13 @@ def test_fwmodel_is_dependency_free():
             assert node.level == 0, "fwmodel must not import sibling modules"
             mods.add((node.module or "").split(".")[0])
     assert mods <= {"functools", "ipaddress", "re", "shlex"}
+
+
+def test_vacuous_default_is_unknown_not_drop():
+    """Conditional rules that together match every packet leave nothing for the default to
+    apply to: the model refuses to call that a default (precision loss, never a false deny)."""
+    m = ipt(["-A INPUT -s 0.0.0.0/1 -j DROP", "-A INPUT -s 128.0.0.0/1 -j DROP"])
+    assert default(m) == "unknown"
+    m = ipt(["-A INPUT -s 0.0.0.0/1 -j ACCEPT", "-A INPUT -s 128.0.0.0/1 -j ACCEPT"])
+    assert default(m) == "unknown"
+    assert default(ipt(["-A INPUT -s 0.0.0.0/1 -j DROP"])) == "drop"

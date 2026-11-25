@@ -24,6 +24,7 @@ PROBE_HOST = "probe.invalid"
 NONEXISTENT_USER = "paddock-nonexistent-probe"
 NONEXISTENT_LABEL = "<nonexistent>"
 MAX_LOGIN_USERS = 20
+MAX_MATCH_USERS = 10
 MAX_PROBE_RUNS = 150
 MAX_ADDR_REPS = 12
 MAX_FILES = 64
@@ -354,9 +355,30 @@ def classify_match(matches, users_total):
     return sorted(criteria), sorted(reasons), patterns
 
 
-def _users_for_probe(users):
-    names = ["root"] + users[:MAX_LOGIN_USERS] + [NONEXISTENT_USER]
-    return names
+def match_user_names(matches):
+    """Literal (non-wildcard, non-negated) user names that ``Match User`` blocks mention.
+
+    Such a user may have a non-login shell and so be absent from the login-user list; probing
+    it by name closes that gap. Sorted, capped at ``MAX_MATCH_USERS``.
+    """
+    names = set()
+    for crit in matches:
+        for key, pat in crit:
+            if key != "user":
+                continue
+            for item in pat.split(","):
+                item = item.strip()
+                if _USERNAME_RE.match(item):
+                    names.add(item)
+    return sorted(names)[:MAX_MATCH_USERS]
+
+
+def _users_for_probe(users, extra=()):
+    names = ["root"] + users[:MAX_LOGIN_USERS]
+    for n in extra:
+        if n not in names:
+            names.append(n)
+    return names + [NONEXISTENT_USER]
 
 
 def _label(user):
@@ -482,7 +504,7 @@ def collect(ctx):
         for a in reps:
             if a not in addrs:
                 addrs.append(a)
-    names = _users_for_probe(users)
+    names = _users_for_probe(users, match_user_names(tc["matches"]))
     plan = [(u, a) for u in names for a in addrs]
     if len(plan) > MAX_PROBE_RUNS:
         reasons.add("probe_cap")

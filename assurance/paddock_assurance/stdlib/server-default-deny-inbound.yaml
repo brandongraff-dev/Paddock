@@ -1,0 +1,16 @@
+apiVersion: paddock.dev/invariant/v1
+id: std:server-default-deny-inbound
+title: Servers drop inbound traffic by default
+description: >
+  The host firewall's effective inbound default is drop or reject in every enabled address family
+  (IPv6 included: an IPv4 default-deny does not protect an IPv6 listener). Judged from a signed,
+  fresh agent firewall model that the agent could read completely; a firewall it cannot model
+  exactly (ipset, marks, NAT rewriting, container networking, an unreadable ruleset) is UNKNOWN,
+  never a pass. Servers are the hosts tagged agent or server: a declared server without an agent
+  is UNKNOWN (no_agent), not out of scope.
+severity: high
+subjects:
+  to: { tag: [agent, server] }
+assert: host.fw.default_inbound_all_families == "deny"
+evidence: { min_tier: configured, max_age: 6h }
+coverage: { require: 1.0 }
