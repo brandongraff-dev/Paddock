@@ -631,6 +631,30 @@ class Agent:
             log.error("dead-man timer: could not queue the report for action %s (%s); the server will be told "
                       "when it offers the action again", action_id, exc)
 
+    def _note_report_conflict(self, action_id: Any, exc: FleetClientError) -> None:
+        """The server refused a queued result with 409: it no longer holds the action as 'approved' (typically it
+        already holds it as 'applied' because the ack of the applied result was lost). The result route accepts
+        a report only for an approved action and there is no other route to correct it, so the report cannot be
+        delivered. Say so, loudly and durably, instead of dropping it silently: ``report_conflict`` in
+        handled.json. The record keeps its truthful status and ``reported`` stays false."""
+        detail = exc.body.get("detail") if isinstance(exc.body, dict) else None
+        detail = (detail if isinstance(detail, str) else str(exc))[:300]
+        log.error("the server refused the result of action %s with HTTP 409 (%s): it holds that action in another "
+                  "state than 'approved', so this host's record cannot be delivered. If the dead-man timer removed "
+                  "the block, the server may still show the action as applied until the host's next posture shows "
+                  "the firewall without the rule", action_id, detail)
+        if not isinstance(action_id, str):
+            return
+        try:
+            with self.state.exclusive():
+                handled = self.state.load_handled()
+                rec = handled.get(action_id)
+                if isinstance(rec, dict):
+                    rec["report_conflict"] = {"http_status": 409, "detail": detail, "at": int(self._clock())}
+                    self.state.save_handled(handled)
+        except (OSError, StateError) as err:
+            log.error("could not record the report conflict of action %s (%s)", action_id, err)
+
     def _recorded_truth(self, action_id: str):
         """``(status, output)`` this host recorded for an action whose block its dead-man timer removed, else
         ``None``: a queued result written before that must not say 'applied'."""
@@ -820,6 +844,8 @@ class Agent:
                     return "retry"
                 if verdict in ("auth", "fatal"):
                     return verdict
+                if kind == "result" and exc.status == 409:
+                    self._note_report_conflict(item.get("action_id"), exc)
                 self.stats["dropped"] += 1
                 self._item_attempts.pop(key, None)
                 box.delete(path)

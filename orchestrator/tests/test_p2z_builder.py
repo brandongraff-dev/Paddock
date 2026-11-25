@@ -254,7 +254,8 @@ def test_z1_a_host_nothing_independent_placed_is_zone_unknown_in_the_document():
 
 
 def test_z1_an_independent_placement_is_not_zone_unknown():
-    doc, _ = _doc({"ips": [], "claimed_ips": ["192.168.77.7"], "observed_ips": ["10.10.0.7"]})
+    # (Z2-2: the observed peer is independent evidence only when the claim agrees with it)
+    doc, _ = _doc({"ips": [], "claimed_ips": ["10.10.0.7"], "observed_ips": ["10.10.0.7"]})
     assert "zone_unknown" not in _n(doc) and _n(doc)["zone"] == "pos"
     lab = [{"node_ref": "agent:00000000-0000-0000-0000-000000000001", "tag": "zone", "value": "guest",
             "source": "declared"}]
@@ -274,7 +275,7 @@ def test_z1_nodes_that_are_not_agents_keep_their_old_semantics():
 
 
 def test_z1_the_document_with_no_zone_unknown_node_is_unchanged():
-    doc, _ = _doc({"ips": [], "claimed_ips": [], "observed_ips": ["10.10.0.7"]})
+    doc, _ = _doc({"ips": [], "claimed_ips": ["10.10.0.7"], "observed_ips": ["10.10.0.7"]})
     assert all("zone_unknown" not in n for n in doc["nodes"])
 
 
@@ -302,7 +303,7 @@ def test_z1_a_lying_host_behind_the_shipped_default_is_never_a_false_holds(claim
 
 
 def test_z1_an_independent_placement_keeps_the_verdict_certain():
-    doc, _ = _segmentation_doc("192.168.77.7", peer="10.10.0.7")               # direct, unique, private: pos
+    doc, _ = _segmentation_doc("10.10.0.7", peer="10.10.0.7")                  # direct, unique, private, claim agrees: pos
     assert "zone_unknown" not in _doc_node(doc, "agent:00000000-0000-0000-0000-000000000001")
     assert _verdict(doc) == "VIOLATED"
     doc, _ = _segmentation_doc("192.168.77.7", label="pos")                    # declared label
@@ -341,3 +342,58 @@ def test_z1_the_runner_reports_how_many_nodes_are_zone_unknown():
     doc, diag = _doc({"ips": [], "claimed_ips": ["192.168.77.7"]})
     d = runner._diagnostics(runner._Snapshot(doc=doc, diag=diag, version=1, doc_sha="x"), {})
     assert d["zone_unknown_count"] == 1 and d["zone_unknown"] == ["agent:00000000-0000-0000-0000-000000000001"]
+
+
+# --------------------------------------------------------------------------- #
+# Z2-2: a signed claim and a network observation are both only evidence. The observed direct private peer places a
+# host ONLY when the host's own claim agrees with it; a disagreement or an empty claim is zone_unknown.
+# --------------------------------------------------------------------------- #
+
+_AG = "agent:00000000-0000-0000-0000-000000000001"
+
+
+def test_z22_a_claim_and_a_peer_in_different_zones_are_not_resolved_by_trusting_the_observation():
+    doc, diag = _doc({"ips": [], "claimed_ips": ["10.10.0.7"], "observed_ips": ["10.99.0.9"]})
+    assert _n(doc).get("zone_unknown") is True, _n(doc)
+    assert _n(doc).get("zone") != "guest"                       # never silently moved to the observed zone
+    assert diag.zone_conflicts.get(_AG) == ["guest", "pos"]
+    doc, _ = _doc({"ips": [], "claimed_ips": ["10.99.0.7"], "observed_ips": ["10.10.0.9"]})   # and the other way
+    assert _n(doc).get("zone_unknown") is True and _n(doc).get("zone") != "pos"
+
+
+def test_z22_an_observed_peer_alone_never_places_a_host():
+    for claimed in ([], ["192.168.77.7"], ["172.17.0.1"]):
+        doc, diag = _doc({"ips": [], "claimed_ips": claimed, "observed_ips": ["10.10.0.7"]})
+        assert _n(doc).get("zone_unknown") is True and "zone" not in _n(doc), (claimed, _n(doc))
+        assert _AG in diag.zone_unplaced
+
+
+def test_z22_an_honest_host_whose_claim_and_peer_agree_is_still_placed():
+    doc, diag = _doc({"ips": [], "claimed_ips": ["10.10.0.7"], "observed_ips": ["10.10.0.7"]})
+    assert "zone_unknown" not in _n(doc) and _n(doc)["zone"] == "pos" and diag.zone_unknown == []
+    doc, _ = _doc({"ips": [], "claimed_ips": ["172.17.0.1", "10.99.0.7"], "observed_ips": ["10.99.0.9"]})
+    assert "zone_unknown" not in _n(doc) and _n(doc)["zone"] == "guest"       # an unzoned bridge address is no vote
+
+
+def test_z22_a_claim_spread_over_several_zones_does_not_agree_with_any_peer():
+    doc, _ = _doc({"ips": [], "claimed_ips": ["10.10.0.7", "10.99.0.7"], "observed_ips": ["10.99.0.9"]})
+    assert _n(doc).get("zone_unknown") is True
+
+
+def test_z22_a_declared_zone_label_still_wins_over_both():
+    lab = [{"node_ref": _AG, "tag": "zone", "value": "pos", "source": "declared"}]
+    doc, _ = _doc({"ips": [], "claimed_ips": ["10.99.0.7"], "observed_ips": ["10.99.0.9"]}, labels=lab)
+    assert "zone_unknown" not in _n(doc) and _n(doc)["zone"] == "pos"
+
+
+@pytest.mark.parametrize("peer", ["10.99.0.9", "10.99.0.7", "10.10.0.7"])
+def test_z22_end_to_end_a_pos_host_connecting_from_a_guest_address_never_makes_guest_cannot_reach_pos_hold(peer):
+    """The finding's own repro: B truthfully claims a pos address and accepts SSH from guest; a direct, unique peer
+    in the guest zone must not move it out of the pos selector."""
+    doc, _ = _segmentation_doc("10.10.0.7", peer=peer, proxied=False)
+    v = _verdict(doc)
+    assert v != "HOLDS", (peer, v, _doc_node(doc, _AG))
+    if peer == "10.10.0.7":
+        assert v == "VIOLATED"                                  # an honest host (claim and peer agree) is still placed
+    else:
+        assert v == "UNKNOWN" and _doc_node(doc, _AG).get("zone_unknown") is True

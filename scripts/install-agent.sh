@@ -67,7 +67,8 @@ unset PADDOCK_ENROLL_TOKEN
 
 # Cleanup runs on EVERY way out, from the very start: it gives the terminal its echo back (the hidden token prompt
 # turns it off) and removes the work directory. INT and TERM must exit (a handler that only cleans up would let the
-# script carry on); the EXIT trap then runs cleanup.
+# script carry on); the EXIT trap then runs cleanup. QUIT (Ctrl-backslash) and HUP get the same treatment: without a
+# handler sh/dash die on them WITHOUT running the EXIT trap, which left the terminal with echo off.
 TTY_SAVED=""
 WORK=""
 cleanup() {
@@ -77,6 +78,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 131' QUIT
+trap 'exit 129' HUP
 
 # Rewritten to the release's own tag in the copy that is attached to a release (release.yml), so a
 # downloaded installer installs the archive it was published with. A checkout pins to the tag below.

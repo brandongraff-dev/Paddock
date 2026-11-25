@@ -1553,11 +1553,13 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
         res.changed = changed
         res.stored = changed or due or key_changed
         # ``peer_proxied``: the strict peer may be the address of a forwarding hop, not of the host (auth.ClientAddr):
-        # such a peer never corroborates the agent with an instance and never places it (review finding hostfw-2)
+        # such a peer never corroborates the agent with an instance and never places it (review finding hostfw-2).
+        # Fail safe: an address that is not a ``ClientAddr`` (a plain str) carries no proof it is direct, so it is
+        # read as proxied (review finding Z2-3).
         new_identity.update({"ips": claimed_id["ips"], "machine_id_hash": claimed_id["machine_id_hash"],
                              "boot_id": claimed_id["boot_id"],
                              "peer_ip": _peer_text(client_ip),
-                             "peer_proxied": bool(getattr(client_ip, "proxied", False))})
+                             "peer_proxied": bool(getattr(client_ip, "proxied", True))})
         new_identity.setdefault("hostname", agent["hostname"])
         new_identity.setdefault("basis", "claimed")
         if res.stored:
@@ -1785,7 +1787,7 @@ async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any],
 
     own = f"agent:{agent_id}"
     me = _ipmap.claim_of(str(agent_id), {**identity, "peer_ip": peer_ip,
-                                         "peer_proxied": bool(getattr(peer_ip, "proxied", False))})
+                                         "peer_proxied": bool(getattr(peer_ip, "proxied", True))})
     others: dict[str, Any] = {}
     if me.ips:
         # every address of the instance(s) this agent could be: another agent claiming ANY of them is a rival

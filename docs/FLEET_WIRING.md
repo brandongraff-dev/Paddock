@@ -185,6 +185,9 @@ port, DNS when the server is a name), and it removes a `block_ip` / `firewall_ru
 round trip to the server follows within `PADDOCK_NETBLOCK_DEADMAN_MIN` minutes (default 10, `0` = off). The
 removal is recorded locally (`handled.json`) and reported on the next round trip through the existing result
 route as a `failed` result with `output.error = "deadman_reverted"` (never as `applied`); no new route was added.
+That route only accepts a report for an action the server holds as `approved`: if the server already holds it as
+`applied` (a lost acknowledgement), the report gets 409, is logged and recorded locally as `report_conflict`, and
+the server's view stays `applied` until an operator looks (AGENT_V2.md section 3).
 Details in [AGENT_V2.md](AGENT_V2.md) section 3.
 
 ---

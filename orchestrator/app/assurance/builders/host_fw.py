@@ -1564,7 +1564,8 @@ def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any
 def _node_attrs(ident: _Ident) -> dict[str, Any]:
     """Attributes of an ``agent:<uuid>`` node. ``ips`` stays EMPTY (the loader reads it as "address unknown", so the
     node is inside every CIDR expansion and no zone comes from it); what the host claims is ``claimed_ips`` and the
-    server-observed private peer address, when usable, is ``observed_ips``."""
+    server-observed private peer address, when usable, is ``observed_ips``. The loader places a host from the observed
+    peer only when the host's claim resolves to the same zone (both are only evidence, review finding Z2-2)."""
     attrs: dict[str, Any] = {"ips": [], "agent_id": ident.agent_id, "identity_basis": ident.basis}
     if ident.claimed:
         attrs["claimed_ips"] = list(ident.claimed)

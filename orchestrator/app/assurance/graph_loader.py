@@ -290,26 +290,33 @@ def _agent_zone(ref: str, attrs: Any, zone_index: ZoneIndex, diag: "LoadDiagnost
     """``(zone, zone_unknown)`` of an uncorroborated ``agent:<uuid>`` node WITHOUT a declared zone label.
 
     ``attrs.ips`` is empty for these nodes on purpose (the host is "address unknown": it is inside every CIDR
-    expansion, D6). A host can write any address into its own listener table, so its CLAIMED addresses are the
-    weakest hint (review finding hostfw-1). Independent placements, strongest first: the address the SERVER observed
-    (``observed_ips``: the direct, unique private source of the connection; when the claim disagrees the observation
-    wins and the conflict is reported), then a platform-written (non-declared) zone label ``weak``. Only when nothing
-    independent exists does the claim place the node, and then ``zone_unknown`` is True: its ``zone`` is a guess for
-    display and the library treats the node as a POSSIBLE member of every zone selector. A node nothing placed at all
-    is unplaced (``zone None``, ``zone_unknown`` True). Both are listed in the diagnostics."""
+    expansion, D6). Both hints about where the host sits are only EVIDENCE: the addresses it CLAIMS (its own signed
+    listener table; a host can write any address there, review finding hostfw-1) and the address the SERVER
+    OBSERVED (``observed_ips``: the direct, unique private source of the connection; a host that tunnels its agent
+    traffic through a machine in another zone, or sits behind a header-less NAT/VPN with one agent, shows that
+    machine's address, review finding Z2-2). Neither is allowed to override the other:
+
+    * the claim and the observation resolve to the SAME zone: two independent hints agree, the host is placed;
+    * they disagree (different zones, or a claim spread over several zones), or there is only one of them (no claim,
+      or a claim that matches no zone): the host is NOT placed by either. A platform-written (non-declared) zone
+      label ``weak`` still places it; otherwise the claim is kept as a best guess for display and the node is
+      ``zone_unknown`` (the library treats it as a POSSIBLE member of every zone selector, so a zone-selected
+      invariant is UNKNOWN, never HOLDS); a node with no usable claim is unplaced (``zone None``, ``zone_unknown``).
+
+    A declared zone label is handled by the caller and always wins. Every non-placed node is listed in the
+    diagnostics; a disagreement is also recorded in ``zone_conflicts``."""
     observed = _hint_ips(attrs, "observed_ips")
     claimed = _hint_ips(attrs, "claimed_ips")
-    if observed:
-        zone, _ = zone_index.resolve(observed)
-        if zone is not None:
-            theirs, _ = zone_index.resolve(claimed) if claimed else (None, [])
-            if theirs is not None and theirs != zone:
-                diag.zone_conflicts[ref] = sorted({zone, theirs})
-            return zone, False
+    ours, ours_conflict = zone_index.resolve(observed) if observed else (None, [])
+    theirs, theirs_conflict = zone_index.resolve(claimed) if claimed else (None, [])
+    if ours is not None and theirs is not None:
+        if ours == theirs and not ours_conflict and not theirs_conflict:
+            return ours, False
+        diag.zone_conflicts[ref] = sorted({ours, theirs, *ours_conflict, *theirs_conflict})
     if weak is not None:
         return weak, False
     if claimed:
-        zone, conflict = zone_index.resolve(claimed)
+        zone, conflict = theirs, theirs_conflict
         if conflict:
             diag.zone_conflicts[ref] = conflict
         if zone is not None:

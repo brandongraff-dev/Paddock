@@ -784,7 +784,13 @@ def _zone_join(lo: Result, hi: Result, unk: set[str]) -> Result:
         extra, cut = _cap_refs(t for t in [*lo.unproven_targets, *hi.violating_targets, *hi.unproven_targets, *unk]
                                if t not in certain)
         lo.unproven_targets = extra
-        lo.violating_truncated = lo.violating_truncated or hi.violating_truncated or cut
+        # The possible run reaches everything the certain run reaches (it only adds members), so under a certain
+        # violation it must be a violation too. Anything else (``overlapping_selectors_too_large``, an empty
+        # selection, any stop that is not a verdict over the possible members) means it never enumerated the
+        # zone-known targets a possible source can reach: those targets are in no list, and the list is not the
+        # whole picture, so it is flagged cut and a consumer closes nothing.
+        incomplete = hi.verdict is not Verdict.VIOLATED
+        lo.violating_truncated = lo.violating_truncated or hi.violating_truncated or cut or incomplete
         lo.reasons.append(f"{ZONE_UNKNOWN}:{len(unk)}")
         lo.blind_spots = lo.blind_spots + _zone_spots(unk)
         return lo

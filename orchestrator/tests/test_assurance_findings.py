@@ -535,6 +535,41 @@ async def test_a_violated_result_without_the_unproven_list_closes_nothing(db_poo
     assert {r["status"] for r in await rows(db_pool)} == {"open"}
 
 
+@pytest.mark.parametrize("n_unknown", [3, 70])
+async def test_z21_a_zone_known_target_only_a_zone_unknown_source_reaches_stays_open_end_to_end(
+        db_pool, fake_redis, n_unknown):
+    """Z2-1: with more than 64 zone-unknown nodes the library's possible run gives up. The REAL result for a
+    graph (g1 guest -> p1 pos certain violation; one zone-unknown node -> p2 pos) must not close p2's finding."""
+    from paddock_assurance import ReachGraph, compile_text, evaluate
+    ids = {k: await mk_asset(db_pool, f"{k}.example") for k in ("g1", "p1", "p2")}
+    ref = {k: f"asset:{v}" for k, v in ids.items()}
+    nodes = [{"id": ref[k], "kind": "host", "tags": [], "zone": z,
+              "coverage": {"tier": "observed", "observed_at": "2026-12-01T08:00:00Z", "source": "t"}}
+             for k, z in (("g1", "guest"), ("p1", "pos"), ("p2", "pos"))]
+    nodes += [{"id": f"ip:10.250.0.{i + 1}", "kind": "ip", "tags": [], "zone_unknown": True,
+               "coverage": {"tier": "observed", "observed_at": "2026-12-01T08:00:00Z", "source": "t"}}
+              for i in range(n_unknown)]
+    edges = [{"src": ref["g1"], "dst": ref["p1"], "proto": "tcp", "ports": "22", "basis": "observed"},
+             {"src": "ip:10.250.0.1", "dst": ref["p2"], "proto": "tcp", "ports": "22", "basis": "observed"}]
+    plan = compile_text("""
+apiVersion: paddock.dev/invariant/v1
+id: std:no-internet-to-datastore
+title: guest cannot reach pos
+subjects: { from: { zone: guest }, to: { zone: pos } }
+assert: unreachable
+evidence: { min_tier: observed, max_age: 24h }
+coverage: { require: 0 }
+""")
+    res = evaluate(plan, ReachGraph.from_dict({"version": 1, "nodes": nodes, "edges": edges}), NOW).to_dict()
+    assert res["verdict"] == "VIOLATED" and res["violating_targets"] == [ref["p1"]]
+    # both findings are open from earlier runs
+    assert (await sync(db_pool, fake_redis, vres([ref["p1"], ref["p2"]]))).opened == 2
+    rep = await sync(db_pool, fake_redis, res, now=NOW + dt.timedelta(minutes=5), version=8)
+    st = status_by_asset(await rows(db_pool))
+    assert st[ids["p2"]] == "open", (rep, st)          # still protected: not "no longer violating"
+    assert st[ids["p1"]] == "open"
+
+
 # =========================================================================== #
 # P2: host-config verdicts (hop-less witnesses, one finding per (invariant, host))
 # =========================================================================== #

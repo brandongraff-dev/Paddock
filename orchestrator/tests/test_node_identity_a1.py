@@ -546,13 +546,23 @@ def test_hostfw_1_a_claimed_address_never_removes_a_host_from_a_cidr_rule(claime
 
 
 def test_hostfw_1_a_hosts_claimed_address_does_not_decide_its_zone_when_the_server_saw_it_elsewhere():
-    """B is really in pos (the server saw it connect from 10.10.0.7) and claims a guest/unzoned address."""
+    """B is really in pos (the server saw it connect from 10.10.0.7) and claims a guest/unzoned address.
+
+    REWRITTEN for Z2-2 (the old text asserted that the observation OVERRIDES the claim; a signed claim and a network
+    observation are both only evidence, and an override by either is forgeable: a pos host connecting from a guest
+    address would be moved out of the pos selector). Now the observation places a host only when the claim agrees; a
+    disagreement leaves it zone_unknown, so the verdict is UNKNOWN (never HOLDS, never a certain answer)."""
     verdicts = {}
     for claimed in ("10.10.0.7", "10.99.0.7", "192.168.77.7", "172.17.0.1"):
         doc, _ = _segmentation_doc(claimed, peer="10.10.0.7")
-        assert _node(doc, T.ref1(1)).get("zone") == "pos", (claimed, _node(doc, T.ref1(1)))
+        node = _node(doc, T.ref1(1))
+        if claimed == "10.10.0.7":
+            assert node.get("zone") == "pos" and "zone_unknown" not in node, (claimed, node)
+        else:
+            assert node.get("zone_unknown") is True, (claimed, node)
         verdicts[claimed] = _verdict(doc)
-    assert set(verdicts.values()) == {"VIOLATED"}, verdicts          # never HOLDS: B is a pos host guest can reach
+    assert verdicts == {"10.10.0.7": "VIOLATED", "10.99.0.7": "UNKNOWN", "192.168.77.7": "UNKNOWN",
+                        "172.17.0.1": "UNKNOWN"}, verdicts                # never HOLDS: B is a pos host guest can reach
 
 
 def test_hostfw_1_a_declared_zone_label_overrides_any_claim():
@@ -576,9 +586,14 @@ def test_hostfw_1_a_zone_that_rests_on_the_hosts_own_claim_alone_is_reported_not
     doc, diag = _segmentation_doc("10.10.0.7", peer=None)
     assert _node(doc, T.ref1(1)).get("zone") == "pos"
     assert diag.zone_from_claim == [T.ref1(1)]
-    doc, diag = _segmentation_doc("10.10.0.7", peer="10.99.0.7")      # the server saw it in guest: that wins, conflict kept
-    assert _node(doc, T.ref1(1)).get("zone") == "guest"
-    assert diag.zone_conflicts.get(T.ref1(1)) == ["guest", "pos"] and diag.zone_from_claim == []
+    # the server saw it in guest: the observation does NOT win (Z2-2: it is only evidence too); the disagreement is
+    # kept, the node stays zone_unknown with its claim as the display guess
+    doc, diag = _segmentation_doc("10.10.0.7", peer="10.99.0.7")
+    assert _node(doc, T.ref1(1)).get("zone") == "pos" and _node(doc, T.ref1(1)).get("zone_unknown") is True
+    assert diag.zone_conflicts.get(T.ref1(1)) == ["guest", "pos"] and diag.zone_from_claim == [T.ref1(1)]
+    doc, diag = _segmentation_doc("10.10.0.7", peer="10.10.0.7")      # claim and observation agree: placed
+    assert _node(doc, T.ref1(1)).get("zone") == "pos" and "zone_unknown" not in _node(doc, T.ref1(1))
+    assert diag.zone_from_claim == [] and diag.zone_unplaced == []
 
 
 def test_hostfw_1_a_stale_node_row_that_still_lists_claimed_addresses_cannot_narrow_cidr_membership():
@@ -802,7 +817,10 @@ def test_hostfw_1_a_host_whose_zone_nothing_independent_supports_is_listed_as_un
     assert T.ref1(1) in diag.zone_unplaced
     doc, diag = _segmentation_doc("10.10.0.7", peer=None)            # placed by its own claim only: reported too
     assert T.ref1(1) in diag.zone_from_claim and T.ref1(1) not in diag.zone_unplaced
-    doc, diag = _segmentation_doc("192.168.77.7", peer="10.10.0.7")  # the server saw it in pos: placed, not unplaced
+    # the server saw it in pos but its claim says nothing about pos: an observation alone never places a host (Z2-2)
+    doc, diag = _segmentation_doc("192.168.77.7", peer="10.10.0.7")
+    assert T.ref1(1) in diag.zone_unplaced and "zone" not in _node(doc, T.ref1(1))
+    doc, diag = _segmentation_doc("10.10.0.7", peer="10.10.0.7")     # claim and observation agree: placed, not unplaced
     assert T.ref1(1) not in diag.zone_unplaced and _node(doc, T.ref1(1))["zone"] == "pos"
 
 
@@ -856,6 +874,18 @@ async def test_hostfw_2_the_graph_and_the_column_agree_for_a_proxied_peer(app_po
     await _agree(app_pool, h)
     await post(app_pool, h, healthy(ips=["10.0.1.5"], security=3), ip="10.0.1.5")   # now seen directly: corroborated
     assert (await _node_ref(app_pool, h))[0].startswith("asset:")
+    await _agree(app_pool, h)
+
+
+async def test_z23_a_plain_str_client_ip_is_stored_as_proxied_never_as_direct(app_pool):
+    """Z2-3: only an auth.ClientAddr with proxied=False is a direct peer. A caller that passes a plain str (no flag)
+    must fail safe: the identity reads proxied, so the peer neither corroborates nor places the host."""
+    await _seed_asset(app_pool, ["10.0.1.5"], [NAT_PUBLIC])
+    h = await seed_host(app_pool)
+    await post(app_pool, h, healthy(ips=["10.0.1.5"]), ip="10.0.1.5", direct=False)
+    ref, ident = await _node_ref(app_pool, h)
+    assert ident["peer_proxied"] is True, ident
+    assert ref == f"agent:{h.id}"
     await _agree(app_pool, h)
 
 

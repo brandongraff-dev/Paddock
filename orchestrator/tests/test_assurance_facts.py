@@ -505,8 +505,8 @@ async def test_a_node_known_only_from_facts_appears_in_the_document(app_pool):
 
 async def test_zone_resolution_works_for_agent_nodes(app_pool):
     """(Rewritten for review finding hostfw-1: what the host SAYS about its addresses does not place it.)
-    ``attrs.ips`` of an agent node is ignored; the address the server observed places it; the host's own claim
-    only places it as a last, reported resort."""
+    ``attrs.ips`` of an agent node is ignored; the address the server observed places it ONLY when the host's own
+    claim agrees (Z2-2); the host's own claim alone places it as a last, reported resort (zone_unknown)."""
     async with conn_for(app_pool) as con:
         await store.upsert_zone(con, "dmz", ["10.20.0.0/24"], set_by="t", justification="j")
     f = host(AG1)
@@ -517,7 +517,16 @@ async def test_zone_resolution_works_for_agent_nodes(app_pool):
     await persist(app_pool, BuildOutput(source=SRC, mode="replace", facts=[f],
                                         nodes=[NodeOut(AG1, "host", attrs={"ips": [], "observed_ips": ["10.20.0.7"]})]))
     doc, diag = await load(app_pool)
-    assert node_of(doc, AG1)["zone"] == "dmz" and diag.zone_from_claim == []
+    # REWRITTEN for Z2-2: the observed peer alone no longer places a host (it is only evidence; a claim that agrees
+    # with it is needed). Alone it leaves the node unplaced and zone_unknown.
+    assert "zone" not in node_of(doc, AG1) and node_of(doc, AG1).get("zone_unknown") is True
+    assert diag.zone_from_claim == [] and diag.zone_unplaced == [AG1]
+    await persist(app_pool, BuildOutput(source=SRC, mode="replace", facts=[f],
+                                        nodes=[NodeOut(AG1, "host", attrs={"ips": [], "observed_ips": ["10.20.0.7"],
+                                                                           "claimed_ips": ["10.20.0.7"]})]))
+    doc, diag = await load(app_pool)
+    assert node_of(doc, AG1)["zone"] == "dmz" and "zone_unknown" not in node_of(doc, AG1)
+    assert diag.zone_unknown == []
     await persist(app_pool, BuildOutput(source=SRC, mode="replace", facts=[f],
                                         nodes=[NodeOut(AG1, "host", attrs={"ips": [], "claimed_ips": ["10.20.0.7"]})]))
     doc, diag = await load(app_pool)

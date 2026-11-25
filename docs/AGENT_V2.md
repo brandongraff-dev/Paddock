@@ -169,9 +169,11 @@ all that `nft` and `iptables-nft` need. `CAP_NET_RAW` is deliberately **not** in
 maximum the process can ever hold. **Legacy iptables (`iptables-legacy`) opens a raw socket and so cannot run
 under this unit**: on a host whose firewall lives in legacy iptables tables, the firewall collector cannot read
 them, reports the facts as partial and approximate, and `std:server-default-deny-inbound` reads `UNKNOWN` for
-that host (never `HOLDS`). This is an **owner decision** (ASSURANCE_P2.md section 8): keeping `CAP_NET_RAW` out of
-the bounding set of a root process is worth more than supporting legacy iptables, so those hosts read `UNKNOWN`
-rather than getting a wider unit. `block_ip` and `firewall_rule` fail there too, and a legacy `iptables` that has to
+that host (never `HOLDS`). What the contract records (ASSURANCE_P2.md section 8) is only that the bounding set is
+"limited to the capabilities the P2 collectors need (`CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_NET_ADMIN` read-only
+use), run as root". It does not mention `CAP_NET_RAW` or legacy iptables, and **no owner decision on them is
+recorded**: leaving `CAP_NET_RAW` out is this project's conservative default, pending the owner's confirmation,
+and the cost is that those hosts read `UNKNOWN` rather than getting a wider unit. `block_ip` and `firewall_rule` fail there too, and a legacy `iptables` that has to
 create `/run/xtables.lock` also fails because `/run` is read-only under `ProtectSystem=strict`. The fix on such a
 host is to move its firewall to nft. If you accept the wider surface (a compromised agent could then open raw
 sockets) you can add `CAP_NET_RAW` in a systemd drop-in
@@ -230,10 +232,19 @@ Safety rails the agent applies on the host, whatever the server says:
   `deadman_reverted_at`, the record rewritten to a failed apply) and logged at ERROR, and the **server is told on
   the next round trip**, through the existing result route and no new one: a `failed` result with
   `output.error = "deadman_reverted"`. It can never be reported as `applied`: a result queued earlier is
-  replaced by that truth when it is sent. This only reaches an action the server still holds as `approved`, which
-  is exactly the case the timer fires in (the result that would have confirmed the block never got through). If
-  that report is lost for good, the server keeps showing the action as approved until the agent next hears it
-  offered, and the host's next posture shows the firewall without the rule.
+  replaced by that truth when it is sent. The result route only takes a report for an action the server still holds
+  as `approved`. That is the usual case the timer fires in (the result that would have confirmed the block never
+  got through), but not the only one: if the server did process the `applied` result and only its acknowledgement
+  was lost, the server holds the action as `applied`, answers the later `failed` report with **409**, and there is
+  no route that can correct it (none was added). The agent then does not drop that silently: it logs the refusal at
+  ERROR and records `report_conflict` (`http_status`, the server's `detail`, a timestamp) on the action in
+  `handled.json`; `reported` stays false and the record keeps its truthful `failed` status. Until an operator
+  looks, the server keeps showing that action as `applied` (with a revert plan for a rule that is already gone);
+  the host's next posture shows the firewall without the rule, and a revert of that action is refused by the
+  agent's ledger because the record is spent. This is fail-safe (nothing is blocked that the server thinks is
+  open), but the server's view can be wrong during that window. If instead the queued report is lost for good
+  while the server still holds the action as `approved` (the queued item is dropped and the server never re-offers
+  the action), the server keeps showing it as approved and the same posture check applies.
 * **Reverts are bound to a local ledger**: the agent reverts only a rule it recorded as applied and not yet
   reverted, and its iptables rules carry a `paddock:<action id>` tag that is probed with `-C` before every insert
   or delete. A revert names its rule by that tag, so two blocks of the same target are reverted independently and in any

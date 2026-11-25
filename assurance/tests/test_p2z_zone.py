@@ -310,3 +310,42 @@ def test_a_certain_violation_lists_every_zone_unknown_node_so_no_finding_closes_
     # and when the list is whole it is exact: a closing consumer can trust it
     if not cut:
         assert listed >= {f"x{i:05d}" for i in range(n)}
+
+
+# ---- Z2-1: a possible run that gave up must not leave a zone-known target unprotected ----
+
+def _hole(n):
+    """g1(guest) -> p1(pos) is a certain violation; only the zone-unknown x000 has an edge to the zone-known p2."""
+    nodes = [node("g1", "guest"), node("p1", "pos"), node("p2", "pos")] + [zu(node("x%03d" % i)) for i in range(n)]
+    return graph(nodes, [edge("g1", "p1", "22"), edge("x000", "p2", "22")])
+
+
+@pytest.mark.parametrize("n", [3, 64, 65, 70, 250])
+def test_z21_a_zone_known_target_reachable_only_from_a_zone_unknown_source_is_never_unprotected(n):
+    r = run(_hole(n)).to_dict()
+    assert r["verdict"] == "VIOLATED" and r["violating_targets"] == ["p1"]
+    # protected = listed as unproven, or the whole list is flagged cut (a closing consumer then closes nothing)
+    assert "p2" in r["unproven_targets"] or r["violating_truncated"], \
+        f"{n} VIOLATED ... p2 in unproven {'p2' in r['unproven_targets']}, truncated {r['violating_truncated']}"
+
+
+def test_z21_when_the_possible_run_completes_the_list_stays_exact_and_not_cut():
+    r = run(_hole(3)).to_dict()
+    assert "p2" in r["unproven_targets"] and not r["violating_truncated"]
+
+
+def test_z21_exposure_and_covered_never_drop_a_possible_target_when_the_possible_run_cannot_finish():
+    # exposure has no overlap cap; the join must stay as exact as before there
+    text = """
+apiVersion: paddock.dev/invariant/v1
+id: acme:only-https-to-pos
+title: only https to pos
+subjects: { from: { zone: guest }, to: { zone: pos } }
+assert: exposes-only
+ports: [443]
+""" + COV
+    nodes = [node("g1", "guest"), node("p1", "pos"), node("p2", "pos")] + [zu(node("x%03d" % i)) for i in range(70)]
+    g = graph(nodes, [edge("g1", "p1", "22"), edge("x000", "p2", "22")])
+    r = run(g, text).to_dict()
+    assert r["verdict"] == "VIOLATED"
+    assert "p2" in r["unproven_targets"] or r["violating_truncated"], r

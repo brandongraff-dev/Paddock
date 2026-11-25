@@ -129,7 +129,7 @@ Exit status: 0 ok, 1 aborted / no posture produced, 2 usage / not enrolled / ref
 | `PADDOCK_INVENTORY_SEC` | `3600` (`0` off) | v1 unsigned inventory for the Fleet page |
 | `PADDOCK_HTTP_TIMEOUT` | `20` | seconds per request |
 | `PADDOCK_OUTBOX_MAX_MB` | `64` | outbox cap; the oldest items are evicted first |
-| `PADDOCK_NETBLOCK_DEADMAN_MIN` | `10` (`0` off) | a `block_ip` / `firewall_rule` the server never heard about again within this many minutes is removed by the agent itself, and the server is told (a `failed` result, `deadman_reverted`) on the next round trip |
+| `PADDOCK_NETBLOCK_DEADMAN_MIN` | `10` (`0` off) | a `block_ip` / `firewall_rule` the server never heard about again within this many minutes is removed by the agent itself, and the server is told (a `failed` result, `deadman_reverted`) on the next round trip; the server accepts that report only while it holds the action as `approved` (a 409 is logged and recorded as `report_conflict` in `handled.json`, `docs/AGENT_V2.md` section 3) |
 | `PADDOCK_ENABLE_IMDS` | `false` | allow the cloud metadata request (off by default, E6) |
 | `PADDOCK_CA_FILE` | system store | CA bundle for a private TLS server |
 | `PADDOCK_QUARANTINE_DIR` | `<state>/quarantine` | where quarantined files are moved |
@@ -210,7 +210,8 @@ is refused and nothing is touched.
 
 `CAP_NET_ADMIN` reaches **nft and iptables-nft** (netlink). It does **not** reach legacy iptables
 (`iptables-legacy`), which opens a raw socket and needs `CAP_NET_RAW`; `CAP_NET_RAW` is deliberately NOT in the
-bounding set (owner decision, `docs/AGENT_V2.md` section 3). On a host whose firewall is legacy iptables the
+bounding set (a conservative default pending owner confirmation, not a recorded decision; `docs/AGENT_V2.md`
+section 3). On a host whose firewall is legacy iptables the
 firewall facts therefore read UNKNOWN, and `block_ip` / `firewall_rule` fail. Neither was exercised against a
 real systemd in this repository's tests.
 

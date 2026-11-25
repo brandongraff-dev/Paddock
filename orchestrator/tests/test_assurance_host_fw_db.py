@@ -82,8 +82,13 @@ def healthy(**kw) -> dict:
     return p
 
 
-async def post(pool, h: Host, payload=None, *, now=None, ip="10.0.0.5", seq=None):
-    """One real signed posture, through the real ingest."""
+async def post(pool, h: Host, payload=None, *, now=None, ip="10.0.0.5", seq=None, direct=True):
+    """One real signed posture, through the real ingest. ``ip`` is what the router passes: an ``auth.ClientAddr``.
+    A plain ``str`` is wrapped as a DIRECT peer (the router's shape for a request that came straight from the host);
+    ``direct=False`` passes the str as it is (a caller that gives no proof, which must read as proxied, Z2-3)."""
+    if direct and not hasattr(ip, "proxied"):
+        from app.auth import ClientAddr
+        ip = ClientAddr(ip, proxied=False)
     now = now or now_()
     h.seq = seq if seq is not None else h.seq + 1
     payload = payload if payload is not None else healthy(collected=now, seq=h.seq)
