@@ -149,9 +149,42 @@ _LIMITERS = {"heartbeat": heartbeat_limiter, "posture": posture_limiter, "rotate
              "inventory": inventory_limiter}
 
 
-# Pre-auth: FAILED envelopes per (agent, strict peer address). A bearer-only holder (no key) burns only its own
-# bucket; it can never reach the per-agent budget above, which is charged after the signature verified.
-preauth_limiter = SlidingWindowLimiter(limit=_env_int("FLEET_PREAUTH_FAILS_PER_MIN", 30), window_s=60)
+class TakeLimiter(SlidingWindowLimiter):
+    """A :class:`SlidingWindowLimiter` whose check and hit are ONE synchronous step (:meth:`take`), with a way to
+    give the slot back (:meth:`refund`). The event loop cannot interleave two callers inside a synchronous method, so
+    ``limit`` concurrent callers get a slot and the rest get ``None``: a ``blocked()`` check followed by a ``hit()``
+    after an ``await`` lets every concurrent request through the check first (200 concurrent requests, limit 30:
+    99 processed)."""
+
+    def take(self, key: str, now: float | None = None) -> float | None:
+        """Take one slot. Returns the token to :meth:`refund` it with, or ``None`` when the key is over its limit."""
+        now = time.monotonic() if now is None else now
+        return now if self.hit(key, now) else None
+
+    def refund(self, key: str, token: float) -> None:
+        """Give back the slot ``token`` stands for. An unknown or expired token is ignored."""
+        q = self._hits.get(key)
+        if not q:
+            return
+        try:
+            q.remove(token)
+        except ValueError:
+            return
+        if not q:
+            self._hits.pop(key, None)
+
+
+# Pre-auth: a slot per (agent, strict peer address) is TAKEN when the request arrives and GIVEN BACK once its
+# signature verified, so what stays in the bucket is the failed (unverified) requests. A bearer-only holder (no key)
+# burns only its own bucket; it can never reach the per-agent budget above, which is charged only for envelopes that
+# are accepted (a fresh seq inside the clock window).
+preauth_limiter = TakeLimiter(limit=_env_int("FLEET_PREAUTH_FAILS_PER_MIN", 30), window_s=60)
+# Verified envelopes that make no progress (a replay of an old seq, an idempotent resend, a stale ``issued_at``): free
+# for the agent's own budget, but not free: a holder of the bearer and one captured envelope could otherwise replay
+# it from anywhere for an unbounded stream of CPU, a database round trip and one audit row each. Per agent, so it can
+# only ever exhaust itself.
+replay_limiter = SlidingWindowLimiter(limit=_env_int("FLEET_REPLAY_PER_MIN", 60), window_s=60)
+_LIMITERS["replay"] = replay_limiter
 
 
 class _Gate:
@@ -250,7 +283,7 @@ def reset_limiters() -> None:
 
 def rate_limited(route: str, agent_id: Any) -> bool:
     """Record a hit for ``agent_id`` on ``route`` and say whether the agent is now OVER its limit. Called only for
-    envelopes whose signature verified."""
+    envelopes whose signature verified (``replay`` is the bucket for verified envelopes that make no progress)."""
     return not _LIMITERS[route].hit(str(agent_id))
 
 
@@ -259,12 +292,24 @@ def _preauth_key(agent_id: Any, ip: str | None) -> str:
 
 
 def preauth_blocked(agent_id: Any, ip: str | None) -> bool:
-    """Has this (agent, peer address) already failed too often this minute? Cheap: no body is read."""
+    """Has this (agent, peer address) already failed too often this minute? Cheap: no body is read. Read-only: the
+    router uses :func:`preauth_take`, which is the atomic check-and-hit."""
     return preauth_limiter.blocked(_preauth_key(agent_id, ip))
 
 
 def preauth_failed(agent_id: Any, ip: str | None) -> None:
     preauth_limiter.hit(_preauth_key(agent_id, ip))
+
+
+def preauth_take(agent_id: Any, ip: str | None) -> float | None:
+    """Take this request's slot in the (agent, peer address) bucket, synchronously. ``None``: the bucket is full (a
+    429 before any body is read). Otherwise the token to hand to :func:`preauth_refund` once the request is known not
+    to be a failure (its signature verified); a slot that is never refunded IS the failure count."""
+    return preauth_limiter.take(_preauth_key(agent_id, ip))
+
+
+def preauth_refund(agent_id: Any, ip: str | None, token: float) -> None:
+    preauth_limiter.refund(_preauth_key(agent_id, ip), token)
 
 
 # --------------------------------------------------------------------------- #
@@ -665,10 +710,16 @@ class SshdConfig(_M):
 _DeltaValue = Union[StrictStr, StrictInt, List[Union[StrictStr, StrictInt]], None]
 
 
+#: a delta names an allowlisted sshd key, which the agent always writes lower-case. A key in any other spelling is
+#: refused here: a library that compares keys exactly would silently ignore ``MaxAuthTries`` and read a weakened
+#: ``Match`` block as the global value (review round 2, D2).
+_DeltaKey = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9]{0,47}$")]
+
+
 class SshdDelta(_M):
     user: S(64)
     addr: S(64)
-    delta: Annotated[Dict[S(48), _DeltaValue], Field(max_length=40)]
+    delta: Annotated[Dict[_DeltaKey, _DeltaValue], Field(max_length=40)]
 
 
 class SshdProbes(_M):
@@ -694,6 +745,32 @@ class SshdFile(_M):
     size: I(0, 2 ** 40)
 
 
+_EPOCH = Optional[Annotated[StrictInt, Field(ge=-(2 ** 40), le=2 ** 40)]]
+
+
+class SshdDaemon(_M):
+    """The RUNNING sshd (agent/PAYLOAD.md section 3): every key is ALWAYS present, ``null`` = the agent could not
+    tell. The library accepts a config claim only on this block's positive evidence, so a posture without it (or
+    with a missing key) is refused here rather than read as "nothing to doubt"."""
+    found: StrictBool
+    masters: I(0, 100000)
+    pid: Optional[I(0, 2 ** 32)]
+    start_epoch: _EPOCH
+    reexec_epoch: _EPOCH
+    config_path: Optional[Annotated[StrictStr, Field(pattern=r"^/[A-Za-z0-9_./+@-]{1,255}$")]]
+    config_default: Optional[StrictBool]
+    options_override: Optional[StrictBool]
+    binary_matches: Optional[StrictBool]
+    config_mtime: _EPOCH
+    reload_pending: Optional[StrictBool]
+
+
+#: the ``config`` keys a collector may report as cut (a list past 50 items, an item past its cap, an over-long
+#: ``authenticationmethods``): agent/PAYLOAD.md section 3 ``truncated``
+_TRUNCATABLE = Literal["allowusers", "allowgroups", "denyusers", "denygroups", "listenaddress",
+                       "authorizedkeysfile", "port", "authenticationmethods"]
+
+
 class SshdV(_M):
     installed: StrictBool
     source: Literal["sshd_T", "text"]
@@ -704,6 +781,9 @@ class SshdV(_M):
     probes: SshdProbes
     match: SshdMatch
     files: L(SshdFile, 64)
+    daemon: SshdDaemon
+    #: MAY BE ABSENT (never null): present and non-empty iff a ``config`` value was cut
+    truncated: Annotated[List[_TRUNCATABLE], Field(min_length=1, max_length=len(_TRUNCATABLE.__args__))] = None  # type: ignore[assignment]
 
 
 # ---- listeners --------------------------------------------------------------- #
@@ -736,6 +816,8 @@ class ListenersV(_M):
     ipv6: StrictBool
     bindv6only: Optional[I(0, 1)]
     attribution: ListenerAttribution
+    #: MAY BE ABSENT (never null, never 0): distinct listeners the agent cut past its 2000-row cap
+    dropped: I(1, 10 ** 7) = None                       # type: ignore[valid-type]
 
 
 # ---- firewall (the canonical model of paddock_agent.collectors.fwmodel) ------ #
@@ -1184,9 +1266,10 @@ async def record_rejection(pool: Any, *, tenant_id: str, agent_id: Any, rej: Rej
     if rej.verified:
         # A rejection of an envelope whose SIGNATURE verified is evidence about the key holder (equivocation = a
         # cloned key, replays, a stale clock...), not noise: it is never sampled out, or a bearer-only flood
-        # from another address could burn the sampler and hide it. Its rate is bounded anyway: the per-agent budget
-        # (60 heartbeats, 20 postures, 10 rotations per window) is charged right after the signature verified, and
-        # every verified rejection that is not a 429 comes after that point.
+        # from another address could burn the sampler and hide it. Its rate is bounded anyway: a verified rejection
+        # is either a non-progress one (a replay, a stale clock), charged to the per-agent replay bucket before it
+        # is answered, or comes after the seq claim, which the per-agent budget (60 heartbeats, 20 postures, 10
+        # rotations per window) is charged for; over either one the answer is a 429 (an aggregate, no row of its own).
         write, carried = True, 0
     else:
         write, carried = _reason_gate.allow(rkey)
@@ -1270,12 +1353,18 @@ class IngestResult:
 async def ingest_envelope(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str, body: bytes,
                           content_encoding: str | None, client_ip: str | None = None,
                           request_id: str | None = None, now: dt.datetime | None = None,
-                          actor: str | None = None, budget: Any = None) -> IngestResult:
+                          actor: str | None = None, budget: Any = None, replay_budget: Any = None) -> IngestResult:
     """Run the section-2 checks on a request body for ``kind`` and, if all pass, persist. Must be called with
     the agent's tenant bound (the router does; ``tenant_id`` is re-bound here anyway).
 
-    ``budget`` (optional, no arguments) is called once the signature verified and returns False when the agent is
-    over its per-agent rate limit (a 429, nothing written): an unauthenticated request never spends it.
+    ``budget`` (optional, no arguments) is called when the envelope is ACCEPTED, i.e. its signature verified, its
+    ``issued_at`` is inside the clock window and its seq is a fresh one (the claim succeeded). It returns False when
+    the agent is over its per-agent rate limit (a 429, the claim is rolled back, nothing is written): an
+    unauthenticated request never spends it, and neither does a replay of an envelope that was already accepted.
+
+    ``replay_budget`` (optional) is called instead for a validly signed envelope that makes no progress (a replayed or
+    superseded seq, an idempotent resend, a stale ``issued_at``): a separate per-agent bucket, so a captured envelope
+    replayed by a holder of the bearer can never use up the real agent's own budget; over it is a 429.
 
     Raises :class:`Rejection` (already audited as ``fleet.evidence.rejected``; ``rej.verified`` says whether the
     signature had verified when it was raised). Any other exception propagates unchanged: the router audits it.
@@ -1287,7 +1376,8 @@ async def ingest_envelope(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kin
     try:
         with tenancy.tenant_context(tenant_id):
             return await _ingest(pool, agent_id=agent_id, tenant_id=tenant_id, kind=kind, body=body,
-                                 encoding=content_encoding, client_ip=client_ip, now=now, ctx=ctx, budget=budget)
+                                 encoding=content_encoding, client_ip=client_ip, now=now, ctx=ctx, budget=budget,
+                                 replay_budget=replay_budget)
     except Rejection as rej:
         rej.verified = bool(ctx.get("verified"))
         rej.key_id = rej.key_id or ctx["key_id"]
@@ -1299,7 +1389,7 @@ async def ingest_envelope(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kin
 
 async def _ingest(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str, body: bytes,
                   encoding: str | None, client_ip: str | None, now: dt.datetime,
-                  ctx: dict[str, Any], budget: Any = None) -> IngestResult:
+                  ctx: dict[str, Any], budget: Any = None, replay_budget: Any = None) -> IngestResult:
     # ---- 1-2: size caps, strict parse, field set -------------------------------------------------
     raw = inflate_body(body, encoding)
     env = parse_envelope(raw, kind)
@@ -1328,11 +1418,14 @@ async def _ingest(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str, 
     if not verify_signature(key["public_key"], env):
         raise Rejection(401, "bad_signature", "the signature does not verify")
     ctx["verified"] = True
-    if budget is not None and not budget():
-        # charged only now: a holder of the bearer without the key never reaches this line
-        raise Rejection(429, "rate_limited", "too many requests from this agent; slow down")
+    # No per-agent budget is charged here: this envelope may be a replay of one that was already accepted (a captured
+    # envelope, sent again by a holder of the bearer), and a replay must not use up the real agent's budget. The
+    # budget is charged when the seq claim succeeds (``_claim_and_persist``); a stale envelope and a replay are
+    # charged to the separate replay bucket.
     skew = abs((now - env.issued).total_seconds())
     if skew > CLOCK_WINDOW_S:
+        if replay_budget is not None and not replay_budget():
+            raise Rejection(429, "rate_limited", "too many requests from this agent; slow down")
         raise Rejection(422, "clock_skew", f"issued_at is {int(skew)} s away from the server clock "
                         f"(window {CLOCK_WINDOW_S} s)",
                         body={"server_now": int(now.timestamp()), "server_time": iso(now)})
@@ -1341,7 +1434,8 @@ async def _ingest(pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str, 
     async with pool.acquire() as con:
         async with con.transaction():
             return await _claim_and_persist(con, pool, agent_id=agent_id, tenant_id=tenant_id, kind=kind,
-                                            env=env, payload=payload, client_ip=client_ip, now=now)
+                                            env=env, payload=payload, client_ip=client_ip, now=now,
+                                            budget=budget, replay_budget=replay_budget)
 
 
 def _check_agent_row(row: Any, env: Envelope, agent_id: uuid.UUID) -> None:
@@ -1360,7 +1454,7 @@ def _check_agent_row(row: Any, env: Envelope, agent_id: uuid.UUID) -> None:
 
 async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant_id: str, kind: str,
                              env: Envelope, payload: bytes, client_ip: str | None,
-                             now: dt.datetime) -> IngestResult:
+                             now: dt.datetime, budget: Any = None, replay_budget: Any = None) -> IngestResult:
     # Lock order: agent row first (enroll re-key and the admin revokes do the same), then the key row.
     agent = await con.fetchrow(
         """SELECT id, tenant_id, hostname, status, legacy, revoked_at, online, offline_since, identity,
@@ -1377,6 +1471,10 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
             WHERE agent_id = $1 AND key_id = $2 AND status = 'active' AND alg = 'ed25519' AND last_seq < $3
         RETURNING last_seq""", agent_id, kid, seq)
     if claimed is None:
+        # no progress: a replay, a superseded seq or an idempotent resend. Never the agent's own budget (a captured
+        # envelope would burn it), but bounded all the same
+        if replay_budget is not None and not replay_budget():
+            raise Rejection(429, "rate_limited", "too many requests from this agent; slow down")
         cur = await con.fetchrow(
             "SELECT status, last_seq FROM fleet_agent_keys WHERE agent_id = $1 AND key_id = $2", agent_id, kid)
         if cur is None or cur["status"] != "active":
@@ -1409,6 +1507,11 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
             raise rej
         raise Rejection(409, "replayed_seq", "seq is not greater than the last accepted seq",
                         body={"expected_min": cur["last_seq"] + 1})
+
+    # ---- the per-agent budget: charged for an ACCEPTED envelope only (a fresh seq in the clock window, signed by a
+    # key of this agent). Raising here rolls the claim back, so a refused envelope does not consume its seq.
+    if budget is not None and not budget():
+        raise Rejection(429, "rate_limited", "too many requests from this agent; slow down")
 
     # ---- 9: payload schema (inside the transaction: a failure rolls the claim back) ----------------
     parsed: dict[str, Any] | None = None
@@ -1453,7 +1556,7 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
         # such a peer never corroborates the agent with an instance and never places it (review finding hostfw-2)
         new_identity.update({"ips": claimed_id["ips"], "machine_id_hash": claimed_id["machine_id_hash"],
                              "boot_id": claimed_id["boot_id"],
-                             "peer_ip": str(client_ip) if client_ip is not None else None,
+                             "peer_ip": _peer_text(client_ip),
                              "peer_proxied": bool(getattr(client_ip, "proxied", False))})
         new_identity.setdefault("hostname", agent["hostname"])
         new_identity.setdefault("basis", "claimed")
@@ -1618,8 +1721,34 @@ _LIVE_AGENT_SQL = ("SELECT id, node_ref, identity FROM fleet_agents "
                    "WHERE id <> $1 AND status <> 'revoked' AND revoked_at IS NULL AND legacy = FALSE AND ")
 #: every other live agent whose claimed addresses overlap the given ones
 _AGENTS_BY_IPS_SQL = _LIVE_AGENT_SQL + "(identity->'ips') ?| $2::text[]"
-#: other live agents presenting the same peer address; three are enough to know the address is shared
-_AGENTS_BY_PEER_SQL = _LIVE_AGENT_SQL + "identity->>'peer_ip' = $2 ORDER BY id LIMIT 3"
+#: other live agents presenting the same peer address (any spelling in ``$2``, see :func:`_peer_forms`); three are
+#: enough to know the address is shared
+_AGENTS_BY_PEER_SQL = _LIVE_AGENT_SQL + "lower(identity->>'peer_ip') = ANY($2::text[]) ORDER BY id LIMIT 3"
+
+
+def _peer_text(client_ip: Any) -> str | None:
+    """The peer address as stored: its canonical text (compressed, lower case, v4-mapped unwrapped), so the same
+    address has one spelling in ``fleet_agents.identity``. Text that is not an address is kept as given."""
+    from .assurance.builders import _ipmap
+    if client_ip is None:
+        return None
+    return _ipmap.norm_ip(str(client_ip)) or str(client_ip)
+
+
+def _peer_forms(peer: str) -> list[str]:
+    """Every spelling a stored ``peer_ip`` may have for the canonical address ``peer``: rows written before the peer was
+    normalised kept whatever the socket reported (``::ffff:10.0.1.5`` for a v4 client on a dual-stack listener). The
+    builder compares canonical addresses; the ingest must find the same agents (review finding Z-4)."""
+    forms = {peer.lower()}
+    try:
+        ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return sorted(forms)
+    if ip.version == 4:
+        n = int(ip)
+        forms.add(f"::ffff:{peer}")
+        forms.add(f"::ffff:{n >> 16:x}:{n & 0xFFFF:x}")
+    return sorted(forms)
 
 
 def _norm_ips(values: Any) -> set[str]:
@@ -1669,7 +1798,7 @@ async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any],
         for o in await con.fetch(_AGENTS_BY_IPS_SQL, agent_id, sorted(reach)):
             others[str(o["id"])] = o
     if me.peer:
-        for o in await con.fetch(_AGENTS_BY_PEER_SQL, agent_id, me.peer):
+        for o in await con.fetch(_AGENTS_BY_PEER_SQL, agent_id, _peer_forms(me.peer)):
             others.setdefault(str(o["id"]), o)
     claims = [me]
     for oid, o in sorted(others.items()):

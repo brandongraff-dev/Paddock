@@ -89,8 +89,13 @@ class FixtureHost:
     """A pretend server. Mutate ``password_auth`` / ``nft`` between collections to change what the host says."""
 
     def __init__(self, root: Path, *, hostname: str = "web-1", password_auth: str = "no",
-                 nft: dict | None = None, lo_only_listeners: bool = False) -> None:
+                 nft: dict | None = None, lo_only_listeners: bool = False, with_daemon: bool = True) -> None:
         self.root = Path(root)
+        self.with_daemon = with_daemon
+        #: extra ``sshd -T`` lines (a long AllowUsers list makes the collector cut the value: ``v.truncated``) and a
+        #: switch for ``sshd -T`` failing (not root, no host keys): the collector then parses the files (``source: text``)
+        self.extra_sshd_T = ""
+        self.sshd_T_fails = False
         self.hostname = hostname
         self.password_auth = password_auth
         self.nft = nft if nft is not None else hardened_nft()
@@ -136,17 +141,42 @@ class FixtureHost:
         }
         for path, content in pfiles.items():
             self._put(proc, path[len("/proc"):], content)
+        if self.with_daemon:
+            self._build_sshd_process(proc, host)
+
+    #: process id of the pretend root-owned sshd listener (``with_daemon``)
+    SSHD_PID = 700
+
+    def _build_sshd_process(self, proc: Path, host: Path) -> None:
+        """A running root-owned ``sshd -D`` master started AFTER the config files were written, so the agent has
+        POSITIVE evidence that the daemon runs what ``sshd -T`` describes (agent/PAYLOAD.md section 3 ``daemon``).
+        Without it a config claim is Unknown by contract: the clean-host verdict needs this block, honestly.
+
+        ``/proc/stat`` ``btime`` is placed one day AFTER the files' change time (the pretend host booted "later"),
+        because a file's ctime cannot be back-dated: the config is older than the daemon, no reload is pending."""
+        pid = str(self.SSHD_PID)
+        self._put(proc, "stat", "cpu  1 2 3\nbtime %d\n" % (int(time.time()) + 86400))
+        self._put(proc, f"{pid}/comm", "sshd\n")
+        self._put(proc, f"{pid}/cmdline", "sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups\0")
+        self._put(proc, f"{pid}/status", "Name:\tsshd\nUid:\t0\t0\t0\t0\n")
+        tail = " ".join(["0"] * 17 + ["0"] + ["0"] * 10)          # fields 5..21, starttime (22) = 0, the rest
+        self._put(proc, f"{pid}/stat", f"{pid} (sshd) S 1 {tail}\n")
+        exe = proc / pid / "exe"
+        if not os.path.lexists(exe):
+            os.symlink("/usr/sbin/sshd", exe)
 
     # ---- the fake commands ------------------------------------------------------------------------------------
     def sshd_T(self) -> str:
         text = fixture("synthetic", "sshd", "sshd_T.hardened.txt").splitlines()
         return "\n".join(f"passwordauthentication {self.password_auth}" if ln.startswith("passwordauthentication ")
-                         else ln for ln in text) + "\n"
+                         else ln for ln in text) + "\n" + self.extra_sshd_T
 
     def runner(self, argv: list[str], timeout: float, max_bytes: int) -> dict:
         self.calls.append(list(argv))
         name = os.path.basename(argv[0]) if argv else ""
         if name == "sshd":
+            if self.sshd_T_fails:
+                return _res("", rc=255, err="sshd: no hostkeys available -- exiting.")
             return _res(self.sshd_T())
         if name == "ssh":
             return _res("", err="OpenSSH_9.6p1 Ubuntu-3ubuntu13.5, OpenSSL 3.0.13 30 Jan 2024")

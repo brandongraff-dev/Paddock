@@ -805,7 +805,8 @@ _NO_WRITE_AHEAD = frozenset({"/v1/scope/check", "/v1/billing/webhook"})
 # lifecycle actions (token create/revoke, enroll, sensor revoke/update) are
 # audited by their handlers.
 # Fleet agent heartbeat (every ~30 s) and posture (every ~5 min) are the same kind of traffic and are exempt
-# the same way; a rejected one is audited twice over (here, and as `fleet.evidence.rejected` by the handler).
+# the same way; a rejected one is audited twice over (here, and as `fleet.evidence.rejected` by the handler), unless the
+# handler aggregated it (``request.state.audit_aggregated``): then only the handler's counter/aggregate row exists.
 _SENSOR_DATA_PLANE = re.compile(
     r"^/v1/(sensors/(heartbeat|ingest/(claim|done))"
     r"|fleet/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/(heartbeat|posture))/?$"
@@ -1054,6 +1055,13 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         if not (denied or mutating or restricted_read or delegated):
             return
         if not denied and status_code < 400 and _SENSOR_DATA_PLANE.match(request.url.path):
+            return
+        if (not denied and getattr(request.state, "audit_aggregated", False)
+                and _SENSOR_DATA_PLANE.match(request.url.path)):
+            # The handler folded this rejection into an aggregate (a counter, one sampled/throttled row per agent per
+            # minute) and said so: its decision is final. One outcome row per rejected request here would grow the
+            # append-only chain without bound under a flood (300 garbage heartbeats wrote 304 rows). A rejection the
+            # handler wrote its own ``fleet.evidence.rejected`` row for (every verified one) keeps this row too.
             return
         try:
             await self._record(request, principal, status_code, denied=denied, details=details)

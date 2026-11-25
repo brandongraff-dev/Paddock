@@ -947,15 +947,9 @@ async def test_wire_2_r2_v1_inventory_is_capped_per_tenant_and_keeps_each_agents
         assert (json.loads(newest) if isinstance(newest, str) else newest)["i"] == 3     # never the newest
 
 
-# the audit middleware (auth.py, not this package) writes one outcome row per rejected request unless the handler
-# says the rejection was folded into an aggregate. The handler side is done; this test is the tripwire for the
-# 2-line auth.py patch (docs: audit_aggregated). It is an expected failure until that patch is in, and a strict
-# one, so the marker has to be removed the moment it is.
-_AUTH_HONOURS_AGGREGATED = "audit_aggregated" in (Path(__file__).parent.parent / "app" / "auth.py").read_text()
-
-
-@pytest.mark.xfail(condition=not _AUTH_HONOURS_AGGREGATED, strict=True,
-                   reason="needs auth.py _audit to skip requests flagged request.state.audit_aggregated (lead patch)")
+# the per-request audit middleware (auth.py) writes one outcome row per rejected request unless the handler says the
+# rejection was folded into an aggregate (``request.state.audit_aggregated``): the handler's decision is final.
+# (This was a strict xfail tripwire until the auth.py ``_audit`` patch landed; it is a normal test now.)
 async def test_wire_3_r2_a_rejected_flood_grows_the_whole_audit_log_by_a_bounded_amount(world, rls_app):
     c = world.client
     host = await enroll_host(c, world.admin_a)

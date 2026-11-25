@@ -67,6 +67,24 @@ settings, not in the workflow: a tag ruleset restricting who may create `v*.*.*`
 deployment-tag rule on the `release` environment, and branch protection on the default branch. Until those are
 configured, treat a release as trusted only as far as you trust everyone who can push tags.
 
+**Repository settings the owner must apply before the first release.** These are GitHub settings, not code, so
+nothing in this repository can enforce them; until every box is ticked, trust a release only as far as you trust
+everyone who can push tags. The release workflow (`.github/workflows/release.yml`) has never been run.
+
+- [ ] **Environment `release`** (Settings, Environments): required reviewers (not the person who pushes the tag),
+      and a deployment-branches-and-tags rule that allows only the `v*.*.*` tag pattern. The `gate` job runs in
+      this environment, so every release job waits for the approval.
+- [ ] **Tag ruleset** (Settings, Rules, Rulesets, target: tags, pattern `v*.*.*`): restrict creation, update and
+      deletion to the release maintainers, and block force-pushes. This is the control that stops "someone who can
+      push a tag" from tagging a commit that deletes the `gate` job.
+- [ ] **Branch protection on the default branch**: require pull requests with review and the CI checks, and block
+      force-pushes and deletion. The `gate` job refuses a tag whose commit is not on the default branch; that
+      only means something while the branch itself is protected.
+- [ ] **Actions pinned**: every third-party action is pinned to a commit SHA and cosign to an exact version in
+      `release.yml`; keep it that way when refreshing them.
+- [ ] After the first release, verify it with `cosign verify-blob` (section 1) and rebuild the archive yourself
+      (end of section 2) before telling anyone to install it.
+
 **3. Check it.** `sudo paddock status` shows the agent id, key id and sequence. In Paddock,
 `GET /v1/fleet/agents` lists the host; enable the two standard invariants
 (`POST /v1/invariants/std/std:server-ssh-hardened/enable`, same for `std:server-default-deny-inbound`) and the next
@@ -96,8 +114,10 @@ evaluation reports one verdict per host. A violation opens a finding titled with
 6. Enrolls with the token from `$PADDOCK_ENROLL_TOKEN`, stdin or a hidden prompt, **never from an argument**
    (`--token` is refused and the value is never echoed), and hands it to the agent on stdin. The token is read
    first, before anything is downloaded or written, so a missing or malformed token leaves the host untouched; a
-   token in the environment is removed from it before any other program runs. A token piped without a trailing
-   newline (`printf %s`) works.
+   token in the environment is removed from it before any other program runs (the installer also unsets any
+   `ENV_TOKEN` / `TOKEN` the caller exported, so the token is never re-exported under those names). Ctrl-C or
+   SIGTERM at the hidden token prompt gives the terminal its echo back and exits (130 / 143). A token piped
+   without a trailing newline (`printf %s`) works.
 7. `systemctl enable` then `systemctl restart paddock-agent`, so a re-run is also the upgrade: the running agent
    is restarted onto the new archive and unit (replacing the archive under a live process is never relied on).
    After a short wait the installer checks `systemctl is-active` and exits non-zero, pointing at
@@ -149,7 +169,9 @@ all that `nft` and `iptables-nft` need. `CAP_NET_RAW` is deliberately **not** in
 maximum the process can ever hold. **Legacy iptables (`iptables-legacy`) opens a raw socket and so cannot run
 under this unit**: on a host whose firewall lives in legacy iptables tables, the firewall collector cannot read
 them, reports the facts as partial and approximate, and `std:server-default-deny-inbound` reads `UNKNOWN` for
-that host (never `HOLDS`). `block_ip` and `firewall_rule` fail there too, and a legacy `iptables` that has to
+that host (never `HOLDS`). This is an **owner decision** (ASSURANCE_P2.md section 8): keeping `CAP_NET_RAW` out of
+the bounding set of a root process is worth more than supporting legacy iptables, so those hosts read `UNKNOWN`
+rather than getting a wider unit. `block_ip` and `firewall_rule` fail there too, and a legacy `iptables` that has to
 create `/run/xtables.lock` also fails because `/run` is read-only under `ProtectSystem=strict`. The fix on such a
 host is to move its firewall to nft. If you accept the wider surface (a compromised agent could then open raw
 sockets) you can add `CAP_NET_RAW` in a systemd drop-in
@@ -184,7 +206,9 @@ is not tested by this project. Upgrading with the installer rewrites the unit fi
 
 Because `ProtectSystem=strict` makes everything but the state directory read-only, the optional enforcement
 actions `block_domain` (writes `/etc/hosts`) and `quarantine_file` fail with a read-only error under this unit and
-are reported as failed. The firewall actions `block_ip` and `firewall_rule` reach nftables and `iptables-nft` over
+are reported as failed (a symlinked `/etc/hosts` is written through only when it points at a regular file in
+`/etc`; otherwise `block_domain` is refused, never replacing the link with a regular file; a quarantined
+setuid/setgid file keeps its bits across filesystems or the quarantine is refused). The firewall actions `block_ip` and `firewall_rule` reach nftables and `iptables-nft` over
 netlink (`CAP_NET_ADMIN`) and fail under legacy iptables, see above. Widen `ReadWritePaths=` only deliberately: it
 widens what a compromised agent can write. Enforcement is unchanged from before: dry-run by default
 (`PADDOCK_DRY_RUN`, true unless you set it to false), propose then approve then apply, reversible, audited
@@ -192,18 +216,29 @@ widens what a compromised agent can write. Enforcement is unchanged from before:
 
 Safety rails the agent applies on the host, whatever the server says:
 
-* **Self-lockout**: `block_ip` is refused for loopback, the unspecified and broadcast addresses and any address
-  the server's name resolves to (or if it cannot resolve it); `block_domain` for the server's own host name;
-  `firewall_rule` for outbound traffic to the server's port, and to port 53 when the server is a name. The action
-  fails with `self_lockout` and nothing is applied.
+* **Self-lockout**: `block_ip` is refused for loopback, the unspecified and broadcast addresses, any address the
+  server's name resolves to, any address the agent's client actually connected to, and the address of every proxy
+  the agent's environment names (`https_proxy`, `http_proxy`, `all_proxy`, either case; `no_proxy` is ignored on
+  purpose, refusing more is the safe side). If the server or a proxy cannot be resolved the target cannot be proven
+  safe, so IP blocks are refused. `block_domain` is refused for the server's or a proxy's host name;
+  `firewall_rule` for outbound traffic to the server's (or a proxy's) port, and to port 53 when the server is a
+  name. The action fails with `self_lockout` and nothing is applied.
 * **Dead-man timer**: a `block_ip` or `firewall_rule` that is not followed by one successful round trip to the
   server within `PADDOCK_NETBLOCK_DEADMAN_MIN` minutes (default 10, `0` turns it off) is removed by the agent
   itself, so a block that cut the host off cannot last for good. `block_domain` and `quarantine_file` are not
-  covered. The removal is local only: the server is not told, so its record of the action can be stale until the
-  next report. The agent logs an error line when it does this.
+  covered. The removal is written to the local ledger (`handled.json`: `reverted_by: "dead-man timer"`,
+  `deadman_reverted_at`, the record rewritten to a failed apply) and logged at ERROR, and the **server is told on
+  the next round trip**, through the existing result route and no new one: a `failed` result with
+  `output.error = "deadman_reverted"`. It can never be reported as `applied`: a result queued earlier is
+  replaced by that truth when it is sent. This only reaches an action the server still holds as `approved`, which
+  is exactly the case the timer fires in (the result that would have confirmed the block never got through). If
+  that report is lost for good, the server keeps showing the action as approved until the agent next hears it
+  offered, and the host's next posture shows the firewall without the rule.
 * **Reverts are bound to a local ledger**: the agent reverts only a rule it recorded as applied and not yet
   reverted, and its iptables rules carry a `paddock:<action id>` tag that is probed with `-C` before every insert
-  or delete. A revert of a block applied by an older agent uses the stored revert plan as the fallback record. If
+  or delete. A revert names its rule by that tag, so two blocks of the same target are reverted independently and in any
+  order (each removes exactly its own tagged rule). A revert of a block applied by an older agent uses the stored
+  revert plan as the fallback record. If
   `handled.json` in the state directory is lost, the agent cannot revert its blocks: remove them by hand.
   `quarantine_file` needs a real, symlink-free path (`/usr/bin/x`, not `/bin/x` on a merged-usr host).
 

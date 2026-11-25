@@ -179,11 +179,13 @@ else.
 
 The agent is in **dry-run unless you set `PADDOCK_DRY_RUN=false`** in `/etc/paddock-agent/agent.env`, and even
 then it applies only what the server marked approved for real. On the host it also refuses a block that would cut
-it off from its own server (`self_lockout`: the server's addresses, loopback, outbound to the server's port,
-DNS when the server is a name), and it removes a `block_ip` / `firewall_rule` itself when no successful round
-trip to the server follows within `PADDOCK_NETBLOCK_DEADMAN_MIN` minutes (default 10, `0` = off). That dead-man
-removal is local only: the server is not told, so its record of the action can lag. Details in
-[AGENT_V2.md](AGENT_V2.md) section 3.
+it off from its own server (`self_lockout`: the server's addresses and the addresses the agent really connected
+to, the proxy named by `https_proxy` / `http_proxy` / `all_proxy`, loopback, outbound to the server's or proxy's
+port, DNS when the server is a name), and it removes a `block_ip` / `firewall_rule` itself when no successful
+round trip to the server follows within `PADDOCK_NETBLOCK_DEADMAN_MIN` minutes (default 10, `0` = off). The
+removal is recorded locally (`handled.json`) and reported on the next round trip through the existing result
+route as a `failed` result with `output.error = "deadman_reverted"` (never as `applied`); no new route was added.
+Details in [AGENT_V2.md](AGENT_V2.md) section 3.
 
 ---
 

@@ -141,6 +141,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _TLS = threading.local()
+MAX_PEERS = 32
 
 
 def _track(sock):
@@ -150,20 +151,81 @@ def _track(sock):
     return sock
 
 
+def _note_peer(sock):
+    """Remember the address a request's socket really reached (the self-lockout guard refuses to block it)."""
+    peers = getattr(_TLS, "peers", None)
+    if peers is None:
+        return
+    try:
+        ip = str(ipaddress.ip_address(sock.getpeername()[0]))
+    except (OSError, ValueError, IndexError, TypeError, AttributeError):
+        return
+    if ip not in peers:
+        if len(peers) >= MAX_PEERS:
+            peers.clear()
+        peers.add(ip)
+
+
+def _resolve_bounded(host, port, limit):
+    """``getaddrinfo`` that cannot outlive ``limit`` seconds. A resolver that stalls is abandoned on a daemon
+    thread (it cannot be interrupted); the caller gets an error at the deadline instead of waiting for it."""
+    box = {}
+
+    def work():
+        try:
+            box["ok"] = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the caller's thread
+            box["err"] = exc
+
+    t = threading.Thread(target=work, name="paddock-dns", daemon=True)
+    t.start()
+    t.join(max(0.05, limit))
+    if t.is_alive():
+        raise socket.timeout("name resolution of %s did not finish within the request deadline" % host)
+    if "err" in box:
+        raise box["err"]
+    return box["ok"]
+
+
+def _bounded_create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
+    """``socket.create_connection`` with the name lookup bounded by the request's total deadline (the socket
+    teardown cannot reach a lookup that has no socket yet). Literal addresses and calls made outside a
+    deadline-tracked request go straight through."""
+    host, port = address[0], address[1]
+    deadline_at = getattr(_TLS, "deadline_at", None)
+    try:
+        ipaddress.ip_address(host)
+        literal = True
+    except ValueError:
+        literal = False
+    if deadline_at is None or literal:
+        return socket.create_connection(address, timeout, source_address)
+    infos = _resolve_bounded(host, port, deadline_at - time.monotonic())
+    last = None
+    seen = set()
+    for info in infos:
+        ip = info[4][0]
+        if ip in seen:
+            continue
+        seen.add(ip)
+        try:
+            return socket.create_connection((ip, port), timeout, source_address)
+        except OSError as exc:
+            last = exc
+    raise last or socket.gaierror(socket.EAI_NONAME, "no address for %s" % host)
+
+
 class _TrackedMixin(object):
     """Hands every socket a request opens to the caller's ``holder`` so a total deadline can close them."""
 
     def __init__(self, *args, **kwargs):
         super(_TrackedMixin, self).__init__(*args, **kwargs)
-        create = self._create_connection
-
-        def tracked(*a, **k):
-            return _track(create(*a, **k))
-        self._create_connection = tracked
+        self._create_connection = lambda *a, **k: _track(_bounded_create_connection(*a, **k))
 
     def connect(self):
         super(_TrackedMixin, self).connect()
         _track(self.sock)
+        _note_peer(self.sock)
 
 
 class _TrackedHTTPConnection(_TrackedMixin, http.client.HTTPConnection):
@@ -192,8 +254,9 @@ def _abort(sock):
             pass
 
 
-def _default_transport(opener, deadline):
-    """``deadline`` is a callable returning the total seconds one request may take."""
+def _default_transport(opener, deadline, peers=None):
+    """``deadline`` is a callable returning the total seconds one request may take; ``peers`` (a set) collects
+    the addresses the request's sockets reached."""
     def one(method, url, headers, body, timeout):
         req = urllib.request.Request(url, data=body, method=method)
         for k, v in headers.items():
@@ -214,8 +277,12 @@ def _default_transport(opener, deadline):
         limit = float(deadline())
         holder, box = [], {}
 
+        started = time.monotonic()
+
         def work():
             _TLS.holder = holder
+            _TLS.peers = peers
+            _TLS.deadline_at = started + limit
             try:
                 box["ok"] = one(method, url, headers, body, timeout)
             except BaseException as exc:  # noqa: BLE001 - re-raised in the caller's thread
@@ -245,6 +312,8 @@ class FleetClient(object):
         # total seconds one request may take (the socket timeout is per operation; see the module docstring)
         self._deadline = float(deadline_s) if deadline_s else max(30.0, 3.0 * self._timeout)
         self.clock_skew_ms = None
+        # the addresses this client's sockets really reached (read by the agent's self-lockout guard)
+        self.peers = set()
         self._ua = user_agent or "paddock-agent/%s" % __version__
         if transport is None:
             host = urlsplit(self.base).hostname or ""
@@ -254,7 +323,8 @@ class FleetClient(object):
             if self.base.startswith("https://"):
                 ctx = ssl.create_default_context(cafile=ca_file) if ca_file else ssl.create_default_context()
                 handlers.append(_TrackedHTTPSHandler(context=ctx))
-            transport = _default_transport(urllib.request.build_opener(*handlers), lambda: self._deadline)
+            transport = _default_transport(urllib.request.build_opener(*handlers), lambda: self._deadline,
+                                           self.peers)
         self._transport = transport
 
     # -- low level ----------------------------------------------------------- #

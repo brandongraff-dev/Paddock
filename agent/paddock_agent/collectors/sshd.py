@@ -299,20 +299,60 @@ def parse_group(text):
     return by_gid, members, nis
 
 
-def _glob_re(pat):
-    return re.compile("".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pat),
-                      re.S)
+MAX_PATTERN_CHARS = 1024      # one pattern list (a Match User/Group value)
+MAX_NAME_CHARS = 256
+MAX_MATCH_STEPS = 200000      # work allowed for one pattern_list_match call
+
+
+class PatternTooComplex(Exception):
+    """A pattern list or name beyond the bounds of the linear matcher: the match is not attempted."""
+
+
+def _wild(name, pat, budget):
+    """``*`` / ``?`` wildcard match (whole string, case-sensitive, ``.`` and ``[`` are literal) by the
+    iterative two-pointer algorithm: it remembers only the LAST ``*``, so it is O(len(name) *
+    len(pat)) in the worst case and has no exponential backtracking. ``budget`` is a one-element
+    list of remaining steps."""
+    i = j = 0
+    star = -1
+    mark = 0
+    n = len(name)
+    m = len(pat)
+    while i < n:
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise PatternTooComplex("match step budget exhausted")
+        if j < m and pat[j] == "*":
+            star = j
+            mark = i
+            j += 1
+        elif j < m and (pat[j] == "?" or pat[j] == name[i]):
+            i += 1
+            j += 1
+        elif star >= 0:
+            j = star + 1
+            mark += 1
+            i = mark
+        else:
+            return False
+    while j < m and pat[j] == "*":
+        j += 1
+    return j == m
 
 
 def pattern_list_match(name, plist):
     """OpenSSH ``match_pattern_list``: 1 match, 0 none, -1 a negated pattern matched (it always wins).
-    Case-sensitive, ``*`` and ``?`` only."""
+    Case-sensitive, ``*`` and ``?`` only. Linear-time matching with a step bound; a list or name over
+    the size bounds raises ``PatternTooComplex`` (the caller must treat the selection as unprobeable)."""
+    if len(plist) > MAX_PATTERN_CHARS or len(name) > MAX_NAME_CHARS:
+        raise PatternTooComplex("pattern list or name too long")
+    budget = [MAX_MATCH_STEPS]
     got = 0
     for sub in plist.split(","):
         neg = sub.startswith("!")
         if neg:
             sub = sub[1:]
-        if _glob_re(sub).fullmatch(name):
+        if _wild(name, sub, budget):
             if neg:
                 return -1
             got = 1
@@ -369,6 +409,14 @@ def selection_extras(rows, group_text, matches, already, check=None):
     reasons = set()
     if not crits:
         return [], reasons
+    try:
+        return _selection_extras(rows, group_text, crits, already, check, reasons)
+    except PatternTooComplex:
+        # a pattern list we will not evaluate: which users it selects is unknown
+        return [], reasons | set(["user_pattern"])
+
+
+def _selection_extras(rows, group_text, crits, already, check, reasons):
     if any(k == "user" and "@" in p for k, p in crits):
         reasons.add("user_pattern")
     by_gid, members, _nis = parse_group(group_text)
@@ -389,7 +437,7 @@ def selection_extras(rows, group_text, matches, already, check=None):
 
     def tick():
         ticks[0] += 1
-        if check is not None and ticks[0] % 1024 == 0:
+        if check is not None and ticks[0] % 128 == 0:
             check()
     cands = sorted((r for r in rows if r["name"] != "root" and r["name"] not in already),
                    key=lambda r: (r["uid"], r["name"]))
@@ -799,7 +847,7 @@ def _cmdline_facts(ctx, pid):
                         path = arg
                     else:
                         bad_path = True
-                elif c in "op":
+                elif c in "opghc":            # options that set a directive (LoginGraceTime, HostKey, ...)
                     overrides = True
                 break
             overrides = True           # an option letter we do not know: do not guess
@@ -810,15 +858,24 @@ def _cmdline_facts(ctx, pid):
 
 
 def _config_mtime_ns(ctx, files, include_dirs=()):
-    """Newest change time (ns, max of mtime and ctime) of the config files read, of every directory an
-    ``Include`` reads from (also when no file is left in it: a deleted drop-in shows only there) and,
-    for an Include directory that is gone, of its parent."""
+    """``(ns, doubt)``: newest change time (ns, max of mtime and ctime) of the config files read, of
+    every directory an ``Include`` reads from (also when no file is left in it: a deleted drop-in shows
+    only there) and, for an Include directory that is gone, of its parent. Also of every symbolic link
+    met on the way to any of them (``ctx.link_change_ns``: ``stat`` follows a link and so cannot see it
+    being repointed). ``doubt`` is True when a link path cannot be resolved with confidence."""
     best = None
+    doubt = False
     dirs = set(include_dirs)
+
+    def take(key):
+        return key if best is None else max(best, key)
+
+    paths = []
     for f in files:
         key = ctx.change_ns(f["path"])
         if key is not None:
-            best = key if best is None else max(best, key)
+            best = take(key)
+        paths.append(f["path"])
         d = os.path.dirname(f["path"])
         if f["path"] != MAIN_CONFIG and d != CONFIG_DIR:
             dirs.add(d)
@@ -827,8 +884,16 @@ def _config_mtime_ns(ctx, files, include_dirs=()):
         if key is None:
             key = ctx.change_ns(os.path.dirname(d.rstrip("/")) or "/")
         if key is not None:
-            best = key if best is None else max(best, key)
-    return best
+            best = take(key)
+        paths.append(d)
+    if MAIN_CONFIG not in paths:
+        paths.append(MAIN_CONFIG)
+    for p in paths:
+        key, bad = ctx.link_change_ns(p)
+        if key is not None:
+            best = take(key)
+        doubt = doubt or bad
+    return best, doubt
 
 
 def daemon_evidence(ctx, binary, files, activated, include_dirs=()):
@@ -837,9 +902,11 @@ def daemon_evidence(ctx, binary, files, activated, include_dirs=()):
     Returns ``(daemon, reasons)``. ``daemon`` always has the same keys (null = could not tell):
     ``found, masters, pid, start_epoch, reexec_epoch, config_path, config_default,
     options_override, binary_matches, config_mtime, reload_pending``. ``reload_pending`` is true
-    when the config files changed after the daemon (re)started, or the daemon runs a different
-    config file / extra options / another binary, so ``sshd -T`` of the default file need not be what
-    runs; null when it could not be determined; false only on positive evidence. A reload (SIGHUP
+    when the config files (or a symbolic link on the way to one) changed after the daemon
+    (re)started, or the daemon runs a different config file / extra options / another binary, so
+    ``sshd -T`` of the default file need not be what runs; null when it could not be determined (no
+    daemon seen, no start time, an unresolvable link); false only on positive evidence. Null always
+    adds the ``daemon_unverified`` reason, so the section is approximate, never exact. A reload (SIGHUP
     re-exec) keeps the process start time, so the pid file mtime is used to see it. No argument
     content is ever kept.
     """
@@ -847,7 +914,7 @@ def daemon_evidence(ctx, binary, files, activated, include_dirs=()):
          "config_path": None, "config_default": None, "options_override": None,
          "binary_matches": None, "config_mtime": None, "reload_pending": None}
     reasons = set()
-    cfg_ns = _config_mtime_ns(ctx, files, include_dirs)
+    cfg_ns, link_doubt = _config_mtime_ns(ctx, files, include_dirs)
     if cfg_ns is not None:
         d["config_mtime"] = cfg_ns // 1000000000
     masters = _sshd_masters(ctx)
@@ -855,6 +922,8 @@ def daemon_evidence(ctx, binary, files, activated, include_dirs=()):
     if not masters:
         if activated:
             d["reload_pending"] = False      # socket activation: sshd reads the files per connection
+        else:
+            reasons.add("daemon_unverified")
         return d, reasons
     pid = masters[0]
     d["found"] = True
@@ -903,11 +972,15 @@ def daemon_evidence(ctx, binary, files, activated, include_dirs=()):
     if differs:
         reasons.add("daemon_config_differs")
         d["reload_pending"] = True
+    elif link_doubt:
+        pass                                  # a link we could not resolve: no positive evidence
     elif cfg_ns is not None and (start_ns is not None or reexec_ns is not None):
         eff = max(start_ns or 0, reexec_ns or 0)
         d["reload_pending"] = cfg_ns > eff
         if d["reload_pending"]:
             reasons.add("reload_pending")
+    if d["reload_pending"] is None:
+        reasons.add("daemon_unverified")      # null is never "current": the fact is approximate
     return d, reasons
 
 

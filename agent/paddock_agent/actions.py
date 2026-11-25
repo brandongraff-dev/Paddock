@@ -29,7 +29,7 @@ import socket
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urlsplit
 
 from . import ALLOWED_ACTIONS
@@ -183,14 +183,47 @@ def _is_ipv6(target: str) -> bool:
         return False
 
 
+_DEFAULT_PORTS = {"https": 443, "http": 80, "socks": 1080, "socks4": 1080, "socks4a": 1080, "socks5": 1080,
+                  "socks5h": 1080}
+
+
+def _endpoint(url: str, default_scheme: str = "http") -> Optional[Tuple[str, int, bool]]:
+    """``(host, port, is_ip_literal)`` of a server or proxy URL (a bare ``host:port`` is read as http), or
+    ``None`` when it names no usable endpoint (an unusable proxy value is not a route the agent can be using)."""
+    v = (url or "").strip() if isinstance(url, str) else ""
+    if not v:
+        return None
+    if "://" not in v:
+        v = "%s://%s" % (default_scheme, v)
+    try:
+        parts = urlsplit(v)
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if port is None:
+        port = _DEFAULT_PORTS.get(parts.scheme, 80)
+    try:
+        ipaddress.ip_address(host)
+        literal = True
+    except ValueError:
+        literal = False
+    return host, port, literal
+
+
 class SelfGuard:
     """Refuses actions that would cut this agent off from its own server (RAIL #7).
 
-    The server address is resolved at validation time (never cached): if the server is a name that cannot be
-    resolved we cannot prove a ``block_ip`` target is not the server, so it is refused (fail safe). The
-    resolver is injectable for tests."""
+    "The way out" is the server itself, every proxy the agent's environment names (``https_proxy`` /
+    ``http_proxy`` / ``all_proxy``: the agent may reach the server only through it) and every address the
+    client really connected to (``peers``). Addresses are resolved at validation time (never cached): if any
+    of those names cannot be resolved we cannot prove a ``block_ip`` target is not the way out, so it is
+    refused (fail safe). The resolver is injectable for tests."""
 
-    def __init__(self, server_url: str, resolver: Optional[Callable[..., Any]] = None) -> None:
+    def __init__(self, server_url: str, resolver: Optional[Callable[..., Any]] = None,
+                 proxies: Iterable[str] = (), peers: Iterable[str] = ()) -> None:
         parts = urlsplit(server_url or "")
         self.host = (parts.hostname or "").lower()
         self.port = parts.port or (443 if parts.scheme == "https" else 80)
@@ -200,21 +233,34 @@ class SelfGuard:
             self._literal = True
         except ValueError:
             self._literal = False
+        self._endpoints = [(self.host, self.port, self._literal)]       # type: List[Tuple[str, int, bool]]
+        for url in proxies or ():
+            ep = _endpoint(url)
+            if ep is not None and ep not in self._endpoints:
+                self._endpoints.append(ep)
+        self._peers = set()                                              # type: Set[str]
+        for peer in peers or ():
+            try:
+                self._peers.add(str(ipaddress.ip_address(peer)))
+            except ValueError:
+                continue
 
     def addresses(self) -> set:
-        if self._literal:
-            return {str(ipaddress.ip_address(self.host))}
-        try:
-            infos = self._resolver(self.host, self.port, 0, socket.SOCK_STREAM)
-        except (OSError, UnicodeError) as exc:
-            raise SelfLockoutError("cannot resolve the server %r to prove the target is not the server "
-                                   "(%s); refusing" % (self.host, exc))
-        out = set()
-        for info in infos:
-            try:
-                out.add(str(ipaddress.ip_address(info[4][0])))
-            except (ValueError, IndexError, TypeError):
+        out = set(self._peers)
+        for host, port, literal in self._endpoints:
+            if literal:
+                out.add(str(ipaddress.ip_address(host)))
                 continue
+            try:
+                infos = self._resolver(host, port, 0, socket.SOCK_STREAM)
+            except (OSError, UnicodeError) as exc:
+                raise SelfLockoutError("cannot resolve %r (the server or a proxy this agent uses) to prove the "
+                                       "target is not the way out (%s); refusing" % (host, exc))
+            for info in infos:
+                try:
+                    out.add(str(ipaddress.ip_address(info[4][0])))
+                except (ValueError, IndexError, TypeError):
+                    continue
         return out
 
     def check(self, action_type: str, target: str) -> None:
@@ -225,17 +271,18 @@ class SelfGuard:
                 raise SelfLockoutError("block_ip %s would block loopback / the unspecified or broadcast "
                                        "address, which cuts the host off from itself" % target)
             if str(ip) in self.addresses():
-                raise SelfLockoutError("block_ip %s is this agent's own server (%s); that is a lockout"
-                                       % (target, self.host))
+                raise SelfLockoutError("block_ip %s is this agent's own server, a proxy it reaches it through or "
+                                       "an address it connected to (%s); that is a lockout" % (target, self.host))
         elif action_type == "block_domain":
-            if target == self.host:
-                raise SelfLockoutError("block_domain %s is this agent's own server; that is a lockout" % target)
+            if target in set(h for h, _p, _l in self._endpoints):
+                raise SelfLockoutError("block_domain %s is this agent's own server or its proxy; that is a "
+                                       "lockout" % target)
         elif action_type == "firewall_rule":
             direction, _proto, port = target.split(":")
-            if direction == "out" and int(port) == self.port:
-                raise SelfLockoutError("firewall_rule %s drops outbound traffic to the server's port %d; "
-                                       "that is a lockout" % (target, self.port))
-            if direction == "out" and int(port) == 53 and not self._literal:
+            if direction == "out" and int(port) in set(p for _h, p, _l in self._endpoints):
+                raise SelfLockoutError("firewall_rule %s drops outbound traffic to the port of the server (or "
+                                       "its proxy), %d; that is a lockout" % (target, int(port)))
+            if direction == "out" and int(port) == 53 and any(not lit for _h, _p, lit in self._endpoints):
                 raise SelfLockoutError("firewall_rule %s drops DNS, which this agent needs to find its "
                                        "server; that is a lockout" % target)
 
@@ -318,7 +365,7 @@ def apply_action(action: Action, enforcer, *, agent_dry_run: bool,
 
 
 def revert_action(action: Action, enforcer, *, agent_dry_run: bool,
-                  ledger: Optional[Callable[[str, str], Optional[Dict[str, Any]]]] = None) -> Outcome:
+                  ledger: Optional[Callable[..., Optional[Dict[str, Any]]]] = None) -> Outcome:
     """Undo an applied block (RAIL #5).
 
     The plan in ``action.result["revert"]`` is **untrusted server data**. The enforcer re-derives the
@@ -357,4 +404,6 @@ def revert_action(action: Action, enforcer, *, agent_dry_run: bool,
     rule = None
     if isinstance(plan, dict) and isinstance(plan.get("action_type"), str) and isinstance(plan.get("target"), str):
         rule = {"action_type": plan["action_type"], "target": plan["target"]}
+        if isinstance(plan.get("tag"), str):
+            rule["tag"] = plan["tag"]                    # the record this revert spends is the one with this tag
     return Outcome(status="applied", dry_run=False, applied=True, output=out, rule=rule)

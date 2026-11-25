@@ -113,6 +113,14 @@ from app.assurance import refs                      # noqa: E402
 from app.assurance.builders import _ipmap           # noqa: E402
 from app.assurance.builders import host_fw as hf    # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _private_peer_proof_on(monkeypatch):
+    """Rules 1 to 4 of ``_ipmap.corroborate`` are what this module exercises, so the private-peer proof (OFF in
+    production since review finding Z-2, see ``_ipmap.PRIVATE_PEER_IS_PROOF``) is switched on here. The default-off
+    behaviour is pinned in ``test_p2z_builder.py``."""
+    monkeypatch.setattr(_ipmap, "PRIVATE_PEER_IS_PROOF", True)
+
 PRIV = "10.0.0.5"
 NAT_PUBLIC = "93.184.216.34"          # globally routable (inert string): the NAT instance's public address
 
@@ -167,7 +175,7 @@ def test_hostfw_2_the_ingest_decision_is_the_builders_decision():
     claims = [_ipmap.Claim("a1", (PRIV,), NAT_PUBLIC)]
     d = _ipmap.corroborate(claims, amap)["a1"]
     assert d.ref is None and d.note == "peer_address_not_instance"
-    d = _ipmap.corroborate([_ipmap.Claim("a1", (PRIV,), PRIV)], amap)["a1"]
+    d = _ipmap.corroborate([_ipmap.Claim("a1", (PRIV,), PRIV, direct=True)], amap)["a1"]
     assert d.ref == refs.asset_ref(inst["id"]) and d.note == ""
 
 
@@ -487,9 +495,14 @@ coverage: { require: 0 }
 """
 
 
-def _segmentation_doc(claimed, *, peer=None, label=None, extra_edges=()):
-    """B accepts SSH from the guest zone (a violation if B is in pos). Only what B CLAIMS (and the server saw) varies."""
+def _segmentation_doc(claimed, *, peer=None, label=None, extra_edges=(), proxied=False):
+    """B accepts SSH from the guest zone (a violation if B is in pos). Only what B CLAIMS (and the server saw) varies.
+    ``proxied``: the identity's ``peer_proxied`` flag (``None`` = a row written before the flag existed)."""
     a = T.agent_row(1, ips=(claimed,), peer=peer)
+    if proxied is None:
+        a["identity"].pop("peer_proxied", None)
+    else:
+        a["identity"]["peer_proxied"] = proxied
     fw = T.fw_section([T.chain([T.acc(proto="tcp", dport=[[22, 22]], src=["10.99.0.0/24"])])])
     out = hf.build(T.rows_of((a, T.posture_row(T.sections(firewall=fw)))), T.NOW)
     nodes = [{"node_ref": n.ref, "kind": n.kind, "asset_id": None, "attrs": json.dumps(n.attrs)} for n in out.nodes]
@@ -793,10 +806,10 @@ def test_hostfw_1_a_host_whose_zone_nothing_independent_supports_is_listed_as_un
     assert T.ref1(1) not in diag.zone_unplaced and _node(doc, T.ref1(1))["zone"] == "pos"
 
 
-@pytest.mark.xfail(strict=True, reason="deferred (needs a library 'zone unknown' state): a lying host with no "
-                                       "label and no usable peer is simply in no zone, so the zone selector misses it")
 @pytest.mark.parametrize("peer", [None, "203.0.113.5", "127.0.0.1", "10.0.0.9"])
 def test_hostfw_1_residual_a_lie_with_no_usable_peer_is_not_a_false_holds(peer):
+    """Closed by the library's zone-unknown state (package Z, finding Z-1): the host is a POSSIBLE member of pos, so
+    the verdict is UNKNOWN (never HOLDS)."""
     doc, _ = _segmentation_doc("192.168.77.7", peer=peer)           # B really is in pos and accepts guest SSH
     assert _verdict(doc) != "HOLDS"
 

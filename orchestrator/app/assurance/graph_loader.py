@@ -70,13 +70,19 @@ class LoadDiagnostics:
     #: node id -> zone names its addresses resolved into (a multi-homed node in two zones).
     zone_conflicts: dict[str, list[str]] = field(default_factory=dict)
     #: ``agent:<uuid>`` nodes whose zone rests ONLY on the addresses the host claims about itself (no declared
-    #: label, no address the server observed): an unverified placement, see :func:`_agent_zone`.
+    #: label, no address the server observed): an unverified placement, see :func:`_agent_zone`. Each is emitted
+    #: with ``zone_unknown: true`` (its ``zone`` is kept as a best guess for display only).
     zone_from_claim: list[str] = field(default_factory=list)
     #: ``agent:<uuid>`` nodes with NO zone at all (no declared label, no usable observed address, a claim that
-    #: matches no zone). A zone selector cannot see them, so a verdict that selects by zone can be a false HOLDS for
-    #: such a host: the library has no "zone unknown" state yet (docs/ASSURANCE_P2.md 13.2), a runner may read this
-    #: list and answer UNKNOWN for zone-selected invariants (review finding hostfw-1).
+    #: matches no zone). Each is emitted with ``zone_unknown: true``: the library treats the node as a POSSIBLE member
+    #: of every zone selector (as source and as target), so a zone-selected invariant is UNKNOWN, never HOLDS, where
+    #: the node could change the verdict (review finding hostfw-1, Z-1).
     zone_unplaced: list[str] = field(default_factory=list)
+
+    @property
+    def zone_unknown(self) -> list[str]:
+        """Every node the document marks ``zone_unknown`` (sorted)."""
+        return sorted({*self.zone_from_claim, *self.zone_unplaced})
     #: host-fact entries (or whole rows) left out of the document because they were invalid; the
     #: affected collectors read as unknown. ``fact_issues`` keeps the first few reasons.
     facts_dropped: int = 0
@@ -234,7 +240,8 @@ def _labels_by_node(rows: list[Any]) -> dict[str, dict[str, tuple[int, str]]]:
 
 def _node_doc(ref: str, kind: str, labels: dict[str, tuple[int, str]], md: dict[str, Any],
               zone: Optional[str], cov: list[dict[str, str]],
-              facts: Optional[dict[str, dict[str, Any]]] = None, has_agent: bool = False) -> dict[str, Any]:
+              facts: Optional[dict[str, dict[str, Any]]] = None, has_agent: bool = False,
+              zone_unknown: bool = False) -> dict[str, Any]:
     """Labels: ``declared`` rows override metadata-derived defaults (crown jewel, data store, and
     the ``agent`` tag a node with host facts gets)."""
     tags: set[str] = set()
@@ -260,6 +267,8 @@ def _node_doc(ref: str, kind: str, labels: dict[str, tuple[int, str]], md: dict[
     doc: dict[str, Any] = {"id": ref, "kind": kind}
     if zone:
         doc["zone"] = zone
+    if zone_unknown:                 # only ever written when true: a document without such a node is unchanged
+        doc["zone_unknown"] = True
     if cls:
         doc["class"] = cls
     doc["tags"] = sorted(tags)
@@ -276,17 +285,18 @@ def _hint_ips(attrs: Any, key: str) -> list[str]:
     return [v for v in raw if isinstance(v, str)][:64] if isinstance(raw, list) else []
 
 
-def _agent_zone(ref: str, attrs: Any, zone_index: ZoneIndex, diag: "LoadDiagnostics") -> Optional[str]:
-    """Zone of an uncorroborated ``agent:<uuid>`` node, from what is NOT the host's own word first.
+def _agent_zone(ref: str, attrs: Any, zone_index: ZoneIndex, diag: "LoadDiagnostics",
+                weak: Optional[str] = None) -> tuple[Optional[str], bool]:
+    """``(zone, zone_unknown)`` of an uncorroborated ``agent:<uuid>`` node WITHOUT a declared zone label.
 
     ``attrs.ips`` is empty for these nodes on purpose (the host is "address unknown": it is inside every CIDR
     expansion, D6). A host can write any address into its own listener table, so its CLAIMED addresses are the
-    weakest hint (review finding hostfw-1): the address the SERVER observed (``observed_ips``: the connection's
-    private source, unique to this agent) is tried first, and when the two disagree the observation wins and the
-    conflict is reported. Only when nothing else exists does the claim place the node, and then it is reported in
-    ``diag.zone_from_claim`` (an unverified placement; a declared zone label always overrides, and the label
-    check happened before this). A zone the library cannot yet call "unknown" is the reason a claim is still
-    used at all: dropping an honest host out of every zone selector would turn a real violation into a HOLDS."""
+    weakest hint (review finding hostfw-1). Independent placements, strongest first: the address the SERVER observed
+    (``observed_ips``: the direct, unique private source of the connection; when the claim disagrees the observation
+    wins and the conflict is reported), then a platform-written (non-declared) zone label ``weak``. Only when nothing
+    independent exists does the claim place the node, and then ``zone_unknown`` is True: its ``zone`` is a guess for
+    display and the library treats the node as a POSSIBLE member of every zone selector. A node nothing placed at all
+    is unplaced (``zone None``, ``zone_unknown`` True). Both are listed in the diagnostics."""
     observed = _hint_ips(attrs, "observed_ips")
     claimed = _hint_ips(attrs, "claimed_ips")
     if observed:
@@ -295,16 +305,18 @@ def _agent_zone(ref: str, attrs: Any, zone_index: ZoneIndex, diag: "LoadDiagnost
             theirs, _ = zone_index.resolve(claimed) if claimed else (None, [])
             if theirs is not None and theirs != zone:
                 diag.zone_conflicts[ref] = sorted({zone, theirs})
-            return zone
+            return zone, False
+    if weak is not None:
+        return weak, False
     if claimed:
         zone, conflict = zone_index.resolve(claimed)
         if conflict:
             diag.zone_conflicts[ref] = conflict
         if zone is not None:
             diag.zone_from_claim.append(ref)
-            return zone
+            return zone, True
     diag.zone_unplaced.append(ref)
-    return None
+    return None, True
 
 
 def _declared_zone_label(labels: dict[str, tuple[int, str]]) -> tuple[Optional[str], Optional[str]]:
@@ -564,6 +576,7 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
     for ref in sorted(kinds):
         lab = labels.get(ref, {})
         md = assets.get(asset_ids.get(ref, ""), {})
+        zone_unknown = False
         if ref == INTERNET:
             zone: Optional[str] = INTERNET
         else:
@@ -571,7 +584,7 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
             zone = declared
             if zone is None:
                 if ref.startswith("agent:"):
-                    zone = _agent_zone(ref, attrs.get(ref), zone_index, diag)
+                    zone, zone_unknown = _agent_zone(ref, attrs.get(ref), zone_index, diag, weak)
                 else:
                     if ref.startswith("ip:") or ref.startswith("cidr:"):
                         addrs = [ref.partition(":")[2]]
@@ -580,14 +593,12 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
                     zone, conflict = zone_index.resolve(addrs)
                     if conflict:
                         diag.zone_conflicts[ref] = conflict
-                if zone is None:
+                if zone is None and not zone_unknown:
                     zone = weak
-                    if zone is not None and ref in diag.zone_unplaced:
-                        diag.zone_unplaced.remove(ref)       # a weaker (non-declared) label did place it
         nodes.append(_node_doc(ref, kinds[ref], lab, md, zone,
                                sorted(cov_by.get(ref, []), key=lambda c: (c["direction"], c["source"], c["tier"]))
                                if ref != INTERNET else [],
-                               host_facts.get(ref), ref in has_facts and ref != INTERNET))
+                               host_facts.get(ref), ref in has_facts and ref != INTERNET, zone_unknown))
 
     edges: list[dict[str, Any]] = []
     for e in sorted(snap["edges"], key=lambda r: (r["src_ref"], r["dst_ref"], r["proto"], r["port_lo"],

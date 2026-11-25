@@ -361,7 +361,9 @@ _TCP22 = {"proto": "tcp", "dport": [[22, 22]]}
 @pytest.mark.parametrize("m", [
     {**_TCP22, "proto": "TCP"}, {**_TCP22, "proto": "6"}, {**_TCP22, "proto": "Tcp"}, {**_TCP22, "proto": "tcp "},
     {**_TCP22, "proto": "p6"}, {**_TCP22, "proto": "p256"}, {**_TCP22, "proto": "all"},
-    {**_TCP22, "proto": "ipv6-icmp"}, {**_TCP22, "proto": "ospf"},
+    {**_TCP22, "proto": "ipv6-icmp"},
+    # ('ospf' used to be listed here: an honest ``-p ospf`` rule widened every listener. It is a real protocol name
+    # of /etc/protocols and now stays exact: test_p2z_builder.py (Z-5) and the exact list below.)
     {**_TCP22, "ct": ["NEW"]}, {**_TCP22, "ct": ["weird"]}, {**_TCP22, "ct": ["new", "weird"]},
     {**_TCP22, "dtype": ["LOCAL"]}, {**_TCP22, "dtype": ["loopback"]},
 ])
@@ -399,7 +401,7 @@ def test_an_unreadable_interface_name_marks_the_rule_unknown(bad):
 
 def test_canonical_protocol_names_and_numbers_are_read_exactly():
     for good in ("tcp", "udp", "icmp", "icmpv6", "sctp", "dccp", "udplite", "gre", "esp", "ah", "igmp", "ipip",
-                 "ipv6", "p89", "p253", "p0", "p255"):
+                 "ipv6", "p89", "p253", "p0", "p255", "ospf", "vrrp", "pim", "ipsec-esp"):
         assert hf._Rule({"v": "accept", "m": {"proto": good}}, 4).unknown is False, good
     assert hf._Rule({"v": "accept", "m": {"icmp": [300]}}, 4).unknown is True
     assert hf._Rule({"v": "accept", "m": {"icmp": [8]}}, 4).unknown is False

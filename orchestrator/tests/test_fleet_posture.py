@@ -133,7 +133,13 @@ def good_posture(*, pw: str = "no", fw_default: str = "drop", ips: list[str] | N
                 "probes": {"addrs": ["10.255.255.1", "203.0.113.7"], "users_probed": 2, "users_total": 2,
                            "planned": 6, "done": 6, "deltas": []},
                 "match": {"blocks": 0, "criteria": [], "known": True, "unprobed": False, "unprobed_reasons": []},
-                "files": [{"path": "/etc/ssh/sshd_config", "sha256": "b" * 64, "size": 100}]}},
+                "files": [{"path": "/etc/ssh/sshd_config", "sha256": "b" * 64, "size": 100}],
+                # a current agent ALWAYS reports the running daemon (agent/PAYLOAD.md section 3): positive evidence
+                # that it runs these files (one master, default config, no -o, same binary, no reload pending)
+                "daemon": {"found": True, "masters": 1, "pid": 700, "start_epoch": 1780000000,
+                           "reexec_epoch": None, "config_path": None, "config_default": True,
+                           "options_override": False, "binary_matches": True, "config_mtime": 1770000000,
+                           "reload_pending": False}}},
             "listeners": {"s": "ok", "conf": "exact", "partial": False, "v": {
                 "count": len(listeners), "listeners": listeners, "ipv6": False, "bindv6only": None,
                 "attribution": {"status": "ok", "unreadable_pids": 0, "unattributed": 0}}},
@@ -171,6 +177,15 @@ def pbytes(p: dict) -> bytes:
 # --------------------------------------------------------------------------- #
 # world: two tenants, users, hosts
 # --------------------------------------------------------------------------- #
+
+@pytest.fixture(autouse=True)
+def _private_peer_proof_on_for_ingest(monkeypatch):
+    """These tests exercise the ingest's corroboration rules (``_ipmap.corroborate`` rules 1 to 4), so the private-peer
+    proof, OFF in production since review finding Z-2 (``_ipmap.PRIVATE_PEER_IS_PROOF``), is switched on here. The
+    default-off behaviour is pinned in ``test_p2z_builder.py``."""
+    from app.assurance.builders import _ipmap
+    monkeypatch.setattr(_ipmap, "PRIVATE_PEER_IS_PROOF", True)
+
 
 @pytest.fixture(autouse=True)
 def _reset_limiters():

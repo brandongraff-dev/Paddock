@@ -113,3 +113,17 @@ def test_full_inventory_shape(tmp_path):
     assert set(inv) == {"os_info", "packages", "listeners", "posture"}
     assert inv["packages"] == []
     assert len(inv["listeners"]) == 2
+
+
+def test_hex_ip_follows_the_host_byte_order(monkeypatch):
+    # coll-8: the kernel prints host-endian u32 words; a big-endian host's hex is already network order
+    import sys
+    monkeypatch.setattr(sys, "byteorder", "little")
+    assert inventory._hex_ip("0100007F") == "127.0.0.1"
+    assert inventory._hex_ip("0302010A") == "10.1.2.3"
+    monkeypatch.setattr(sys, "byteorder", "big")
+    assert inventory._hex_ip("7F000001") == "127.0.0.1"          # was 1.0.0.127
+    assert inventory._hex_ip("0A010203") == "10.1.2.3"            # was 3.2.1.10
+    assert inventory._hex_ip("00000000") == "0.0.0.0"
+    assert inventory._hex_ip("00000000000000000000000000000001") == "::1"
+    assert inventory._hex_ip("20010DB8000000000000000000000001") == "2001:db8::1"

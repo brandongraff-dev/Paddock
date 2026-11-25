@@ -64,13 +64,16 @@ def parse_ipt_flavour(text):
     return "unknown"
 
 
+_IF_INET6_ADDR = re.compile(r"^[0-9a-fA-F]{32}$")
+
+
 def ipv6_enabled(ctx):
     """True/False from ``/proc/net/if_inet6`` (the truth), ``None`` when it cannot be told.
 
     A non-loopback IPv6 address means IPv6 reaches this host, whatever ``all/disable_ipv6`` says
     (a later per-interface ``disable_ipv6=0`` re-enables it). The file is absent only when the host
-    has no IPv6 stack; if the stack is visibly there (tcp6, /proc/sys/net/ipv6) or the file cannot be
-    read in full the answer is unknown, never "disabled".
+    has no IPv6 stack; if the stack is visibly there (tcp6, /proc/sys/net/ipv6), the file cannot be
+    read in full or a line of it is not in the kernel's format, the answer is unknown, never "disabled".
     """
     st, text = ctx.read_text("/proc/net/if_inet6", 1 << 20)
     if st == "missing":
@@ -80,11 +83,17 @@ def ipv6_enabled(ctx):
         return False
     if st != "ok":
         return None
+    garbled = False
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) >= 6 and parts[5] != "lo":
+        if not parts:
+            continue
+        if len(parts) < 6 or not _IF_INET6_ADDR.match(parts[0]):
+            garbled = True                    # the kernel never writes this: do not read it as "none"
+            continue
+        if parts[5] != "lo":
             return True
-    return False
+    return None if garbled else False
 
 
 def _tables(ctx, path):

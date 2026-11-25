@@ -19,6 +19,7 @@ import hashlib
 import os
 import selectors
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -315,6 +316,47 @@ class Ctx(object):
         except OSError:
             return None
         return max(st.st_mtime_ns, st.st_ctime_ns)
+
+    def link_change_ns(self, path):
+        """``(ns, doubt)``: the newest change time (mtime or ctime of ``lstat``) of every symbolic link
+        met while resolving ``path`` component by component, and whether the resolution cannot be
+        trusted (a loop, more than 40 links, a link that cannot be read). ``change_ns`` follows links
+        and so sees only the target: repointing a link (``ln -sf``) leaves the target untouched but
+        creates a link whose own ctime is "now". ``ns`` is None when no link is on the path."""
+        best = None
+        doubt = False
+        links = 0
+        pending = [c for c in path.split("/") if c]
+        cur = ""
+        while pending:
+            comp = pending.pop(0)
+            if comp == ".":
+                continue
+            if comp == "..":
+                cur = cur.rpartition("/")[0]
+                continue
+            nxt = cur + "/" + comp
+            try:
+                st = os.lstat(self.fs_path(nxt))
+            except (FileNotFoundError, NotADirectoryError):
+                break                                    # nothing below a missing component
+            except OSError:
+                doubt = True
+                break
+            if not stat.S_ISLNK(st.st_mode):
+                cur = nxt
+                continue
+            t = max(st.st_mtime_ns, st.st_ctime_ns)
+            best = t if best is None else max(best, t)
+            links += 1
+            lst, target = self.readlink(nxt)
+            if links > 40 or lst != "ok" or not target:
+                doubt = True
+                break
+            if target.startswith("/"):
+                cur = ""
+            pending = [c for c in target.split("/") if c] + pending
+        return best, doubt
 
     def mtime_s(self, path):
         try:

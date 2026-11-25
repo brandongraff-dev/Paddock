@@ -589,10 +589,12 @@ async def _read_body(request: Request, limit: int) -> bytes:
 async def _ingest(request: Request, pool, principal: Principal, agent_id: UUID, kind: str):
     """The shared body of heartbeat / posture / rotate. Order, cheapest first:
 
-    1. a pre-auth check keyed by (agent, STRICT peer address): if that pair has already failed too often this minute
-       the request is a 429 before any body is read (the per-agent budget is not touched);
-    2. the capped body read, then ``fleet_posture`` checks 1-10 with the per-agent budget charged only AFTER the
-       signature verified, so a holder of the bearer alone cannot exhaust the real agent's budget;
+    1. a pre-auth slot keyed by (agent, STRICT peer address), taken in one synchronous step: if that pair already
+       holds too many unverified requests this minute the request is a 429 before any body is read (the per-agent
+       budget is not touched). The slot is given back once the signature verified;
+    2. the capped body read, then ``fleet_posture`` checks 1-10 with the per-agent budget charged only for an ACCEPTED
+       envelope (a fresh seq in the clock window), so neither a holder of the bearer alone nor a replay of a captured
+       signed envelope can exhaust the real agent's budget (replays have a bucket of their own);
     3. any other exception is audited as a rejection too (these routes are exempt from the per-request audit row).
 
     Returns ``(IngestResult, None)`` or ``(None, JSONResponse)``."""
@@ -600,16 +602,23 @@ async def _ingest(request: Request, pool, principal: Principal, agent_id: UUID, 
     tenant = str(principal.tenant_id)
     rid = getattr(request.state, "request_id", None)
     ip = client_ip_strict(request)       # the host's address is a corroboration input: never the forgeable leftmost entry
-    if fleet_posture.preauth_blocked(agent_id, ip):
+    # ONE synchronous step: take a slot in the (agent, address) bucket. Check-then-act (blocked(), then a hit after the
+    # body was read) let every concurrent request through the check before any of them recorded a failure.
+    slot = fleet_posture.preauth_take(agent_id, ip)
+    if slot is None:
         rej = fleet_posture.Rejection(429, "rate_limited", "too many failed requests for this agent from this address")
         await fleet_posture.record_rejection(pool, tenant_id=tenant, agent_id=agent_id, rej=rej, request_id=rid,
                                              client_ip=ip, kind=kind, actor=principal.actor)
         _note_sampled(request, rej)
         return None, _rejection_response(rej, {"Retry-After": "60"})
+
+    def verified() -> None:
+        """The signature verified: this request is not a failure, give its slot back."""
+        fleet_posture.preauth_refund(agent_id, ip, slot)
+
     try:
         body = await _read_body(request, fleet_posture.MAX_BODY_BYTES)
     except fleet_posture.Rejection as rej:
-        fleet_posture.preauth_failed(agent_id, ip)
         await fleet_posture.record_rejection(pool, tenant_id=tenant, agent_id=agent_id, rej=rej,
                                              request_id=rid, client_ip=ip, kind=kind, actor=principal.actor)
         _note_sampled(request, rej)
@@ -618,11 +627,12 @@ async def _ingest(request: Request, pool, principal: Principal, agent_id: UUID, 
         res = await fleet_posture.ingest_envelope(
             pool, agent_id=agent_id, tenant_id=tenant, kind=kind, body=body,
             content_encoding=request.headers.get("content-encoding"), client_ip=ip, request_id=rid,
-            actor=principal.actor, budget=lambda: not fleet_posture.rate_limited(route, agent_id))
+            actor=principal.actor, budget=lambda: not fleet_posture.rate_limited(route, agent_id),
+            replay_budget=lambda: not fleet_posture.rate_limited("replay", agent_id))
     except fleet_posture.Rejection as rej:
         _note_sampled(request, rej)
-        if rej.status != 429 and not rej.verified:
-            fleet_posture.preauth_failed(agent_id, ip)
+        if rej.verified or rej.status == 429:     # a signed envelope (or a budget answer, which only follows one)
+            verified()
         return None, _rejection_response(rej, {"Retry-After": "60"} if rej.status == 429 else None)
     except Exception:  # noqa: BLE001 -- heartbeat/posture are exempt from the per-request audit row: audit the crash
         logger.exception("fleet_ingest_failed", extra={"agent": str(agent_id), "kind": kind})
@@ -631,6 +641,7 @@ async def _ingest(request: Request, pool, principal: Principal, agent_id: UUID, 
                                              request_id=rid, client_ip=ip, kind=kind, actor=principal.actor)
         _note_sampled(request, rej)
         return None, _rejection_response(rej)
+    verified()
     if res.came_online:
         await fleet_monitor.emit_transition(
             pool, {"id": agent_id, "tenant_id": tenant, "hostname": res.agent.get("hostname", "")},

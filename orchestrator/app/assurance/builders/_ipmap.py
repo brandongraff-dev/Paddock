@@ -286,8 +286,11 @@ class Claim:
     agent_id: str
     ips: tuple[str, ...]
     peer: Optional[str]
-    #: False when the server could not tell the peer address from that of a forwarding hop (``auth.ClientAddr.proxied``).
-    direct: bool = True
+    #: True ONLY when the ingest recorded ``peer_proxied: false`` (``auth.ClientAddr.proxied``). Everything else, a
+    #: forwarding hop, a missing key (a row written before the flag existed, possibly with a forged peer from the old
+    #: ``client_ip_strict``) or a malformed value, reads as "may be a hop": a peer of unknown provenance proves nothing
+    #: (review finding Z-3).
+    direct: bool = False
 
 
 @dataclass(frozen=True)
@@ -321,10 +324,21 @@ def claim_of(agent_id: Any, identity: Any) -> Claim:
     ident = identity if isinstance(identity, Mapping) else {}
     peer = ident.get("peer_ip")
     return Claim(str(agent_id), tuple(claimed_ips(ident)), norm_ip(peer) if isinstance(peer, str) else None,
-                 direct=ident.get("peer_proxied") is not True)
+                 direct=ident.get("peer_proxied") is False)
 
 
-def corroborate(claims: Iterable[Claim], amap: IpMap) -> dict[str, Decision]:
+#: Whether a PRIVATE source address the server saw is accepted as proof that an agent IS a cloud instance (rules 1 to 4
+#: of :func:`corroborate`). It is OFF: owner decision (2) says corroboration must be impossible to forge from inside
+#: the network, and a header-less NAT or VPN instance that rewrites another machine's source to its own private
+#: address, with one enrolled agent behind it, is indistinguishable from the instance (review finding Z-2). A weak
+#: proof is no proof: the agent stays ``agent:<uuid>``, ``claimed``, which is safe (the host is judged on its own
+#: facts, the instance node keeps no host facts and so reads UNKNOWN, never a false HOLDS). The switch exists so a
+#: P2.1 trust root (a server-verified instance-identity document, or an operator pairing of agent and asset) can
+#: turn the proof back on per claim; there is deliberately no setting, route or UI for it in P2.
+PRIVATE_PEER_IS_PROOF = False
+
+
+def corroborate(claims: Iterable[Claim], amap: IpMap, *, private_peer_proof: Optional[bool] = None) -> dict[str, Decision]:
     """Decide, for every claim, whether the agent is merged into a cloud instance. ``amap`` holds ASSETS only.
 
     An agent is merged into instance ``X`` only when ALL hold:
@@ -338,8 +352,15 @@ def corroborate(claims: Iterable[Claim], amap: IpMap) -> dict[str, Decision]:
        host behind a NAT instance, proxy or bastion shares that instance's public address (review finding
        hostfw-2). A private source address cannot be forged from another network, and a host cannot borrow it
        unless it is routed through ``X`` itself, which the next rule catches when another enrolled agent shares
-       it. A header-less NAT that rewrites the source to ``X``'s private address with only ONE enrolled agent
-       behind it is NOT detectable here (it needs an instance-identity proof; docs/ASSURANCE_P2.md section 11);
+       it. BUT (review finding Z-2): a header-less NAT or VPN instance that rewrites the source of ANOTHER machine
+       to ``X``'s own private address, with exactly ONE enrolled agent behind it, is not distinguishable from ``X``
+       itself, so that machine would be merged into ``X`` and its facts and inbound coverage would speak for ``X``.
+       The agent's hostname proves nothing (the host's own word, derivable from the address) and the inventory has
+       no signed per-instance identity. A private peer address alone is therefore NOT proof
+       (:data:`PRIVATE_PEER_IS_PROOF` is off, owner decision 2): a claim that passes rules 1 and 2 still stays
+       ``claimed`` (note ``peer_address_not_proof``). Merging needs a new trust root (a signed instance-identity
+       document the server verifies, or an operator pairing of agent and asset), P2.1. Rules 3 and 4 below are
+       kept as they are, so the day the proof is turned on they already hold;
     3. no OTHER enrolled agent presents the same peer address (shared egress: the address says nothing about
        which machine it is). Every agent counts, whatever it claims;
     4. no other agent that passed rules 1 and 2 for the same instance exists (two agents on one cloud node merge
@@ -349,6 +370,7 @@ def corroborate(claims: Iterable[Claim], amap: IpMap) -> dict[str, Decision]:
     clash with a corroborated agent (review findings hostfw-5 and wire-5); it only stays ``claimed``. Rule 3
     counts the OTHER agents' observed peer, which is server-observed evidence, not a claim. Pure and
     deterministic; input order never changes the result."""
+    proof = PRIVATE_PEER_IS_PROOF if private_peer_proof is None else bool(private_peer_proof)
     claims = sorted(claims, key=lambda c: c.agent_id)
     by_peer: dict[str, set[str]] = {}
     for c in claims:
@@ -376,6 +398,9 @@ def corroborate(claims: Iterable[Claim], amap: IpMap) -> dict[str, Decision]:
             continue
         if not c.direct:
             out[c.agent_id] = Decision(None, "peer_not_direct")
+            continue
+        if not proof:
+            out[c.agent_id] = Decision(None, "peer_address_not_proof")
             continue
         passed[c.agent_id] = ref
     by_ref: dict[str, list[str]] = {}

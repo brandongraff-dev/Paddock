@@ -32,6 +32,14 @@ from app.assurance.types import BuildOutput
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 12, 1, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _private_peer_proof_on(monkeypatch):
+    """Rules 1 to 4 of ``_ipmap.corroborate`` are what this module exercises, so the private-peer proof (OFF in
+    production since review finding Z-2, see ``_ipmap.PRIVATE_PEER_IS_PROOF``) is switched on here. The default-off
+    behaviour is pinned in ``test_p2z_builder.py``."""
+    monkeypatch.setattr(_ipmap, "PRIVATE_PEER_IS_PROOF", True)
 MIN = dt.timedelta(minutes=1)
 H = dt.timedelta(hours=1)
 KEY = "k" * 32
@@ -134,7 +142,7 @@ def agent_row(n=1, *, ips=("10.0.0.5",), peer=None, last_seen=NOW - MIN, silent_
               legacy=False, revoked_at=None, last_posture_at=NOW - MIN, hostname=None):
     return {"id": aid(n), "hostname": hostname or f"host{n}", "status": status, "legacy": legacy,
             "revoked_at": revoked_at, "last_seen": last_seen, "silent_after_s": silent_after,
-            "node_ref": None, "identity": {"ips": list(ips), "peer_ip": peer},
+            "node_ref": None, "identity": {"ips": list(ips), "peer_ip": peer, "peer_proxied": False},
             "last_posture_at": last_posture_at, "agent_version": "0.2.0"}
 
 

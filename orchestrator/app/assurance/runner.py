@@ -551,6 +551,13 @@ async def _parse_graph(snap: _Snapshot, summary: dict[str, Any]) -> None:
         logger.error("assurance_graph_incomplete", extra={"reason": snap.reason, "destinations": len(unexpanded)})
         summary["errors"].append(f"graph incomplete: cidr_expansion_overflow ({len(unexpanded)} destinations)")
         return
+    if _zone_unknown_nodes(snap.doc) and not _lib_knows_zone_unknown():
+        # An older library ignores ``zone_unknown`` and would not select such a node for any zone: a false HOLDS.
+        snap.reason = "graph_unavailable"
+        snap.error = "the assurance library does not understand zone_unknown nodes (version skew)"
+        logger.error("assurance_graph_invalid", extra={"error": snap.error})
+        summary["errors"].append(f"graph: {snap.error}")
+        return
     try:
         snap.graph = await asyncio.to_thread(_lib().ReachGraph.from_dict, snap.doc)
     except Exception as exc:  # noqa: BLE001 -- GraphError: bad data must not become a verdict
@@ -560,14 +567,30 @@ async def _parse_graph(snap: _Snapshot, summary: dict[str, Any]) -> None:
         summary["errors"].append(f"graph: {snap.error}")
 
 
+def _zone_unknown_nodes(doc: Any) -> bool:
+    nodes = doc.get("nodes") if isinstance(doc, dict) else None
+    return isinstance(nodes, list) and any(isinstance(n, dict) and n.get("zone_unknown") for n in nodes)
+
+
+def _lib_knows_zone_unknown() -> bool:
+    try:
+        from paddock_assurance import graph as G  # noqa: PLC0415
+        return "zone_unknown" in getattr(G.Node, "__dataclass_fields__", {})
+    except Exception:  # noqa: BLE001 -- unreadable library: treat as not supported (the graph is then unavailable)
+        return False
+
+
 def _diagnostics(snap: _Snapshot, summary: dict[str, Any]) -> dict[str, Any]:
     diag = snap.diag
     unexpanded = list(getattr(diag, "cidr_unexpanded", None) or [])
+    zone_unknown = list(getattr(diag, "zone_unknown", None) or [])
     return {
         "at": summary.get("_at"), "graph_version": snap.version, "doc_sha": snap.doc_sha,
         "graph_ok": snap.graph is not None, "graph_reason": snap.reason,
         "cidr_unexpanded": unexpanded[:50], "cidr_unexpanded_count": len(unexpanded),
         "zone_conflicts": dict(list((getattr(diag, "zone_conflicts", None) or {}).items())[:50]),
+        # nodes the library treats as possible members of every zone (no independent placement, hostfw-1)
+        "zone_unknown": zone_unknown[:50], "zone_unknown_count": len(zone_unknown),
         "facts_dropped": int(getattr(diag, "facts_dropped", 0) or 0),
         "fact_issues": list(getattr(diag, "fact_issues", None) or [])[:20],
     }

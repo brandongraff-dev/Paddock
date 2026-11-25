@@ -16,6 +16,7 @@ import os
 import platform as _platform
 import socket
 import subprocess
+import sys
 from typing import Any, Callable, Dict, List, Optional
 
 Runner = Callable[[List[str]], str]
@@ -53,14 +54,16 @@ def collect_os_info() -> Dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 def _hex_ip(hexaddr: str) -> Optional[str]:
-    """/proc/net addresses are the in-memory (little-endian per 32-bit word) hex of the address."""
+    """/proc/net addresses are the host-endian hex of each 32-bit word of the address: byte-reversed on a
+    little-endian host, already in network order on a big-endian one (s390x, ppc64 BE)."""
     try:
         raw = bytes.fromhex(hexaddr)
     except ValueError:
         return None
     if len(raw) not in (4, 16):
         return None
-    words = [raw[i:i + 4][::-1] for i in range(0, len(raw), 4)]
+    little = sys.byteorder == "little"
+    words = [raw[i:i + 4][::-1] if little else raw[i:i + 4] for i in range(0, len(raw), 4)]
     packed = b"".join(words)
     try:
         return socket.inet_ntop(socket.AF_INET if len(raw) == 4 else socket.AF_INET6, packed)

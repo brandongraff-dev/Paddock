@@ -42,6 +42,7 @@ import signal
 import socket
 import threading
 import time
+import urllib.request
 import uuid
 from typing import Any, Callable, Dict, Optional
 
@@ -77,6 +78,7 @@ TERMINAL_CODES = frozenset({"agent_revoked", "re_enroll_required"})   # explicit
 MAX_RESULT_AGE_S = 24 * 3600     # a queued action result older than this is dropped (the server re-offers the action)
 MAX_ITEM_ATTEMPTS = 8            # failed re-sends of one queued item before it is dropped (it cannot block the rest)
 MAX_ACTIONS_PER_HEARTBEAT = 50
+DEADMAN = "dead-man timer"       # handled.json ``reverted_by`` of a block the agent removed on its own
 MAX_OUTBOX_AGE_S = 480           # the server accepts |now - issued_at| <= 600 s; stay well inside it
 FORCE_FULL_MANIFEST_EVERY_S = 24 * 3600
 _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._:-]{1,253}$")
@@ -459,25 +461,36 @@ class Agent:
                     "tag": rv.get("tag") if isinstance(rv.get("tag"), str) else None}
         return None
 
-    def _ledger_find(self, handled: Dict[str, Any], action_type: str, target: str):
-        """``(id, record, rule)`` of the newest unreverted record of applying exactly this, or ``None``."""
+    def _ledger_find(self, handled: Dict[str, Any], action_type: str, target: str, tag: Optional[str] = None):
+        """``(id, record, rule)`` of the newest unreverted record of applying exactly this, or ``None``. With a
+        ``tag`` only the record whose rule carries exactly that tag counts (so an older block of the same
+        target is reverted by its own action, whatever newer blocks exist)."""
         best = None
         for aid, rec in handled.items():
             rule = self._rule_of(rec)
             if rule is None or rule["action_type"] != action_type or rule["target"] != target:
+                continue
+            if tag is not None and rule.get("tag") != tag:
                 continue
             if best is None or rec.get("at", 0) >= best[1].get("at", 0):
                 best = (aid, rec, rule)
         return best
 
     def _ledger(self, handled: Dict[str, Any]):
-        def lookup(action_type: str, target: str) -> Optional[Dict[str, Any]]:
-            hit = self._ledger_find(handled, action_type, target)
+        def lookup(action_type: str, target: str, tag: Optional[str] = None) -> Optional[Dict[str, Any]]:
+            hit = self._ledger_find(handled, action_type, target, tag)
             return hit[2] if hit else None
         return lookup
 
     def _guard(self) -> SelfGuard:
-        return SelfGuard(self.client.base, resolver=self._resolver)
+        """The self-lockout guard for one action: the server, every proxy the environment names (whether or not
+        no_proxy would bypass it: refusing more is the safe side) and the addresses the client really reached."""
+        try:
+            proxies = [v for k, v in urllib.request.getproxies().items() if k != "no" and isinstance(v, str)]
+        except Exception:  # noqa: BLE001 -- an unreadable proxy configuration must not disable the guard
+            proxies = []
+        return SelfGuard(self.client.base, resolver=self._resolver, proxies=proxies,
+                         peers=tuple(getattr(self.client, "peers", ()) or ()))
 
     def handle_action(self, action: Action) -> Outcome:
         """Apply (or revert) one server-approved action under the safety gate; report real outcomes."""
@@ -539,7 +552,8 @@ class Agent:
                   "revert": outcome.revert, "reported": False}
         if action.action_type == "revert":
             if outcome.status == "applied" and outcome.rule:
-                hit = self._ledger_find(handled, outcome.rule["action_type"], outcome.rule["target"])
+                hit = self._ledger_find(handled, outcome.rule["action_type"], outcome.rule["target"],
+                                        outcome.rule.get("tag"))
                 if hit is not None:                      # this rule is no longer in force on the host
                     hit[1]["reverted"] = True
                     hit[1]["reverted_by"] = action.id
@@ -603,6 +617,31 @@ class Agent:
                 self.state.save_handled(handled)
         self._unconfirmed = False
 
+    def _queue_deadman_result(self, action_id: str, rec: Dict[str, Any]) -> None:
+        """Make sure a truthful (failed) result for ``action_id`` is queued unless one already waits."""
+        box = self.state.outbox
+        try:
+            for path in box.files():
+                item = box.read(path)
+                if isinstance(item, dict) and item.get("kind") == "result" and item.get("action_id") == action_id:
+                    return          # flush_outbox substitutes the recorded truth for whatever it carries
+            box.put({"kind": "result", "action_id": action_id, "status": rec["status"], "output": rec["output"],
+                     "revert": None, "issued": int(self._clock())})
+        except OSError as exc:
+            log.error("dead-man timer: could not queue the report for action %s (%s); the server will be told "
+                      "when it offers the action again", action_id, exc)
+
+    def _recorded_truth(self, action_id: str):
+        """``(status, output)`` this host recorded for an action whose block its dead-man timer removed, else
+        ``None``: a queued result written before that must not say 'applied'."""
+        try:
+            rec = self.state.load_handled().get(action_id)
+        except StateError:
+            return None
+        if isinstance(rec, dict) and rec.get("reverted_by") == DEADMAN and rec.get("status") == "failed":
+            return rec["status"], rec.get("output") or {}
+        return None
+
     def _deadman_tick(self) -> None:
         """Remove a network block that the server never heard about again within ``deadman_minutes``."""
         minutes = getattr(self.cfg, "deadman_minutes", 0)
@@ -619,6 +658,8 @@ class Agent:
             for aid, rec in due:
                 rule = rec["rule"]
                 plan = {"mechanism": "iptables", "action_type": rule["action_type"], "target": rule["target"]}
+                if isinstance(rule.get("tag"), str):
+                    plan["tag"] = rule["tag"]            # remove exactly this action's rule, not a newer twin
                 try:
                     safe = self.enforcer.validate_revert(plan, ledger=self._ledger(handled))
                     self.enforcer.revert(safe)
@@ -627,9 +668,22 @@ class Agent:
                               rule["target"], aid, exc)
                     continue
                 rec["reverted"] = rule["reverted"] = True
-                rec["reverted_by"] = "dead-man timer"
+                rec["reverted_by"] = DEADMAN
                 rule["deadman_reverted_at"] = now
+                # The record of what this host did is now the truth, and it is what any later report carries:
+                # the block is gone, so the server must never be told it is "applied". It is reported through
+                # the existing result route as a failed apply (the action is still 'approved' there: the
+                # result that would have confirmed it never got through, which is why the timer fired).
+                rec["status"] = "failed"
+                rec["revert"] = None
+                rec["output"] = {"error": "deadman_reverted",
+                                 "detail": "the block was removed by the agent's dead-man timer: no round trip "
+                                           "with the server succeeded within %d minutes of applying it" % minutes,
+                                 "action_type": rule["action_type"], "target": rule["target"],
+                                 "deadman_reverted_at": now}
+                rec["reported"] = False
                 self.state.save_handled(handled)
+                self._queue_deadman_result(aid, rec)
                 log.error("dead-man timer: %s %s (action %s) was applied %d minutes ago and the server has not "
                           "been reached since; REMOVED it so the host cannot be cut off for good",
                           rule["action_type"], rule["target"], aid, minutes)
@@ -741,8 +795,11 @@ class Agent:
                         log.warning("dropping the queued result of action %s: too old", item.get("action_id"))
                         box.delete(path)
                         continue
-                    self.client.post_result(item["action_id"], status=item["status"],
-                                            output=item.get("output") or {}, revert=item.get("revert"))
+                    status, output, revert = item["status"], item.get("output") or {}, item.get("revert")
+                    truth = self._recorded_truth(item["action_id"])
+                    if truth is not None:               # the dead-man timer removed it since this was queued
+                        (status, output), revert = truth, None
+                    self.client.post_result(item["action_id"], status=status, output=output, revert=revert)
                     self._mark_reported(item["action_id"])
                     self._confirm_blocks()
                 else:

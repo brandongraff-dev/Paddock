@@ -82,7 +82,9 @@ DEFAULT_PROTECTED = ("/var/lib/paddock-agent", "/etc/paddock-agent", "/usr/local
 
 # the ledger an agent passes to validate_revert: (action_type, canonical target) -> the unreverted local rule
 # record ({"tag": ...}) or None
-Ledger = Callable[[str, str], Optional[Dict[str, Any]]]
+# ``ledger(action_type, target[, tag])``: this host's own record of an unreverted rule the agent applied. With a
+# ``tag`` the lookup is for exactly that action's rule (reverts work in any order); without one, the newest.
+Ledger = Callable[..., Optional[Dict[str, Any]]]
 
 
 class BaseEnforcer:
@@ -280,9 +282,31 @@ class LinuxEnforcer(BaseEnforcer):
             raise EnforcerError("command failed (%s): %s :: %s" % (res.returncode, " ".join(cmd), res.stderr))
 
     # -- /etc/hosts --------------------------------------------------------- #
+    def _hosts_target(self, path: str) -> str:
+        """The file the sinkhole line really goes into. A plain file is itself. A SYMLINKED hosts file is written
+        through (the link is never replaced by a regular file) but only when the final target is an existing
+        regular file inside the directory that holds the configured hosts path (``/etc``); anything else is
+        refused with a clear error and nothing is touched."""
+        if not os.path.islink(path):
+            return path
+        real = os.path.realpath(path)
+        root = os.path.realpath(os.path.dirname(os.path.abspath(path)))
+        if os.path.dirname(real) != root and not real.startswith(root.rstrip("/") + "/"):
+            raise EnforcerError("%s is a symlink to %s, outside %s; refusing to write through it (point it at a "
+                                "file in that directory, or manage the sinkhole by hand)" % (path, real, root))
+        try:
+            st = os.stat(real)
+        except OSError:
+            raise EnforcerError("%s is a symlink to %s, which does not exist; refusing to create it" % (path, real))
+        if not stat.S_ISREG(st.st_mode):
+            raise EnforcerError("%s is a symlink to %s, which is not a regular file; refusing" % (path, real))
+        return real
+
     def _append_hosts_line(self, path: str, line: str) -> bool:
         """Append ``line`` on a line of its own (never glued onto an unterminated last line), atomically and
-        keeping the file's mode and owner. False when the exact line is already there."""
+        keeping the file's mode and owner (a symlinked file is written through, see :meth:`_hosts_target`).
+        False when the exact line is already there."""
+        path = self._hosts_target(path)
         try:
             with open(path, "rb") as fh:
                 data = fh.read()
@@ -296,9 +320,9 @@ class LinuxEnforcer(BaseEnforcer):
         _write_preserving(path, data + want + b"\n")
         return True
 
-    @staticmethod
-    def _remove_hosts_line(path: str, line: str) -> int:
+    def _remove_hosts_line(self, path: str, line: str) -> int:
         """Remove every line equal to ``line``; EnforcerError when there was none (nothing was reverted)."""
+        path = self._hosts_target(path)
         try:
             with open(path, "rb") as fh:
                 data = fh.read()
@@ -448,7 +472,9 @@ class LinuxEnforcer(BaseEnforcer):
             raise RevertRefused("revert target refused: %s" % exc)
         tag = plan_tag
         if ledger is not None:
-            rule = ledger(at, canon_target)
+            # a revert names the rule by the tag the agent wrote (paddock:<action id>): look THAT record up, so an
+            # older block can be reverted while a newer one of the same target stays in force
+            rule = ledger(at, canon_target, plan_tag) if plan_tag is not None else ledger(at, canon_target)
             if not isinstance(rule, dict):
                 raise RevertRefused("no unreverted local record that this agent applied %s %s; refusing to "
                                     "remove a rule it did not create" % (at, canon_target))
@@ -649,8 +675,8 @@ def _open_dir_nofollow(path: str) -> int:
 
 def _move_nofollow(sfd: int, sname: str, dfd: int, dname: str) -> None:
     """Move ``sname`` (in directory ``sfd``) to ``dname`` (in ``dfd``) without following a symlink anywhere:
-    a ``dir_fd``-relative rename, or (across filesystems) a copy that preserves mode, owner and times
-    followed by an unlink of the source."""
+    a ``dir_fd``-relative rename, or (across filesystems) a copy that preserves mode (setuid/setgid
+    included), owner and times followed by an unlink of the source, or an :class:`EnforcerError` when it cannot."""
     try:
         os.rename(sname, dname, src_dir_fd=sfd, dst_dir_fd=dfd)
         return
@@ -673,11 +699,24 @@ def _move_nofollow(sfd: int, sname: str, dfd: int, dname: str) -> None:
                 view = memoryview(chunk)
                 while view:
                     view = view[os.write(wfd, view):]
-            os.fchmod(wfd, stat.S_IMODE(st.st_mode))
+            # owner FIRST, mode second: chown clears setuid / setgid, so the other order loses the bits
+            want = stat.S_IMODE(st.st_mode)
             try:
                 os.fchown(wfd, st.st_uid, st.st_gid)
             except OSError:
                 pass                                       # not root: the restore check will notice a change
+            got = os.fstat(wfd)
+            if want & (stat.S_ISUID | stat.S_ISGID) and (got.st_uid, got.st_gid) != (st.st_uid, st.st_gid):
+                # never leave a setuid / setgid copy that belongs to somebody else, and never drop the bits
+                # silently: refuse (the source is untouched and the copy is removed below)
+                raise EnforcerError(
+                    "cannot move %s across filesystems: its owner (%d:%d) cannot be preserved, so its "
+                    "setuid/setgid bits (mode %04o) would be lost or end up on another owner. Quarantine it "
+                    "from a mount that allows a rename, or by hand" % (sname, st.st_uid, st.st_gid, want))
+            os.fchmod(wfd, want)
+            if stat.S_IMODE(os.fstat(wfd).st_mode) != want:
+                raise EnforcerError("cannot move %s across filesystems: its mode %04o could not be preserved"
+                                    % (sname, want))
             os.fsync(wfd)
         except BaseException:
             os.close(wfd)

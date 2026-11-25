@@ -7,6 +7,9 @@ from .helpers import FakeRunner, fixture, make_ctx, res
 VERSION = "OpenSSH_9.6p1 Ubuntu-3ubuntu13.5, OpenSSL 3.0.13 30 Jan 2024"
 BINS = ["/usr/sbin/sshd", "/usr/bin/ssh"]
 S = "synthetic/sshd/"
+# Positive evidence about the daemon (socket activation); without any, reload_pending is null and the
+# section is approximate (P2 round 2, L-7), which is not what these tests are about.
+ACTIVATED = {"/etc/systemd/system/sockets.target.wants/ssh.socket": ""}
 
 
 def sshd_runner(base_text, probe=None, rc=0, err=""):
@@ -169,7 +172,7 @@ def test_containerised_and_non_linux(tmp_path):
 
 
 def test_exact_collection_without_match_blocks(tmp_path):
-    files = ubuntu_files({"/etc/ssh/sshd_config": "PasswordAuthentication no\nUsePAM yes\n"})
+    files = ubuntu_files({"/etc/ssh/sshd_config": "PasswordAuthentication no\nUsePAM yes\n", **ACTIVATED})
     del files["/etc/ssh/sshd_config.d/50-cloud-init.conf"]
     runner = sshd_runner(fixture(S + "sshd_T.hardened.txt"))
     ctx = make_ctx(tmp_path, runner=runner, files=files, bins=BINS)
@@ -239,7 +242,7 @@ def test_match_group_and_address_blocks_are_probed(tmp_path):
         return pw_yes if user == "alice" else hardened
     ctx = make_ctx(tmp_path, runner=sshd_runner(hardened, probe),
                    files={"/etc/ssh/sshd_config": fixture(S + "sshd_config.match.txt"),
-                          "/etc/passwd": fixture(S + "passwd.sample")}, bins=BINS)
+                          "/etc/passwd": fixture(S + "passwd.sample"), **ACTIVATED}, bins=BINS)
     sec = sshd.collect(ctx)
     v = sec["v"]
     assert v["match"]["blocks"] == 2 and v["match"]["criteria"] == ["address", "group", "user"]
@@ -254,7 +257,8 @@ def test_match_group_and_address_blocks_are_probed(tmp_path):
 def test_unprobable_match_criteria_make_it_approximate(tmp_path):
     cfg = "PasswordAuthentication no\nMatch Host *.corp.example\n  PasswordAuthentication yes\n"
     ctx = make_ctx(tmp_path, runner=sshd_runner(fixture(S + "sshd_T.hardened.txt")),
-                   files={"/etc/ssh/sshd_config": cfg, "/etc/passwd": fixture(S + "passwd.sample")}, bins=BINS)
+                   files={"/etc/ssh/sshd_config": cfg, "/etc/passwd": fixture(S + "passwd.sample"),
+                          **ACTIVATED}, bins=BINS)
     sec = sshd.collect(ctx)
     assert sec["conf"] == "approximate" and sec["v"]["match"]["unprobed_reasons"] == ["criterion_host"]
     assert sec["v"]["source"] == "sshd_T"

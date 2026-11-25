@@ -88,6 +88,11 @@ class Node:
     coverage: tuple[Coverage, ...] = ()
     # Signed host facts per collector (``nodes[].facts``), or None when the node has none at all.
     host: Optional[HostFacts] = None
+    # The node's zone could not be established (no declared label and no independent placement, e.g. a managed
+    # host that only says where it is in its own words). It is NEVER a definite member of a zone selector and a
+    # POSSIBLE member of every one: the evaluator then answers UNKNOWN where the node could change the verdict
+    # (docs/ASSURANCE_P2.md 13.x, review finding hostfw-1). ``zone`` may still carry a best guess for display.
+    zone_unknown: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,8 +130,17 @@ class ReachGraph:
         return self._out.get(node_id, [])
 
     def select(self, sel: Optional[Selector]) -> list[Node]:
-        """Nodes matching ``sel`` (``None`` = every node), sorted by id."""
+        """Nodes DEFINITELY matching ``sel`` (``None`` = every node), sorted by id. A ``zone_unknown`` node
+        never definitely matches a selector that names a zone."""
         res = [n for n in self.nodes.values() if sel is None or matches(sel, n)]
+        return sorted(res, key=lambda n: n.id)
+
+    def select_possible(self, sel: Optional[Selector]) -> list[Node]:
+        """Nodes that match ``sel`` only POSSIBLY: ``zone_unknown`` nodes whose every other selector field
+        matches, when ``sel`` names a zone. Disjoint from :meth:`select`; empty for a selector with no zone."""
+        if sel is None or not sel.zone:
+            return []
+        res = [n for n in self.nodes.values() if n.zone_unknown and possibly_matches(sel, n)]
         return sorted(res, key=lambda n: n.id)
 
     # ----- loading --------------------------------------------------------------------------
@@ -250,9 +264,27 @@ def _load_json(text: Any) -> Any:
 
 
 def matches(sel: Selector, node: Node) -> bool:
+    """Does the node DEFINITELY match? A node of unknown zone is in no zone as far as a certain answer goes."""
     if sel.id and node.id not in sel.id:
         return False
-    if sel.zone and node.zone not in sel.zone:
+    if sel.zone and (node.zone_unknown or node.zone not in sel.zone):
+        return False
+    if sel.kind and node.kind not in sel.kind:
+        return False
+    if sel.cls and node.cls not in sel.cls:
+        return False
+    if sel.tag and not (node.tags & set(sel.tag)):
+        return False
+    return True
+
+
+def possibly_matches(sel: Selector, node: Node) -> bool:
+    """Could the node match, were its zone known? Every field but the zone must match; a ``zone_unknown`` node
+    passes the zone test (as a member of ANY zone). A node whose zone is known matches exactly when it
+    definitely does."""
+    if not node.zone_unknown:
+        return matches(sel, node)
+    if sel.id and node.id not in sel.id:
         return False
     if sel.kind and node.kind not in sel.kind:
         return False
@@ -290,6 +322,9 @@ def _node(raw: Any, i: int, budget: Optional[list[int]] = None) -> Node:
     for what, v in (("zone", zone), ("class", cls)):
         if v is not None and not isinstance(v, str):
             raise GraphError(f"node {nid!r}: {what!r} must be a string")
+    zone_unknown = raw.get("zone_unknown", False)
+    if type(zone_unknown) is not bool:       # 1, "true", null: refuse, a truthy-looking value must not be guessed at
+        raise GraphError(f"node {nid!r}: 'zone_unknown' must be true or false")
     host: Optional[HostFacts] = None
     if raw.get("facts") is not None:
         try:
@@ -297,7 +332,7 @@ def _node(raw: Any, i: int, budget: Optional[list[int]] = None) -> Node:
         except FactError as exc:
             raise GraphError(str(exc)) from exc
     return Node(id=nid, kind=str(raw.get("kind", "host")), zone=zone,
-                tags=frozenset(tags), cls=cls, coverage=cov, host=host)
+                tags=frozenset(tags), cls=cls, coverage=cov, host=host, zone_unknown=zone_unknown)
 
 
 def _qualifier(c: dict, key: str, nid: str) -> str:

@@ -17,6 +17,10 @@ PASSWD = ("root:x:0:0:root:/root:/bin/bash\n"
 CFG_GROUP = "PasswordAuthentication no\nMatch Group sftponly\n  PasswordAuthentication yes\n"
 
 
+# Positive evidence about the daemon (socket activation: sshd reads the files per connection), so a test
+# about probing is not also a test of "no daemon seen" (which is never exact: P2 round 2, L-7).
+ACTIVATED = {"/etc/systemd/system/sockets.target.wants/ssh.socket": ""}
+
 CTIME_OVERRIDE = {}
 
 
@@ -38,6 +42,7 @@ def _ctime_equals_mtime(monkeypatch):
 def run_collect(tmp_path, passwd, config, who, group=None, extra=None, bins=BINS):
     """sshd.collect where ``-T -C user=U`` shows password auth for the users in ``who``."""
     files = {"/etc/ssh/sshd_config": config, "/etc/passwd": passwd}
+    files.update(ACTIVATED)
     if group is not None:
         files["/etc/group"] = group
     files.update(extra or {})
@@ -219,7 +224,7 @@ def _t_with(extra_lines):
 def test_hostcfg3_a_cut_allowusers_list_is_flagged_and_never_exact(tmp_path):
     names = " ".join("user%03d" % i for i in range(60))
     sec = sshd.collect(make_ctx(tmp_path, runner=sshd_runner(_t_with("allowusers " + names + "\n")),
-                                files=ubuntu_files(), bins=BINS))
+                                files=ubuntu_files(ACTIVATED), bins=BINS))
     v = sec["v"]
     assert len(v["config"]["allowusers"]) == sshd.MAX_LIST_ITEMS
     assert v["truncated"] == ["allowusers"]
@@ -238,7 +243,7 @@ def test_hostcfg3_a_cut_authenticationmethods_is_flagged(tmp_path):
 def test_hostcfg3_untruncated_sections_have_no_flag_and_stay_exact(tmp_path):
     names = " ".join("user%03d" % i for i in range(sshd.MAX_LIST_ITEMS))
     sec = sshd.collect(make_ctx(tmp_path, runner=sshd_runner(_t_with("allowusers " + names + "\n")),
-                                files=ubuntu_files(), bins=BINS))
+                                files=ubuntu_files(ACTIVATED), bins=BINS))
     assert "truncated" not in sec["v"] and sec["conf"] == "exact"
 
 

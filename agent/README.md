@@ -85,8 +85,10 @@ Details that matter:
 * **No transport error escapes.** DNS, refused, reset, timeout, TLS, malformed replies all become one
   `FleetClientError`; the loop backs off with jitter (5 s doubling, **capped at 300 s**) and carries on.
   Redirects are never followed (credentials never leave for another host).
-* **Exit status 7 = re-enrollment required** (`403 re_enroll_required`, or ten consecutive 401/403): the
-  daemon stops instead of hammering a server that has refused it.
+* **Exit status 7 = re-enrollment required**, and only on the server's explicit, structured verdict: a JSON
+  body whose `error` or `reason` is `agent_revoked` or `re_enroll_required`. A bare 401/403/404 (a WAF, an
+  ingress, a captive portal, a key rotated by another process) is never terminal: the agent re-reads its key
+  and credentials from disk, retries, logs loudly after ten in a row and keeps retrying at the capped backoff.
 
 ## State directory (`/var/lib/paddock-agent`, mode 0700, owned by the agent user)
 
@@ -127,6 +129,7 @@ Exit status: 0 ok, 1 aborted / no posture produced, 2 usage / not enrolled / ref
 | `PADDOCK_INVENTORY_SEC` | `3600` (`0` off) | v1 unsigned inventory for the Fleet page |
 | `PADDOCK_HTTP_TIMEOUT` | `20` | seconds per request |
 | `PADDOCK_OUTBOX_MAX_MB` | `64` | outbox cap; the oldest items are evicted first |
+| `PADDOCK_NETBLOCK_DEADMAN_MIN` | `10` (`0` off) | a `block_ip` / `firewall_rule` the server never heard about again within this many minutes is removed by the agent itself, and the server is told (a `failed` result, `deadman_reverted`) on the next round trip |
 | `PADDOCK_ENABLE_IMDS` | `false` | allow the cloud metadata request (off by default, E6) |
 | `PADDOCK_CA_FILE` | system store | CA bundle for a private TLS server |
 | `PADDOCK_QUARANTINE_DIR` | `<state>/quarantine` | where quarantined files are moved |
@@ -154,7 +157,12 @@ credential file is rejected on read; v1 agents get `403 re_enroll_required` from
    and nothing runs.** A quarantine restore additionally needs this host's own manifest entry, so the
    server cannot choose where a file lands, and it never overwrites an existing file.
 6. **Allowed actions only:** `block_ip`, `block_domain`, `quarantine_file`, `firewall_rule`, `revert`.
-7. **IPv6 `block_ip` is refused loudly** (`ipv6_not_supported`): the enforcer drives IPv4 `iptables`, so
+7. **No self-lockout.** A `block_ip` of the agent's own server, of an address the agent really connected to, of
+   the proxy it reaches the server through (`https_proxy` / `http_proxy` / `all_proxy`), of loopback or of the
+   unspecified / broadcast address, a `block_domain` of the server or proxy host, and an outbound
+   `firewall_rule` on the server's (or proxy's) port are refused (`self_lockout`). A name that cannot be
+   resolved cannot be proven safe, so IP blocks are refused while it does not resolve.
+8. **IPv6 `block_ip` is refused loudly** (`ipv6_not_supported`): the enforcer drives IPv4 `iptables`, so
    the block would never take effect. Previously this failed silently.
 
 ## The systemd unit (one root process, hardened)
@@ -195,10 +203,16 @@ WantedBy=multi-user.target
 
 Consequences you should know about (not hidden): under `ProtectSystem=strict` only the state directory is
 writable, so with this unit **`block_domain` (writes `/etc/hosts`) and `quarantine_file` (moves a file out of
-its directory) fail with a read-only filesystem error** and are reported as `failed`; firewall actions use
-netlink via `CAP_NET_ADMIN`. Widen `ReadWritePaths=` deliberately if you want those, knowing it widens what a
-compromised agent can write. The legacy `iptables` binary may also need `CAP_NET_RAW`, which is not in the
-bounding set. Neither was exercised against a real systemd in this repository's tests.
+its directory) fail with a read-only filesystem error** and are reported as `failed`. Widen `ReadWritePaths=`
+deliberately if you want those, knowing it widens what a compromised agent can write. A symlinked
+`/etc/hosts` is written through only when it points at a regular file inside `/etc`; otherwise `block_domain`
+is refused and nothing is touched.
+
+`CAP_NET_ADMIN` reaches **nft and iptables-nft** (netlink). It does **not** reach legacy iptables
+(`iptables-legacy`), which opens a raw socket and needs `CAP_NET_RAW`; `CAP_NET_RAW` is deliberately NOT in the
+bounding set (owner decision, `docs/AGENT_V2.md` section 3). On a host whose firewall is legacy iptables the
+firewall facts therefore read UNKNOWN, and `block_ip` / `firewall_rule` fail. Neither was exercised against a
+real systemd in this repository's tests.
 
 ## Container
 

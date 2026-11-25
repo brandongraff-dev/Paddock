@@ -56,3 +56,13 @@ class RecordingEnforcer(BaseEnforcer):
 @pytest.fixture
 def enforcer() -> RecordingEnforcer:
     return RecordingEnforcer()
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_proxy(monkeypatch):
+    """The agent's self-lockout guard and its HTTP client both read the proxy environment: keep every test
+    hermetic whatever the developer's / CI runner's shell exports (a test that wants a proxy sets one)."""
+    import os
+    for name in list(os.environ):
+        if name.lower() in ("http_proxy", "https_proxy", "all_proxy", "no_proxy", "ftp_proxy"):
+            monkeypatch.delenv(name, raising=False)

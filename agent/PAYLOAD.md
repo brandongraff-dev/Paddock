@@ -129,17 +129,21 @@ config_mtime: int|null, reload_pending: bool|null}` (all keys always present, `n
 `reexec_epoch` the mtime of `/run/sshd.pid` (or `/var/run/sshd.pid`) when it names that pid (sshd rewrites it when
 it re-executes on SIGHUP, which keeps the process start time); `config_path` the `-f` path of the command line (path
 only, validated) and `config_default` whether the daemon uses `/etc/ssh/sshd_config`; `options_override` whether the
-command line carries `-o`, `-p`, `-4` or `-6` (only the boolean, never the content); `binary_matches` whether the
+command line carries `-o`, `-p`, `-g`, `-h`, `-c`, `-4` or `-6` (only the boolean, never the content); `binary_matches` whether the
 running executable is the binary `sshd -T` was run with (false when it was deleted/replaced on disk);
 `config_mtime` the newest change time (the later of mtime and ctime, so `cp -p`, `rsync -a`, `tar` and `touch -d`
 cannot hide a write) of `sshd_config`, the `Include`d files and every directory an `Include` reads from, also when no
-file is left in it (a deleted drop-in shows only on the directory; for a directory that is gone, its parent).
+file is left in it (a deleted drop-in shows only on the directory; for a directory that is gone, its parent),
+and of every symbolic link met while resolving those paths (`lstat`, so repointing `sshd_config` or an included
+directory to an older file after the daemon started is seen; a link loop, more than 40 links or an unreadable link
+makes the answer null, never false).
 The command line is read like getopt (`-Df /path`, `-Df/path`, `-Do Opt=v`, `-D4`; an option letter sshd does not
 document counts as an override).
 `reload_pending` is **true** when `config_mtime` is after `max(start_epoch, reexec_epoch)` (an edit not yet loaded)
 or the daemon runs another config file or extra options; **false** only on positive evidence (config older than the
 last (re)start, or socket-activated with no master); **null** when it cannot be determined (no daemon process
-visible, unreadable `/proc`). `sshd -T` describes the on-disk files, `daemon` is the only evidence about what runs;
+visible and not socket-activated, no start time, an unresolvable link, unreadable `/proc`). A null adds the reason
+`daemon_unverified`, so the section is `conf: approximate`: an unknown reload state is never `exact`. `sshd -T` describes the on-disk files, `daemon` is the only evidence about what runs;
 a consumer must treat `reload_pending != false` as Unknown for "the effective sshd configuration". A reload that
 does not rewrite the pid file keeps `reload_pending` true until the daemon is restarted.
 
@@ -148,8 +152,8 @@ has more than 20 login users, or more than 10 literal `Match User` names, or mor
 a probe), `nss_users_unknown` (a user/group criterion exists and `nsswitch.conf` passwd/group names a source other
 than `files`/`compat`/`systemd`, systemd userdb/homed data exists, NIS `+`/`-` rows are present, or `/etc/group` is
 unreadable), `user_name_unprobeable` (an account whose name cannot be passed as `-C user=` would be selected by a
-criterion no probed account represents), `user_pattern` (`Match User` with a `user@host` pattern), `config_truncated`
-(see `truncated`), `reload_pending`, `daemon_config_differs` (the daemon runs another `-f` file or `-o/-p/-4/-6`),
+criterion no probed account represents), `user_pattern` (`Match User` with a `user@host` pattern, or a `Match User/Group` pattern list over 1024 characters or too costly to evaluate; matching is linear-time), `config_truncated`
+(see `truncated`), `reload_pending`, `daemon_unverified` (`reload_pending` is null), `daemon_config_differs` (the daemon runs another `-f` file or `-o/-p/-g/-h/-c/-4/-6`),
 `daemon_binary_differs`, `daemon_ambiguous` (more than one listener `sshd`), `criterion_<name>` (host, localaddress, localport, rdomain, exec, ...: cannot be
 probed), `address_pattern` (a `Match Address` pattern that is not a CIDR), `address_atoms` (more than 12
 atoms), `config_unreadable`, `passwd_unreadable`, `probe_cap`, `probe_budget`, `probe_failed`,
@@ -224,7 +228,7 @@ recorded as `frontends` only, never as truth. Dormant nft tables are ignored.
   "frontends": [ {"name":"ufw","state":"active|inactive|unknown","default_incoming":"deny|allow|reject|unknown","rules":int<=1000},
                  {"name":"firewalld","state":"running|not_running|unknown","default_zone":str|null} ],   # sorted by name
   "ipv6_enabled": bool,                    # a non-loopback address in /proc/net/if_inet6 (the truth; all/disable_ipv6 is
-                                           # ignored). If it cannot be told (unreadable/truncated file, stack visible but
+                                           # ignored). If it cannot be told (unreadable/truncated/garbled file, stack visible but
                                            # no if_inet6) this is true and confidence is "unknown" ("ipv6_state_unknown")
   "families": { "ip4": F, "ip6": F },
   "flat_view": { "default_input_policy": "accept|drop|reject|unknown",

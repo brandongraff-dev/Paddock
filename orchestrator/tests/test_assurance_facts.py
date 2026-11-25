@@ -438,8 +438,10 @@ def _golden_fact(data, *, seq=1, **over):
 async def test_the_loader_emits_the_pinned_document_shape(app_pool):
     await persist(app_pool, build(host(AG1)))
     doc, diag = await load(app_pool)
+    # ``zone_unknown``: an agent node nothing independent placed (no label, no direct private peer) is a possible member
+    # of every zone selector (package Z, finding Z-1); the pinned shape carries the attribute, only ever when true.
     assert node_of(doc, AG1) == {
-        "id": AG1, "kind": "host", "tags": ["agent"],
+        "id": AG1, "kind": "host", "tags": ["agent"], "zone_unknown": True,
         "facts": {"firewall": _golden_fact(fw_data()), "sshd": _golden_fact(sshd_data())}}
     assert diag.facts_dropped == 0 and diag.fact_issues == []
     assert [n["id"] for n in doc["nodes"]] == sorted(n["id"] for n in doc["nodes"])

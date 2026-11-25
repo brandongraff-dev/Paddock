@@ -43,13 +43,13 @@ from collections import deque
 from itertools import islice
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 
 from . import ports as P
 from . import hostconfig as HC
 from . import hostfields as HF
 from .compile import Plan, PlanKind
-from .graph import INTERNET, DirState, Edge, Node, ReachGraph, direction_state, matches
+from .graph import INTERNET, DirState, Edge, Node, ReachGraph, direction_state, matches, possibly_matches
 from .model import Allow, Tier
 
 MAX_WITNESSES = 5
@@ -494,10 +494,11 @@ def _search_groups(S: set[str], T: set[str]) -> list[tuple[set[str], list[str]]]
     return groups
 
 
-def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
-    inv = plan.invariant
-    S = {n.id for n in g.select(inv.subjects.from_)}
-    T = {n.id for n in g.select(inv.subjects.to)}
+def _reach_core(plan: Plan, g: ReachGraph, now: dt.datetime, S: set[str], T: set[str],
+                stop: frozenset[str], generous: bool) -> Result:
+    """One reach evaluation over explicit selections. ``generous`` = an exception whose selector names a zone also
+    excuses a node that is only POSSIBLY in that zone (the under-approximating, "certain" run); otherwise only a
+    definite member is excused (the over-approximating run). Without zone-unknown nodes the two are the same."""
     cov = _coverage_map(plan, g, now)
     blind_out = frozenset(n for n, c in cov.items() if not c.out.covered)
     blind_in = frozenset(n for n, c in cov.items() if not c.inn.covered)
@@ -513,14 +514,14 @@ def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     if early is not None:
         return _selection_unknown(early, done, S, T)
 
+    excuses = possibly_matches if generous else matches
     exempt: dict[str, Allow] = {}
     for t in sorted(T):
         for a in allows:
-            if matches(a.to, g.nodes[t]):
+            if excuses(a.to, g.nodes[t]):
                 exempt[t] = a
                 break
     edge_ok = _edge_filter(plan)
-    stop = frozenset(n.id for n in g.select(inv.via.stop_at)) if inv.via.stop_at else frozenset()
     groups = _search_groups(S, T)
 
     # Known edges only. Paths are kept per violating target (not the BFS trees: one tree per
@@ -620,10 +621,9 @@ def _first_blind_pairs(S: set[str], T: set[str], cov: dict[str, _NodeCov],
     return list(islice(pairs(), limit))
 
 
-def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
-    inv = plan.invariant
-    S = {n.id for n in g.select(inv.subjects.from_)}
-    T = {n.id for n in g.select(inv.subjects.to)}
+def _exposure_core(plan: Plan, g: ReachGraph, now: dt.datetime, S: set[str], T: set[str],
+                   generous: bool) -> Result:
+    """One exposure evaluation over explicit selections (``generous``: see :func:`_reach_core`)."""
     cov = _coverage_map(plan, g, now)
     allows, invalid = _active_allows(plan, now)
 
@@ -637,6 +637,7 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
         return _selection_unknown(early, done, S, T)
 
     edge_ok = _edge_filter(plan)
+    excuses = possibly_matches if generous else matches
     witnesses: list[Witness] = []
     used: dict[tuple[str, str], dict[str, str]] = {}
     violating: set[str] = set()
@@ -650,7 +651,7 @@ def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
         exposed = e.ports if plan.via_ports is None else P.intersect(e.ports, plan.via_ports)
         permitted = plan.allowed_ports
         for a in allows:
-            if matches(a.to, g.nodes[e.dst]):
+            if excuses(a.to, g.nodes[e.dst]):
                 extra = P.parse_ports(a.ports) if a.ports else P.FULL
                 over = P.intersect(P.subtract(exposed, plan.allowed_ports), extra)
                 if over:
@@ -711,9 +712,8 @@ def _uncovered_witness(node: str, c: _NodeCov) -> Witness:
     return Witness((), "unknown", False, detail)
 
 
-def _eval_covered(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
+def _covered_core(plan: Plan, g: ReachGraph, now: dt.datetime, sel: list[str]) -> Result:
     """HOLDS iff every selected node is covered in both directions, fresh, at ``min_tier``."""
-    sel = [n.id for n in g.select(plan.invariant.subjects.to)]
     cov = _coverage_map(plan, g, now)
     if not sel:
         return _finish(_new(plan, now, Verdict.UNKNOWN, "empty_selector:to"), plan, g, cov,
@@ -732,6 +732,114 @@ def _eval_covered(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     res = _new(plan, now, Verdict.HOLDS, "all_covered")
     relied = {(n, d) for n in sel for d in ("in", "out")}
     return _finish(res, plan, g, cov, set(sel), relied)
+
+
+# --------------------------------------------------------------------------------------------
+# ZONE UNKNOWN: a node whose zone could not be established is a POSSIBLE member of every zone selector
+#
+# Two evaluations bound the truth. The "certain" run (``lo``) gives the zone-unknown nodes every benefit of the
+# doubt (they are in no selection, they may be an application boundary, they may be excused by an exception): what
+# it finds is a violation however the nodes are really placed. The "possible" run (``hi``) puts them into every
+# selection they could be in and excuses only definite members: a HOLDS there holds however they are placed. A
+# certain violation is VIOLATED (violations win; the extra possible violators stay in ``unproven_targets`` so no
+# finding for them closes); a violation that exists only in ``hi`` is UNKNOWN, never HOLDS (and never VIOLATED:
+# the evidence does not say the node is in the zone). With no zone-unknown node in play only ``lo`` runs and the
+# result is byte-for-byte what it was before this state existed.
+
+MAX_ZONE_BLIND_SPOTS = 200
+ZONE_UNKNOWN = "zone_unknown"
+
+
+def _split(g: ReachGraph, sel: Optional[Any]) -> tuple[set[str], set[str]]:
+    """``(definite members, possible-only members)`` of a selector."""
+    return {n.id for n in g.select(sel)}, {n.id for n in g.select_possible(sel)}
+
+
+def _zone_spots(unk: set[str]) -> list[BlindSpot]:
+    return [BlindSpot(n, ZONE_UNKNOWN, True, "both") for n in sorted(unk)[:MAX_ZONE_BLIND_SPOTS]]
+
+
+def _tag_witness(w: Witness, unk: set[str]) -> Witness:
+    """Name the zone-unknown node(s) a witness depends on (``detail.zone_unknown``, comma separated)."""
+    ends = {w.detail.get("node")} if not w.hops else {w.hops[0].src, w.hops[-1].dst}
+    named = sorted(n for n in ends if n in unk)
+    if not named:
+        return w
+    return Witness(w.hops, w.weakest_basis, w.confirmed, {**w.detail, ZONE_UNKNOWN: ",".join(named)})
+
+
+def _cap_refs(refs: Iterable[str]) -> tuple[list[str], bool]:
+    out = sorted(set(refs))
+    return out[:MAX_VIOLATING_TARGETS], len(out) > MAX_VIOLATING_TARGETS
+
+
+def _zone_join(lo: Result, hi: Result, unk: set[str]) -> Result:
+    """The verdict over every way the zone-unknown nodes ``unk`` could be placed (see the section comment)."""
+    if lo.verdict is Verdict.VIOLATED:
+        # Every zone-unknown node is itself listed (not only through the blind-spot sample, which is capped and
+        # may be missing when the possible run gave up on size): a violation that is certain for some nodes says
+        # nothing about the zone of the others, so no finding for them may close. Past the cap the list is flagged
+        # cut and a consumer closes nothing.
+        certain = set(lo.violating_targets)
+        extra, cut = _cap_refs(t for t in [*lo.unproven_targets, *hi.violating_targets, *hi.unproven_targets, *unk]
+                               if t not in certain)
+        lo.unproven_targets = extra
+        lo.violating_truncated = lo.violating_truncated or hi.violating_truncated or cut
+        lo.reasons.append(f"{ZONE_UNKNOWN}:{len(unk)}")
+        lo.blind_spots = lo.blind_spots + _zone_spots(unk)
+        return lo
+    if hi.verdict is Verdict.VIOLATED:
+        hi.verdict = Verdict.UNKNOWN
+        hi.reasons = [f"possible_via_{ZONE_UNKNOWN}", f"{ZONE_UNKNOWN}:{len(unk)}"]
+        hi.unproven_targets, cut = _cap_refs([*hi.violating_targets, *hi.unproven_targets])
+        hi.violating_truncated = hi.violating_truncated or cut
+        hi.violating_targets, hi.violation_count = [], 0
+        hi.witnesses = [_tag_witness(w, unk) for w in hi.witnesses]
+        hi.evidence_tier = hi.valid_until = None
+        hi.blind_spots = hi.blind_spots + _zone_spots(unk)
+        return hi
+    if hi.verdict is Verdict.HOLDS and lo.verdict is Verdict.HOLDS:
+        hi.reasons.append(f"{ZONE_UNKNOWN}:{len(unk)}")        # checked for every way the nodes could be placed
+        return hi
+    if hi.verdict is Verdict.HOLDS or lo.reasons[:1] and lo.reasons[0].split(":")[0] in (
+            "empty_selector", "overlapping_selectors_too_large"):
+        return lo                            # a selection problem is the definite part's answer: not a pass
+    hi.blind_spots = hi.blind_spots + _zone_spots(unk)
+    return hi
+
+
+def _eval_reach(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
+    inv = plan.invariant
+    S, S_x = _split(g, inv.subjects.from_)
+    T, T_x = _split(g, inv.subjects.to)
+    stop, stop_x = _split(g, inv.via.stop_at) if inv.via.stop_at else (set(), set())
+    # an exception naming a zone may excuse a possible member of that zone
+    allow_x = any(a.to.zone for a in plan.invariant.allow) and any(n.zone_unknown for n in g.nodes.values())
+    if not (S_x or T_x or stop_x or allow_x):
+        return _reach_core(plan, g, now, S, T, frozenset(stop), False)
+    lo = _reach_core(plan, g, now, S, T, frozenset(stop | stop_x), True)
+    hi = _reach_core(plan, g, now, S | S_x, T | T_x, frozenset(stop), False)
+    return _zone_join(lo, hi, S_x | T_x | stop_x | {n.id for n in g.nodes.values() if allow_x and n.zone_unknown})
+
+
+def _eval_exposure(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
+    inv = plan.invariant
+    S, S_x = _split(g, inv.subjects.from_)
+    T, T_x = _split(g, inv.subjects.to)
+    allow_x = any(a.to.zone for a in plan.invariant.allow) and any(n.zone_unknown for n in g.nodes.values())
+    if not (S_x or T_x or allow_x):
+        return _exposure_core(plan, g, now, S, T, False)
+    lo = _exposure_core(plan, g, now, S, T, True)
+    hi = _exposure_core(plan, g, now, S | S_x, T | T_x, False)
+    return _zone_join(lo, hi, S_x | T_x | {n.id for n in g.nodes.values() if allow_x and n.zone_unknown})
+
+
+def _eval_covered(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
+    T, T_x = _split(g, plan.invariant.subjects.to)
+    if not T_x:
+        return _covered_core(plan, g, now, sorted(T))
+    return _zone_join(_covered_core(plan, g, now, sorted(T)),
+                      _covered_core(plan, g, now, sorted(T | T_x)), T_x)
 
 
 # --------------------------------------------------------------------------------------------
@@ -787,6 +895,14 @@ def _host_blind_spots(unknown: list[tuple[str, HC.Ev]]) -> list[BlindSpot]:
 
 
 def _eval_hostconfig(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
+    res = _hostconfig_core(plan, g, now)
+    n_possible = len(g.select_possible(plan.invariant.subjects.to))
+    if n_possible:
+        res.reasons.append(f"{ZONE_UNKNOWN}:{n_possible}")
+    return res
+
+
+def _hostconfig_core(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     """Kleene three-valued, per host, then aggregated: VIOLATED if any host is false, else UNKNOWN
     (``hosts_unknown:<n>``) if any is unknown, else HOLDS. A lower ``coverage.require`` lets a HOLDS
     stand with unknown hosts when passing/selected reaches it; those hosts are blind spots. An
@@ -796,13 +912,21 @@ def _eval_hostconfig(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     sel = g.select(plan.invariant.subjects.to)
     if not sel:
         return _new(plan, now, Verdict.UNKNOWN, "empty_selector:to")
+    # Hosts whose zone is unknown are POSSIBLE members of a zone selector. One that passes is fine whichever zone it
+    # is in; one that fails is not a certain violation (it may not be in the zone): it is undecided, and listed as
+    # such, never silently out of scope (a verdict about "prod" must not be a HOLDS because a host hid its zone).
+    possible = g.select_possible(plan.invariant.subjects.to)
     evs: list[tuple[str, HC.Ev]] = []
-    for n in sel:
+    zone_undecided: set[str] = set()
+    possible_ids = {n.id for n in possible}
+    for n in sorted(sel + possible, key=lambda x: x.id):
         ev = HC.HostEvaluator(n.host, now, plan.min_tier, plan.max_age).evaluate(plan.expr)
+        if ev.tv is False and n.id in possible_ids:
+            zone_undecided.add(n.id)
         evs.append((n.id, ev))
     passing = [(nid, ev) for nid, ev in evs if ev.tv is True]
-    failing = [(nid, ev) for nid, ev in evs if ev.tv is False]
-    unknown = [(nid, ev) for nid, ev in evs if ev.tv is None]
+    failing = [(nid, ev) for nid, ev in evs if ev.tv is False and nid not in zone_undecided]
+    unknown = [(nid, ev) for nid, ev in evs if ev.tv is None or nid in zone_undecided]
     total = len(evs)
 
     res = _new(plan, now, Verdict.UNKNOWN, f"hosts_unknown:{len(unknown)}")
@@ -811,7 +935,10 @@ def _eval_hostconfig(plan: Plan, g: ReachGraph, now: dt.datetime) -> Result:
     res.coverage_universe = res.relevant_universe = total
     res.coverage_covered = res.relevant_covered = len(passing) + len(failing)
     res.blind_spots = _host_blind_spots(unknown)[:MAX_HOST_BLIND_SPOTS]
-    unknown_ids = [nid for nid, _ in unknown]
+    if possible:
+        res.blind_spots += [BlindSpot(n.id, ZONE_UNKNOWN, True, "host") for n in possible
+                            if n.id in zone_undecided][:MAX_ZONE_BLIND_SPOTS]
+    unknown_ids = sorted(nid for nid, _ in unknown)
     res.unproven_targets = unknown_ids[:MAX_VIOLATING_TARGETS]
     passing_ids = [nid for nid, _ in passing]
     res.passing_targets = passing_ids[:MAX_VIOLATING_TARGETS]

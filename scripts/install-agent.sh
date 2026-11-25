@@ -59,9 +59,24 @@ umask 022
 
 # The token may be handed over in the environment. Take it out of the environment before ANY other command
 # runs, so curl, cosign, sha256sum and the downloaded archive never inherit it. It is passed to the agent on
-# stdin, once, at the end. (An inherited, exported TOKEN is dropped too, so a later TOKEN= cannot export it.)
+# stdin, once, at the end. The variables this script uses to hold the token are unset first: a name the caller
+# exported (ENV_TOKEN, TOKEN) would otherwise stay exported when the script assigns the token to it.
+unset ENV_TOKEN TOKEN
 ENV_TOKEN="${PADDOCK_ENROLL_TOKEN:-}"
-unset PADDOCK_ENROLL_TOKEN TOKEN
+unset PADDOCK_ENROLL_TOKEN
+
+# Cleanup runs on EVERY way out, from the very start: it gives the terminal its echo back (the hidden token prompt
+# turns it off) and removes the work directory. INT and TERM must exit (a handler that only cleans up would let the
+# script carry on); the EXIT trap then runs cleanup.
+TTY_SAVED=""
+WORK=""
+cleanup() {
+  if [ -n "$TTY_SAVED" ]; then stty "$TTY_SAVED" 2>/dev/null || true; TTY_SAVED=""; fi
+  if [ -n "$WORK" ]; then rm -rf "$WORK"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Rewritten to the release's own tag in the copy that is attached to a release (release.yml), so a
 # downloaded installer installs the archive it was published with. A checkout pins to the tag below.
@@ -346,10 +361,10 @@ read_token() {
     die "when the installer is piped into sh, stdin is the script and cannot also carry the token: download the script and run it from the file with the token on stdin (printf %s \"\$TOKEN\" | sudo sh ./install-agent.sh --server URL). Never put the token in a command line or after 'sudo VAR=': both end up in argv, which every local user can read"
   elif [ -t 0 ]; then
     printf 'Enrollment token (input hidden): ' >&2
-    old="$(stty -g 2>/dev/null || true)"
+    TTY_SAVED="$(stty -g 2>/dev/null || true)"     # the traps above give the echo back on any exit
     stty -echo 2>/dev/null || true
     IFS= read -r TOKEN || [ -n "$TOKEN" ] || TOKEN=""
-    if [ -n "$old" ]; then stty "$old" 2>/dev/null || true; fi
+    if [ -n "$TTY_SAVED" ]; then stty "$TTY_SAVED" 2>/dev/null || true; TTY_SAVED=""; fi
     printf '\n' >&2
   else
     IFS= read -r TOKEN || [ -n "$TOKEN" ] || TOKEN=""
@@ -480,11 +495,7 @@ if [ "$NO_ENROLL" = 0 ] && [ "$enrolled" = 0 ]; then
 fi
 ENV_TOKEN=""
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/paddock-agent-install.XXXXXX")"
-# exit on a signal (a plain cleanup handler would let the script carry on); the EXIT trap removes $WORK
-trap 'rm -rf "$WORK"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/paddock-agent-install.XXXXXX")"        # removed by cleanup (EXIT trap)
 
 step "Downloading $REPO $TAG"
 fetch "$BASE_URL/paddock-agent.pyz" "$WORK/paddock-agent.pyz" || die "could not download $BASE_URL/paddock-agent.pyz"

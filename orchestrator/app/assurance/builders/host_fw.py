@@ -104,19 +104,47 @@ _OTHER_PROTO = "p253"
 _PROTO_NAMES = frozenset(("tcp", "udp", "icmp", "icmpv6", "sctp", "dccp", "udplite", "gre", "esp", "ah", "igmp",
                           "ipip", "ipv6"))
 _PROTO_NUMBERS = frozenset((1, 2, 4, 6, 17, 33, 41, 47, 50, 51, 58, 132, 136))   # have a name: 'pNNN' is not their spelling
+# The names the agent forwards unchanged when its own table (fwmodel._PROTO_NAMES) does not know them: ``iptables -p
+# vrrp`` reads ``vrrp``, ``-p 112`` reads ``p112``. They are the lower-case names (and aliases) of /etc/protocols
+# (netbase), each a protocol NUMBER; here they are folded onto ONE token per protocol, so ``vrrp`` and ``p112`` are the
+# same protocol in a walk (a drop of one applies to the other), and an honest rule for another IP protocol stays exact
+# instead of widening every listener (review finding Z-5). A name that is NOT in this table (a typo, 'TCP', 'all',
+# 'ipv6-icmp' which the agent itself writes ``icmpv6``) is still unknown and widens (hostfw-8).
+_ETC_PROTOCOLS = {
+    "ggp": 3, "ipencap": 4, "ip-encap": 4, "st": 5, "egp": 8, "igp": 9, "pup": 12, "hmp": 20, "xns-idp": 22, "rdp": 27,
+    "iso-tp4": 29, "xtp": 36, "ddp": 37, "idpr-cmtp": 38, "ipv6-route": 43, "ipv6-frag": 44, "idrp": 45, "rsvp": 46,
+    "ipsec-esp": 50, "ipsec-ah": 51, "skip": 57, "ipv6-nonxt": 59, "ipv6-opts": 60, "rspf": 73, "cphb": 73, "vmtp": 81,
+    "eigrp": 88, "ospf": 89, "ospfigp": 89, "etherip": 97, "encap": 98, "pim": 103, "ipcomp": 108, "vrrp": 112,
+    "l2tp": 115, "isis": 124, "fc": 133, "mobility-header": 135, "mpls-in-ip": 137, "manet": 138, "hip": 139,
+    "shim6": 140, "wesp": 141, "rohc": 142, "ethernet": 143,
+}
+_NAME_OF_NUMBER = {1: "icmp", 2: "igmp", 4: "ipip", 6: "tcp", 17: "udp", 33: "dccp", 41: "ipv6", 47: "gre", 50: "esp",
+                   51: "ah", 58: "icmpv6", 132: "sctp", 136: "udplite"}
 _CT_STATES = frozenset(("established", "invalid", "new", "related", "untracked"))
 _DTYPES = frozenset(("anycast", "broadcast", "local", "multicast", "unicast"))
 _PNNN = re.compile(r"p(0|[1-9][0-9]{0,2})")
 _IFNAME = re.compile(r"[\x21-\x7e]{1,15}")            # printable, no space; the kernel's limit is 15 characters
 
 
-def _canonical_proto(tok: Any) -> bool:
+def _proto_token(tok: Any) -> Optional[str]:
+    """The one token a protocol is walked by (``tcp``, ``udp``, ... for the agent's own names, ``pNNN`` for every other
+    number), or ``None`` for a token that is not a protocol spelling the agent writes (the rule is then unknown)."""
     if not isinstance(tok, str):
-        return False
+        return None
     if tok in _PROTO_NAMES:
-        return True
+        return tok
     m = _PNNN.fullmatch(tok)
-    return m is not None and int(tok[1:]) <= 255 and int(tok[1:]) not in _PROTO_NUMBERS
+    if m is not None:
+        n = int(tok[1:])
+        return tok if n <= 255 and n not in _PROTO_NUMBERS else None
+    n = _ETC_PROTOCOLS.get(tok)
+    if n is not None:
+        return _NAME_OF_NUMBER.get(n) or f"p{n}"
+    return None
+
+
+def _canonical_proto(tok: Any) -> bool:
+    return _proto_token(tok) is not None
 
 
 def _canonical_ifname(tok: Any) -> bool:
@@ -262,9 +290,9 @@ class _Rule:
         self.has_dst = "dst" in m
         for key in ("iif", "oif", "proto"):
             if key in m:
-                if isinstance(m[key], str) and (_canonical_proto(m[key]) if key == "proto"
-                                                 else _canonical_ifname(m[key])):
-                    setattr(self, key, m[key])
+                tok = _proto_token(m[key]) if key == "proto" else (m[key] if _canonical_ifname(m[key]) else None)
+                if tok is not None:
+                    setattr(self, key, tok)
                 else:
                     self.unknown = True        # the condition is NOT applied (it would decide "no match"), the rule is "maybe"
         for key in ("src", "dst"):
@@ -722,8 +750,9 @@ def _parse_listeners(sec: Any, ipv6_enabled: Optional[bool]) -> _Lst:
     lst.listeners.sort(key=lambda x: (x.port, x.proto, x.ip))
     count = v.get("count")
     lst.count = count if _is_int(count) else -1
+    # ``dropped`` (rows the agent cut past its own cap) contradicts a complete table whatever else the section says
     lst.complete = (sec.get("conf") == "exact" and sec.get("partial") is False and lst.bad_rows == 0
-                    and lst.count == len(rows) and len(rows) <= MAX_LISTENERS)
+                    and v.get("dropped") is None and lst.count == len(rows) and len(rows) <= MAX_LISTENERS)
     return lst
 
 
@@ -1104,13 +1133,33 @@ def _compact_listeners(v: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(r, dict):
             rows.append({"proto": r.get("proto"), "ip": _norm_ip(r.get("ip")), "port": r.get("port"),
                          "bind_class": r.get("bind_class"), "comm": r.get("comm"), "exe": _exe_name(r.get("exe"))})
-    omitted = max(0, len(rows) - MAX_FACT_LISTENERS)
+    seen = len(rows)
+    omitted = max(0, seen - MAX_FACT_LISTENERS)
     if omitted:       # reachable rows first; ``count`` keeps the true total, so the table reads as incomplete
         rows = sorted(rows, key=_listener_order)[:MAX_FACT_LISTENERS]
-    out = {"count": v.get("count"), "listeners": rows, "ipv6": v.get("ipv6"),
+    reported, dropped = v.get("count"), v.get("dropped")
+    count = reported
+    cut = (omitted > 0) or (dropped is not None)
+    if cut:
+        # The library calls a table complete when ``count == len(rows)``. The agent's number is its own word, so when
+        # this fact is NOT the whole table (the builder capped it, or the agent cut rows itself) the count can never
+        # be below what we know exists: rows seen here plus rows the agent says it dropped. A lying or buggy ``count``
+        # equal to the capped length therefore still reads as incomplete (review finding Z-6); the agent's own
+        # number stays visible as ``reported_count`` so a consumer can say "N of M".
+        if dropped is None or (_is_int(dropped) and dropped >= 0):
+            known = seen + (dropped or 0)
+        else:
+            known = seen + 1       # "I cut rows" in an unusable number: at least one more exists, never complete
+        count = max(reported, known) if _is_int(reported) else known
+    out = {"count": count, "listeners": rows, "ipv6": v.get("ipv6"),
            "bindv6only": v.get("bindv6only"), "attribution": v.get("attribution")}
+    if cut and reported != count:
+        out["reported_count"] = reported
+    if dropped is not None:      # the agent's own cut: the table is a sample (absent unless > 0)
+        out["dropped"] = dropped
     if omitted:
         out["omitted"] = omitted
+        out["capped"] = MAX_FACT_LISTENERS
     return _clip(out)
 
 
@@ -1781,6 +1830,14 @@ SELECT id, hostname, status, legacy, revoked_at, last_seen, silent_after_s, node
 # Revoked or legacy agents that still have an OPEN invariant finding about their node: they stay in the graph
 # as UNKNOWN tombstones (a finding never closes because its host left the graph). Without an open finding there
 # is nothing to protect and the row is not read (a decommissioned instance must not stay in the graph for ever).
+# Scope, decided (review finding hostfw-4, Z-7): a tombstone lives exactly while an OPEN or TRIAGED host-config finding
+# names the host; a revoked host with no such finding leaves the graph (one node and one fact per decommissioned
+# autoscaling instance would otherwise grow the graph without bound). Dropping the EXISTS clause keeps every revoked or
+# legacy agent. A host an operator LABELS out of the selector (declared ``agent=false`` / ``server=false``) is an
+# opt-out, not a tombstone: it is simply no longer selected, and its open finding stays open because only
+# ``passing_targets`` close a finding. There is NO operator "clear" action in P2 (a route, an RBAC decision and a
+# migration, P2.1): the finding is closed by the host passing again, or by an operator setting its status through the
+# existing findings route (PATCH /findings/{id}).
 TOMBSTONES_SQL = """
 SELECT a.id, a.hostname, a.status, a.legacy, a.revoked_at, a.node_ref
   FROM fleet_agents a
@@ -1928,6 +1985,16 @@ async def _load_scan_cover(conn) -> list[dict[str, Any]]:
     return out
 
 
+def _identity_view(ident: Any) -> dict[str, Any]:
+    """What the builder keeps of a stored identity. ``peer_proxied`` is False ONLY when the ingest wrote exactly
+    ``false``: a missing or malformed flag (a row written before the flag existed) means the peer may be a forwarding
+    hop, which never corroborates and never places a host (review finding Z-3)."""
+    ident = ident if isinstance(ident, dict) else {}
+    return {"ips": ident.get("ips") if isinstance(ident.get("ips"), list) else [],
+            "peer_ip": ident.get("peer_ip") if isinstance(ident.get("peer_ip"), str) else None,
+            "peer_proxied": ident.get("peer_proxied") is not False}
+
+
 async def load(conn, now: dt.datetime, *, agent_posture_max_age: Optional[dt.timedelta] = None,
                **_opts: Any) -> HostFwRows:
     """Read the rows ``build`` needs. ``conn`` is tenant-bound; nothing here names a tenant."""
@@ -1938,11 +2005,7 @@ async def load(conn, now: dt.datetime, *, agent_posture_max_age: Optional[dt.tim
     for r in await conn.fetch(AGENTS_SQL):
         d = dict(r)
         d["id"] = str(d["id"])
-        ident = _json(d.get("identity"), {})
-        ident = ident if isinstance(ident, dict) else {}
-        d["identity"] = {"ips": ident.get("ips") if isinstance(ident.get("ips"), list) else [],
-                         "peer_ip": ident.get("peer_ip") if isinstance(ident.get("peer_ip"), str) else None,
-                         "peer_proxied": ident.get("peer_proxied") is True}
+        d["identity"] = _identity_view(_json(d.get("identity"), {}))
         agents.append(d)
     rows.agents = agents
     ids = [a["id"] for a in agents]

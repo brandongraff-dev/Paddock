@@ -155,6 +155,30 @@ NON_SSH_COMMS = frozenset([
 ])
 ABSENCE_NOTE = "basis:sshd_absence_from_listener_table"
 
+# The config keys the agent's sshd collector can emit (its ALLOWLIST), always lower case. A key outside
+# this set, or spelled otherwise (``MaxAuthTries``, the alias ``challengeresponseauthentication`` the
+# agent normalises), in ``v.config`` or a probe delta is a fact this library cannot read: it must not
+# be ignored while a lower-case key it does read says "fine".
+SSHD_KEYS = frozenset([
+    "passwordauthentication", "kbdinteractiveauthentication", "pubkeyauthentication",
+    "permitemptypasswords", "usepam", "x11forwarding", "permituserenvironment",
+    "hostbasedauthentication", "gssapiauthentication", "strictmodes", "permitrootlogin",
+    "addressfamily", "allowtcpforwarding", "loglevel", "maxauthtries", "logingracetime",
+    "maxsessions", "authenticationmethods", "port", "listenaddress", "allowusers", "allowgroups",
+    "denyusers", "denygroups", "authorizedkeysfile", "authorizedkeyscommand"])
+_ALLOW_LISTS = ("allowusers", "allowgroups")
+_PATTERN_CHARS = "*?!"
+
+
+def _unreadable_keys(m: Mapping[str, Any]) -> bool:
+    return any(not isinstance(k, str) or k not in SSHD_KEYS for k in m)
+
+
+def _list_has_pattern(v: Any) -> bool:
+    """An AllowUsers / AllowGroups entry with a wildcard or a negation: the list is a set of patterns,
+    not of names (``*`` lets every account in), so it is not "restricted to this set"."""
+    return any(isinstance(x, str) and any(c in x for c in _PATTERN_CHARS) for x in v)
+
 
 def _truncated(d: Mapping[str, Any]) -> Union[frozenset, "Unknown"]:
     """The config keys the collector says it cut (``v.truncated``; absent when nothing was cut). A
@@ -223,9 +247,11 @@ def _sshd_state(fact: Fact) -> Union[tuple[Mapping[str, Any], list[Mapping[str, 
     pending = _daemon_problem(d)
     if pending is not None:
         return pending
+    if _unreadable_keys(cfg):
+        return Unknown("approximate")
     deltas: list[Mapping[str, Any]] = []
     for item in probes["deltas"]:
-        if not _is_map(item) or not _is_map(item.get("delta")):
+        if not _is_map(item) or not _is_map(item.get("delta")) or _unreadable_keys(item["delta"]):
             return Unknown("approximate")
         deltas.append(item["delta"])
     base = {k: v for k, v in cfg.items() if k not in trunc}
@@ -319,6 +345,8 @@ def _sshd_list(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
             return Unknown("no_value")
         if _is_cut_list(v):
             return Unknown("approximate")
+        if key in _ALLOW_LISTS and _list_has_pattern(v):
+            return Unknown("no_value")                 # patterns, not names: no set to reason over
         return Known(frozenset(v))
     return acc
 
@@ -343,6 +371,8 @@ def _sshd_listset(key: str) -> Callable[[Fact, tuple, "HostCtx"], Outcome]:
                 return False
             if not _is_seq(v) or not all(isinstance(x, str) for x in v):
                 return None
+            if _list_has_pattern(v):
+                return None                            # '*' admits everyone: not a restriction we can state
             return len(v) > 0
         v = k_all([one(c) for c in variants])
         return Unknown("no_value") if v is None else Known(v)
