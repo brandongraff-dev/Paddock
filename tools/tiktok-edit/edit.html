@@ -228,22 +228,90 @@ const SCREENS_D3=[
 /*30*/{words:1,lines:['FREE.','OPEN SOURCE.'],fs:130,gap:170,cap:'AGPL-3.0'},
 /*31*/{wall:1,title:'',cols:3,cell:300,hl:4,strobe:1,items:[{logo:'git'},{logo:'github'},{logo:'composer'},{logo:'kubernetes'},{logo:'PADDOCK'},{logo:'nuget'},{logo:'docker'},{logo:'linux'},{logo:'opensourceinitiative'}]},
 ];
-const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B,a2:SCREENS_A,b2:SCREENS_B,c:SCREENS_C,d:SCREENS_D,d3:SCREENS_D3};
+const SCREENS_G1=[
+/*0*/{tint:1,layers:['speed'],words:1,instant:1,lines:['HOW','HACKERS','GET IN.'],fs:170,gap:190,cols:['#f2f2f2','#f2f2f2','#ff5a46']},
+/*1*/{tint:1,skull:1,skullText:'NO MAGIC.'},
+/*2*/{words:1,lines:['8 STEPS.'],fs:240,col:'#e67350'},
+/*3*/{words:1,lines:['STAY FOR','#8'],fs:190,gap:230,cols:['#f2f2f2','#e67350']},
+/*4*/{ui:'kali',rect:[0,0,.87],tag:'kali.org · the hacker distro'},
+/*5*/{wall:1,title:'THEIR TOOLBOX',cols:3,cell:300,items:[{logo:'kalilinux',label:'Kali'},{logo:'metasploit',label:'Metasploit'},{logo:'burpsuite',label:'Burp Suite'},{logo:'wireshark',label:'Wireshark'},{logo:'hashcat',label:'hashcat'},{text:'Nmap',label:'scanner'}]},
+/*6*/{num:1,step:0,words:1,lines:['RECON'],fs:210,cap:'they map you first'},
+/*7*/{step:0,ui:'nmap',rect:[0,0,.87],tag:'nmap.org · port scanning'},
+/*8*/{step:0,words:1,lines:['SCAN.'],fs:240},
+/*9*/{step:0,words:1,lines:['PROBE.'],fs:240},
+/*10*/{num:2,step:1,words:1,lines:['INITIAL','ACCESS'],fs:150,gap:180,cap:'phishing · stolen passwords · unpatched bugs'},
+/*11*/{step:1,ui:'hibp',rect:[0,.1,.87],tag:'haveibeenpwned.com',ann:[[.0,.78,.62,.17,'accounts already leaked']]},
+/*12*/{num:3,step:2,words:1,lines:['EXECUTE'],fs:190,cap:'run their code on your machine'},
+/*13*/{step:2,ui:'metasploit',rect:[0,0,.87],tag:'metasploit.com · pen-test framework'},
+/*14*/{num:4,step:3,words:1,lines:['PERSIST'],fs:190,cap:'a back door, left open'},
+/*15*/{num:5,step:4,words:1,lines:['ESCALATE'],fs:170,cap:'user to admin'},
+/*16*/{step:4,words:1,lines:['ROOT.'],fs:260,col:'#ff5a46'},
+/*17*/{step:4,ui:'mitre_tactics',rect:[0,0,.87],tag:'MITRE ATT&CK · enterprise tactics'},
+/*18*/{num:6,step:5,words:1,lines:['LATERAL','MOVEMENT'],fs:140,gap:170,cap:'one machine becomes the network'},
+/*19*/{step:5,flow:1,nodes:[{id:'a',x:170,y:560,text:'LAPTOP',w:200,h:220},{id:'b',x:540,y:560,text:'SERVER',w:200,h:220,red:1},{id:'c',x:910,y:560,text:'DATABASE',w:200,h:220,red:1}],edges:[{a:'a',b:'b',red:1},{a:'b',b:'c',red:1}],cap:'Hop to hop.'},
+/*20*/{num:7,step:6,words:1,lines:['EXFIL'],fs:220,cap:'your data, on their server'},
+/*21*/{step:6,ui:'cisa',rect:[0,0,.87],tag:'CISA · known exploited vulnerabilities'},
+/*22*/{num:8,step:7,tint:1,words:1,lines:['IMPACT'],fs:210,col:'#ff5a46',cap:'ransomware · outage · leak'},
+/*23*/{step:7,words:1,lines:['THEY NEED','ONE DOOR.'],fs:130,gap:160},
+/*24*/{ui:'nvd',rect:[0,0,.87],tag:'every door gets a CVE number'},
+/*25*/{wall:1,title:'THE DEFENDERS',cols:3,cell:300,items:[{logo:'owasp',label:'OWASP'},{logo:'virustotal',label:'VirusTotal'},{logo:'wireshark',label:'Wireshark'},{logo:'linux',label:'Linux'},{logo:'github',label:'GitHub'},{logo:'python',label:'Python'}]},
+/*26*/{words:1,lines:['SEE IT','FIRST.'],fs:190,gap:220},
+/*27*/{words:1,lines:['FIND THE','DOORS.'],fs:160,gap:190},
+/*28*/{words:1,lines:['CLOSE','THEM.'],fs:190,gap:220},
+/*29*/{wall:1,title:'',cols:4,cell:240,hl:5,items:[{logo:'kalilinux'},{logo:'metasploit'},{logo:'burpsuite'},{logo:'wireshark'},{logo:'linux'},{logo:'PADDOCK'},{logo:'python'},{logo:'owasp'},{logo:'openssl'},{logo:'github'},{logo:'docker'},{logo:'gnubash'},{logo:'virustotal'},{logo:'hashcat'},{logo:'git'},{logo:'debian'}]},
+/*30*/{words:1,lines:['FREE.','OPEN SOURCE.'],fs:130,gap:170},
+/*31*/{wall:1,title:'',cols:3,cell:300,hl:4,strobe:1,items:[{logo:'kalilinux'},{logo:'metasploit'},{logo:'burpsuite'},{logo:'wireshark'},{logo:'PADDOCK'},{logo:'owasp'},{logo:'python'},{logo:'linux'},{logo:'github'}]},
+];
+const SCREENS_G2=[
+/*0*/{tint:1,layers:['speed'],words:1,instant:1,lines:['THE HACKS','THAT BROKE','THE INTERNET.'],fs:128,gap:165,cols:['#f2f2f2','#f2f2f2','#ff5a46']},
+/*1*/{tint:1,skull:1,skullText:'ALL REAL.'},
+/*2*/{words:1,lines:['6 HACKS.'],fs:240,col:'#e67350'},
+/*3*/{words:1,lines:['STAY FOR','#6'],fs:190,gap:230,cols:['#f2f2f2','#e67350']},
+/*4*/{wall:1,title:'CODE YOU TRUST',cols:3,cell:300,items:[{logo:'openssl',label:'OpenSSL'},{logo:'gnubash',label:'Bash'},{logo:'apache',label:'Apache'},{logo:'openjdk',label:'Java'},{logo:'linux',label:'Linux'},{logo:'github',label:'GitHub'}]},
+/*5*/{words:1,lines:['EVERY ONE','HAD A CVE.'],fs:140,gap:170},
+/*6*/{words:1,lines:['IT STARTS','IN 2014.'],fs:150,gap:180},
+/*7*/{hero:1,logo:'openssl',title:'OPENSSL',sub:'the lock on most of the web',ts:100,size:360},
+/*8*/{num:1,incident:1,year:'2014',name:'HEARTBLEED',sub:'OpenSSL · CVE-2014-0160',img:'nvd_heartbleed',imgTag:'NVD · CVE-2014-0160',cy:.28},
+/*9*/{num:1,words:1,lines:['READ SERVER','MEMORY.'],fs:130,gap:160},
+/*10*/{num:2,incident:1,year:'2014',name:'SHELLSHOCK',sub:'GNU Bash · CVE-2014-6271',img:'nvd_shellshock',imgTag:'NVD · CVE-2014-6271',logo:'gnubash',cy:.28},
+/*11*/{num:2,words:1,lines:['CODE HIDDEN','IN A VARIABLE.'],fs:118,gap:150},
+/*12*/{num:3,incident:1,year:'2017',name:'WANNACRY',sub:'EternalBlue · CVE-2017-0144',img:'nvd_eternalblue',imgTag:'NVD · CVE-2017-0144',cy:.28},
+/*13*/{num:3,tint:1,words:1,lines:['A RANSOMWARE','WORM.'],fs:130,gap:160,col:'#ff5a46'},
+/*14*/{num:4,incident:1,year:'2020',name:'SOLARWINDS',sub:'supply chain · a trusted update',nameFs:110},
+/*15*/{num:4,words:1,lines:['THE UPDATE','WAS THE','BACKDOOR.'],fs:120,gap:150},
+/*16*/{num:5,incident:1,year:'2021',name:'LOG4SHELL',sub:'Apache Log4j · CVE-2021-44228',img:'nvd',imgTag:'NVD · CVE-2021-44228',logo:'apache',cy:.28},
+/*17*/{num:5,words:1,lines:['ONE LOG LINE','RUNS THEIR','CODE.'],fs:110,gap:140},
+/*18*/{num:6,incident:1,year:'2024',name:'XZ BACKDOOR',sub:'xz utils · CVE-2024-3094',img:'nvd_xz',imgTag:'NVD · CVE-2024-3094',nameFs:104,cy:.28},
+/*19*/{num:6,tint:1,words:1,lines:['HIDDEN IN A','COMPRESSION','LIBRARY.'],fs:110,gap:140,col:'#ff5a46'},
+/*20*/{words:1,lines:['WHAT THEY','SHARED.'],fs:150,gap:180},
+/*21*/{words:1,lines:['TRUSTED','CODE.'],fs:190,gap:220},
+/*22*/{words:1,lines:['EXPOSED','EVERYWHERE.'],fs:140,gap:170},
+/*23*/{ui:'cisa',rect:[0,0,.87],tag:'CISA · known exploited vulnerabilities'},
+/*24*/{wall:1,title:'THE DEFENDERS',cols:3,cell:300,items:[{logo:'owasp',label:'OWASP'},{logo:'virustotal',label:'VirusTotal'},{logo:'wireshark',label:'Wireshark'},{logo:'linux',label:'Linux'},{logo:'github',label:'GitHub'},{logo:'python',label:'Python'}]},
+/*25*/{words:1,lines:['KNOW WHAT','YOU RUN.'],fs:150,gap:180},
+/*26*/{words:1,lines:['PATCH','FAST.'],fs:200,gap:230},
+/*27*/{words:1,lines:['WATCH THE','SUPPLY CHAIN.'],fs:120,gap:150},
+/*28*/{words:1,lines:['SEE IT','FIRST.'],fs:190,gap:220},
+/*29*/{wall:1,title:'',cols:4,cell:240,hl:5,items:[{logo:'openssl'},{logo:'gnubash'},{logo:'apache'},{logo:'openjdk'},{logo:'linux'},{logo:'PADDOCK'},{logo:'github'},{logo:'python'},{logo:'kalilinux'},{logo:'owasp'},{logo:'virustotal'},{logo:'wireshark'},{logo:'docker'},{logo:'git'},{logo:'debian'},{logo:'metasploit'}]},
+/*30*/{words:1,lines:['FREE.','OPEN SOURCE.'],fs:130,gap:170},
+/*31*/{wall:1,title:'',cols:3,cell:300,hl:4,strobe:1,items:[{logo:'openssl'},{logo:'gnubash'},{logo:'apache'},{logo:'openjdk'},{logo:'PADDOCK'},{logo:'linux'},{logo:'github'},{logo:'python'},{logo:'owasp'}]},
+];
+const SCREEN_SETS={main:SCREENS_MAIN,a:SCREENS_A,b:SCREENS_B,a2:SCREENS_A,b2:SCREENS_B,c:SCREENS_C,d:SCREENS_D,d3:SCREENS_D3,g1:SCREENS_G1,g2:SCREENS_G2};
 const SCREENS=SCREEN_SETS[VAR]||SCREENS_MAIN;
-const HITS=VAR==='c'?[{k:8,v:'sentry',big:1},{k:16,v:'linux',big:1.12},{k:32,v:'pd',big:1}]:(VAR==='d'||VAR==='d3')?[{k:8,v:'npm',big:1},{k:16,v:'pypi',big:1.12},{k:32,v:'pd',big:1}]:VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
+const HITS=VAR==='g1'?[{k:8,v:'kali',big:1},{k:16,v:'linux',big:1.12},{k:32,v:'pd',big:1}]:VAR==='g2'?[{k:8,v:'openssl',big:1},{k:16,v:'log4j',big:1.12},{k:32,v:'pd',big:1}]:VAR==='c'?[{k:8,v:'sentry',big:1},{k:16,v:'linux',big:1.12},{k:32,v:'pd',big:1}]:(VAR==='d'||VAR==='d3')?[{k:8,v:'npm',big:1},{k:16,v:'pypi',big:1.12},{k:32,v:'pd',big:1}]:VAR==='main'?[{k:7,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}]:[{k:8,v:'py',big:1},{k:16,v:'kali',big:1.12},{k:32,v:'pd',big:1}];// ---------------- init
 async function init(){
  CORPUS=(await (await fetch('build/corpus.txt')).text()).split('\n');
  const svg=await (await fetch('assets/paddock-logo.svg')).text();const re=/M(\d+) (\d+)h(\d+)v1h-\d+z/g;let m;const seen=new Set();
  while((m=re.exec(svg))){for(let i=0;i<+m[3];i++){const k=(+m[1]+i)+','+m[2];if(!seen.has(k)){seen.add(k);LOGO.push([+m[1]+i,+m[2]])}}}
  let w=await (await fetch('assets/paddock-wordmark.svg')).text();w=w.replace('<svg ','<svg width="3136" height="808" ');
  WM=new Image();WM.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(w);await WM.decode();
- for(const n of ['python','linux','kalilinux','docker','github','git','gnubash','wireshark','openssl','opensourceinitiative','claude','anthropic','burpsuite','metasploit','owasp','ubuntu','raspberrypi','cisco','ubiquiti','mikrotik','vmware','siemens','schneiderelectric','rockwellautomation','abb','mqtt','zigbee','bluetooth','debian','alpinelinux','arm','npm','pypi','go','rust','rubygems','nuget','composer','kubernetes']){let t=await (await fetch('assets/logos/'+n+'.svg')).text();t=t.replace('<svg ','<svg fill="#ffffff" width="512" height="512" ');const im=new Image();im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(t);await im.decode();LG[n]=im}
+ for(const n of ['python','linux','kalilinux','docker','github','git','gnubash','wireshark','openssl','opensourceinitiative','claude','anthropic','burpsuite','metasploit','owasp','ubuntu','raspberrypi','cisco','ubiquiti','mikrotik','vmware','siemens','schneiderelectric','rockwellautomation','abb','mqtt','zigbee','bluetooth','debian','alpinelinux','arm','npm','pypi','go','rust','rubygems','nuget','composer','kubernetes','apache','openjdk','hashcat','virustotal','haveibeenpwned']){let t=await (await fetch('assets/logos/'+n+'.svg')).text();t=t.replace('<svg ','<svg fill="#ffffff" width="512" height="512" ');const im=new Image();im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(t);await im.decode();LG[n]=im}
  ONS=(await (await fetch(`build/onsets-${VAR}.json`).then(r=>r.ok?r:fetch('build/onsets.json'))).json()).on;
  try{const cf=await (await fetch(`build/config-${VAR}.json`).then(r=>r.ok?r:fetch('build/config.json'))).json();B=cf.beat;T0=cf.t0;END=cf.end;HORSE_T=T0+32*B}catch(e){}
  {const n=document.createElement('canvas');n.width=n.height=256;const nx=n.getContext('2d'),id=nx.createImageData(256,256);for(let i=0;i<65536;i++){const v=Math.random()*255;id.data[i*4]=id.data[i*4+1]=id.data[i*4+2]=v;id.data[i*4+3]=255}nx.putImageData(id,0,0);window.NOISE=n}
  window.IM={};for(const n of ['ui_graph','ui_paths','ui_findings','ui_chains']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='assets/ui/'+(n==='ui_paths'?'attack-paths':n.slice(3))+'.jpg'})}
  for(const n of ['m_knot','m_face','m_hands','m_whale']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/memes/'+n+'.png'})}
- for(const n of ['cisa','nvd','nmap','wireshark','kali','owasp','mitre','repo','dd_devices','dd_deps','sentry_top','sentry_table','osv','osv_vuln','ghsa','unifi','siemens']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/shots/'+n+'.png'})}
+ for(const n of ['cisa','nvd','nmap','wireshark','kali','owasp','mitre','repo','dd_devices','dd_deps','sentry_top','sentry_table','osv','osv_vuln','ghsa','unifi','siemens','nvd_heartbleed','nvd_shellshock','nvd_eternalblue','nvd_xz','mitre_tactics','burp','hashcat','hibp','metasploit']){await new Promise(r=>{const im=new Image();im.onload=()=>{window.IM[n]=im;r()};im.onerror=()=>r();im.src='inputs/shots/'+n+'.png'})}
  await document.fonts.load('300 60px NR');await document.fonts.ready;window.READY=true}
 // ---------------- code rendering
 const KW=/^(import|from|for|in|while|def|return|True|False|None|if|else)$/;
@@ -332,7 +400,7 @@ function finale(t){
 // ---------------- badge (corner logo like the reference's channel mark)
 function badge(){const cell=3.6,ox=412,oy=1409;ctx.save();ctx.shadowColor='rgba(255,255,255,.6)';ctx.shadowBlur=14;ctx.fillStyle='rgba(236,230,218,.95)';for(const [x,y] of LOGO)ctx.fillRect(ox+x*cell,oy+y*cell,cell-.4,cell-.4);ctx.restore();ctx.font=`300 36px NR,serif`;ctx.fillStyle='#ece6da';ctx.textBaseline='middle';ctx.fillText('paddock',ox+31*cell+16,1445)}
 
-const TINTX={raspberrypi:['#ff6b8a','#C51A4A'],cisco:['#6fd0ff','#049fd9'],ubiquiti:['#6aa6ff','#0559C9'],mikrotik:['#c9d6e2','#8aa0b5'],vmware:['#c4d4dc','#9fb3bd'],siemens:['#33d1c1','#009999'],schneiderelectric:['#7bf08f','#3dcd58'],rockwellautomation:['#ff7b73','#e0443e'],abb:['#ff6a6a','#ff000f'],mqtt:['#d9b3ff','#a066f0'],zigbee:['#ffd36b','#eb7d00'],bluetooth:['#7fb8ff','#0082fc'],debian:['#ff6b8a','#d70a53'],alpinelinux:['#7fb3ff','#0d597f'],arm:['#8fd3ff','#0091bd'],npm:['#ff6b6b','#CB3837'],pypi:['#4B8BBE','#FFD43B'],go:['#7be3ff','#00ADD8'],rust:['#ffcfa3','#DEA584'],rubygems:['#ff8a73','#E9573F'],nuget:['#7fb8ff','#004880'],composer:['#c9a98a','#885630'],kubernetes:['#8fb6ff','#326CE5']};
+const TINTX={raspberrypi:['#ff6b8a','#C51A4A'],cisco:['#6fd0ff','#049fd9'],ubiquiti:['#6aa6ff','#0559C9'],mikrotik:['#c9d6e2','#8aa0b5'],vmware:['#c4d4dc','#9fb3bd'],siemens:['#33d1c1','#009999'],schneiderelectric:['#7bf08f','#3dcd58'],rockwellautomation:['#ff7b73','#e0443e'],abb:['#ff6a6a','#ff000f'],mqtt:['#d9b3ff','#a066f0'],zigbee:['#ffd36b','#eb7d00'],bluetooth:['#7fb8ff','#0082fc'],debian:['#ff6b8a','#d70a53'],alpinelinux:['#7fb3ff','#0d597f'],arm:['#8fd3ff','#0091bd'],npm:['#ff6b6b','#CB3837'],pypi:['#4B8BBE','#FFD43B'],go:['#7be3ff','#00ADD8'],rust:['#ffcfa3','#DEA584'],rubygems:['#ff8a73','#E9573F'],nuget:['#7fb8ff','#004880'],composer:['#c9a98a','#885630'],kubernetes:['#8fb6ff','#326CE5'],apache:['#ff8fa3','#D22128'],openjdk:['#ffb27a','#ED8B00'],hashcat:['#e8e8e8','#bdbdbd'],virustotal:['#8fb6ff','#394EFF'],haveibeenpwned:['#9fd0ff','#2f80d6']};
 function tinted(img,size,c1,c2){const raw=document.createElement('canvas');raw.width=raw.height=512;const rx=raw.getContext('2d');rx.drawImage(img,0,0,512,512);const d=rx.getImageData(0,0,512,512).data;let x0=512,y0=512,x1=0,y1=0;for(let y=0;y<512;y++)for(let x=0;x<512;x++){if(d[(y*512+x)*4+3]>20){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}}
  const bw=x1-x0+1,bh=y1-y0+1,sc=size/Math.max(bw,bh);const k=document.createElement('canvas');k.width=k.height=size;const x=k.getContext('2d');x.drawImage(raw,x0,y0,bw,bh,(size-bw*sc)/2,(size-bh*sc)/2,bw*sc,bh*sc);x.globalCompositeOperation='source-in';const g=x.createLinearGradient(0,0,size,size);g.addColorStop(0,c1);g.addColorStop(1,c2);x.fillStyle=g;x.fillRect(0,0,size,size);return k}
 const TINT={};
@@ -441,10 +509,10 @@ function versus(S,lt,t){ctx.fillStyle='rgba(70,6,6,.55)';ctx.fillRect(0,0,540,H)
  drawCode(mk(S.lc,30),lt,t);drawCode(mk(S.rc,562),lt,t);
  figure({...S.fl,col:'#ff6b5a',x:270,y:1120},lt,t);figure({...S.fr,col:TAN,x:810,y:1120},lt,t)}
 function speed(t){ctx.save();ctx.translate(540,820);ctx.strokeStyle='rgba(236,230,218,.22)';ctx.lineWidth=2;for(let i=0;i<46;i++){const a=hash(i,3)*6.283,r0=260+((t*900+hash(i,4)*1400)%1300),len=60+hash(i,5)*140;ctx.beginPath();ctx.moveTo(Math.cos(a)*r0,Math.sin(a)*r0);ctx.lineTo(Math.cos(a)*(r0+len),Math.sin(a)*(r0+len));ctx.stroke()}ctx.restore()}
-function hud(t){ctx.save();ctx.textBaseline='alphabetic';ctx.font=`500 22px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.6)';ctx.textAlign='left';ctx.fillText('PADDOCK // SURFACE MONITOR',60,92);ctx.textAlign='right';ctx.fillStyle='#6bd36b';ctx.fillText('● LIVE',1020,92);ctx.fillStyle='rgba(236,230,218,.16)';ctx.fillRect(60,108,960,1);
+function hud(t){ctx.save();ctx.textBaseline='alphabetic';ctx.font=`500 22px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.6)';ctx.textAlign='left';ctx.fillText(VAR[0]==='g'?'THREAT FEED // REAL INCIDENTS':'PADDOCK // SURFACE MONITOR',60,92);ctx.textAlign='right';ctx.fillStyle='#6bd36b';ctx.fillText('● LIVE',1020,92);ctx.fillStyle='rgba(236,230,218,.16)';ctx.fillRect(60,108,960,1);
  ctx.strokeStyle='rgba(236,230,218,.3)';ctx.lineWidth=2;[[30,30,1,1],[1050,30,-1,1],[30,1890,1,-1],[1050,1890,-1,-1]].forEach(([x,y,a,b])=>{ctx.beginPath();ctx.moveTo(x,y+b*44);ctx.lineTo(x,y);ctx.lineTo(x+a*44,y);ctx.stroke()});
  ctx.fillStyle='rgba(236,230,218,.1)';for(let y=140;y<1360;y+=40)ctx.fillRect(10,y,y%200===140?18:9,1);
- const sec=Math.floor(t)+11,utc=`14:02:${String(sec%60).padStart(2,'0')}`;ctx.textAlign='left';ctx.font=`500 22px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.5)';ctx.fillText(`scope acme-demo.example · assets 55 · kev 3 · utc ${utc}`,60,1372);ctx.restore()}
+ const sec=Math.floor(t)+11,utc=`14:02:${String(sec%60).padStart(2,'0')}`;ctx.textAlign='left';ctx.font=`500 22px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.5)';ctx.fillText(VAR[0]==='g'?`sources: NVD · MITRE ATT&CK · CISA · utc ${utc}`:`scope acme-demo.example · assets 55 · kev 3 · utc ${utc}`,60,1372);ctx.restore()}
 
 // ---------------- deep-dive primitives (logo-first, no typing)
 function lg(name,size,x,y){if(name==='PADDOCK'){const cp=size/32;ctx.fillStyle='#ece6da';for(const [px,py] of LOGO)ctx.fillRect(x-16*cp+px*cp,y-10*cp+py*cp,cp+.5,cp+.5)}else ctx.drawImage(logoT(name,Math.round(size)),x-size/2,y-size/2,size,size)}
@@ -488,8 +556,23 @@ function matrixX(S,lt,t){const L=['ot-cell','cameras','office','bms','guest','it
  for(let r=0;r<n;r++)for(let c=0;c<n;c++){const at=(r*n+c)*.006,k=easeOut(seg(lt,at,at+.06));if(k<=0)continue;const hot=(r===1&&c===0)||(r===4&&c===5)||(r===2&&c===0),ok=r===c||hash(r,c)>.62;
   ctx.fillStyle=hot?'#ff5a46':(ok?'rgba(120,200,255,.35)':'rgba(255,255,255,.05)');ctx.globalAlpha=k;ctx.fillRect(ox+c*cs+6,oy+r*cs+6,cs-12,cs-12);ctx.globalAlpha=1}
  ctx.textAlign='center';ctx.font=`800 60px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#f2f2f2';ctx.globalAlpha=easeOut(seg(lt,.2,.35));ctx.fillText('Who really talks to whom.',540,1290);ctx.font=`500 28px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText('observed segmentation map',540,1345);ctx.globalAlpha=1}
+
+const SKULL=['      _______________      ','   .-\'               \'-.   ','  /                     \\  ',' |    ,--.         ,--.    |',' |   /    \\       /    \\   |',' |   \\    /       \\    /   |','  \\   `--\'    ,    `--\'   / ',"   '.       /_\\       .'   ",'     \'-.    ` \'    .-\'     ','        |  |-|-|  |        ','        |_ |-|-| _|        ','         \'-\'\'\'\'\'\'-\'         '];
+function skullX(S,lt,t){ctx.save();ctx.font=`700 34px ${MONO}`;ctx.textAlign='center';ctx.textBaseline='middle';const k=easeOut(seg(lt,0,.1));ctx.globalAlpha=Math.min(1,k*1.6);ctx.translate(540,640);ctx.scale(lerp(1.5,1,k),lerp(1.5,1,k));
+ SKULL.forEach((row,i)=>{const j=(hash(i,Math.floor(t*14))-.5)*(hash(i,9)>.8?30:4);ctx.fillStyle=i>2&&i<7?'#ff5a46':'#f2f2f2';ctx.fillText(row,j,(i-6)*52)});ctx.restore();
+ ctx.textAlign='center';ctx.font=`800 90px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#f2f2f2';ctx.globalAlpha=easeOut(seg(lt,.12,.24));ctx.fillText(S.skullText||'',540,1120);ctx.globalAlpha=1}
+const TACT=['RECON','ACCESS','EXECUTE','PERSIST','ESCALATE','MOVE','EXFIL','IMPACT'];
+function killbar(step){const w=112,g=8,x0=(W-(8*w+7*g))/2,y=1320;ctx.font=`700 18px ${MONO}`;ctx.textAlign='center';ctx.textBaseline='middle';
+ TACT.forEach((n,i)=>{const on=i<=step,cur=i===step;ctx.fillStyle=cur?'#e67350':on?'rgba(230,115,80,.38)':'rgba(255,255,255,.06)';ctx.fillRect(x0+i*(w+g),y,w,56);ctx.strokeStyle=cur?'#fff':'rgba(255,255,255,.18)';ctx.lineWidth=cur?3:1;ctx.strokeRect(x0+i*(w+g),y,w,56);ctx.fillStyle=cur?'#14110e':on?'#f2f2f2':'#7d8290';ctx.fillText(n,x0+i*(w+g)+w/2,y+28)})}
+function incidentX(S,lt,t){const k=easeOut(seg(lt,0,.1));ctx.save();ctx.globalAlpha=Math.min(1,k*1.6);ctx.textAlign='left';ctx.textBaseline='alphabetic';
+ ctx.font=`800 150px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#e67350';ctx.fillText(S.year,70,520);
+ ctx.font=`800 ${S.nameFs||120}px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#f2f2f2';ctx.fillText(S.name,70,650);
+ ctx.font=`500 32px ${MONO}`;ctx.fillStyle='#9a9fa8';ctx.fillText(S.sub,70,712);
+ if(S.logo)lg(S.logo,150,900,380);
+ const im=window.IM&&window.IM[S.img];if(im){const bw=960,bh=470,sw=im.width,sh=sw*bh/bw,sy=im.height*(S.cy||.3);ctx.save();ctx.translate(540,1010);ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=24;ctx.shadowOffsetY=8;ctx.fillStyle='#000';ctx.fillRect(-bw/2-5,-bh/2-5,bw+10,bh+10);ctx.shadowBlur=0;ctx.shadowOffsetY=0;ctx.drawImage(im,0,Math.min(sy,im.height-sh),sw,sh,-bw/2,-bh/2,bw,bh);ctx.fillStyle='rgba(0,0,0,.85)';ctx.font=`600 22px ${MONO}`;const tg=S.imgTag||'',tw=ctx.measureText(tg).width+28;ctx.fillRect(-bw/2,-bh/2-36,tw,32);ctx.fillStyle='#e8e8e8';ctx.textBaseline='middle';ctx.fillText(tg,-bw/2+14,-bh/2-20);ctx.restore()}
+ ctx.restore()}
 // ---------------- python triangle badge (as in the reference)
-const TRIS={py:{top:'PYTHON',mark:'python',sides:['pyw','pyi'],bot:'py'},kali:{top:'KALI',mark:'kalilinux',sides:['root','apt'],bot:'linux'},pd:{top:'PADDOCK',mark:'PADDOCK',sides:['map','fix'],bot:'defend'},sentry:{top:'SENTRY',mark:'raspberrypi',sides:['span','pcap'],bot:'listen-only'},linux:{top:'LINUX',mark:'linux',sides:['arm64','amd64'],bot:'docker'},npm:{top:'NPM',mark:'npm',sides:['lock','json'],bot:'sbom'},pypi:{top:'PYPI',mark:'python',sides:['whl','sdist'],bot:'osv'}};
+const TRIS={py:{top:'PYTHON',mark:'python',sides:['pyw','pyi'],bot:'py'},kali:{top:'KALI',mark:'kalilinux',sides:['root','apt'],bot:'linux'},pd:{top:'PADDOCK',mark:'PADDOCK',sides:['map','fix'],bot:'defend'},sentry:{top:'SENTRY',mark:'raspberrypi',sides:['span','pcap'],bot:'listen-only'},linux:{top:'LINUX',mark:'linux',sides:['arm64','amd64'],bot:'docker'},npm:{top:'NPM',mark:'npm',sides:['lock','json'],bot:'sbom'},pypi:{top:'PYPI',mark:'python',sides:['whl','sdist'],bot:'osv'},openssl:{top:'OPENSSL',mark:'openssl',sides:['tls','rsa'],bot:'heartbleed'},log4j:{top:'LOG4J',mark:'apache',sides:['jndi','java'],bot:'log4shell'}};
 function tri(cx,cy,s,v,a){const T=TRIS[v]||TRIS.pd;ctx.save();ctx.globalAlpha=a;ctx.translate(cx,cy);
  const P=[[0,-.52*s],[-.5*s,.38*s],[.5*s,.38*s]];ctx.strokeStyle='#fff';ctx.lineWidth=Math.max(2,.026*s);ctx.lineJoin='miter';ctx.beginPath();ctx.moveTo(P[0][0],P[0][1]);ctx.lineTo(P[1][0],P[1][1]);ctx.lineTo(P[2][0],P[2][1]);ctx.closePath();ctx.stroke();
  if(T.mark==='PADDOCK'){const cell=.46*s/32;ctx.fillStyle='#ece6da';for(const [x,y] of LOGO)ctx.fillRect(-.23*s+x*cell,-.02*s+y*cell,cell+.5,cell+.5)}
@@ -511,7 +594,7 @@ function triLayer(t){
   let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}
   const sx=(hash(Math.floor(t*60),5)-.5)*14*(1-mv)*(p<.3?1:.3);ctx.save();ctx.translate(sx,0);tri(cx,cy,s*(1+.035*bp),hit.v,Math.min(1,k*1.6));ctx.restore();
   if(p<.18){ctx.fillStyle=`rgba(255,255,255,${.6*(1-p/.18)})`;ctx.fillRect(0,0,W,H)}
- }else if(t>=firstEnd){let v=HITS[0].v;for(const h of HITS)if(t>=sc(h.k+2))v=h.v;let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}tri(150,1465,190*(1+.12*bp),v,.95);ctx.save();ctx.font=`500 32px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.85)';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText('openpaddock.dev',262,1475);ctx.restore()}}
+ }else if(t>=firstEnd){let v=HITS[0].v;for(const h of HITS)if(t>=sc(h.k+2))v=h.v;let bp=0;for(const [ot,os] of ONS){const d=t-ot;if(d>=0&&d<.15)bp=Math.max(bp,(1-d/.15)*Math.min(1,os/2))}tri(150,1465,190*(1+.12*bp),v,.95);ctx.save();ctx.font=`500 32px ${MONO}`;ctx.fillStyle='rgba(236,230,218,.85)';ctx.textAlign='left';ctx.textBaseline='middle';if(VAR[0]!=='g')ctx.fillText('openpaddock.dev',262,1475);ctx.restore()}}
 // ---------------- compositor
 function render(t){
  if(!window.READY)return;
@@ -527,7 +610,7 @@ function render(t){
   const sh=Math.pow(1-seg(lt,0,.2),2)*(k===0?0:14),z=1+.065*Math.pow(1-seg(lt,0,.16),2)+.016*bp;
   ctx.save();ctx.translate(W/2+(hash(Math.floor(t*60),1)-.5)*sh,H/2+(hash(Math.floor(t*60),2)-.5)*sh);ctx.scale(z,z);ctx.translate(-W/2,-H/2);
   if(S0.tint)tintFx(t,lt);
-  for(const L of (S0.layers||[])){if(L==='codebg')codebg(t,.13);if(L==='packets')packets(t);if(L==='ports')ports(t,lt);if(L==='radar')radar(t);if(L==='hex')hex(t);if(L==='bars')bars(t);if(L==='speed')speed(t)}
+  for(const L of (S0.layers||[])){if(L==='codebg')codebg(t,.13);if(L==='packets')packets(t);if(L==='ports')ports(t,lt);if(L==='radar')radar(t);if(L==='hex')hex(t);if(L==='bars')bars(t);if(L==='speed')speed(t);if(L==='rain')rain(t,.22)}
   if(S0.win)termWin(S0,lt);
   if(S0.extra==='shark')shark(t,lt);
   if(S0.card)cardLogo(S0,lt,t);
@@ -543,6 +626,9 @@ function render(t){
   if(S0.detectors)detectorsX(S0,lt,t);
   if(S0.drift)driftX(S0,lt,t);
   if(S0.matrix)matrixX(S0,lt,t);
+  if(S0.skull)skullX(S0,lt,t);
+  if(S0.incident)incidentX(S0,lt,t);
+  if(S0.step!==undefined)killbar(S0.step);
   if(S0.num){const nk=easeOut(seg(lt,0,.1));ctx.save();ctx.globalAlpha=Math.min(1,nk*1.6);ctx.translate(70,200);ctx.scale(lerp(1.5,1,nk),lerp(1.5,1,nk));ctx.font=`800 190px Inter,"DejaVu Sans",sans-serif`;ctx.fillStyle='#e67350';ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText('#'+S0.num,0,0);ctx.restore()}
   if(S0.versus)versus(S0,lt,t);
   if(S0.meme)memeFull(S0,lt,t);
@@ -575,7 +661,7 @@ function render(t){
   ctx.globalCompositeOperation='overlay';ctx.globalAlpha=.22;for(let x=-gy;x<W;x+=256)for(let y=-gx;y<H;y+=256)ctx.drawImage(window.NOISE,x,y);ctx.restore()}
  const v=ctx.createRadialGradient(W/2,H/2,H*.35,W/2,H/2,H*.75);v.addColorStop(0,'rgba(0,0,0,0)');v.addColorStop(1,'rgba(0,0,0,.4)');ctx.fillStyle=v;ctx.fillRect(0,0,W,H);
  ctx.fillStyle='rgba(0,0,0,.14)';for(let y=0;y<H;y+=4)ctx.fillRect(0,y,W,1);
- if(VAR==='d3'){const pp=clamp(t/END);ctx.fillStyle='rgba(255,255,255,.22)';ctx.fillRect(60,134,960,7);ctx.fillStyle='#fff';ctx.fillRect(60,134,960*pp,7)}
+ if(VAR==='d3'||VAR[0]==='g'){const pp=clamp(t/END);ctx.fillStyle='rgba(255,255,255,.22)';ctx.fillRect(60,134,960,7);ctx.fillStyle='#fff';ctx.fillRect(60,134,960*pp,7)}
  const fo=seg(t,END-.25,END);if(fo>0){ctx.fillStyle=`rgba(0,0,0,${fo})`;ctx.fillRect(0,0,W,H)}
 }
 window.render=render;init();
