@@ -209,7 +209,7 @@ async def harness(request, db_pool, tenants):
 
 async def test_backend_declares_its_contract(harness):
     b = harness.backend
-    assert isinstance(b, KeyBackend)
+    assert isinstance(getattr(b, "_inner", b), KeyBackend)      # the scoping test helper wraps the real backend
     assert b.custody in ("hosted", "byok-kms", "byok-hsm")
     assert isinstance(b.algs, frozenset) and b.algs == frozenset({"ed25519"})
     assert b.max_message_bytes is None or (isinstance(b.max_message_bytes, int) and b.max_message_bytes > 0)
@@ -720,3 +720,30 @@ async def test_no_key_material_anywhere(db_pool, tenants, caplog, monkeypatch, t
     for where, text in haystacks.items():
         for form in forms:
             assert form not in text, f"key material leaked into {where}"
+
+
+# --------------------------------------------------------------------------- #
+# AwsKmsBackend: a stub behind PADDOCK_ATTEST_BYOK_ENABLED (D18). No BYOK route exists in P3.
+# --------------------------------------------------------------------------- #
+
+def test_the_aws_kms_stub_is_off_by_default_and_refuses_to_be_built(monkeypatch):
+    monkeypatch.setattr(attest_config.settings, "byok_enabled", False)
+    with pytest.raises(BackendUnavailable, match="BYOK"):
+        backend_mod.AwsKmsBackend()
+
+
+async def test_the_aws_kms_stub_never_creates_signs_or_destroys_anything(monkeypatch):
+    monkeypatch.setattr(attest_config.settings, "byok_enabled", True)
+    b = backend_mod.AwsKmsBackend()
+    assert isinstance(b, KeyBackend)
+    assert (b.name, b.custody, b.algs, b.max_message_bytes) == ("aws-kms", "byok-kms", frozenset({"ed25519"}), 4096)
+    h = KeyHandle("aws-kms", TA, "c" * 32, "attest", "ed25519", key_ref="arn:aws:kms:eu-west-1:1:key/x")
+    with pytest.raises(BackendUnavailable, match="not implemented"):
+        await b.generate(TA, "attest", "ed25519")
+    with pytest.raises(BackendUnavailable, match="not implemented"):
+        await b.sign(h, b"m")
+    with pytest.raises(BackendUnavailable, match="not implemented"):
+        await b.destroy(h)
+    health = await b.health(h)
+    assert health.ok is False and health.state == "unavailable"
+    assert not [n for n in dir(b) if FORBIDDEN_NAME.search(n)]

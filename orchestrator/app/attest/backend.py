@@ -94,3 +94,39 @@ class KeyBackend(Protocol):
 
     async def health(self, h: KeyHandle, *, conn: Any = None) -> BackendHealth:
         """Report whether ``h`` could sign right now. Never raises for an outage: it reports ``unavailable``."""
+
+
+class AwsKmsBackend:
+    """A **stub** for the later BYOK/KMS backend (D18). It exists so the interface has a second shape and so the flag
+    has something to guard; it creates, signs and destroys nothing. Constructing it needs
+    ``PADDOCK_ATTEST_BYOK_ENABLED=true`` (default false) and every operation then raises :class:`BackendUnavailable`,
+    so a mistakenly selected KMS backend can only fail closed (the issuer does not issue). Raw-message KMS products cap
+    the message (4096 bytes, to be verified) and a statement is about 5 KB, so a real implementation needs a
+    digest-signing algorithm (spec 1.1); no BYOK route exists in P3."""
+
+    name = "aws-kms"
+    custody: Custody = "byok-kms"
+    algs = frozenset({"ed25519"})
+    max_message_bytes = 4096
+
+    def __init__(self) -> None:
+        from .config import settings   # lazy: a stub must not read configuration at import time
+
+        if not settings.byok_enabled:
+            raise BackendUnavailable("BYOK is not enabled (PADDOCK_ATTEST_BYOK_ENABLED=false)")
+
+    @staticmethod
+    def _stub() -> BackendUnavailable:
+        return BackendUnavailable("the AWS KMS backend is not implemented in this release")
+
+    async def generate(self, tenant_id: Any, usage: str, alg: str, *, conn: Any = None) -> tuple[KeyHandle, bytes]:
+        raise self._stub()
+
+    async def sign(self, h: KeyHandle, message: bytes, *, conn: Any = None) -> bytes:
+        raise self._stub()
+
+    async def destroy(self, h: KeyHandle, *, conn: Any = None) -> None:
+        raise self._stub()
+
+    async def health(self, h: KeyHandle, *, conn: Any = None) -> BackendHealth:
+        return BackendHealth(False, "unavailable", "the AWS KMS backend is not implemented in this release")
