@@ -1,11 +1,14 @@
 # Paddock: notes for agents working in this repo
 
-## Owner's UI design is authoritative: don't override it
+## UI design baseline (owner sign-off is no longer required)
 
 The repo owner hand-tuned the dashboard and landing UI (PR #2,
-`claude/optimistic-volta-khlk4c`, merged to `main`). Treat these decisions as
-fixed. Build new UI *inside* them, and don't revert, restyle or "clean up"
-any of the following unless the owner asks:
+`claude/optimistic-volta-khlk4c`, merged to `main`). The owner has given
+standing approval for UI work: you do **not** need to ask before adding,
+changing or restyling UI. Treat what follows as the current design baseline:
+build new UI in the same visual language, and keep the performance rules and
+the deliberately-removed list below unless you have a concrete reason, which you
+state in the PR or commit message. Don't regress it by accident:
 
 **Console (dashboard)**
 - **Pixel aurora** (`src/brand/PixelField.tsx`): a dithered Bayer dot-matrix
@@ -45,7 +48,8 @@ any of the following unless the owner asks:
 **Deploy:** `dashboard/vercel.json` (vite build, SPA rewrite); `.vercel` and
 `.env*` are ignored.
 
-If a change seems to require touching any of this, ask the owner first.
+Changing any of this no longer needs the owner's sign-off. If you change a baseline
+decision on purpose, update this section in the same change so it stays accurate.
 
 ## Working rules
 

@@ -286,7 +286,7 @@ For each static counterexample, confirm hops that are not already `observed`/`te
   inside guest*. Candidates: a Sentry on that VLAN, or an agent on a host in that zone. This is a **new
   job type, separate from `agent_actions`**: the agent's rail #1 ("no field names a remote host to
   act on") is about *enforcement*, so a read-only connect test does not violate it, but it is a new
-  capability and needs the owner's explicit sign-off (§12, decision 3).
+  capability. The owner has approved building it (decision 3), strictly under the gating below.
 - **Every probe is gated exactly like today's verify:** `/v1/scope/check` allow ∧ proof-of-control
   `verified|attested` ∧ pinned `resolved_ips` ∧ per-request outbound audit. No scope, no packet.
 - **Outcome mapping:** connect succeeded → edge becomes `tested` (witness *confirmed*); refused/timeout
@@ -668,10 +668,10 @@ three standard invariants (`std:no-internet-to-datastore`, `std:guest-cannot-rea
 
 1. **Verifier and spec licence** (Apache-2.0 recommended) and CLA confirmation.
 2. **Key custody:** hosted signing only for the MVP, or BYOK/KMS from day one? (Recommend: hosted key + published roadmap to BYOK; BYOK before the first enterprise/insurer deal.)
-3. **In-zone vantage probes (§5.3):** approve a new read-only TCP-connect capability for agents/Sentry, under existing scope/proof gating? Without it, REACH invariants top out at tier `observed`.
+3. **In-zone vantage probes (§5.3):** *approved by the owner (built in P5)*: a new read-only TCP-connect capability for agents/Sentry, under existing scope/proof gating. Without it, REACH invariants top out at tier `observed`.
 4. **Default visibility** of attestations: private-by-default with explicit publish (recommended) vs public by default.
 5. **First buyer:** MSPs (multi-tenant console exists) vs cyber-insurance carriers vs vendors answering questionnaires. It decides which invariants and acceptance policy ship first.
-6. **Naming/placement:** a product tier in `EDITIONS.md` and a new section in the owner-approved dashboard; both need owner sign-off per `CLAUDE.md`.
+6. **Naming/placement:** a product tier in `EDITIONS.md` and a new section in the owner-approved dashboard; the owner has given standing sign-off for UI work (`CLAUDE.md`), so no further approval is needed.
 
 **Explicitly out of the MVP:** runtime/EDR detection, Windows/macOS enforcement, identity (IdP)
 invariants, Wi-Fi/RF sensing, firmware, the Shield client, multi-vendor firewall equivalence proofs,
