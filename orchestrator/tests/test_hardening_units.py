@@ -229,6 +229,29 @@ async def test_audit_ip_ignores_a_forged_prefix_and_says_when_it_is_proxied(app,
 
 # ---- static guard: nobody but auth.py reads the forwarded-for header (attack 25) ------------------------------ #
 
+_FORWARDING_HEADERS = ("x-forwarded-for", "x-real-ip", "x-client-ip", "forwarded")
+
+
+def _folded_text(node) -> "str | None":
+    """Lower-case text of a string/bytes literal, a constant ``+`` concatenation or an f-string's literal parts
+    (``None`` for anything else), so ``b'x-forwarded-for'`` and ``'x-forwarded-' + 'for'`` are seen like the plain form."""
+    import ast
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        v = node.value
+        return (v.decode("latin-1") if isinstance(v, bytes) else v).lower()
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        a, b = _folded_text(node.left), _folded_text(node.right)
+        return a + b if a is not None and b is not None else None
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for v in node.values:
+            t = _folded_text(v) if isinstance(v, ast.Constant) else ""
+            parts.append(t or "")
+        return "".join(parts)
+    return None
+
+
 def _xff_offenders(source: str) -> list[str]:
     """Findings in one module: a string constant naming ``x-forwarded-for`` (outside docstrings) or a
     ``.split(',')[0]`` of anything in a module that mentions the header at all."""
@@ -244,10 +267,12 @@ def _xff_offenders(source: str) -> list[str]:
     out: list[str] = []
     mentions = False
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in doc_ids
-                and "x-forwarded-for" in node.value.lower()):
+        if id(node) in doc_ids:
+            continue
+        text = _folded_text(node)
+        if text is not None and any(h in text for h in _FORWARDING_HEADERS):
             mentions = True
-            out.append(f"line {node.lineno}: reads the x-forwarded-for header")
+            out.append(f"line {node.lineno}: reads a client-address forwarding header")
     for node in ast.walk(tree):
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call):
             f = node.value.func
@@ -267,6 +292,18 @@ def test_the_static_guard_catches_the_leftmost_idiom():
     assert _xff_offenders(bad2)
     fine = 'def ip(request):\n    """mentions x-forwarded-for in a docstring only"""\n    return request.client.host\n'
     assert _xff_offenders(fine) == []
+
+
+@pytest.mark.parametrize("src", [
+    "def ip(r):\n    return dict(r.scope['headers']).get(b'x-forwarded-for')\n",
+    "def ip(r):\n    return r.headers.get('x-forwarded-' + 'for')\n",
+    "def ip(r):\n    return r.headers.get(b'X-Forwarded-' b'For'.decode())\n",
+    "def ip(r):\n    return r.headers.get('X-Real-IP')\n",
+    "def ip(r):\n    return r.headers.get('forwarded')\n",
+    "def ip(r):\n    return r.headers.get(f'x-forwarded-{\"for\"}')\n",
+])
+def test_the_static_guard_catches_evasive_spellings(src):
+    assert _xff_offenders(src), src
 
 
 def test_no_module_outside_auth_reads_x_forwarded_for():

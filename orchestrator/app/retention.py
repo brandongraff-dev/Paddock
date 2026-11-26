@@ -264,7 +264,14 @@ async def run_retention(
             # RLS hides every other tenant's rows, so purge each tenant inside
             # its own context (before this only the default tenant was ever
             # purged and every other tenant's data was retained forever).
-            for tid in await tenancy.list_tenant_ids(pool):
+            tids = await tenancy.list_tenant_ids(pool)
+            active_tids = set(tids)
+            if tenancy.DEFAULT_TENANT_ID not in tids:
+                # A suspended platform tenant must not stop the purge of the global tables it alone may write
+                # (platform_only policies run in its turn); tenant policies are unaffected by the extra turn
+                # because a suspended tenant is skipped for them below.
+                tids = [*tids, tenancy.DEFAULT_TENANT_ID]
+            for tid in tids:
                 with tenancy.tenant_context(tid):
                     async with pool.acquire() as tcon:
                         for p in pols:
@@ -273,6 +280,8 @@ async def run_retention(
                                 continue
                             if p.platform_only and tid != tenancy.DEFAULT_TENANT_ID:
                                 continue  # a global table: the platform tenant's turn only
+                            if not p.platform_only and tid not in active_tids:
+                                continue  # the platform turn added above is for global tables only
                             try:
                                 n = await _purge_one(tcon, p, batch, max_batches)
                             except Exception:  # noqa: BLE001 -- one bad table never stops the rest

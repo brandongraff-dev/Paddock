@@ -348,6 +348,10 @@ async def test_mutation_writes_intent_then_outcome(client, db_pool):
             "SELECT id, status, details FROM audit_log WHERE path = '/v1/scope' ORDER BY id"
         )
     intent, outcome = (json.loads(r["details"]) for r in rows[-2:])
+    # P2.1 6.3 / D35 supersedes the exact-dict form: a request whose address was derived through a trusted proxy
+    # (the in-process client 127.0.0.1 is one) carries ``ip_proxied: true``. Anything else is still a failure.
+    for d in (intent, outcome):
+        assert d.pop("ip_proxied", True) is True
     assert intent == {"phase": "intent"} and rows[-2]["status"] is None
     assert outcome == {"phase": "outcome", "intent_id": rows[-2]["id"]}
     assert rows[-1]["status"] == 201

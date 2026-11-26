@@ -326,3 +326,22 @@ async def test_a_reference_in_one_tenant_never_protects_another_tenants_copy_eve
     async with db_pool.acquire() as con:
         alive = {r["id"] for r in await con.fetch("SELECT id FROM agent_manifests")}
     assert alive == {a}
+
+
+async def test_global_tables_are_still_purged_when_the_platform_tenant_is_not_in_the_active_list(
+        db_pool, app_pool, monkeypatch):
+    """A suspended platform tenant must not stop the purge of the global advisory tables (storage-growth guard)."""
+    await _tenants(db_pool)
+    async with db_pool.acquire() as con:
+        await _scope(con)
+        await con.execute(
+            "INSERT INTO advisory_fixes (scope, cve_id, pkg, pkg_kind, state, first_seen_at, last_seen_snapshot, removed_at) "
+            "VALUES ('debian:bookworm','CVE-2024-0009','p','source','fixed', now(), $1, $2)",
+            await _snap(con, "tracker", "debian:bookworm", 1, "current", 1), _ago(60))
+
+    async def only_a_and_b(pool, *, active_only=True):
+        return [TENANT_A, TENANT_B]
+
+    monkeypatch.setattr(tenancy, "list_tenant_ids", only_a_and_b)
+    counts = await retention.run_retention(db_pool)
+    assert counts["advisory_fixes"] == 1
