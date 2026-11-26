@@ -331,3 +331,318 @@ def test_sg_without_an_ip_permissions_list_is_flagged_not_treated_as_empty():
     md = {a["metadata"]["group_id"]: a["metadata"] for a in st.batch.assets}
     assert "ingress_rules" not in md["sg-1"] and md["sg-1"]["ingress_truncated"] is True
     assert md["sg-2"]["ingress_rules"] == [] and md["sg-2"]["ingress_truncated"] is False
+
+
+# --------------------------------------------------------------------------- #
+# builders-7: the ENI inventory (docs/ASSURANCE_P2_1.md section 5.3, D32)
+# --------------------------------------------------------------------------- #
+
+import datetime as dt                           # noqa: E402
+import random                                   # noqa: E402
+import re                                       # noqa: E402
+from pathlib import Path                        # noqa: E402
+from types import SimpleNamespace               # noqa: E402
+
+ACCT = "123456789012"
+
+
+def _inst(iid, region=REGION):
+    return aws_mod._Instance(f"arn:aws:ec2:{region}:{ACCT}:instance/{iid}", region, iid, [], [], [], None, {})
+
+
+def _eni(eid, groups, *, status="in-use", itype="interface", desc="", iid=None, managed=False,
+         owner=ACCT, public=None, **extra):
+    e = {"NetworkInterfaceId": eid, "Status": status, "InterfaceType": itype, "Description": desc,
+         "RequesterManaged": managed, "Groups": [{"GroupId": g, "GroupName": g} for g in groups]}
+    if iid or status == "in-use":
+        e["Attachment"] = {"InstanceId": iid, "InstanceOwnerId": owner, "Status": "attached"} if iid else \
+            {"InstanceOwnerId": owner, "Status": "attached"}
+        if not iid:
+            e["Attachment"].pop("InstanceId")
+    if public:
+        e["Association"] = {"PublicIp": public}
+    e.update(extra)
+    return e
+
+
+def _classify(eni, *, instances=("i-1",), lbs=("app/front", "classic/old")):
+    return aws_mod.classify_eni(eni, region=REGION, account=ACCT,
+                                instances={i: _inst(i) for i in instances}, lb_names=set(lbs))
+
+
+def test_an_attached_instance_interface_is_modelled_only_when_the_instance_is_ours_and_in_this_region():
+    assert _classify(_eni("eni-1", ["sg-a"], iid="i-1")) == ("instance", "i-1")
+    assert _classify(_eni("eni-1", ["sg-a"], iid="i-ghost"))[0] == "other"                  # not described: unmodelled
+    assert _classify(_eni("eni-1", ["sg-a"], iid="i-1", owner="222222222222"))[0] == "other"   # another account's
+    assert _classify(_eni("eni-1", ["sg-a"], iid="i-1", status="available"))[0] == "detached"
+    inst = {"i-1": _inst("i-1", "eu-west-1")}
+    assert aws_mod.classify_eni(_eni("eni-1", ["sg-a"], iid="i-1"), region=REGION, account=ACCT,
+                                instances=inst, lb_names=set())[0] == "other"                # other region's instance
+    for itype in ("trunk", "branch", "lambda", "vpc_endpoint"):
+        assert _classify(_eni("eni-1", ["sg-a"], iid="i-1", itype=itype))[0] != "instance"   # pod / service ENIs
+
+
+def test_a_load_balancer_interface_is_modelled_only_when_requester_managed_and_the_typed_name_was_described():
+    assert _classify(_eni("e", ["g"], desc="ELB app/front/50dc6c495c0c9188", managed=True)) == ("lb", "app/front")
+    assert _classify(_eni("e", ["g"], desc="ELB old", managed=True)) == ("lb", "classic/old")
+    assert _classify(_eni("e", ["g"], desc="ELB app/other/1", managed=True))[0] == "other"       # not described here
+    assert _classify(_eni("e", ["g"], desc="ELB net/front/1", managed=True))[0] == "other"       # same name, other type
+    assert _classify(_eni("e", ["g"], desc="ELB front", managed=True))[0] == "other"             # untyped = classic/front
+    # a user can name any ENI "ELB app/front/..": only requester-managed ones are the load balancer's
+    assert _classify(_eni("e", ["g"], desc="ELB app/front/50dc6c495c0c9188", managed=False))[0] == "other"
+    assert _classify(_eni("e", ["g"], desc="ELB app/front/1", managed=True, status="available"))[0] == "detached"
+    assert _classify(_eni("e", ["g"], desc="ELB app/front/1/x", managed=True))[0] == "other"
+    assert _classify(_eni("e", ["g"], desc="ELB app//1", managed=True))[0] == "other"
+
+
+@pytest.mark.parametrize("kw,kind", [
+    ({"itype": "lambda"}, "lambda"),
+    ({"desc": "AWS Lambda VPC ENI-fn-1234"}, "lambda"),
+    ({"desc": "arn:aws:ecs:us-east-1:123456789012:attachment/abc"}, "ecs"),
+    ({"desc": "arn:aws-us-gov:ecs:us-gov-west-1:123456789012:attachment/abc"}, "ecs"),
+    ({"desc": "RDSNetworkInterface"}, "rds"),
+    ({"itype": "vpc_endpoint"}, "vpce"),
+    ({"itype": "gateway_load_balancer_endpoint"}, "vpce"),
+    ({"itype": "nat_gateway"}, "nat_gateway"),
+    ({"status": "available"}, "detached"),
+    ({"itype": "api_gateway_managed"}, "other"),
+    ({"desc": "something we never heard of"}, "other"),
+])
+def test_everything_that_is_not_an_instance_or_a_described_lb_is_unmodelled_with_a_kind(kw, kind):
+    got, who = _classify(_eni("eni-9", ["sg-a"], **kw))
+    assert got == kind and who is None
+
+
+def test_summarize_counts_each_group_an_interface_is_in_and_ignores_unknown_groups():
+    enis = [_eni("eni-a", ["sg-a", "sg-b"], iid="i-1"),
+            _eni("eni-b", ["sg-a"], itype="lambda"),
+            _eni("eni-c", ["sg-b", "sg-zzz"], desc="arn:aws:ecs:r:a:x", public="54.1.1.1"),
+            _eni("eni-d", ["sg-a"], desc="ELB app/front/1", managed=True)]
+    out = aws_mod.summarize_enis(enis, region=REGION, account=ACCT, instances={"i-1": _inst("i-1")},
+                                 lb_names={"app/front"}, sg_ids={"sg-a", "sg-b", "sg-empty"})
+    assert set(out) == {"sg-a", "sg-b", "sg-empty"}
+    assert out["sg-a"] == {"instances": ["i-1"], "lbs": ["app/front"], "truncated": False,
+                           "unmodeled": {"count": 1, "kinds": {"lambda": 1},
+                                         "sample": [{"id": "eni-b", "kind": "lambda", "public": False}]}}
+    assert out["sg-b"]["instances"] == ["i-1"] and out["sg-b"]["unmodeled"] == {
+        "count": 1, "kinds": {"ecs": 1}, "sample": [{"id": "eni-c", "kind": "ecs", "public": True}]}
+    assert out["sg-empty"] == {"instances": [], "lbs": [], "truncated": False,
+                               "unmodeled": {"count": 0, "kinds": {}, "sample": []}}
+    json.dumps(out)
+
+
+def test_summarize_is_deterministic_and_caps_with_a_truncated_flag():
+    enis = [_eni(f"eni-{i:04d}", ["sg-a"], iid=f"i-{i:04d}") for i in range(600)]
+    enis += [_eni(f"eni-l{i:04d}", ["sg-a"], desc=f"ELB app/lb{i}/1", managed=True) for i in range(200)]
+    enis += [_eni(f"eni-x{i:04d}", ["sg-a"], itype="lambda") for i in range(37)]
+    inst = {f"i-{i:04d}": _inst(f"i-{i:04d}") for i in range(600)}
+    lbs = {f"app/lb{i}" for i in range(200)}
+    first = aws_mod.summarize_enis(enis, region=REGION, account=ACCT, instances=inst, lb_names=lbs, sg_ids={"sg-a"})
+    m = first["sg-a"]
+    assert len(m["instances"]) == 512 and m["instances"] == sorted(m["instances"])
+    assert len(m["lbs"]) == 128 and m["lbs"] == sorted(m["lbs"])
+    assert m["truncated"] is True
+    assert m["unmodeled"]["count"] == 37 and m["unmodeled"]["kinds"] == {"lambda": 37}
+    assert [s["id"] for s in m["unmodeled"]["sample"]] == [f"eni-x{i:04d}" for i in range(10)]
+    for seed in range(4):
+        shuffled = enis[:]
+        random.Random(seed).shuffle(shuffled)
+        assert aws_mod.summarize_enis(shuffled, region=REGION, account=ACCT, instances=inst, lb_names=lbs,
+                                      sg_ids={"sg-a"}) == first
+    under = aws_mod.summarize_enis(enis[:512], region=REGION, account=ACCT, instances=inst, lb_names=lbs,
+                                   sg_ids={"sg-a"})
+    assert under["sg-a"]["truncated"] is False and len(under["sg-a"]["instances"]) == 512
+
+
+def test_summarize_survives_garbage_interfaces_by_counting_them_unmodelled():
+    out = aws_mod.summarize_enis([None, "x", {}, {"Groups": "sg-a"}, {"Groups": [None, {"GroupId": 5}]},
+                                  {"NetworkInterfaceId": "eni-1", "Groups": [{"GroupId": "sg-a"}], "Status": 7}],
+                                 region=REGION, account=ACCT, instances={}, lb_names=set(), sg_ids={"sg-a"})
+    assert out["sg-a"]["unmodeled"]["count"] == 1 and out["sg-a"]["instances"] == []
+
+
+def _pull_sync(conn):
+    import asyncio
+    return asyncio.run(conn.pull())
+
+
+def _sgs(batch):
+    return {a["metadata"]["name"]: a["metadata"] for a in batch.assets
+            if a["kind"] == "cloud_resource" and a["metadata"].get("resource_type") == "security_group"}
+
+
+def _insts(batch):
+    return [a["metadata"] for a in batch.assets
+            if a["kind"] == "cloud_resource" and a["metadata"].get("resource_type") == "instance"]
+
+
+def _faulty(*, eni=None, instances=None, sgs=None):
+    """A boto3 Session whose chosen operations answer ``(code, [pages-before-the-error])`` like a denied or
+    interrupted AWS call. ``before-call`` handlers short-circuit the HTTP exchange, so everything else is moto."""
+    import boto3 as _boto3
+
+    faults = {"DescribeNetworkInterfaces": eni, "DescribeInstances": instances, "DescribeSecurityGroups": sgs}
+
+    class Session(_boto3.session.Session):
+        def client(self, *a, **kw):
+            c = super().client(*a, **kw)
+            for op, spec in faults.items():
+                if spec is None:
+                    continue
+                state = {"n": 0}
+
+                def hook(model, params, request_signer, context, _op=op, _spec=spec, _state=state, **_):
+                    code, partial = _spec
+                    _state["n"] += 1
+                    if _state["n"] <= len(partial):
+                        return SimpleNamespace(status_code=200, headers={}, content=b""), partial[_state["n"] - 1]
+                    return (SimpleNamespace(status_code=403, headers={}, content=b""),
+                            {"Error": {"Code": code, "Message": "no"}, "ResponseMetadata": {"HTTPStatusCode": 403}})
+
+                c.meta.events.register(f"before-call.ec2.{op}", hook)
+            return c
+
+    return Session
+
+
+async def _pull_world(monkeypatch, *, session=None, mutate=None):
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(k, "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
+    with moto.mock_aws():
+        world = _build_world()
+        if mutate:
+            mutate(world)
+        conn = aws_mod.AwsConnector(
+            {"regions": [REGION], "role_arn": "arn:aws:iam::123456789012:role/paddock-readonly"},
+            SECRETS, http=None)
+        if session:
+            conn.session_factory = session
+        batch = await conn.pull()
+    return world, batch, conn
+
+
+async def test_a_complete_pull_writes_the_inventory_onto_every_group_and_marks_the_region_complete(monkeypatch):
+    world, batch, conn = await _pull_world(monkeypatch)
+    sgs = _sgs(batch)
+    web = sgs["web"]
+    inv, mem = web["eni_inventory"], web["eni_members"]
+    assert inv["complete"] is True and inv["region"] == REGION and inv["eni_total"] >= 1
+    assert dt.datetime.fromisoformat(inv["read_at"]).tzinfo is not None
+    assert mem["instances"] == [world["iid"]] and mem["truncated"] is False
+    assert mem["unmodeled"] == {"count": 0, "kinds": {}, "sample": []} and mem["lbs"] == []
+    assert sgs["db"]["eni_inventory"]["complete"] is True and sgs["db"]["eni_members"]["instances"] == []
+    assert all(m["inventory_complete"] is True for m in sgs.values())
+    assert all(m["inventory_complete"] is True for m in _insts(batch))
+    assert not [w for w in conn.last_warnings if "NetworkInterfaces" in w]
+
+
+async def test_a_stray_interface_in_a_group_is_counted_unmodelled(monkeypatch):
+    def add(world):
+        ec2 = boto3.client("ec2", region_name=REGION)
+        sg = next(g["GroupId"] for g in ec2.describe_security_groups()["SecurityGroups"] if g["GroupName"] == "web")
+        sub = ec2.describe_subnets()["Subnets"][0]["SubnetId"]
+        ec2.create_network_interface(SubnetId=sub, Groups=[sg], Description="AWS Lambda VPC ENI-fn")
+        ec2.create_network_interface(SubnetId=sub, Groups=[sg], Description="plain")
+
+    _, batch, _ = await _pull_world(monkeypatch, mutate=add)
+    web = _sgs(batch)["web"]["eni_members"]
+    assert web["unmodeled"]["count"] == 2 and web["unmodeled"]["kinds"] == {"lambda": 1, "detached": 1}
+    assert web["instances"] and len(web["unmodeled"]["sample"]) == 2
+
+
+async def test_access_denied_on_the_interface_read_degrades_to_incomplete_with_a_warning(monkeypatch):
+    sess = _faulty(eni=("UnauthorizedOperation", []))
+    _, batch, conn = await _pull_world(monkeypatch, session=sess)
+    for md in _sgs(batch).values():
+        assert md["eni_inventory"]["complete"] is False and md["eni_members"] == {}
+        assert md["inventory_complete"] is True                  # the group and instance listings were fine
+    assert any("ec2:DescribeNetworkInterfaces[us-east-1]: UnauthorizedOperation" in w for w in conn.last_warnings)
+    assert _insts(batch)                                          # the rest of the pull is untouched
+
+
+async def test_a_partial_interface_page_is_incomplete_not_a_short_list(monkeypatch):
+    first = {"NetworkInterfaces": [_eni("eni-1", ["sg-whatever"], itype="lambda")], "NextToken": "page-2"}
+    sess = _faulty(eni=("RequestLimitExceeded", [first]))
+    _, batch, conn = await _pull_world(monkeypatch, session=sess)
+    for md in _sgs(batch).values():
+        assert md["eni_inventory"]["complete"] is False and md["eni_members"] == {}
+    assert any("DescribeNetworkInterfaces" in w for w in conn.last_warnings)
+
+
+@pytest.mark.parametrize("op", ["instances", "sgs"])
+async def test_a_failed_instance_or_group_listing_marks_the_regions_assets_incomplete(monkeypatch, op):
+    sess = _faulty(**{op: ("RequestLimitExceeded", [])})
+    _, batch, conn = await _pull_world(monkeypatch, session=sess)
+    # a failure on the FIRST page leaves nothing to build from; what is written must say so
+    flagged = [m for m in list(_sgs(batch).values()) + _insts(batch)]
+    assert all(m["inventory_complete"] is False for m in flagged)
+    assert any("RequestLimitExceeded" in w for w in conn.last_warnings)
+
+
+async def test_a_listing_that_fails_after_its_first_page_flags_the_pages_it_did_return(monkeypatch):
+    import boto3 as _boto3
+
+    def pages(monkeypatch_session):
+        pass
+
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(k, "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
+    with moto.mock_aws():
+        _build_world()
+        ec2 = _boto3.client("ec2", region_name=REGION)
+        real = ec2.describe_security_groups()["SecurityGroups"]
+        first = {"SecurityGroups": real[:1], "NextToken": "2"}
+        conn = aws_mod.AwsConnector({"regions": [REGION]}, SECRETS, http=None)
+        conn.session_factory = _faulty(sgs=("InternalError", [first]))
+        batch = await conn.pull()
+    sgs = _sgs(batch)
+    assert len(sgs) == 1 and all(m["inventory_complete"] is False for m in sgs.values())
+    assert all(m["inventory_complete"] is False for m in _insts(batch))
+
+
+async def test_a_later_failed_read_overwrites_a_stale_complete_inventory_in_the_assets(
+        db_pool, fake_redis, monkeypatch):
+    """The metadata merge is shallow: a failed read must WRITE incomplete, never leave the old complete:true."""
+    from app.integrations.ingest import apply_source_batch
+
+    _, good, _ = await _pull_world(monkeypatch)
+    _, bad, _ = await _pull_world(monkeypatch, session=_faulty(eni=("UnauthorizedOperation", [])))
+    await apply_source_batch(db_pool, fake_redis, good, source="integration:aws")
+
+    async def stored():
+        rows = await db_pool.fetch(
+            "SELECT metadata FROM assets WHERE kind = 'cloud_resource' AND metadata->>'resource_type' = 'security_group' "
+            "AND metadata->>'name' = 'web'")
+        (r,) = rows
+        md = r["metadata"]
+        return json.loads(md) if isinstance(md, str) else md
+
+    before = await stored()
+    assert before["eni_inventory"]["complete"] is True and before["eni_members"]["instances"]
+    await apply_source_batch(db_pool, fake_redis, bad, source="integration:aws")
+    after = await stored()
+    assert after["eni_inventory"]["complete"] is False and after["eni_members"] == {}
+
+
+def test_a_group_with_no_read_yet_is_written_incomplete_not_omitted():
+    st = aws_mod._State(account="1", partition="aws", admin_ports=(), crown_tags=[], data_stores_sensitive=True)
+    st.sgs = {"sg-2": {"GroupId": "sg-2", "_region": REGION, "IpPermissions": []}}
+    aws_mod.AwsConnector._security_group_findings(aws_mod.AwsConnector({}, {}, None), st, REGION)
+    (a,) = st.batch.assets
+    assert a["metadata"]["eni_inventory"]["complete"] is False and a["metadata"]["eni_members"] == {}
+
+
+def test_the_least_privilege_policy_lists_describe_network_interfaces():
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "INTEGRATIONS-CONTEXT.md").read_text()
+    start = doc.index('"Sid": "PaddockInventory"')
+    block = doc[start:doc.index("]", start)]
+    assert '"ec2:DescribeNetworkInterfaces"' in block
+    assert '"ec2:DescribeSecurityGroups"' in block
+    # every ec2 call the connector makes is in the policy (the doc is the contract with the customer)
+    src = Path(aws_mod.__file__).read_text()
+    called = set(re.findall(r"ec2:Describe\w+", src))
+    listed = set(re.findall(r'"(ec2:Describe\w+)"', block))
+    assert called <= listed, called - listed
+    assert "network interface" in doc.lower() and "unenumerated" in doc.lower() or "ENI inventory" in doc

@@ -7,6 +7,10 @@
                       corroborated as one cloud instance (docs/ASSURANCE_P2.md E3)
   ip:<addr>           a host with no asset row (canonical, compressed, lowercase)
   cidr:<net>          a network (security-group source ranges, declared zones)
+  estate:<acct>:<region>:<vpc|none>
+                      the RESIDUAL of a cloud account/region/VPC: whatever may sit in a referenced
+                      security group that no builder models (Lambda, Fargate, endpoints, ...). Never
+                      covered, never CIDR-expanded, never an asset (docs/ASSURANCE_P2_1.md D31)
 
 Refs are canonical strings so equal things compare equal across builders.
 """
@@ -18,8 +22,8 @@ import uuid
 from typing import Optional
 
 INTERNET = "internet"
-KINDS = ("internet", "host", "cloud_instance", "cloud_db", "cloud_lb", "device", "ip", "cidr")
-_PREFIXES = ("asset", "agent", "ip", "cidr")
+KINDS = ("internet", "host", "cloud_instance", "cloud_db", "cloud_lb", "device", "ip", "cidr", "estate")
+_PREFIXES = ("asset", "agent", "ip", "cidr", "estate")
 _MAX_REF = 128
 
 
@@ -56,6 +60,26 @@ def cidr_ref(net: str) -> str:
         raise RefError(f"bad cidr {net!r}") from exc
 
 
+_ESTATE_ACCOUNT_RE = re.compile(r"[0-9]{12}")
+_ESTATE_REGION_RE = re.compile(r"[a-z]{2}(?:-[a-z]+)+-[0-9]{1,2}")
+_ESTATE_VPC_RE = re.compile(r"vpc-[0-9a-f]{1,32}")
+
+
+def estate_ref(account: str, region: str, vpc: Optional[str]) -> str:
+    """``estate:<12-digit account>:<region>:<vpc-id|none>``: strict (no case folding, no whitespace,
+    ASCII digits only) so two builders can never mint two spellings of one residual. ``vpc`` of
+    ``None``, ``''`` or ``'none'`` is the account/region residual with no VPC."""
+    if not (isinstance(account, str) and _ESTATE_ACCOUNT_RE.fullmatch(account)):
+        raise RefError(f"bad estate account {account!r}")
+    if not (isinstance(region, str) and len(region) <= 32 and _ESTATE_REGION_RE.fullmatch(region)):
+        raise RefError(f"bad estate region {region!r}")
+    if vpc is None or vpc in ("", "none"):
+        vpc = "none"
+    elif not (isinstance(vpc, str) and _ESTATE_VPC_RE.fullmatch(vpc)):
+        raise RefError(f"bad estate vpc {vpc!r}")
+    return f"estate:{account}:{region}:{vpc}"
+
+
 def parse_ref(ref: str) -> tuple[str, Optional[str]]:
     """``(prefix, value)``; ``('internet', None)`` for the internet. Raises ``RefError``."""
     if not isinstance(ref, str) or not ref or len(ref) > _MAX_REF:
@@ -65,7 +89,13 @@ def parse_ref(ref: str) -> tuple[str, Optional[str]]:
     prefix, sep, value = ref.partition(":")
     if not sep or prefix not in _PREFIXES or not value:
         raise RefError(f"bad ref {ref!r}")
-    canon = {"asset": asset_ref, "agent": agent_ref, "ip": ip_ref, "cidr": cidr_ref}[prefix](value)
+    if prefix == "estate":
+        parts = value.split(":")
+        if len(parts) != 3:
+            raise RefError(f"bad ref {ref!r}")
+        canon = estate_ref(*parts)
+    else:
+        canon = {"asset": asset_ref, "agent": agent_ref, "ip": ip_ref, "cidr": cidr_ref}[prefix](value)
     if canon != ref:
         raise RefError(f"non-canonical ref {ref!r} (expected {canon!r})")
     return prefix, value

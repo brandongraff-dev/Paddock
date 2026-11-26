@@ -36,3 +36,61 @@ def test_agent_refs():
         assert not refs.is_valid_ref(bad), bad
     with pytest.raises(refs.RefError):
         refs.agent_ref("not-a-uuid")
+
+
+# --------------------------------------------------------------------------- #
+# estate: the residual node of a security group whose membership is not proven
+# (docs/ASSURANCE_P2_1.md section 5.2, D31)
+# --------------------------------------------------------------------------- #
+
+def test_estate_ref_is_canonical_and_parses_back():
+    r = refs.estate_ref("123456789012", "us-east-1", "vpc-0abc123")
+    assert r == "estate:123456789012:us-east-1:vpc-0abc123"
+    assert refs.parse_ref(r) == ("estate", "123456789012:us-east-1:vpc-0abc123")
+    assert refs.is_valid_ref(r)
+    assert refs.estate_ref("123456789012", "eu-west-2", None) == "estate:123456789012:eu-west-2:none"
+    assert refs.estate_ref("123456789012", "eu-west-2", "") == "estate:123456789012:eu-west-2:none"
+    assert refs.estate_ref("123456789012", "eu-west-2", "none") == "estate:123456789012:eu-west-2:none"
+    assert refs.is_valid_ref("estate:000000000001:us-gov-west-1:none")
+
+
+def test_estate_is_a_node_kind_and_a_ref_prefix_but_not_an_agent_style_kind():
+    assert "estate" in refs.KINDS
+    assert "estate" in refs._PREFIXES
+    assert refs.KINDS.count("estate") == 1
+
+
+@pytest.mark.parametrize("acct", ["", "12345678901", "1234567890123", "12345678901a", "１２３４５６７８９０１２",
+                                  " 123456789012", "123456789012\n", None, 123456789012])
+def test_estate_ref_rejects_a_bad_account(acct):
+    with pytest.raises(refs.RefError):
+        refs.estate_ref(acct, "us-east-1", "none")
+
+
+@pytest.mark.parametrize("region", ["", "US-EAST-1", "us-east", "useast1", "us-east-1:x", "us_east_1", "x" * 40,
+                                    "us-east-1 ", "us--east-1", "-us-east-1", None])
+def test_estate_ref_rejects_a_bad_region(region):
+    with pytest.raises(refs.RefError):
+        refs.estate_ref("123456789012", region, "none")
+
+
+@pytest.mark.parametrize("vpc", ["vpc-", "VPC-0abc", "vpc-0ABC", "vpc-xyz", "subnet-0abc", "vpc-0abc:1", "vpc-" + "a" * 40,
+                                 "vpc-0abc ", "None", "NONE"])
+def test_estate_ref_rejects_a_bad_vpc(vpc):
+    with pytest.raises(refs.RefError):
+        refs.estate_ref("123456789012", "us-east-1", vpc)
+
+
+@pytest.mark.parametrize("bad", ["estate:", "estate:123456789012", "estate:123456789012:us-east-1",
+                                 "estate:123456789012:us-east-1:", "estate:123456789012:us-east-1:vpc-0abc:extra",
+                                 "ESTATE:123456789012:us-east-1:none", "estate:123456789012:US-EAST-1:none",
+                                 "estate:12345:us-east-1:none", "estate:123456789012:us-east-1:vpc-0ABC",
+                                 "estate:123456789012:us-east-1:NONE", "estate:123456789012:us-east-1:vpc-0abc ",
+                                 "estate:123456789012:us-east-1:none\n"])
+def test_bad_or_non_canonical_estate_refs_are_rejected(bad):
+    assert not refs.is_valid_ref(bad)
+
+
+def test_an_estate_ref_stays_inside_the_ref_length_cap():
+    assert len(refs.estate_ref("123456789012", "ap-southeast-4", "vpc-" + "a" * 32)) <= 128
+    assert not refs.is_valid_ref("estate:123456789012:us-east-1:vpc-" + "a" * 120)

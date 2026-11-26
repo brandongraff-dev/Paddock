@@ -325,6 +325,38 @@ async def maybe_run_retention(pool, now: float | None = None) -> dict | None:
         return None
 
 
+_compaction_last_run: float | None = None
+
+
+async def maybe_run_compaction(pool, now: float | None = None) -> dict | None:
+    """Compact old ``invariant_runs`` rows (docs/ASSURANCE_P2_1.md 6.2, D34) next to the retention purge.
+
+    Same cadence and the same switch as ``maybe_run_retention``: with retention off the operator asked to keep
+    everything, and compaction rewrites rows, so it does not run either. One replica at a time (an advisory lock inside
+    ``housekeeping.run_compaction``). Never raises.
+    """
+    import time
+
+    from .assurance import housekeeping
+    from .opsconfig import ops_settings
+
+    global _compaction_last_run
+    if not ops_settings.retention_enabled:
+        return None
+    now = time.monotonic() if now is None else now
+    if (
+        _compaction_last_run is not None
+        and now - _compaction_last_run < ops_settings.retention_interval_sec
+    ):
+        return None
+    _compaction_last_run = now
+    try:
+        return await housekeeping.run_compaction(pool)
+    except Exception:  # noqa: BLE001
+        logger.exception("assurance_compaction_run_failed")
+        return None
+
+
 async def _guarded(name: str, coro) -> None:
     """Run one sweep; a failure is logged and never stops the loop."""
     try:
@@ -383,6 +415,7 @@ async def scheduler_loop(app) -> None:
                     if proof_due:
                         await _guarded("scope_proof_sweep_failed", scope_proof.reverify_due(pool, r))
             await maybe_run_retention(pool)
+            await maybe_run_compaction(pool)
             from .reports.digest import run_due_digests
 
             await _guarded("digest_tick_failed", run_due_digests(pool))
