@@ -151,6 +151,31 @@ async def test_concurrent_ensure_estate_yields_one_estate_and_one_commit_key(db_
         assert len(await estate.get_commit_key(con)) == 32
 
 
+async def test_the_estate_row_is_locked_while_it_is_filled_in(db_pool, configured):
+    """Two callers that both see an unfilled estate row must not each create an estate id: ensure_estate takes the row
+    lock (FOR UPDATE) and re-reads after it, so the loser sees the winner's id and writes no second audit row."""
+    winner = "e_" + "a" * 26
+    async with db_pool.acquire() as holder:
+        await holder.execute("INSERT INTO attest_estates (tenant_id) VALUES ($1::uuid)", DEFAULT)
+        tx = holder.transaction()
+        await tx.start()
+        await holder.fetchrow("SELECT estate_id FROM attest_estates WHERE tenant_id = $1::uuid FOR UPDATE", DEFAULT)
+
+        async def caller():
+            async with db_pool.acquire() as con:
+                return await estate.ensure_estate(con)
+
+        task = asyncio.ensure_future(caller())
+        await asyncio.sleep(0.6)
+        assert not task.done(), "ensure_estate did not wait for the row lock"
+        await holder.execute("UPDATE attest_estates SET estate_id = $2 WHERE tenant_id = $1::uuid", DEFAULT, winner)
+        await tx.commit()
+        info = await asyncio.wait_for(task, 10)
+    assert info.estate_id == winner
+    assert await db_pool.fetchval("SELECT count(*) FROM audit_log WHERE action = 'attest.estate.created'") == 0
+    assert (await _counts(db_pool))["attest_key_secrets"] == 0
+
+
 async def test_each_tenant_gets_its_own_estate_and_commit_key(db_pool, app_pool, configured, tenants):
     out = {}
     for tid in (TA, TB):

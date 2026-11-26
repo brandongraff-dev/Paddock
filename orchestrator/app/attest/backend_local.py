@@ -71,9 +71,29 @@ class LocalAesGcmBackend:
 
     # ------------------------------------------------------------------ plumbing
 
+    @staticmethod
+    def _require_context(tenant: str) -> None:
+        """The key's tenant must be the tenant this code is running for. The handle is not a capability: a request
+        for tenant A that holds tenant B's handle (a bug, a forged id) must not reach B's sealed seed, so the tenant
+        context is checked here and never replaced by the handle's tenant."""
+        ambient = tenancy.current_tenant_id()
+        try:
+            same = ambient is not None and crypto.normalize_tenant(ambient) == tenant
+        except crypto.SealError:
+            same = False
+        if not same:
+            raise BackendError("the key belongs to another tenant than the current tenant context")
+
     @contextlib.asynccontextmanager
     async def _connection(self, tenant_id: str, conn: Any) -> AsyncIterator[Any]:
+        self._require_context(tenant_id)
         if conn is not None:
+            # a connection stamped for a tenant (what row-level security uses) must be this key's tenant; an
+            # unstamped one (superuser maintenance) is bounded by the tenant context above and the explicit tenant
+            # filter in every statement
+            stamped = await conn.fetchval("SELECT paddock_current_tenant()::text")
+            if stamped is not None and crypto.normalize_tenant(stamped) != tenant_id:
+                raise BackendError("the connection is stamped for another tenant than the key")
             yield conn
             return
         try:
@@ -211,6 +231,8 @@ class LocalAesGcmBackend:
             return BackendHealth(True, "ok")
         except BackendUnavailable as exc:
             return BackendHealth(False, "unavailable", str(exc))
+        except BackendError as exc:
+            return BackendHealth(False, "unusable", str(exc))
         except _TRANSIENT as exc:
             return BackendHealth(False, "unavailable", f"database unavailable ({type(exc).__name__})")
         finally:

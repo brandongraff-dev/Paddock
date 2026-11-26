@@ -4,7 +4,8 @@
 --                      is not the newest (highest seq) statement of its publication, so the head is never removed.
 --   attest_revocations BEFORE UPDATE OR DELETE: always refused (strictly append-only).
 --   attest_keys        BEFORE DELETE: always refused. BEFORE UPDATE: refused if tenant_id, kid, public_key, alg, usage,
---                      custody, backend or key_ref changes, or if the status does not move forward
+--                      custody, backend, key_ref or publication_id changes (publication_id is fixed at insert: moving an
+--                      active key out of the estate-wide set would free uq_attest_keys_one_active for a second key), or if the status does not move forward
 --                      (pending -> active -> retiring -> retired, any -> revoked, revoked is terminal).
 --
 -- The app role cannot disable triggers (099 revokes TRIGGER and it owns nothing), so these guards bind an application
@@ -59,7 +60,8 @@ BEGIN
   IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.kid IS DISTINCT FROM OLD.kid
      OR NEW.public_key IS DISTINCT FROM OLD.public_key OR NEW.alg IS DISTINCT FROM OLD.alg
      OR NEW.usage IS DISTINCT FROM OLD.usage OR NEW.custody IS DISTINCT FROM OLD.custody
-     OR NEW.backend IS DISTINCT FROM OLD.backend OR NEW.key_ref IS DISTINCT FROM OLD.key_ref THEN
+     OR NEW.backend IS DISTINCT FROM OLD.backend OR NEW.key_ref IS DISTINCT FROM OLD.key_ref
+     OR NEW.publication_id IS DISTINCT FROM OLD.publication_id THEN
     RAISE EXCEPTION 'attest_keys identity columns are immutable (kid %)', OLD.kid
       USING ERRCODE = 'integrity_constraint_violation';
   END IF;

@@ -339,6 +339,22 @@ async def test_key_identity_columns_are_frozen(pool, tenants, col, val):
     assert "immutable" in str(err).lower() or "frozen" in str(err).lower(), err
 
 
+async def test_key_publication_id_is_frozen_so_the_one_active_key_rule_cannot_be_bypassed(pool, tenants):
+    """uq_attest_keys_one_active only covers estate-wide keys (publication_id IS NULL): moving an active key out of
+    that set would free the slot for a second active key."""
+    await _key(pool, TA, KID1, status="active")
+    pub = "11111111-1111-1111-1111-111111111111"
+    err = await _rejects(pool, TA, "UPDATE attest_keys SET publication_id = $1::uuid WHERE kid = $2", pub, KID1)
+    assert "immutable" in str(err).lower(), err
+    await _rejects(pool, TA, "INSERT INTO attest_keys (tenant_id, kid, usage, status, public_key) "
+                             "VALUES ($1::uuid, $2, 'attest', 'active', $3)", TA, KID2, b"\x02" * 32)
+    assert await _val(pool, TA, "SELECT count(*) FROM attest_keys WHERE publication_id IS NOT NULL") == 0
+    # a per-publication key set at insert time is fine and stays fixed
+    await _exec(pool, TA, "INSERT INTO attest_keys (tenant_id, kid, usage, status, public_key, publication_id) "
+                          "VALUES ($1::uuid, $2, 'attest', 'active', $3, $4::uuid)", TA, KID2, b"\x02" * 32, pub)
+    await _rejects(pool, TA, "UPDATE attest_keys SET publication_id = NULL WHERE kid = $1", KID2)
+
+
 async def test_key_tenant_cannot_be_moved(db_pool, tenants):
     await _key(db_pool, TA, KID1)
     await _rejects(db_pool, TA, "UPDATE attest_keys SET tenant_id = $1::uuid", TB)

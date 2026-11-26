@@ -285,6 +285,20 @@ def test_context_components_cannot_smuggle_the_separator(kek, bad):
         crypto.seal(b"k" * 32, **dict(CTX, **bad))
 
 
+@pytest.mark.parametrize("bad", [
+    dict(kid="\u00e9"), dict(usage="att\u00e9st"), dict(alg="ed\u0222"), dict(kid="k\u200bid"), dict(kid="\U0001f511"),
+])
+def test_non_ascii_context_components_are_a_seal_error_not_a_unicode_error(kek, bad):
+    """Fails closed with the type callers catch (SealError), never a raw UnicodeEncodeError."""
+    with pytest.raises(crypto.SealError):
+        crypto.seal(b"k" * 32, **dict(CTX, **bad))
+    blob = crypto.seal(b"k" * 32, **CTX)
+    with pytest.raises(crypto.SealError):
+        crypto.unseal(blob, **dict(CTX, **bad))
+    with pytest.raises(crypto.SealError):
+        crypto.wrap_aad(**dict(CTX, **bad))
+
+
 def test_tenant_id_is_normalised(kek):
     blob = crypto.seal(b"k" * 32, **dict(CTX, tenant_id=TENANT.upper()))
     assert bytes(crypto.unseal(blob, **dict(CTX, tenant_id=uuid.UUID(TENANT)))) == b"k" * 32

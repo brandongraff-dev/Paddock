@@ -145,8 +145,9 @@ def normalize_tenant(value: Any) -> str:
 
 
 def _component(value: Any, name: str) -> str:
-    if not isinstance(value, str) or not value or _COMPONENT_FORBIDDEN.search(value) or len(value) > 256:
-        raise SealError(f"{name} is empty or contains a separator or control character")
+    if (not isinstance(value, str) or not value or len(value) > 256 or not value.isascii()
+            or _COMPONENT_FORBIDDEN.search(value)):
+        raise SealError(f"{name} is empty, too long, not ASCII, or contains a separator or control character")
     return value
 
 

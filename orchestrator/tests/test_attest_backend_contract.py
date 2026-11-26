@@ -119,6 +119,38 @@ class FakeKmsBackend:
         return BackendHealth(True, "ok")
 
 
+class _Scoped:
+    """Test helper: run every call in the handle's (or the requested) tenant context, as the issuer loop does. The
+    backend itself refuses a handle whose tenant is not the current tenant context (see the dedicated tests, which
+    use the raw backend)."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def generate(self, tenant_id, usage, alg, *, conn=None):
+        with tenancy.tenant_context(tenant_id):
+            return await self._inner.generate(tenant_id, usage, alg, conn=conn)
+
+    async def sign(self, h, message, *, conn=None):
+        with tenancy.tenant_context(h.tenant_id):
+            return await self._inner.sign(h, message, conn=conn)
+
+    async def destroy(self, h, *, conn=None):
+        with tenancy.tenant_context(h.tenant_id):
+            return await self._inner.destroy(h, conn=conn)
+
+    async def health(self, h, *, conn=None):
+        with tenancy.tenant_context(h.tenant_id):
+            return await self._inner.health(h, conn=conn)
+
+
+def _scoped(backend: Any) -> _Scoped:
+    return _Scoped(backend)
+
+
 class _FailingPool:
     def acquire(self):
         raise asyncpg.CannotConnectNowError("the database is starting up")
@@ -148,7 +180,7 @@ class Harness:
         if self.kind == "fake-kms":
             self.backend.down = True
             return self.backend
-        return LocalAesGcmBackend(_FailingPool())
+        return _scoped(LocalAesGcmBackend(_FailingPool()))
 
 
 @pytest.fixture(autouse=True)
@@ -167,7 +199,7 @@ async def tenants(db_pool):
 @pytest_asyncio.fixture(params=["local-aes-gcm", "fake-kms"])
 async def harness(request, db_pool, tenants):
     if request.param == "local-aes-gcm":
-        return Harness("local-aes-gcm", LocalAesGcmBackend(db_pool), db_pool)
+        return Harness("local-aes-gcm", _scoped(LocalAesGcmBackend(db_pool)), db_pool)
     return Harness("fake-kms", FakeKmsBackend(), db_pool)
 
 
@@ -338,13 +370,13 @@ async def test_the_anchor_usage_is_supported_too(harness):
 # --------------------------------------------------------------------------- #
 
 async def test_local_backend_declares_hosted_custody_and_no_message_cap(db_pool):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     assert (b.name, b.custody, b.algs, b.max_message_bytes) == ("local-aes-gcm", "hosted", frozenset({"ed25519"}), None)
     assert b.name == backend_local.NAME == "local-aes-gcm"
 
 
 async def test_the_sealed_row_holds_no_plaintext_seed(db_pool, tenants):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, _ = await b.generate(TA, "attest", "ed25519")
     async with db_pool.acquire() as con:
         row = await con.fetchrow("SELECT * FROM attest_key_secrets WHERE kid = $1", h.kid)
@@ -359,7 +391,7 @@ async def test_the_sealed_row_holds_no_plaintext_seed(db_pool, tenants):
 
 async def test_key_creation_is_refused_without_a_kek_and_writes_nothing(db_pool, tenants, monkeypatch):
     monkeypatch.setattr(attest_config.settings, "kek", None)
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     with pytest.raises(KekNotConfigured) as ei:
         await b.generate(TA, "attest", "ed25519")
     assert isinstance(ei.value, BackendUnavailable)
@@ -367,7 +399,7 @@ async def test_key_creation_is_refused_without_a_kek_and_writes_nothing(db_pool,
 
 
 async def test_signing_without_the_kek_is_unavailable_not_a_wrong_answer(db_pool, tenants, monkeypatch):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, _ = await b.generate(TA, "attest", "ed25519")
     monkeypatch.setattr(attest_config.settings, "kek", None)
     with pytest.raises(KekNotConfigured):
@@ -378,7 +410,7 @@ async def test_signing_without_the_kek_is_unavailable_not_a_wrong_answer(db_pool
 
 async def test_a_blob_moved_to_another_tenant_fails_authentication(db_pool, tenants):
     """mint_other_tenant_key / sealed_blob_swap_fails: B cannot sign with A's sealed seed even if the row is swapped."""
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     ha, pub_a = await b.generate(TA, "attest", "ed25519")
     hb, _ = await b.generate(TB, "attest", "ed25519")
     async with db_pool.acquire() as con:
@@ -392,7 +424,7 @@ async def test_a_blob_moved_to_another_tenant_fails_authentication(db_pool, tena
 
 
 async def test_a_blob_moved_to_another_kid_or_usage_fails_authentication(db_pool, tenants):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h1, _ = await b.generate(TA, "attest", "ed25519")
     h2, _ = await b.generate(TA, "attest", "ed25519")
     async with db_pool.acquire() as con:
@@ -412,7 +444,7 @@ async def test_a_sealed_seed_that_does_not_match_its_kid_is_refused(db_pool, ten
     async with db_pool.acquire() as con:
         assert await crypto.store_secret(con, plaintext=b"\x11" * 32, tenant_id=TA, kind="signing", kid=fake_kid,
                                          usage="attest", alg="ed25519")
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h = KeyHandle("local-aes-gcm", TA, fake_kid, "attest", "ed25519")
     with pytest.raises(BackendError, match="kid"):
         await b.sign(h, b"m")
@@ -420,7 +452,7 @@ async def test_a_sealed_seed_that_does_not_match_its_kid_is_refused(db_pool, ten
 
 
 async def test_a_swapped_public_key_column_refuses_to_sign(db_pool, tenants):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, pub = await b.generate(TA, "attest", "ed25519")
     async with db_pool.acquire() as con:
         await con.execute("INSERT INTO attest_keys (tenant_id, kid, public_key, status) VALUES ($1::uuid, $2, $3, 'active')",
@@ -430,7 +462,7 @@ async def test_a_swapped_public_key_column_refuses_to_sign(db_pool, tenants):
 
 
 async def test_a_matching_registered_public_key_signs(db_pool, tenants):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, pub = await b.generate(TA, "attest", "ed25519")
     async with db_pool.acquire() as con:
         await con.execute("INSERT INTO attest_keys (tenant_id, kid, public_key, status) VALUES ($1::uuid, $2, $3, 'active')",
@@ -439,7 +471,7 @@ async def test_a_matching_registered_public_key_signs(db_pool, tenants):
 
 
 async def test_the_unsealed_seed_buffer_is_wiped_after_signing(db_pool, tenants, monkeypatch):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, _ = await b.generate(TA, "attest", "ed25519")
     seen: list[bytearray] = []
     real = crypto.load_secret
@@ -455,7 +487,7 @@ async def test_the_unsealed_seed_buffer_is_wiped_after_signing(db_pool, tenants,
 
 
 async def test_the_seed_buffer_is_wiped_when_signing_fails_too(db_pool, tenants, monkeypatch):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, _ = await b.generate(TA, "attest", "ed25519")
     seen: list[bytearray] = []
     real = crypto.load_secret
@@ -474,7 +506,7 @@ async def test_the_seed_buffer_is_wiped_when_signing_fails_too(db_pool, tenants,
 
 async def test_a_signature_that_does_not_verify_is_never_returned(db_pool, tenants, monkeypatch):
     """sign-then-verify: a faulty signer (bit flip, fault injection) yields an error, not a bad signature."""
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, _ = await b.generate(TA, "attest", "ed25519")
     real_cls = backend_local.Ed25519PrivateKey
 
@@ -501,7 +533,7 @@ async def test_a_signature_that_does_not_verify_is_never_returned(db_pool, tenan
 
 
 async def test_there_is_no_unsealed_key_cache(db_pool, tenants):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, pub = await b.generate(TA, "attest", "ed25519")
     assert _verifies(pub, b"m", await b.sign(h, b"m"))
     async with db_pool.acquire() as con:
@@ -511,7 +543,7 @@ async def test_there_is_no_unsealed_key_cache(db_pool, tenants):
 
 
 async def test_a_revoked_key_row_blocks_signing_even_with_the_seed_present(db_pool, tenants):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     h, pub = await b.generate(TA, "attest", "ed25519")
     async with db_pool.acquire() as con:
         await con.execute("INSERT INTO attest_keys (tenant_id, kid, public_key, status) VALUES ($1::uuid, $2, $3, 'active')",
@@ -523,7 +555,7 @@ async def test_a_revoked_key_row_blocks_signing_even_with_the_seed_present(db_po
 
 
 async def test_generate_and_sign_can_run_inside_the_callers_transaction(db_pool, tenants):
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     async with db_pool.acquire() as con:
         try:
             async with con.transaction():
@@ -538,7 +570,7 @@ async def test_generate_and_sign_can_run_inside_the_callers_transaction(db_pool,
 
 
 async def test_through_the_non_superuser_app_pool_each_tenant_only_reaches_its_own_key(db_pool, app_pool, tenants):
-    b = LocalAesGcmBackend(app_pool)
+    b = _scoped(LocalAesGcmBackend(app_pool))
     ha, pub_a = await b.generate(TA, "attest", "ed25519")
     hb, pub_b = await b.generate(TB, "attest", "ed25519")
     assert _verifies(pub_a, b"m", await b.sign(ha, b"m")) and _verifies(pub_b, b"m", await b.sign(hb, b"m"))
@@ -547,16 +579,87 @@ async def test_through_the_non_superuser_app_pool_each_tenant_only_reaches_its_o
     assert await db_pool.fetchval("SELECT count(*) FROM attest_key_secrets") == 2
 
 
+async def _two_tenant_keys(b):
+    with tenancy.tenant_context(TB):
+        hb, pub_b = await b.generate(TB, "attest", "ed25519")
+    with tenancy.tenant_context(TA):
+        ha, pub_a = await b.generate(TA, "attest", "ed25519")
+    return ha, pub_a, hb, pub_b
+
+
+async def test_a_real_handle_of_another_tenant_is_refused_under_this_tenants_context(db_pool, tenants):
+    """mint_other_tenant_key (11.3): tenant A's request context can neither sign with, destroy, probe nor create keys
+    for tenant B's REAL key. The handle's tenant must equal the caller's tenant context."""
+    b = LocalAesGcmBackend(db_pool)
+    ha, pub_a, hb, pub_b = await _two_tenant_keys(b)
+    with tenancy.tenant_context(TA):
+        with pytest.raises(BackendError, match="tenant"):
+            await b.sign(hb, b"m")
+        with pytest.raises(BackendError, match="tenant"):
+            await b.destroy(hb)
+        with pytest.raises(BackendError, match="tenant"):
+            await b.generate(TB, "attest", "ed25519")
+        health = await b.health(hb)
+        assert health.ok is False and health.state == "unusable"
+        assert _verifies(pub_a, b"m", await b.sign(ha, b"m"))         # its own key still works
+    with tenancy.tenant_context(TB):
+        assert _verifies(pub_b, b"m", await b.sign(hb, b"m"))         # B's key survived the destroy attempt
+        assert (await b.health(hb)).ok is True
+    assert await db_pool.fetchval("SELECT count(*) FROM attest_key_secrets") == 2
+
+
+async def test_a_real_handle_of_another_tenant_is_refused_through_the_app_pool_too(app_pool, tenants):
+    b = LocalAesGcmBackend(app_pool)
+    ha, pub_a, hb, pub_b = await _two_tenant_keys(b)
+    with tenancy.tenant_context(TA):
+        with pytest.raises(BackendError, match="tenant"):
+            await b.sign(hb, b"m")
+        async with app_pool.acquire() as con:
+            with pytest.raises(BackendError, match="tenant"):
+                await b.sign(hb, b"m", conn=con)
+            with pytest.raises(BackendError, match="tenant"):
+                await b.destroy(hb, conn=con)
+
+
+async def test_a_connection_stamped_for_another_tenant_is_refused(db_pool, tenants):
+    """With conn= the handle must also match the tenant the connection is stamped for (what RLS will use)."""
+    b = LocalAesGcmBackend(db_pool)
+    _, _, hb, pub_b = await _two_tenant_keys(b)
+    with tenancy.tenant_context(TB):
+        async with db_pool.acquire() as con:
+            async with con.transaction():
+                await con.execute("SELECT set_config('app.tenant_id', $1, true)", TA)
+                with pytest.raises(BackendError, match="tenant"):
+                    await b.sign(hb, b"m", conn=con)
+                with pytest.raises(BackendError, match="tenant"):
+                    await b.destroy(hb, conn=con)
+                with pytest.raises(BackendError, match="tenant"):
+                    await b.generate(TB, "attest", "ed25519", conn=con)
+                await con.execute("SELECT set_config('app.tenant_id', $1, true)", TB)
+                assert _verifies(pub_b, b"m", await b.sign(hb, b"m", conn=con))
+
+
+async def test_no_tenant_context_at_all_is_refused(db_pool, tenants, monkeypatch):
+    b = LocalAesGcmBackend(db_pool)
+    _, _, hb, _ = await _two_tenant_keys(b)
+    monkeypatch.setattr(tenancy.settings, "tenancy_strict", True)
+    assert tenancy.current_tenant_id() is None
+    with pytest.raises(BackendError, match="tenant"):
+        await b.sign(hb, b"m")
+    with pytest.raises(BackendError, match="tenant"):
+        await b.generate(TB, "attest", "ed25519")
+
+
 async def test_two_generate_calls_never_collide_and_each_has_one_row(db_pool, tenants):
     import asyncio
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     out = await asyncio.gather(*[b.generate(TA, "attest", "ed25519") for _ in range(8)])
     assert len({h.kid for h, _ in out}) == 8
     assert await db_pool.fetchval("SELECT count(*) FROM attest_key_secrets") == 8
 
 
 async def test_a_database_that_is_down_is_backend_unavailable_not_a_key_error(tenants):
-    b = LocalAesGcmBackend(_FailingPool())
+    b = _scoped(LocalAesGcmBackend(_FailingPool()))
     h = KeyHandle("local-aes-gcm", TA, "c" * 32, "attest", "ed25519")
     with pytest.raises(BackendUnavailable):
         await b.sign(h, b"m")
@@ -580,7 +683,7 @@ async def test_no_key_material_anywhere(db_pool, tenants, caplog, monkeypatch, t
     for attr, name in (("issuer_key_file", "issuer.key"), ("issuer_cert_file", "issuer.cert"),
                        ("revoker_key_file", "revoker.key"), ("revoker_cert_file", "revoker.cert")):
         monkeypatch.setattr(attest_config.settings, attr, str(tmp_path / name))
-    b = LocalAesGcmBackend(db_pool)
+    b = _scoped(LocalAesGcmBackend(db_pool))
     messages: list[str] = []
     h, pub = await b.generate(TA, "attest", "ed25519")
     await b.sign(h, b"payload")
