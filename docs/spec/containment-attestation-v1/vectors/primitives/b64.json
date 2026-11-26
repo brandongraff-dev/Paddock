@@ -1,0 +1,269 @@
+{
+  "decode": [
+    {
+      "decoded_hex": "",
+      "id": "empty",
+      "input": "",
+      "valid": true
+    },
+    {
+      "decoded_hex": "00",
+      "id": "one-byte",
+      "input": "AA==",
+      "valid": true
+    },
+    {
+      "decoded_hex": "0000",
+      "id": "two-bytes",
+      "input": "AAA=",
+      "valid": true
+    },
+    {
+      "decoded_hex": "000000",
+      "id": "three-bytes",
+      "input": "AAAA",
+      "valid": true
+    },
+    {
+      "decoded_hex": "666f6f",
+      "id": "foo",
+      "input": "Zm9v",
+      "valid": true
+    },
+    {
+      "decoded_hex": "666f6f62",
+      "id": "foob",
+      "input": "Zm9vYg==",
+      "valid": true
+    },
+    {
+      "decoded_hex": "666f6f6261",
+      "id": "fooba",
+      "input": "Zm9vYmE=",
+      "valid": true
+    },
+    {
+      "decoded_hex": "666f6f626172",
+      "id": "foobar",
+      "input": "Zm9vYmFy",
+      "valid": true
+    },
+    {
+      "decoded_hex": "fbffbf",
+      "id": "plus-slash",
+      "input": "+/+/",
+      "valid": true
+    },
+    {
+      "decoded_hex": "ff",
+      "id": "slash-pad",
+      "input": "/w==",
+      "valid": true
+    },
+    {
+      "decoded_hex": "ffffff",
+      "id": "all-ones",
+      "input": "////",
+      "valid": true
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "no-padding",
+      "input": "Zm9vYg",
+      "valid": false,
+      "why": "padding is required"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "no-padding-2",
+      "input": "Zm9vYmE",
+      "valid": false,
+      "why": "padding is required"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "short-padding",
+      "input": "Zm9vYg=",
+      "valid": false,
+      "why": "wrong amount of padding"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "extra-padding",
+      "input": "Zg===",
+      "valid": false,
+      "why": "too much padding"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "padding-only",
+      "input": "====",
+      "valid": false,
+      "why": "padding only"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "leading-padding",
+      "input": "=Zg=",
+      "valid": false,
+      "why": "padding in front"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "padding-in-middle",
+      "input": "Zg==Zg==",
+      "valid": false,
+      "why": "concatenated groups"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "urlsafe-minus",
+      "input": "-_8=",
+      "valid": false,
+      "why": "URL-safe alphabet"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "urlsafe-underscore",
+      "input": "Zm9_",
+      "valid": false,
+      "why": "URL-safe alphabet"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "trailing-newline",
+      "input": "Zm9v\n",
+      "valid": false,
+      "why": "whitespace"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "leading-space",
+      "input": " Zm9v",
+      "valid": false,
+      "why": "whitespace"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "inner-space",
+      "input": "Zm 9v",
+      "valid": false,
+      "why": "whitespace"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "inner-newline",
+      "input": "Zm9v\nYmFy",
+      "valid": false,
+      "why": "line break"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "tab",
+      "input": "Zm9v\t",
+      "valid": false,
+      "why": "whitespace"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "nonzero-trailing-bits-2",
+      "input": "Zh==",
+      "valid": false,
+      "why": "non-zero trailing bits (canonical form is Zg==)"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "nonzero-trailing-bits-3",
+      "input": "Zm9=",
+      "valid": false,
+      "why": "non-zero trailing bits (canonical form is Zm8=)"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "length-1",
+      "input": "Z",
+      "valid": false,
+      "why": "impossible length"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "length-5",
+      "input": "ZZZZZ",
+      "valid": false,
+      "why": "length is not a multiple of 4"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "non-ascii",
+      "input": "Zm9\u00e9",
+      "valid": false,
+      "why": "outside the alphabet"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "full-width",
+      "input": "\uff3a\uff4d\uff39\uff56",
+      "valid": false,
+      "why": "outside the alphabet"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "nul-byte",
+      "input": "Zm9v\u0000",
+      "valid": false,
+      "why": "outside the alphabet"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "dot",
+      "input": "Zm9.",
+      "valid": false,
+      "why": "outside the alphabet"
+    },
+    {
+      "code": "schema.base64_invalid",
+      "id": "equals-then-data",
+      "input": "Zm=v",
+      "valid": false,
+      "why": "padding inside a group"
+    }
+  ],
+  "encode": [
+    {
+      "b64": "",
+      "data_hex": ""
+    },
+    {
+      "b64": "AA==",
+      "data_hex": "00"
+    },
+    {
+      "b64": "/w==",
+      "data_hex": "ff"
+    },
+    {
+      "b64": "AAE=",
+      "data_hex": "0001"
+    },
+    {
+      "b64": "Zm9v",
+      "data_hex": "666f6f"
+    },
+    {
+      "b64": "Zm9vYmFy",
+      "data_hex": "666f6f626172"
+    },
+    {
+      "b64": "+/+/",
+      "data_hex": "fbffbf"
+    },
+    {
+      "b64": "ByZFZIOiweD/Hj1ce5q52PcWNVRzkrHQ7w4tTGuKqcjnBiVEY4KhwN/+HTxbepm41/YVNFNykbDP7g0sS2qJqA==",
+      "data_hex": "0726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8"
+    }
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "b64",
+  "spec": "spec/01-conventions.md 2.2",
+  "spec_version": "1.0"
+}

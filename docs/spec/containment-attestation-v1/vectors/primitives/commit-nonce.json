@@ -1,0 +1,317 @@
+{
+  "commit_key_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+  "generator": "tools/gen_vectors.py",
+  "kind": "commit-nonce",
+  "leaf_encoding": [
+    {
+      "id": "none-omitted",
+      "input": {
+        "id": "n1",
+        "kind": "host",
+        "t": "node",
+        "zone": null
+      },
+      "leaf_json": "{\"id\":\"n1\",\"kind\":\"host\",\"t\":\"node\",\"tree\":\"graph\"}"
+    },
+    {
+      "id": "non-ascii-label",
+      "input": {
+        "id": "n2",
+        "label": "caf\u00e9",
+        "t": "node"
+      },
+      "leaf_json": "{\"id\":\"n2\",\"label\":{\"$h\":\"sha256:850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e\"},\"t\":\"node\",\"tree\":\"graph\"}"
+    },
+    {
+      "id": "quote-in-string",
+      "input": {
+        "id": "n3",
+        "label": "say \"hi\"",
+        "t": "node"
+      },
+      "leaf_json": "{\"id\":\"n3\",\"label\":{\"$h\":\"sha256:f65be999baf4fcd1360777c7c8a0473cefc28df82631cdfaf423f11389ac9a6c\"},\"t\":\"node\",\"tree\":\"graph\"}"
+    },
+    {
+      "id": "backslash-in-string",
+      "input": {
+        "id": "n4",
+        "label": "a\\b",
+        "t": "node"
+      },
+      "leaf_json": "{\"id\":\"n4\",\"label\":{\"$h\":\"sha256:c62016d0f8ee333350283fd879b50b692932e932794e5d686f7d37d67484e199\"},\"t\":\"node\",\"tree\":\"graph\"}"
+    },
+    {
+      "id": "control-char",
+      "input": {
+        "id": "n5",
+        "label": "a\tb",
+        "t": "node"
+      },
+      "leaf_json": "{\"id\":\"n5\",\"label\":{\"$h\":\"sha256:894891f8b78a9945b0aa07e70d5f71f10b1f1990af127de561cc0ac36024c188\"},\"t\":\"node\",\"tree\":\"graph\"}"
+    },
+    {
+      "id": "nested-list",
+      "input": {
+        "id": "n6",
+        "t": "node",
+        "tags": [
+          "a",
+          "\u00e9",
+          "b"
+        ]
+      },
+      "leaf_json": "{\"id\":\"n6\",\"t\":\"node\",\"tags\":[\"a\",{\"$h\":\"sha256:4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c\"},\"b\"],\"tree\":\"graph\"}"
+    }
+  ],
+  "leaves": [
+    {
+      "id": "policy-ssh",
+      "leaf_hash_hex": "0e53fcfdecf7ff92efaecfdecfa6f339a1b8d8bbb4abb70a43b6e6e0c5064396",
+      "leaf_json": "{\"digest\":\"sha256:e118308d1eb364979bffb1609cb40171c11006d38d4b6087b73cafdd5b2bb0f1\",\"enabled\":true,\"id\":\"std:server-ssh-hardened\",\"source\":\"std\",\"tree\":\"policy\"}",
+      "leaf_json_sha256": "ee7efbf8aafc8297b51063fbed95573d445e73b003e505dd02d640edb6927d56",
+      "nonce_hex": "39befbe29dfecdf1e956037ec2f8097fc19f12be1000d0e1d0ccde873641b9e8",
+      "record": {
+        "digest": "sha256:e118308d1eb364979bffb1609cb40171c11006d38d4b6087b73cafdd5b2bb0f1",
+        "enabled": true,
+        "id": "std:server-ssh-hardened",
+        "source": "std"
+      },
+      "tree": "policy"
+    },
+    {
+      "id": "policy-disabled-custom",
+      "leaf_hash_hex": "2be528a52a70c26b72217ef6384ac7ded52547780c446b1e4ab0244aaf39e299",
+      "leaf_json": "{\"digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"enabled\":false,\"id\":\"acme:no-telnet\",\"source\":\"custom\",\"tree\":\"policy\"}",
+      "leaf_json_sha256": "a4aad626e102edbe3c7c2cc7af53841569e92499a905383331f086084b0a985d",
+      "nonce_hex": "7ff720cdd6caefc337dce01999d69ec0eb3e5bdb15393dc019d155a607377d60",
+      "record": {
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "enabled": false,
+        "id": "acme:no-telnet",
+        "source": "custom"
+      },
+      "tree": "policy"
+    },
+    {
+      "id": "graph-node",
+      "leaf_hash_hex": "f4eb6aa89c37314c88254b7f215c9ec3fe21d556f273131abc4f2dd614e2b838",
+      "leaf_json": "{\"id\":\"internet\",\"kind\":\"internet\",\"t\":\"node\",\"tags\":[],\"tree\":\"graph\"}",
+      "leaf_json_sha256": "78d525ef14f7395b671f0e3f5f54afed9539e0cc44a9ab4831fe170659933de5",
+      "nonce_hex": "a8d3a0d3727594ba387876c7e991591ba1ee3c4df091630a75bca401fd8dc94c",
+      "record": {
+        "id": "internet",
+        "kind": "internet",
+        "t": "node",
+        "tags": []
+      },
+      "tree": "graph"
+    },
+    {
+      "id": "graph-edge",
+      "leaf_hash_hex": "d91d4eddfa1766316fc50eda339f0aaafa762bee701aa1713fe7350cbee84e52",
+      "leaf_json": "{\"basis\":\"configured\",\"dst\":\"asset:22222222-2222-4222-8222-222222222222\",\"ports\":\"443\",\"proto\":\"tcp\",\"source\":\"aws_sg\",\"src\":\"internet\",\"t\":\"edge\",\"tree\":\"graph\"}",
+      "leaf_json_sha256": "3b0fe720cdda14db0d1a6a2fe56b5693c64e90d4db9fc5da3031ec29cbe7b5cd",
+      "nonce_hex": "84ac1a332699a1c13a1c826237be1e3329b21b89f84101f1928b6faddc31399f",
+      "record": {
+        "basis": "configured",
+        "dst": "asset:22222222-2222-4222-8222-222222222222",
+        "ports": "443",
+        "proto": "tcp",
+        "source": "aws_sg",
+        "src": "internet",
+        "t": "edge"
+      },
+      "tree": "graph"
+    },
+    {
+      "id": "graph-fact",
+      "leaf_hash_hex": "bf741199ea985d6083433bf6fc251d6714c24ffedd03c2b3703246b854cf694e",
+      "leaf_json": "{\"d\":\"sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"name\":\"sshd\",\"node\":\"agent:33333333-3333-4333-8333-333333333333\",\"t\":\"fact\",\"tree\":\"graph\"}",
+      "leaf_json_sha256": "bea35e4e916d10232804b8b0f9b75368686f23ecced66b0c275fdeb546256b5c",
+      "nonce_hex": "a0c1426e8bcf1c5172a6b7fbf740ec15adcf1a99c9b301ee353b86a94421134f",
+      "record": {
+        "d": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "name": "sshd",
+        "node": "agent:33333333-3333-4333-8333-333333333333",
+        "t": "fact"
+      },
+      "tree": "graph"
+    },
+    {
+      "id": "blind-spot",
+      "leaf_hash_hex": "ed05f1c6aa2391a9bd2ae7ab2aa47f239e20ab3741915a4cf8632c9a306dd8c0",
+      "leaf_json": "{\"direction\":\"in\",\"inv\":\"std:no-internet-to-datastore\",\"node\":\"asset:33333333-3333-4333-8333-333333333333\",\"reason\":\"stale\",\"relevant\":true,\"tree\":\"blind\"}",
+      "leaf_json_sha256": "475b28bef3f5ecc7cf6a80a3b26b946ce9f2673c5b392c8e3d4afc1c8534c221",
+      "nonce_hex": "cbd1996f5c89aae1891764f33a13aad5fa7598b8bc466ebdf461aac296d6c5f0",
+      "record": {
+        "direction": "in",
+        "inv": "std:no-internet-to-datastore",
+        "node": "asset:33333333-3333-4333-8333-333333333333",
+        "reason": "stale",
+        "relevant": true
+      },
+      "tree": "blind"
+    },
+    {
+      "id": "blind-spot-collector",
+      "leaf_hash_hex": "db3c1b0306c0b872094bc8543db70547236e243680728cd29630db54d026df96",
+      "leaf_json": "{\"collector\":\"sshd\",\"direction\":\"host\",\"inv\":\"std:server-ssh-hardened\",\"node\":\"agent:44444444-4444-4444-8444-444444444444\",\"reason\":\"no_value\",\"relevant\":false,\"tree\":\"blind\"}",
+      "leaf_json_sha256": "9a471f574aa1b87e14ea63cea7040a1755045406158e89f3c126d8f30e76ba4f",
+      "nonce_hex": "042e0ea58b255da1a24cd22a44cb8f62fdf6322c475d5141d732b255060dacf3",
+      "record": {
+        "collector": "sshd",
+        "direction": "host",
+        "inv": "std:server-ssh-hardened",
+        "node": "agent:44444444-4444-4444-8444-444444444444",
+        "reason": "no_value",
+        "relevant": false
+      },
+      "tree": "blind"
+    }
+  ],
+  "nonce_rule": "HMAC-SHA256(commit_key, b\"paddock/leaf-nonce/v1\\x00\" || SHA256(leaf_json))",
+  "spec": "spec/04-merkle.md",
+  "spec_version": "1.0",
+  "trees": [
+    {
+      "id": "section-13-policy",
+      "leaf_order": [
+        "std:server-ssh-hardened",
+        "std:no-internet-to-datastore",
+        "std:guest-cannot-reach-pos"
+      ],
+      "records": [
+        {
+          "digest": "sha256:a6a8227c5cc662a688f14fe5c79dbe929539369c6bd5639750e72c1b92298bc6",
+          "enabled": true,
+          "id": "std:no-internet-to-datastore",
+          "source": "std"
+        },
+        {
+          "digest": "sha256:e118308d1eb364979bffb1609cb40171c11006d38d4b6087b73cafdd5b2bb0f1",
+          "enabled": true,
+          "id": "std:server-ssh-hardened",
+          "source": "std"
+        },
+        {
+          "digest": "sha256:e261c80c93ca592db7f8eb4c08a42e66d1748eab61038722b958bc33bb69fc1c",
+          "enabled": true,
+          "id": "std:guest-cannot-reach-pos",
+          "source": "std"
+        }
+      ],
+      "root": "sha256:1ceecb33a4ca1bf921a3336c237c60c55068826cf4fe6bc83c6de172c061551d",
+      "size": 3,
+      "sorted_leaf_hashes": [
+        "0e53fcfdecf7ff92efaecfdecfa6f339a1b8d8bbb4abb70a43b6e6e0c5064396",
+        "23333591f6ada73ea77502ce4483796afe870ba8e2a5655da2a2546f4898f56f",
+        "afda932d1153be57289b817fbd311e3b41338cf44d74faae338536f762b94d5e"
+      ],
+      "tree": "policy"
+    },
+    {
+      "id": "section-13-graph",
+      "leaf_order": [
+        "node",
+        "edge",
+        "node"
+      ],
+      "records": [
+        {
+          "id": "internet",
+          "kind": "internet",
+          "t": "node",
+          "tags": []
+        },
+        {
+          "class": "datastore",
+          "id": "asset:11111111-1111-4111-8111-111111111111",
+          "kind": "cloud_db",
+          "t": "node",
+          "tags": []
+        },
+        {
+          "basis": "configured",
+          "dst": "asset:22222222-2222-4222-8222-222222222222",
+          "ports": "443",
+          "proto": "tcp",
+          "source": "aws_sg",
+          "src": "internet",
+          "t": "edge"
+        }
+      ],
+      "root": "sha256:7b5165627f159516c5e6f40f4875c238fe2d607d816be24d320a9ad5da9580e7",
+      "size": 3,
+      "sorted_leaf_hashes": [
+        "d7332007dc557e40d8fbce95c2132e0fde8aa6443c062e8dd210757775a5a463",
+        "d91d4eddfa1766316fc50eda339f0aaafa762bee701aa1713fe7350cbee84e52",
+        "f4eb6aa89c37314c88254b7f215c9ec3fe21d556f273131abc4f2dd614e2b838"
+      ],
+      "tree": "graph"
+    },
+    {
+      "id": "section-13-blind",
+      "leaf_order": [
+        "std:no-internet-to-datastore"
+      ],
+      "records": [
+        {
+          "direction": "in",
+          "inv": "std:no-internet-to-datastore",
+          "node": "asset:33333333-3333-4333-8333-333333333333",
+          "reason": "stale",
+          "relevant": true
+        }
+      ],
+      "root": "sha256:ed05f1c6aa2391a9bd2ae7ab2aa47f239e20ab3741915a4cf8632c9a306dd8c0",
+      "size": 1,
+      "sorted_leaf_hashes": [
+        "ed05f1c6aa2391a9bd2ae7ab2aa47f239e20ab3741915a4cf8632c9a306dd8c0"
+      ],
+      "tree": "blind"
+    },
+    {
+      "id": "empty-policy",
+      "leaf_order": [],
+      "records": [],
+      "root": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "sorted_leaf_hashes": [],
+      "tree": "policy"
+    }
+  ],
+  "unencodable_fail_closed": [
+    {
+      "id": "float",
+      "input": {
+        "k": "x",
+        "t": "meta",
+        "v": 1.5
+      }
+    },
+    {
+      "id": "negative-int",
+      "input": {
+        "k": "x",
+        "t": "meta",
+        "v": -1
+      }
+    },
+    {
+      "id": "int-over-2^53",
+      "input": {
+        "k": "x",
+        "t": "meta",
+        "v": 9007199254740992
+      }
+    },
+    {
+      "id": "float-integral",
+      "input": {
+        "k": "x",
+        "t": "meta",
+        "v": 1.0
+      }
+    }
+  ]
+}

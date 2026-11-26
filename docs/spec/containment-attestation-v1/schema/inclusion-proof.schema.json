@@ -1,0 +1,60 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/inclusion-proof.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Private disclosure material: it carries a record and its blinding nonce, so it is never served publicly. The verifier rebuilds the leaf as PCJ of the record plus the tree label.",
+  "properties": {
+    "index": {
+      "maximum": 1099511627775,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "nonce": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "path": {
+      "items": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "record": {
+      "not": {
+        "required": [
+          "tree"
+        ]
+      },
+      "type": "object"
+    },
+    "size": {
+      "maximum": 1099511627776,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "tree": {
+      "enum": [
+        "graph",
+        "policy",
+        "blind"
+      ]
+    },
+    "v": {
+      "const": 1
+    }
+  },
+  "required": [
+    "v",
+    "tree",
+    "size",
+    "index",
+    "nonce",
+    "record",
+    "path"
+  ],
+  "title": "Merkle inclusion proof file",
+  "type": "object"
+}

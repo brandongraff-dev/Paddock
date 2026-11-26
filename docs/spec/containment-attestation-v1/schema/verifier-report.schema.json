@@ -1,0 +1,379 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/verifier-report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What --json prints. params hold only schema-validated tokens. Implementations may add fields; consumers ignore unknown ones. decision and exit follow the precedence: any reject gives 1, else any unverifiable gives 2, else 0.",
+  "properties": {
+    "checks": {
+      "items": {
+        "properties": {
+          "codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "unverifiable",
+              "skip",
+              "not_evaluated"
+            ]
+          },
+          "step": {
+            "maximum": 10,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "step",
+          "id",
+          "status",
+          "codes"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "decision": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "unverifiable"
+      ]
+    },
+    "exit": {
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "human": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "key": {
+      "properties": {
+        "custody": {
+          "type": "string"
+        },
+        "dns_bound": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "dnssec": {
+          "enum": [
+            "ad_asserted",
+            "not_asserted",
+            "unknown"
+          ]
+        },
+        "kid": {
+          "type": "string"
+        },
+        "vendor_certified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "now": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "policy_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "primary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "profile": {
+      "enum": [
+        "baseline",
+        "policy"
+      ]
+    },
+    "reasons": {
+      "items": {
+        "allOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "class": {
+                "enum": [
+                  "R",
+                  "U",
+                  "W"
+                ]
+              },
+              "code": {
+                "pattern": "^[a-z]+\\.[a-z0-9_]+$",
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "description": "schema-validated tokens only; attacker text never appears here",
+                "type": "object"
+              },
+              "step": {
+                "maximum": 10,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "class",
+              "step",
+              "params",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "class": {
+                "enum": [
+                  "R",
+                  "U"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "type": "array"
+    },
+    "report_version": {
+      "const": 1
+    },
+    "results": {
+      "items": {
+        "properties": {
+          "coverage": {
+            "properties": {
+              "covered": {
+                "type": "integer"
+              },
+              "percent_floor": {
+                "type": "integer"
+              },
+              "required_bp": {
+                "type": "integer"
+              },
+              "universe": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "exceptions": {
+            "type": "integer"
+          },
+          "invariant": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "HOLDS",
+              "VIOLATED",
+              "UNKNOWN",
+              "EXPIRED"
+            ]
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verdict": {
+            "enum": [
+              "HOLDS",
+              "VIOLATED",
+              "UNKNOWN"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "spec": {
+      "type": "string"
+    },
+    "statement": {
+      "properties": {
+        "issued_at": {
+          "type": "string"
+        },
+        "min_tier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policy": {
+          "properties": {
+            "disabled": {
+              "type": "integer"
+            },
+            "disclosed": {
+              "type": "integer"
+            },
+            "enabled_custom": {
+              "type": "integer"
+            },
+            "enabled_std": {
+              "type": "integer"
+            },
+            "total": {
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "snapshot_at": {
+          "type": "string"
+        },
+        "valid_until": {
+          "type": "string"
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "subject": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target": {
+      "type": "string"
+    },
+    "verifier": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "warnings": {
+      "items": {
+        "allOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "class": {
+                "enum": [
+                  "R",
+                  "U",
+                  "W"
+                ]
+              },
+              "code": {
+                "pattern": "^[a-z]+\\.[a-z0-9_]+$",
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "description": "schema-validated tokens only; attacker text never appears here",
+                "type": "object"
+              },
+              "step": {
+                "maximum": 10,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "class",
+              "step",
+              "params",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "class": {
+                "const": "W"
+              }
+            }
+          }
+        ]
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "report_version",
+    "verifier",
+    "spec",
+    "now",
+    "target",
+    "profile",
+    "decision",
+    "exit",
+    "primary",
+    "reasons",
+    "warnings",
+    "checks",
+    "human"
+  ],
+  "title": "Verifier JSON report",
+  "type": "object"
+}

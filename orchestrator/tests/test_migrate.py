@@ -7,6 +7,7 @@ touched.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import shutil
 import uuid
 
@@ -375,3 +376,90 @@ async def test_startup_as_non_owner_role_checks_instead_of_migrating(empty_db, s
         await con.execute(f'DROP OWNED BY "{role}"; DROP ROLE "{role}"')
     finally:
         await con.close()
+
+
+# --------------------------------------------------------------------------- #
+# P2.1 (WP0): migrations 044 / 045 / 046 (docs/ASSURANCE_P2_1.md D2)
+# --------------------------------------------------------------------------- #
+
+P21_FILES = ["044_advisories.sql", "045_agent_identity.sql", "046_assurance_lifecycle.sql"]
+
+
+async def test_p21_migrations_apply_once_in_order_on_a_fresh_database(empty_db):
+    res = await _up(empty_db, schema_dir=SCHEMA_DIR)
+    applied = [n for n in res.applied if n in P21_FILES]
+    assert applied == P21_FILES
+    names = res.applied
+    assert names.index("042_agent_v2_hardening.sql") < names.index(P21_FILES[0]) < names.index("099_tenancy.sql")
+    assert not any(n.startswith("043_") for n in names)       # 043 stays unused: a numbering gap is tolerated (035 too)
+    con = await asyncpg.connect(empty_db)
+    try:
+        assert (await migrate.migration_status(con, SCHEMA_DIR)).clean
+        for t in ("kev_entries", "advisory_snapshots", "agent_manifests", "fleet_agent_pairings", "fleet_conflict_acks"):
+            assert await con.fetchval("SELECT to_regclass($1) IS NOT NULL", t), t
+    finally:
+        await con.close()
+    again = await _up(empty_db, schema_dir=SCHEMA_DIR)
+    assert again.applied == []
+
+
+async def test_a_database_at_042_upgrades_to_p21_keeping_its_data_and_getting_rls(empty_db, schema_copy):
+    """The real upgrade path: 099 is already recorded, so 044..046 are 'out of order' (applied with a warning) and the
+    runner re-asserts tenancy afterwards, which is what gives the new tables their RLS."""
+    stash = schema_copy.parent / "stash"
+    stash.mkdir()
+    for n in P21_FILES:
+        shutil.move(str(schema_copy / n), str(stash / n))
+    await _up(empty_db, schema_dir=schema_copy)
+    con = await asyncpg.connect(empty_db)
+    try:
+        assert not await con.fetchval("SELECT to_regclass('kev_entries') IS NOT NULL")
+        old = datetime.datetime(2026, 2, 2, 10, 0, tzinfo=datetime.timezone.utc)
+        await con.execute("INSERT INTO invariants (invariant_id, enabled, updated_at) VALUES ('acme:off', false, $1),"
+                          " ('acme:on', true, $1)", old)
+        await con.execute("INSERT INTO invariant_runs (invariant_id) VALUES ('acme:on')")
+    finally:
+        await con.close()
+    for n in P21_FILES:
+        shutil.move(str(stash / n), str(schema_copy / n))
+    res = await _up(empty_db, schema_dir=schema_copy)
+    assert res.applied == P21_FILES
+    assert res.out_of_order == P21_FILES
+    assert res.reasserted == [migrate.TENANCY_FILE]
+    con = await asyncpg.connect(empty_db)
+    try:
+        off = await con.fetchrow("SELECT enabled, disabled_at, archived_at FROM invariants WHERE invariant_id='acme:off'")
+        assert off["disabled_at"].isoformat().startswith("2026-02-02T10:00:00") and off["archived_at"] is None
+        assert (await con.fetchval("SELECT disabled_at FROM invariants WHERE invariant_id='acme:on'")) is None
+        assert await con.fetchval("SELECT pinned FROM invariant_runs WHERE invariant_id='acme:on'") is False
+        for t in ("agent_manifests", "agent_manifest_refs", "fleet_agent_pairings", "fleet_conflict_acks"):
+            rls = await con.fetchrow("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname=$1", t)
+            assert rls["relrowsecurity"] and rls["relforcerowsecurity"], t
+            assert await con.fetchval("SELECT count(*) FROM pg_policies WHERE tablename=$1 AND policyname='tenant_isolation'", t) == 1
+        for t in ("kev_entries", "advisory_scopes", "advisory_snapshots", "advisory_fixes"):
+            pols = {r[0] for r in await con.fetch("SELECT policyname FROM pg_policies WHERE tablename=$1", t)}
+            assert pols == {"global_read", "global_platform_write"}, t
+            assert not await con.fetchval("SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name='tenant_id'", t)
+        assert await con.fetchval("SELECT has_table_privilege('paddock_svc_intel','kev_entries','INSERT')")
+        assert (await _up(empty_db, schema_dir=schema_copy)).applied == []
+    finally:
+        await con.close()
+
+
+@pytest.mark.parametrize("name", P21_FILES)
+async def test_a_p21_migration_edited_after_it_was_applied_is_refused_as_drift(empty_db, schema_copy, name):
+    """Applied files are immutable (D2): a later edit is a checksum drift, never silently re-run."""
+    await _up(empty_db, schema_dir=schema_copy)
+    f = schema_copy / name
+    f.write_text(f.read_text() + "\n-- edit after apply\n")
+    with pytest.raises(migrate.ChecksumDriftError) as ei:
+        await _up(empty_db, schema_dir=schema_copy)
+    assert name in str(ei.value)
+
+
+def test_the_p21_files_declare_the_tables_the_baseliner_looks_for():
+    by = {f.filename: f for f in migrate.discover(SCHEMA_DIR)}
+    assert set(by["044_advisories.sql"].tables) == {"kev_entries", "advisory_scopes", "advisory_snapshots",
+                                                    "advisory_fixes", "agent_manifests", "agent_manifest_refs"}
+    assert set(by["045_agent_identity.sql"].tables) == {"fleet_agent_pairings", "fleet_conflict_acks"}
+    assert by["046_assurance_lifecycle.sql"].tables == []        # column and index changes only

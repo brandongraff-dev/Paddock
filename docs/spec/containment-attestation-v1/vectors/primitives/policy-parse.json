@@ -1,0 +1,725 @@
+{
+  "cases": [
+    {
+      "accept": true,
+      "desc": "the MVP document's example parses unchanged",
+      "id": "mvp-doc-example",
+      "value": {
+        "max_age": "48h",
+        "min_coverage": {
+          "$decimal": "0.95"
+        },
+        "require": [
+          {
+            "invariant": "std:no-internet-to-datastore",
+            "min_tier": "observed",
+            "verdict": "HOLDS"
+          },
+          {
+            "invariant": "std:server-ssh-hardened",
+            "verdict": "HOLDS"
+          }
+        ]
+      },
+      "yaml": "require:\n  - { invariant: std:no-internet-to-datastore, verdict: HOLDS, min_tier: observed }\n  - { invariant: std:server-ssh-hardened,       verdict: HOLDS }\nmax_age: 48h\nmin_coverage: 0.95\n"
+    },
+    {
+      "accept": true,
+      "desc": "no content is an empty mapping",
+      "id": "empty-document",
+      "value": {},
+      "yaml": ""
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "comments-only",
+      "value": {},
+      "yaml": "# nothing here\n\n   # indented comment\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "comments-and-blank-lines",
+      "value": {
+        "max_age": "24h",
+        "policy_version": 1
+      },
+      "yaml": "# a comment\npolicy_version: 1  # trailing comment\n\nmax_age: 24h\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "nested-mapping",
+      "value": {
+        "trust": {
+          "dns_binding": "required",
+          "revocation_max_age": "72h",
+          "vendor_cert": "required"
+        }
+      },
+      "yaml": "trust:\n  vendor_cert: required\n  dns_binding: required\n  revocation_max_age: 72h\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "block-sequence-scalars",
+      "value": {
+        "ids": [
+          "std:a",
+          "std:b"
+        ]
+      },
+      "yaml": "ids:\n  - std:a\n  - std:b\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "block-sequence-of-mappings",
+      "value": {
+        "require": [
+          {
+            "invariant": "std:x",
+            "verdict": "HOLDS"
+          },
+          {
+            "invariant": "std:y",
+            "min_tier": "configured"
+          }
+        ]
+      },
+      "yaml": "require:\n  - invariant: std:x\n    verdict: HOLDS\n  - invariant: std:y\n    min_tier: configured\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "flow-sequence",
+      "value": {
+        "ids": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "yaml": "ids: [a, b, c]\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "flow-sequence-empty",
+      "value": {
+        "ids": []
+      },
+      "yaml": "ids: []\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "flow-mapping-empty-item",
+      "value": {
+        "require": [
+          {}
+        ]
+      },
+      "yaml": "require:\n  - {}\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "double-quoted",
+      "value": {
+        "name": "a: b # c"
+      },
+      "yaml": "name: \"a: b # c\"\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "double-quoted-escapes",
+      "value": {
+        "name": "say \"x\" \\ y"
+      },
+      "yaml": "name: \"say \\\"x\\\" \\\\ y\"\n"
+    },
+    {
+      "accept": true,
+      "desc": "off must be quoted to be a string",
+      "id": "quoted-keyword-off",
+      "value": {
+        "anchor": "off",
+        "dnssec": "off"
+      },
+      "yaml": "anchor: \"off\"\ndnssec: \"off\"\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "quoted-keyword-null",
+      "value": {
+        "a": "null",
+        "b": "yes",
+        "c": "~"
+      },
+      "yaml": "a: \"null\"\nb: \"yes\"\nc: \"~\"\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "integers",
+      "value": {
+        "history_depth": 12,
+        "max_exceptions": 0,
+        "policy_version": 1
+      },
+      "yaml": "policy_version: 1\nmax_exceptions: 0\nhistory_depth: 12\n"
+    },
+    {
+      "accept": true,
+      "desc": "decimals stay exact",
+      "id": "decimals",
+      "value": {
+        "min_coverage": {
+          "$decimal": "0.95"
+        },
+        "x": {
+          "$decimal": "1.0"
+        },
+        "y": {
+          "$decimal": "0.9999"
+        }
+      },
+      "yaml": "min_coverage: 0.95\nx: 1.0\ny: 0.9999\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "booleans",
+      "value": {
+        "flag": false,
+        "require_latest": true
+      },
+      "yaml": "require_latest: true\nflag: false\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "bare-strings",
+      "value": {
+        "a": "std:no-internet-to-datastore",
+        "b": "48h",
+        "c": "sha256:ab12",
+        "d": "95%",
+        "e": "a/b.c+d_e-f"
+      },
+      "yaml": "a: std:no-internet-to-datastore\nb: 48h\nc: sha256:ab12\nd: 95%\ne: a/b.c+d_e-f\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "flow-mapping-in-item",
+      "value": {
+        "require": [
+          {
+            "invariant": "std:x",
+            "max_age": "6h",
+            "min_coverage": {
+              "$decimal": "0.9"
+            },
+            "verdict": "HOLDS"
+          }
+        ]
+      },
+      "yaml": "require:\n  - { invariant: std:x, verdict: HOLDS, max_age: 6h, min_coverage: 0.9 }\n"
+    },
+    {
+      "accept": true,
+      "desc": "a flow sequence is a valid sequence item",
+      "id": "flow-sequence-in-flow-mapping-not-needed",
+      "value": {
+        "a": [
+          [
+            "x",
+            "y"
+          ]
+        ]
+      },
+      "yaml": "a:\n  - [x, y]\n"
+    },
+    {
+      "accept": true,
+      "desc": "six levels of nesting",
+      "id": "depth-6",
+      "value": {
+        "a": {
+          "b": {
+            "c": {
+              "d": {
+                "e": {
+                  "f": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "yaml": "a:\n  b:\n    c:\n      d:\n        e:\n          f: 1\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "key-order-preserved-by-value",
+      "value": {
+        "a": 2,
+        "b": 1
+      },
+      "yaml": "b: 1\na: 2\n"
+    },
+    {
+      "accept": true,
+      "desc": "",
+      "id": "no-final-newline",
+      "value": {
+        "a": 1
+      },
+      "yaml": "a: 1"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "'#' is outside the bare-string charset",
+      "id": "bare-hash-in-value",
+      "line": 1,
+      "yaml": "a: b#c\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "anchors",
+      "id": "anchor",
+      "line": 1,
+      "yaml": "a: &x 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "aliases",
+      "id": "alias",
+      "line": 1,
+      "yaml": "a: *x\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "tags",
+      "id": "tag",
+      "line": 1,
+      "yaml": "a: !!str 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "block scalars",
+      "id": "block-scalar-literal",
+      "line": 1,
+      "yaml": "a: |\n  text\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "block scalars",
+      "id": "block-scalar-folded",
+      "line": 1,
+      "yaml": "a: >\n  text\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "multi-document syntax",
+      "id": "document-start",
+      "line": 1,
+      "yaml": "---\na: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "document-end",
+      "line": 2,
+      "yaml": "a: 1\n...\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "second-document",
+      "line": 2,
+      "yaml": "a: 1\n---\nb: 2\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "merge-key",
+      "line": 2,
+      "yaml": "a: 1\n<<: b\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "YAML 1.1 booleans are not scalars here",
+      "id": "yes",
+      "line": 1,
+      "yaml": "a: yes\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "no",
+      "line": 1,
+      "yaml": "a: no\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "on",
+      "line": 1,
+      "yaml": "a: on\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "off must be quoted",
+      "id": "off",
+      "line": 1,
+      "yaml": "a: off\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "tilde",
+      "line": 1,
+      "yaml": "a: ~\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "null",
+      "line": 1,
+      "yaml": "a: null\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "Null",
+      "line": 1,
+      "yaml": "a: Null\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "NULL",
+      "line": 1,
+      "yaml": "a: NULL\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "Yes-capitalised",
+      "line": 1,
+      "yaml": "a: Yes\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "only lowercase true and false",
+      "id": "True-capitalised",
+      "line": 1,
+      "yaml": "a: True\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "a key with no value and no children",
+      "id": "empty-value",
+      "line": 1,
+      "yaml": "a:\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "duplicate-key",
+      "line": 3,
+      "yaml": "a: 1\nb: 2\na: 3\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "duplicate-key-nested",
+      "line": 3,
+      "yaml": "m:\n  x: 1\n  x: 2\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "duplicate-key-in-flow",
+      "line": 2,
+      "yaml": "r:\n  - { a: 1, a: 2 }\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "more than six levels",
+      "id": "depth-7",
+      "line": 7,
+      "yaml": "a:\n  b:\n    c:\n      d:\n        e:\n          f:\n            g: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "tab-indent",
+      "line": 2,
+      "yaml": "a:\n\tb: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "tab-anywhere",
+      "line": 1,
+      "yaml": "a:\t1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "indentation is two spaces per level",
+      "id": "odd-indent",
+      "line": 2,
+      "yaml": "a:\n   b: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "indent-4",
+      "line": 2,
+      "yaml": "a:\n    b: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "non-ascii-value",
+      "line": 1,
+      "yaml": "a: caf\u00e9\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "the whole file is ASCII",
+      "id": "non-ascii-comment",
+      "line": 1,
+      "yaml": "a: 1 # caf\u00e9\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "LF only",
+      "id": "cr-line-ending",
+      "line": 1,
+      "yaml": "a: 1\r\nb: 2\r\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "single-quoted",
+      "line": 1,
+      "yaml": "a: 'x'\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "unterminated-quote",
+      "line": 1,
+      "yaml": "a: \"x\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "only \\\" and \\\\ are escapes",
+      "id": "bad-escape",
+      "line": 1,
+      "yaml": "a: \"\\n\"\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "bare-with-space",
+      "line": 1,
+      "yaml": "a: hello world\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "bare-with-comma",
+      "line": 1,
+      "yaml": "a: x,y\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "nested-flow-mapping",
+      "line": 2,
+      "yaml": "r:\n  - { a: { b: 1 } }\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "nested-flow-sequence",
+      "line": 1,
+      "yaml": "a: [x, [y]]\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "unclosed-flow-sequence",
+      "line": 1,
+      "yaml": "a: [x, y\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "unclosed-flow-mapping",
+      "line": 2,
+      "yaml": "r:\n  - { a: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "a flow mapping is only allowed as a sequence item",
+      "id": "flow-mapping-as-value",
+      "line": 1,
+      "yaml": "a: { b: 1 }\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "line-without-colon",
+      "line": 2,
+      "yaml": "a: 1\nnonsense\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "complex-key",
+      "line": 1,
+      "yaml": "? a\n: b\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "sequence-of-sequences",
+      "line": 2,
+      "yaml": "a:\n  - - x\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "the document is a mapping",
+      "id": "top-level-sequence",
+      "line": 1,
+      "yaml": "- a\n- b\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "top-level-scalar",
+      "line": 1,
+      "yaml": "hello\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "key-with-space",
+      "line": 1,
+      "yaml": "a b: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "quoted-key",
+      "line": 1,
+      "yaml": "\"a\": 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "decimal-leading-dot",
+      "line": 1,
+      "yaml": "a: .5\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "mixed-sequence-and-mapping",
+      "line": 3,
+      "yaml": "a:\n  - x\n  b: 1\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "",
+      "id": "sequence-indent-jump",
+      "line": 3,
+      "yaml": "a:\n  - x\n      - y\n"
+    },
+    {
+      "accept": false,
+      "code": "config.policy_invalid",
+      "desc": "more than 65536 bytes",
+      "id": "file-over-64kib",
+      "line": 1,
+      "yaml_recipe": {
+        "fill": "x",
+        "length": 65537,
+        "newline": true,
+        "text": "# "
+      }
+    }
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "policy-parse",
+  "limits": {
+    "max_bytes": 65536,
+    "max_depth": 6
+  },
+  "spec": "spec/08-acceptance-policy.md",
+  "spec_version": "1.0",
+  "value_encoding": "{\"$decimal\": \"0.95\"} stands for an exact decimal; everything else is plain JSON"
+}

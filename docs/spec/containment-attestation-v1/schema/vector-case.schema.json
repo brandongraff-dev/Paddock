@@ -1,0 +1,199 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/vector-case.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "vectors/cases/<id>/case.json. The runner materialises the recipes, then runs the implementation and compares exit, decision, the exact ordered list of reject and unverifiable codes, warnings, primary and profile.",
+  "properties": {
+    "anchor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "args": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "description": {
+      "type": "string"
+    },
+    "dns": {
+      "description": "a resolver fixture, or {resolvers:[fixture,...]} for several resolvers",
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "expect": {
+      "additionalProperties": false,
+      "properties": {
+        "codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decision": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "unverifiable"
+          ]
+        },
+        "exit": {
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "forbidden_terms": {
+          "type": "boolean"
+        },
+        "primary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "enum": [
+            "baseline",
+            "policy"
+          ]
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "exit",
+        "decision",
+        "codes",
+        "warnings",
+        "primary"
+      ],
+      "type": "object"
+    },
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9.^+-]{0,63}$",
+      "type": "string"
+    },
+    "inputs": {
+      "description": "producer cases: engine results, key seed, seq, prev, commit_key",
+      "type": "object"
+    },
+    "now": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "policy": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "producer": {
+      "description": "true when the orchestrator producer must reproduce the case byte for byte",
+      "type": "boolean"
+    },
+    "recipes": {
+      "items": {
+        "properties": {
+          "bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "file": {
+            "type": "string"
+          },
+          "fill": {
+            "maxLength": 1,
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "pad_file",
+              "write_file"
+            ]
+          },
+          "tail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "file"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "registry": {
+      "description": "default or a path relative to the case",
+      "type": "string"
+    },
+    "roots": {
+      "description": "test (default), none, or a path relative to the case",
+      "type": "string"
+    },
+    "spec_refs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "state": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "target": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "dir",
+            "file"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "description",
+    "spec_refs",
+    "tags",
+    "producer",
+    "now",
+    "target",
+    "args",
+    "expect"
+  ],
+  "title": "Conformance case",
+  "type": "object"
+}

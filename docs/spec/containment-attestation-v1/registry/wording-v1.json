@@ -1,0 +1,219 @@
+{
+  "description": "Every human sentence the verifier prints. The issuer supplies integers, enumerated tokens and registry names only; it never supplies text.",
+  "enums": {
+    "cert": {
+      "domain_only": "bound by the domain only, without a vendor certificate",
+      "vendor_certified": "vouched for by the vendor root"
+    },
+    "custody": {
+      "byok-hsm": "customer-held (HSM)",
+      "byok-kms": "customer-held (KMS)",
+      "hosted": "held by the issuer (hosted)"
+    },
+    "dns": {
+      "dns_bound": "named by the domain's DNS",
+      "dns_not_checked": "DNS binding not checked",
+      "dns_unbound": "not named by the domain's DNS"
+    },
+    "dnssec": {
+      "ad_asserted": "asserted by the resolver",
+      "not_asserted": "not asserted",
+      "unknown": "unknown"
+    }
+  },
+  "forbidden_words": [
+    "secure",
+    "secured",
+    "safe",
+    "safely",
+    "protected",
+    "compliant",
+    "certified",
+    "guarantee",
+    "guaranteed",
+    "unhackable",
+    "breach-proof",
+    "passed",
+    "clean",
+    "proven"
+  ],
+  "headlines": {
+    "accepted": {
+      "slots": {
+        "name": "token"
+      },
+      "text": "ACCEPTED under policy {name}"
+    },
+    "baseline": {
+      "slots": {},
+      "text": "VALID under baseline profile"
+    },
+    "rejected": {
+      "slots": {
+        "message": "phrase"
+      },
+      "text": "REJECTED: {message}"
+    },
+    "unverifiable": {
+      "slots": {
+        "message": "phrase"
+      },
+      "text": "UNVERIFIABLE: {message}"
+    }
+  },
+  "profile_line": "profile: baseline (no acceptance policy given; nothing requires specific invariants)",
+  "reason_phrases": {
+    "coverage_below_required": "coverage is below the floor the invariant requires",
+    "empty_selector": "the invariant selects nothing",
+    "evaluation_error": "the evaluation failed",
+    "graph_incomplete": "the network model is incomplete",
+    "host_evidence_unusable": "host evidence is missing, unsigned, partial or unusable",
+    "invalid_definition": "the invariant definition is invalid",
+    "other": "undetermined for a reason this verifier does not name",
+    "possible_via_unknown_edges": "a path may exist through connections that are not fully known",
+    "selection_too_large": "the selectors overlap too much to decide",
+    "stale_or_missing_evidence": "evidence is stale or missing",
+    "zone_unknown": "some assets have no known network zone"
+  },
+  "slot_types": {
+    "enum:<name>": "one of the keys of enums.<name>; the phrase is substituted",
+    "invid": "invariant id: [a-z][a-z0-9]{0,31}:[a-z0-9][a-z0-9-]{0,63}",
+    "name": "registry name: printable ASCII, 1 to 120 characters, no quote, backtick, brace or backslash",
+    "phrase": "a phrase taken from this file or a fixed code message: printable ASCII, 1 to 200 characters, no quote, backtick, brace or backslash",
+    "subject": "dns:<domain> or paddock-estate:<estate id>",
+    "time": "YYYY-MM-DDTHH:MM:SSZ",
+    "token": "[A-Za-z0-9._:-]{1,64}",
+    "uint": "integer 0 to 2^53-1"
+  },
+  "templates": {
+    "W-CHAIN-BROKEN": {
+      "slots": {},
+      "text": "This attestation does not link to the previous one: updates may have been withheld or replaced."
+    },
+    "W-CUSTOM-NAME": {
+      "slots": {
+        "id": "invid"
+      },
+      "text": "Custom invariant `{id}` (defined by the operator; not reviewed by Paddock)"
+    },
+    "W-DIGEST-CHANGED": {
+      "slots": {},
+      "text": "An invariant's definition changed since the previous attestation."
+    },
+    "W-DNS-UNBOUND": {
+      "slots": {},
+      "text": "The domain's DNS does not name the signing key: this attestation is not bound to the domain."
+    },
+    "W-ENGINE-ADVISORY": {
+      "slots": {},
+      "text": "The engine version that produced this attestation has a known defect advisory."
+    },
+    "W-EXC": {
+      "slots": {
+        "n": "uint"
+      },
+      "text": "{n} declared exception(s) apply."
+    },
+    "W-EXPIRED-ATT": {
+      "slots": {
+        "valid_until": "time"
+      },
+      "text": "EXPIRED: this attestation lapsed at {valid_until}."
+    },
+    "W-FOOTER": {
+      "slots": {},
+      "text": "A passing result means: no counterexample was found under this evidence, at this coverage, at this time. It is not a statement that the organisation is secure."
+    },
+    "W-HOLDS": {
+      "slots": {
+        "covered": "uint",
+        "name": "name",
+        "pct": "uint",
+        "tier_phrase": "phrase",
+        "universe": "uint",
+        "valid_until": "time"
+      },
+      "text": "No counterexample found for \"{name}\", based on {tier_phrase}. {covered} of {universe} relevant assets had live evidence ({pct}%). Evidence current until {valid_until}."
+    },
+    "W-HOLDS-EXPIRED": {
+      "slots": {
+        "name": "name",
+        "valid_until": "time"
+      },
+      "text": "EXPIRED: the result for \"{name}\" was current until {valid_until}. It says nothing about now."
+    },
+    "W-KEY": {
+      "slots": {
+        "cert": "enum:cert",
+        "custody": "enum:custody",
+        "dns": "enum:dns",
+        "dnssec": "enum:dnssec"
+      },
+      "text": "Signing key: {custody}; {cert}; {dns}; DNSSEC: {dnssec}."
+    },
+    "W-KEY-REVOKED": {
+      "slots": {},
+      "text": "The signing key has been revoked."
+    },
+    "W-POLICY": {
+      "slots": {
+        "disabled": "uint",
+        "disclosed": "uint",
+        "enabled": "uint",
+        "k": "uint"
+      },
+      "text": "{disclosed} of {enabled} enabled invariants are disclosed ({disabled} declared invariants are disabled). {k} enabled invariants are not shown as holding: they may be violated, undetermined, not yet evaluated, or not disclosed. The issuer chooses what to disclose."
+    },
+    "W-POLICY-SHRANK": {
+      "slots": {},
+      "text": "The set of declared invariants is smaller than in the previous attestation."
+    },
+    "W-ROLLBACK": {
+      "slots": {},
+      "text": "This attestation is older than one seen before: the sequence number went backwards."
+    },
+    "W-STD-MISSING": {
+      "slots": {
+        "n": "uint"
+      },
+      "text": "Standard invariants enabled but not disclosed: {n}."
+    },
+    "W-STD-UNRECOGNISED": {
+      "slots": {},
+      "text": "A standard invariant's definition is not the one this verifier knows."
+    },
+    "W-SUPERSEDED": {
+      "slots": {},
+      "text": "A newer statement or a supersession notice exists for this subject: this attestation is out of date."
+    },
+    "W-UNKNOWN": {
+      "slots": {
+        "name": "name",
+        "reason_phrase": "phrase"
+      },
+      "text": "Undetermined for \"{name}\": {reason_phrase}. This is not a pass."
+    },
+    "W-VALID": {
+      "slots": {
+        "issued_at": "time",
+        "subject": "subject",
+        "valid_until": "time"
+      },
+      "text": "This attestation is correctly signed by a key bound to {subject}, was issued {issued_at} and is current until {valid_until}. It lists results of specific checks. It is not an assessment of overall security."
+    },
+    "W-VIOLATED": {
+      "slots": {
+        "name": "name",
+        "violations": "uint"
+      },
+      "text": "A counterexample exists for \"{name}\" ({violations} found)."
+    }
+  },
+  "tier_phrases": {
+    "configured": "configuration read from the systems (not tested from outside)",
+    "declared": "statements made by the operator (not measured)",
+    "observed": "observed network traffic or an outside-in scan",
+    "tested": "a scope-approved active test"
+  },
+  "wording_version": 1
+}

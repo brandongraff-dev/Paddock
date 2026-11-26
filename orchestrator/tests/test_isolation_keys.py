@@ -25,6 +25,7 @@ GLOBAL_UNIQUE_OK = {
     "ontology_objects": "keyed by globally unique backing ids (generator artefact)",
     "exposure_leads": "public lead capture, written by the platform tenant only",
     "sso_replay_cache": "assertion ids are globally unique by construction",
+    "attest_bundle_objects": "one public domain is served from one place: partial unique (domain_key, path) WHERE public",
 }
 
 

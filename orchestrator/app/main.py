@@ -80,6 +80,7 @@ from .routers import sensors as sensors_router
 from .routers import assurance as assurance_router
 from .routers import reach_flows as reach_flows_router
 from .assurance import runner as assurance_runner
+from .attest import wiring as attest_wiring
 
 logger = logging.getLogger(__name__)
 
@@ -152,10 +153,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.assurance_enabled:
         assurance_task = asyncio.create_task(assurance_runner.assurance_loop(app))
         app.state.assurance_task = assurance_task
+    # Signed attestations (P3): starts attest.loop when that module exists (attest/wiring.py).
+    attest_wiring.start(app)
 
     try:
         yield
     finally:
+        try:
+            await attest_wiring.stop(app)
+        except Exception:  # noqa: BLE001 -- never block shutdown
+            logger.exception("attest_stop_failed")
         for task in (scheduler_task, anchor_task, growth_task, sensor_task, fleet_agent_task, assurance_task):
             if task is None:
                 continue
@@ -353,6 +360,8 @@ def create_app() -> FastAPI:
     app.include_router(growth_suppliers.router)
     app.include_router(assurance_router.router)
     app.include_router(reach_flows_router.router)
+    # Signed attestations (P3): includes routers/attestations.py and routers/public_attest.py when they exist.
+    attest_wiring.include(app)
 
     return app
 

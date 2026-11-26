@@ -38,6 +38,13 @@ GLOBAL_ALLOWLIST = {
     "sla_policies": "platform-wide SLA policy",
     "billing_customers": "opaque Stripe customer->tenant routing, platform-written (webhook has no tenant)",
     "billing_events": "opaque Stripe webhook event ids (replay protection), platform-written",
+    # P2.1 (schema 044, docs/ASSURANCE_P2_1.md 1.3): public vendor/CISA advisory data written by the intel service as
+    # the platform tenant only (global_platform_write); the orchestrator only SELECTs it. NOT the tenant tables
+    # agent_manifests / agent_manifest_refs of the same file, which are per-tenant and must never carry the marker.
+    "kev_entries": "public CISA KEV catalogue, platform-written by intel (canonical for assurance, D4)",
+    "advisory_scopes": "closed list of distro scopes we claim to judge, upserted by intel from code",
+    "advisory_snapshots": "public vendor feed snapshot ledger (sha256, ages), platform-written by intel",
+    "advisory_fixes": "public vendor advisory rows filtered to the KEV id set, platform-written by intel",
 }
 
 #: Extra permissive policies on tenant tables, and the only condition each may
@@ -50,6 +57,7 @@ EXTRA_POLICIES = {
     ("trust_links", "trust_public_lookup"): "app.trust_hash",
     ("scim_tokens", "scim_token_auth_lookup"): "app.auth_lookup",
     ("identity_providers", "identity_provider_auth_lookup"): "app.auth_lookup",
+    ("attest_bundle_objects", "attest_public_lookup"): "app.attest_lookup",
 }
 
 #: Tenant tables whose RLS policy may also honour credential lookup.

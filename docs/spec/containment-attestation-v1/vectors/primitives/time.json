@@ -1,0 +1,514 @@
+{
+  "durations": [
+    {
+      "input": "30s",
+      "seconds": 30,
+      "valid": true
+    },
+    {
+      "input": "5m",
+      "seconds": 300,
+      "valid": true
+    },
+    {
+      "input": "24h",
+      "seconds": 86400,
+      "valid": true
+    },
+    {
+      "input": "7d",
+      "seconds": 604800,
+      "valid": true
+    },
+    {
+      "input": "0s",
+      "seconds": 0,
+      "valid": true
+    },
+    {
+      "input": "48h",
+      "seconds": 172800,
+      "valid": true
+    },
+    {
+      "input": "72h",
+      "seconds": 259200,
+      "valid": true
+    },
+    {
+      "input": "1d",
+      "seconds": 86400,
+      "valid": true
+    },
+    {
+      "input": "90m",
+      "seconds": 5400,
+      "valid": true
+    },
+    {
+      "input": "",
+      "valid": false
+    },
+    {
+      "input": "24",
+      "valid": false
+    },
+    {
+      "input": "h",
+      "valid": false
+    },
+    {
+      "input": "1.5h",
+      "valid": false
+    },
+    {
+      "input": "-1h",
+      "valid": false
+    },
+    {
+      "input": "+1h",
+      "valid": false
+    },
+    {
+      "input": "01h",
+      "valid": false
+    },
+    {
+      "input": "1H",
+      "valid": false
+    },
+    {
+      "input": "1 h",
+      "valid": false
+    },
+    {
+      "input": "1w",
+      "valid": false
+    },
+    {
+      "input": "1hh",
+      "valid": false
+    },
+    {
+      "input": " 1h",
+      "valid": false
+    },
+    {
+      "input": "1h ",
+      "valid": false
+    },
+    {
+      "input": "1h\n",
+      "valid": false
+    },
+    {
+      "input": "9007199254740992s",
+      "valid": false
+    },
+    {
+      "input": "999999999999d",
+      "valid": false
+    },
+    {
+      "input": "\uff11h",
+      "valid": false
+    },
+    {
+      "input": "0x10s",
+      "valid": false
+    },
+    {
+      "input": "1e2s",
+      "valid": false
+    },
+    {
+      "input": "PT1H",
+      "valid": false
+    },
+    {
+      "input": "24 hours",
+      "valid": false
+    }
+  ],
+  "format": [
+    {
+      "epoch": 946684800,
+      "text": "2000-01-01T00:00:00Z"
+    },
+    {
+      "epoch": 1796115600,
+      "text": "2026-12-01T09:00:00Z"
+    },
+    {
+      "epoch": 1796202000,
+      "text": "2026-12-02T09:00:00Z"
+    },
+    {
+      "epoch": 253402300799,
+      "text": "9999-12-31T23:59:59Z"
+    },
+    {
+      "epoch": 1000000000,
+      "text": "2001-09-09T01:46:40Z"
+    },
+    {
+      "epoch": 951782400,
+      "text": "2000-02-29T00:00:00Z"
+    }
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "time",
+  "parse": [
+    {
+      "epoch": 1796115600,
+      "id": "ok-2026-12-01T09:00:00Z",
+      "input": "2026-12-01T09:00:00Z",
+      "valid": true
+    },
+    {
+      "epoch": 946684800,
+      "id": "ok-2000-01-01T00:00:00Z",
+      "input": "2000-01-01T00:00:00Z",
+      "valid": true
+    },
+    {
+      "epoch": 253402300799,
+      "id": "ok-9999-12-31T23:59:59Z",
+      "input": "9999-12-31T23:59:59Z",
+      "valid": true
+    },
+    {
+      "epoch": 1835438400,
+      "id": "ok-2028-02-29T12:00:00Z",
+      "input": "2028-02-29T12:00:00Z",
+      "valid": true
+    },
+    {
+      "epoch": 951782400,
+      "id": "ok-2000-02-29T00:00:00Z",
+      "input": "2000-02-29T00:00:00Z",
+      "valid": true
+    },
+    {
+      "epoch": 1772323199,
+      "id": "ok-2026-02-28T23:59:59Z",
+      "input": "2026-02-28T23:59:59Z",
+      "valid": true
+    },
+    {
+      "epoch": 1798761599,
+      "id": "ok-2026-12-31T23:59:59Z",
+      "input": "2026-12-31T23:59:59Z",
+      "valid": true
+    },
+    {
+      "epoch": 1767225600,
+      "id": "ok-2026-01-01T00:00:00Z",
+      "input": "2026-01-01T00:00:00Z",
+      "valid": true
+    },
+    {
+      "epoch": 13574563200,
+      "id": "ok-2400-02-29T00:00:00Z",
+      "input": "2400-02-29T00:00:00Z",
+      "valid": true
+    },
+    {
+      "epoch": 1782863999,
+      "id": "ok-2026-06-30T23:59:59Z",
+      "input": "2026-06-30T23:59:59Z",
+      "valid": true
+    },
+    {
+      "epoch": 1777507200,
+      "id": "ok-2026-04-30T00:00:00Z",
+      "input": "2026-04-30T00:00:00Z",
+      "valid": true
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-offset-plus",
+      "input": "2026-12-01T09:00:00+00:00",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-offset-minus",
+      "input": "2026-12-01T09:00:00-05:00",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-fraction",
+      "input": "2026-12-01T09:00:00.5Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-lowercase-z",
+      "input": "2026-12-01T09:00:00z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-lowercase-t",
+      "input": "2026-12-01t09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-space-separator",
+      "input": "2026-12-01 09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-no-z",
+      "input": "2026-12-01T09:00:00",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-leap-second",
+      "input": "2026-12-31T23:59:60Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-feb-30",
+      "input": "2026-02-30T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-feb-29-non-leap",
+      "input": "2026-02-29T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-feb-29-century-non-leap",
+      "input": "2100-02-29T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-month-13",
+      "input": "2026-13-01T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-month-00",
+      "input": "2026-00-01T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-day-00",
+      "input": "2026-12-00T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-day-32",
+      "input": "2026-12-32T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-apr-31",
+      "input": "2026-04-31T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-hour-24",
+      "input": "2026-12-01T24:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-minute-60",
+      "input": "2026-12-01T09:60:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-year-1999",
+      "input": "1999-12-31T23:59:59Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-year-10000",
+      "input": "10000-01-01T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-year-0000",
+      "input": "0000-01-01T00:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-leading-space",
+      "input": " 2026-12-01T09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-trailing-space",
+      "input": "2026-12-01T09:00:00Z ",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-trailing-newline",
+      "input": "2026-12-01T09:00:00Z\n",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-empty",
+      "input": "",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-date-only",
+      "input": "2026-12-01",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-short-year",
+      "input": "26-12-01T09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-single-digit-month",
+      "input": "2026-1-01T09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-full-width-digits",
+      "input": "\uff12\uff10\uff12\uff16-12-01T09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-arabic-indic-digit",
+      "input": "2026-12-0\u0661T09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-basic-format",
+      "input": "20261201T090000Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-week-date",
+      "input": "2026-W49-1T09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-epoch-number",
+      "input": "1796115600",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-minus-year",
+      "input": "-2026-12-01T09:00:00Z",
+      "valid": false
+    },
+    {
+      "code": "schema.time_format",
+      "id": "bad-double-z",
+      "input": "2026-12-01T09:00:00ZZ",
+      "valid": false
+    }
+  ],
+  "spec": "spec/01-conventions.md 2.6",
+  "spec_version": "1.0",
+  "window_rule": "ok iff issued_at - 300 <= now < valid_until; now >= valid_until is expired first",
+  "windows": [
+    {
+      "id": "at-issue",
+      "issued_at": 1796115600,
+      "now": 1796115600,
+      "state": "ok",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "one-before-expiry",
+      "issued_at": 1796115600,
+      "now": 1796201999,
+      "state": "ok",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "at-expiry",
+      "issued_at": 1796115600,
+      "now": 1796202000,
+      "state": "expired",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "after-expiry",
+      "issued_at": 1796115600,
+      "now": 1796202001,
+      "state": "expired",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "skew-edge",
+      "issued_at": 1796115600,
+      "now": 1796115300,
+      "state": "ok",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "beyond-skew",
+      "issued_at": 1796115600,
+      "now": 1796115299,
+      "state": "not_yet_valid",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "one-before-issue",
+      "issued_at": 1796115600,
+      "now": 1796115599,
+      "state": "ok",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "far-future",
+      "issued_at": 1796115600,
+      "now": 1806202000,
+      "state": "expired",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "far-past",
+      "issued_at": 1796115600,
+      "now": 0,
+      "state": "not_yet_valid",
+      "valid_until": 1796202000
+    },
+    {
+      "id": "expired-wins-over-skew",
+      "issued_at": 1796115600,
+      "now": 1796202005,
+      "state": "expired",
+      "valid_until": 1796202000
+    }
+  ]
+}

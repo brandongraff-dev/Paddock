@@ -13,8 +13,22 @@ integration_deliveries     updated_at      90 d  (RETENTION_INTEGRATION_DELIVERI
 observation tables         auto-detected   30 d  (RETENTION_OBSERVATIONS_DAYS)
 agent_inventory (v1)       collected_at    30 d  (RETENTION_AGENT_INVENTORY_DAYS)
 agent_posture (signed)     received_at     90 d  (RETENTION_AGENT_POSTURE_DAYS)
+invariant_runs             evaluated_at    365 d (RETENTION_INVARIANT_RUNS_DAYS)
+                                           never the newest row of a (tenant, invariant), never ``pinned``
+agent_manifests            last_ref_at     7 d   (RETENTION_AGENT_MANIFESTS_DAYS)
+                                           only lists no agent references any more
+advisory_fixes (global)    removed_at      30 d  (RETENTION_ADVISORY_FIXES_DAYS)
+advisory_snapshots (glob.) fetched_at      keeps the last 14 per (source, scope),
+                                           ``rejected`` rows 90 d (RETENTION_ADVISORY_REJECTED_DAYS),
+                                           never one a live advisory row points at
 RETENTION_EXTRA entries    as given        as given ("table:col:days,...")
 =========================  ==============  ==================================
+
+The P2.1 rows (docs/ASSURANCE_P2_1.md 1.11, 6.2): ``invariant_runs`` keeps "since when" alive because the newest row
+of each invariant is the ledger anchor; an unreferenced manifest is garbage (a referenced one never expires, however
+old); the advisory tables are GLOBAL (written by the intel service as the platform tenant), so their policies run in the
+platform tenant's turn only. A ``rejected`` snapshot is kept for 90 days as evidence and does not count toward the 14.
+``advisory_fixes`` are purged before ``advisory_snapshots``, whose primary keys they reference.
 
 A policy with ``days <= 0`` is disabled; a table that does not exist is
 skipped. ``audit_log`` (the tamper-evident hash chain) and
@@ -64,6 +78,17 @@ AGENT_INVENTORY_DAYS_DEFAULT = 30
 AGENT_POSTURE_DAYS_DEFAULT = 90
 
 
+# P2.1 (docs/ASSURANCE_P2_1.md 1.11 and 6.2).
+INVARIANT_RUNS_DAYS_DEFAULT = 365
+AGENT_MANIFESTS_DAYS_DEFAULT = 7
+ADVISORY_FIXES_DAYS_DEFAULT = 30
+ADVISORY_REJECTED_DAYS_DEFAULT = 90
+#: advisory_snapshots keep the newest N non-rejected rows of each (source, scope); a floor of this many days of age is
+#: also required, so nothing fresh can go whatever the fetch rate (set RETENTION_ADVISORY_SNAPSHOTS_DAYS=0 to disable)
+ADVISORY_SNAPSHOTS_KEEP = 14
+ADVISORY_SNAPSHOTS_MIN_AGE_DAYS_DEFAULT = 1
+
+
 def _env_days(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name) or default)
@@ -82,6 +107,9 @@ class Policy:
     days: int
     # Optional constant SQL predicate (never user input) ANDed to the horizon.
     where: str | None = None
+    # A GLOBAL table (no tenant_id; RLS lets only the platform tenant write it): purged in the platform tenant's turn
+    # only, once per run, instead of once per tenant.
+    platform_only: bool = False
 
     def validate(self) -> None:
         if self.table in NEVER_PURGE:
@@ -104,6 +132,11 @@ def parse_extra(spec: str) -> list[Policy]:
     return out
 
 
+#: no advisory row (live or removed-but-not-yet-purged) names the snapshot as its last sighting
+_SNAPSHOT_UNREFERENCED = ("NOT EXISTS (SELECT 1 FROM advisory_fixes f "
+                          "WHERE f.last_seen_snapshot = advisory_snapshots.id)")
+
+
 def configured_policies() -> list[Policy]:
     s = ops_settings
     pols = [
@@ -119,6 +152,38 @@ def configured_policies() -> list[Policy]:
                _env_days("RETENTION_AGENT_INVENTORY_DAYS", AGENT_INVENTORY_DAYS_DEFAULT)),
         Policy("agent_posture", "received_at",
                _env_days("RETENTION_AGENT_POSTURE_DAYS", AGENT_POSTURE_DAYS_DEFAULT)),
+        # invariant_runs (6.2, D34): everything older than the horizon EXCEPT the newest row of each (tenant, invariant)
+        # (so "since when" always has an anchor) and pinned rows (P3 attestations hold them). The correlated reference is
+        # valid inside _purge_one's ``SELECT ctid FROM "invariant_runs"`` subquery. Rows with an identical timestamp are
+        # both kept (the comparison is strict): never a deletion on a tie.
+        Policy("invariant_runs", "evaluated_at",
+               _env_days("RETENTION_INVARIANT_RUNS_DAYS", INVARIANT_RUNS_DAYS_DEFAULT),
+               where="NOT pinned AND EXISTS (SELECT 1 FROM invariant_runs n "
+                     "WHERE n.invariant_id = invariant_runs.invariant_id "
+                     "AND n.tenant_id = invariant_runs.tenant_id "
+                     "AND n.evaluated_at > invariant_runs.evaluated_at)"),
+        # agent_manifests (1.5, 1.11): only a list no agent references. A ref is per tenant (tenant_id is compared, so a
+        # reference in tenant A never protects tenant B's copy of the same sha).
+        Policy("agent_manifests", "last_ref_at",
+               _env_days("RETENTION_AGENT_MANIFESTS_DAYS", AGENT_MANIFESTS_DAYS_DEFAULT),
+               where="NOT EXISTS (SELECT 1 FROM agent_manifest_refs r "
+                     "WHERE r.tenant_id = agent_manifests.tenant_id AND r.manifest_sha = agent_manifests.sha256)"),
+        # advisory_fixes BEFORE advisory_snapshots (the FK points that way): removed rows after 30 days.
+        Policy("advisory_fixes", "removed_at",
+               _env_days("RETENTION_ADVISORY_FIXES_DAYS", ADVISORY_FIXES_DAYS_DEFAULT), platform_only=True),
+        # advisory_snapshots: every rejected row after 90 days ...
+        Policy("advisory_snapshots", "fetched_at",
+               _env_days("RETENTION_ADVISORY_REJECTED_DAYS", ADVISORY_REJECTED_DAYS_DEFAULT),
+               where="status = 'rejected' AND " + _SNAPSHOT_UNREFERENCED, platform_only=True),
+        # ... and a superseded row once 14 newer non-rejected rows of the same (source, scope) exist. The ``current``
+        # row is never a candidate (it is the staleness clock), nor is one a live or recently removed advisory row names.
+        Policy("advisory_snapshots", "fetched_at",
+               _env_days("RETENTION_ADVISORY_SNAPSHOTS_DAYS", ADVISORY_SNAPSHOTS_MIN_AGE_DAYS_DEFAULT),
+               where="status = 'superseded' AND " + _SNAPSHOT_UNREFERENCED + " AND (SELECT count(*) FROM "
+                     "advisory_snapshots n WHERE n.source = advisory_snapshots.source "
+                     "AND n.scope = advisory_snapshots.scope AND n.status <> 'rejected' "
+                     f"AND (n.fetched_at, n.id) > (advisory_snapshots.fetched_at, advisory_snapshots.id)) "
+                     f">= {ADVISORY_SNAPSHOTS_KEEP}", platform_only=True),
     ]
     pols += parse_extra(s.retention_extra)
     return pols
@@ -206,6 +271,8 @@ async def run_retention(
                             p.validate()  # refuses audit_log even if constructed directly
                             if p.days <= 0:
                                 continue
+                            if p.platform_only and tid != tenancy.DEFAULT_TENANT_ID:
+                                continue  # a global table: the platform tenant's turn only
                             try:
                                 n = await _purge_one(tcon, p, batch, max_batches)
                             except Exception:  # noqa: BLE001 -- one bad table never stops the rest

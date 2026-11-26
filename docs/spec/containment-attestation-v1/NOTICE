@@ -1,0 +1,10 @@
+Paddock containment attestation specification, version 1
+Copyright 2026 The Paddock authors
+
+This specification and its test vectors are licensed under the Apache License, Version 2.0 (see LICENSE),
+which includes a patent grant, so that anyone may implement the format and a verifier without restriction.
+It is a separate work from the AGPL-3.0 licensed Paddock platform in the same repository.
+
+The test vectors include the public test vectors of RFC 8032 (Ed25519). The Merkle tree construction follows
+RFC 6962 and RFC 9162; the signing envelope follows DSSE and in-toto Statement v1 (both Apache-2.0 projects).
+The keys derived from the public conformance seeds in the vectors are test keys only: never trust them.

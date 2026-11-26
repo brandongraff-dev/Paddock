@@ -1,0 +1,118 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/bundle-index.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "bundle.json (an object), attestation/index.json and anchors/index.json (arrays, at most 60 entries). Conveniences only: the verifier never trusts them for a decision.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "maxLength": 253,
+          "type": "string"
+        },
+        "generated_at": {
+          "$ref": "predicate.schema.json#/$defs/T"
+        },
+        "head": {
+          "additionalProperties": false,
+          "properties": {
+            "digest": {
+              "$ref": "predicate.schema.json#/$defs/H"
+            },
+            "seq": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "seq",
+            "digest"
+          ],
+          "type": "object"
+        },
+        "paths": {
+          "items": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "spec": {
+          "const": "paddock-attest-bundle/v1"
+        }
+      },
+      "required": [
+        "spec",
+        "domain",
+        "generated_at",
+        "head",
+        "paths"
+      ],
+      "type": "object"
+    },
+    {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "issued_at": {
+            "$ref": "predicate.schema.json#/$defs/T"
+          },
+          "kid": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "seq": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "statement_digest": {
+            "$ref": "predicate.schema.json#/$defs/H"
+          },
+          "valid_until": {
+            "$ref": "predicate.schema.json#/$defs/T"
+          }
+        },
+        "required": [
+          "seq",
+          "statement_digest",
+          "issued_at",
+          "valid_until",
+          "kid"
+        ],
+        "type": "object"
+      },
+      "maxItems": 60,
+      "type": "array"
+    },
+    {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "$ref": "predicate.schema.json#/$defs/T"
+          },
+          "kid": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "max_id": {
+            "$ref": "predicate.schema.json#/$defs/UINT"
+          }
+        },
+        "required": [
+          "max_id",
+          "at",
+          "kid"
+        ],
+        "type": "object"
+      },
+      "maxItems": 60,
+      "type": "array"
+    }
+  ],
+  "title": "Unsigned bundle conveniences"
+}

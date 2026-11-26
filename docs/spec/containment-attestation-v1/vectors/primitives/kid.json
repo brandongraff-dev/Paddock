@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "fp": "sha256:58ccf8a6356bd6f132b30895fcc9ecc3097511dac0fc39de13c6a1652e0ec66f",
+      "kid": "58ccf8a6356bd6f132b30895fcc9ecc3",
+      "name": "root-1",
+      "pub_b64": "C1KOEZ3V6Kq0BrW0IFXgHCiK3uTpHV/CNVfxfkU3+PM=",
+      "pub_hex": "0b528e119dd5e8aab406b5b42055e01c288adee4e91d5fc23557f17e4537f8f3",
+      "seed_hex": "44a7ae50f13f39bfe6b8d190ce7d881077052db155fadee5fbf25dd6d98d5c39"
+    },
+    {
+      "fp": "sha256:bab29923f5f1202a7c5cba60a87cd7460465e81fe196b52f470bf9d61001ba04",
+      "kid": "bab29923f5f1202a7c5cba60a87cd746",
+      "name": "root-2",
+      "pub_b64": "eteESenZdfdkCYm7snjzD2pFjOLsvRrq+1bCnsPTiwA=",
+      "pub_hex": "7ad78449e9d975f7640989bbb278f30f6a458ce2ecbd1aeafb56c29ec3d38b00",
+      "seed_hex": "1c0b9f97913c000387f2df1f88f15f2df606d214447871081744a99c708932cb"
+    },
+    {
+      "fp": "sha256:03dbb18584f3b1572ca60337d0dd6c257dd921509c7351e1a999b120f9d416bd",
+      "kid": "03dbb18584f3b1572ca60337d0dd6c25",
+      "name": "issuer-1",
+      "pub_b64": "AnkxIn0Nq03t0HZLEY5iKeFVqPkG24Qb7MNSF12DDOY=",
+      "pub_hex": "027931227d0dab4dedd0764b118e6229e155a8f906db841becc352175d830ce6",
+      "seed_hex": "ac73f61867b4e06b98dfc552b1583e576da4624a52ce1139bd0fcdd5cf529765"
+    },
+    {
+      "fp": "sha256:caed6e63bfffa98faabc47117ebf4123181826c37ab7636ab4529fa3d37d8125",
+      "kid": "caed6e63bfffa98faabc47117ebf4123",
+      "name": "revoker-1",
+      "pub_b64": "6FJ3QuMGcDJDXukWs4v4fbAcVTLQKddYZDyQ94Mvuw4=",
+      "pub_hex": "e8527742e3067032435ee916b38bf87db01c5532d029d758643c90f7832fbb0e",
+      "seed_hex": "c0e6acf0bb29c914d0bc65d3790a4597e95c266837770964b7dda6bff1f1368c"
+    },
+    {
+      "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+      "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+      "name": "tenant-a",
+      "pub_b64": "SSJYp+SRzsje7AY/OPHucOc6+STVMppqHDvdYR9OLmk=",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "seed_hex": "cfe3a469917cbcf7ff08d59db72a543ff5ab540ee36bb6013b3addcd919d9290"
+    },
+    {
+      "fp": "sha256:5f8a1d41d9d98fa38c01448c27488b744638eb14a5ba47169285cfaf3891f994",
+      "kid": "5f8a1d41d9d98fa38c01448c27488b74",
+      "name": "tenant-b",
+      "pub_b64": "nSNlcvOuT4pI9xOAPEolRD6AHDbWePOYLAXRe4Ramf4=",
+      "pub_hex": "9d236572f3ae4f8a48f713803c4a25443e801c36d678f3982c05d17b845a99fe",
+      "seed_hex": "dd935bc4b8c6b5b232536cf67cee9f7c527e7851abd06269c6f2a55ecfc0172a"
+    },
+    {
+      "fp": "sha256:9aef608fe4565a8f55947deec61af518fda30e0e5373a51af847340285e13969",
+      "kid": "9aef608fe4565a8f55947deec61af518",
+      "name": "anchor-a",
+      "pub_b64": "u45ixP3frxff11KsgHX0HrqrB5Om7isLnn4ye8ONzzQ=",
+      "pub_hex": "bb8e62c4fddfaf17dfd752ac8075f41ebaab0793a6ee2b0b9e7e327bc38dcf34",
+      "seed_hex": "d5b8a14da6062e5194f548748b4cf7fe0605999d6376febad39dd86ff13d5b17"
+    },
+    {
+      "fp": "sha256:b0ad8ab32dbe4405ba6994807d36d91511962ab93a746e7134e82e56943dcb29",
+      "kid": "b0ad8ab32dbe4405ba6994807d36d915",
+      "name": "attacker",
+      "pub_b64": "1xnAo8uvkyLLWoNpd8FVEeZeLMJbmCuv2M7HVU5eZJ8=",
+      "pub_hex": "d719c0a3cbaf9322cb5a836977c15511e65e2cc25b982bafd8cec7554e5e649f",
+      "seed_hex": "349fcca3cfb566109884547bc5575f00461614690d65a1c51341eb483b212817"
+    }
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "kid",
+  "seed_rule": "seed = sha256(b\"paddock-conformance-seed/v1/\" + name); kid = first 32 hex of sha256(raw public key)",
+  "spec": "spec/05-keys-certs-revocation-dns.md",
+  "spec_version": "1.0",
+  "warning": "public test keys: never a trust root"
+}

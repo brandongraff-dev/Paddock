@@ -1,0 +1,693 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$defs": {
+    "ESTATE": {
+      "pattern": "^e_[a-z2-7]{26}$",
+      "type": "string"
+    },
+    "H": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "INV": {
+      "maxLength": 96,
+      "pattern": "^[a-z][a-z0-9]{0,31}:[a-z0-9][a-z0-9-]{0,63}$",
+      "type": "string"
+    },
+    "KID": {
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "SUBJECT": {
+      "maxLength": 260,
+      "pattern": "^(dns:([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?|paddock-estate:e_[a-z2-7]{26})$",
+      "type": "string"
+    },
+    "T": {
+      "description": "YYYY-MM-DDTHH:MM:SSZ. Calendar validity (no 30 February, no :60, years 2000 to 9999) is checked by the verifier.",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+      "type": "string"
+    },
+    "UINT": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "result_holds": {
+      "additionalProperties": false,
+      "description": "HOLDS: no counterexample under this evidence, coverage and freshness",
+      "properties": {
+        "assertion": {
+          "enum": [
+            "unreachable",
+            "exposes-only",
+            "covered",
+            "host-config"
+          ]
+        },
+        "blind_spots": {
+          "additionalProperties": false,
+          "properties": {
+            "root": {
+              "$ref": "predicate.schema.json#/$defs/H"
+            },
+            "size": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "root",
+            "size",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "coverage": {
+          "additionalProperties": false,
+          "properties": {
+            "covered": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "estate_covered": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "estate_universe": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "required_bp": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "universe": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            }
+          },
+          "required": [
+            "universe",
+            "covered",
+            "required_bp",
+            "estate_universe",
+            "estate_covered"
+          ],
+          "type": "object"
+        },
+        "digest": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "exceptions": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "invariant": {
+          "$ref": "predicate.schema.json#/$defs/INV"
+        },
+        "max_age_s": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "min_tier": {
+          "enum": [
+            "declared",
+            "configured",
+            "observed",
+            "tested"
+          ]
+        },
+        "selected": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "stop_at": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "to": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            }
+          },
+          "required": [
+            "to"
+          ],
+          "type": "object"
+        },
+        "tier": {
+          "description": "never declared; tested is rejected by a v1 verifier (result.tier_invalid)",
+          "enum": [
+            "configured",
+            "observed",
+            "tested"
+          ]
+        },
+        "valid_until": {
+          "$ref": "predicate.schema.json#/$defs/T"
+        },
+        "verdict": {
+          "const": "HOLDS"
+        }
+      },
+      "required": [
+        "invariant",
+        "digest",
+        "assertion",
+        "verdict",
+        "min_tier",
+        "max_age_s",
+        "coverage",
+        "blind_spots",
+        "selected",
+        "exceptions",
+        "tier",
+        "valid_until"
+      ],
+      "type": "object"
+    },
+    "result_unknown": {
+      "additionalProperties": false,
+      "description": "UNKNOWN: undetermined, never a pass",
+      "properties": {
+        "assertion": {
+          "enum": [
+            "unreachable",
+            "exposes-only",
+            "covered",
+            "host-config"
+          ]
+        },
+        "blind_spots": {
+          "additionalProperties": false,
+          "properties": {
+            "root": {
+              "$ref": "predicate.schema.json#/$defs/H"
+            },
+            "size": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "root",
+            "size",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "coverage": {
+          "additionalProperties": false,
+          "properties": {
+            "covered": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "estate_covered": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "estate_universe": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "required_bp": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "universe": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            }
+          },
+          "required": [
+            "universe",
+            "covered",
+            "required_bp",
+            "estate_universe",
+            "estate_covered"
+          ],
+          "type": "object"
+        },
+        "digest": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "exceptions": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "invariant": {
+          "$ref": "predicate.schema.json#/$defs/INV"
+        },
+        "max_age_s": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "min_tier": {
+          "enum": [
+            "declared",
+            "configured",
+            "observed",
+            "tested"
+          ]
+        },
+        "reason_codes": {
+          "description": "sorted ascending; sortedness is checked by the verifier",
+          "items": {
+            "enum": [
+              "coverage_below_required",
+              "empty_selector",
+              "evaluation_error",
+              "graph_incomplete",
+              "host_evidence_unusable",
+              "invalid_definition",
+              "other",
+              "possible_via_unknown_edges",
+              "selection_too_large",
+              "stale_or_missing_evidence",
+              "zone_unknown"
+            ]
+          },
+          "maxItems": 11,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "selected": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "stop_at": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "to": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            }
+          },
+          "required": [
+            "to"
+          ],
+          "type": "object"
+        },
+        "verdict": {
+          "const": "UNKNOWN"
+        }
+      },
+      "required": [
+        "invariant",
+        "digest",
+        "assertion",
+        "verdict",
+        "min_tier",
+        "max_age_s",
+        "coverage",
+        "blind_spots",
+        "selected",
+        "exceptions",
+        "reason_codes"
+      ],
+      "type": "object"
+    },
+    "result_violated": {
+      "additionalProperties": false,
+      "description": "VIOLATED: a counterexample exists; only the count is disclosed",
+      "properties": {
+        "assertion": {
+          "enum": [
+            "unreachable",
+            "exposes-only",
+            "covered",
+            "host-config"
+          ]
+        },
+        "blind_spots": {
+          "additionalProperties": false,
+          "properties": {
+            "root": {
+              "$ref": "predicate.schema.json#/$defs/H"
+            },
+            "size": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "root",
+            "size",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "coverage": {
+          "additionalProperties": false,
+          "properties": {
+            "covered": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "estate_covered": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "estate_universe": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "required_bp": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "universe": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            }
+          },
+          "required": [
+            "universe",
+            "covered",
+            "required_bp",
+            "estate_universe",
+            "estate_covered"
+          ],
+          "type": "object"
+        },
+        "digest": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "exceptions": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "invariant": {
+          "$ref": "predicate.schema.json#/$defs/INV"
+        },
+        "max_age_s": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "min_tier": {
+          "enum": [
+            "declared",
+            "configured",
+            "observed",
+            "tested"
+          ]
+        },
+        "selected": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "stop_at": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            },
+            "to": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            }
+          },
+          "required": [
+            "to"
+          ],
+          "type": "object"
+        },
+        "verdict": {
+          "const": "VIOLATED"
+        },
+        "violations": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "invariant",
+        "digest",
+        "assertion",
+        "verdict",
+        "min_tier",
+        "max_age_s",
+        "coverage",
+        "blind_spots",
+        "selected",
+        "exceptions",
+        "violations"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/predicate.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The predicate of https://paddock.dev/attestation/containment/v1. Strict: an unknown key anywhere is invalid; a new field means a new predicateType. Rules a schema cannot state (sorted unique results, count consistency, windows, tier ordering, coverage arithmetic) are checks of the verification procedure.",
+  "else": {
+    "required": [
+      "prev"
+    ]
+  },
+  "if": {
+    "properties": {
+      "seq": {
+        "const": 1
+      }
+    },
+    "required": [
+      "seq"
+    ]
+  },
+  "properties": {
+    "audit_anchor": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "predicate.schema.json#/$defs/T"
+        },
+        "digest": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "hash_alg": {
+          "enum": [
+            "sha256",
+            "hmac-sha256"
+          ]
+        },
+        "head": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "kid": {
+          "$ref": "predicate.schema.json#/$defs/KID"
+        },
+        "max_id": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        }
+      },
+      "required": [
+        "max_id",
+        "head",
+        "hash_alg",
+        "at",
+        "kid",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "disclosure": {
+      "additionalProperties": false,
+      "properties": {
+        "custom": {
+          "type": "boolean"
+        },
+        "verdicts": {
+          "enum": [
+            "holds_only",
+            "all"
+          ]
+        }
+      },
+      "required": [
+        "verdicts",
+        "custom"
+      ],
+      "type": "object"
+    },
+    "engine": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "paddock-assurance"
+        },
+        "ruleset": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "version": {
+          "pattern": "^[0-9A-Za-z.+-]{1,32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "ruleset"
+      ],
+      "type": "object"
+    },
+    "estate": {
+      "$ref": "predicate.schema.json#/$defs/ESTATE"
+    },
+    "issued_at": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "kid": {
+      "$ref": "predicate.schema.json#/$defs/KID"
+    },
+    "limits": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "id": {
+          "pattern": "^paddock-limits/[0-9]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "policy": {
+      "additionalProperties": false,
+      "properties": {
+        "commitment": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "disclosed": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "enabled_custom": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "enabled_std": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "total": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "versions": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        }
+      },
+      "required": [
+        "commitment",
+        "total",
+        "enabled_std",
+        "enabled_custom",
+        "disclosed",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "prev": {
+      "$ref": "predicate.schema.json#/$defs/H"
+    },
+    "results": {
+      "description": "sorted by invariant in byte order and unique; the verifier checks order and uniqueness",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/result_holds"
+          },
+          {
+            "$ref": "#/$defs/result_violated"
+          },
+          {
+            "$ref": "#/$defs/result_unknown"
+          }
+        ]
+      },
+      "maxItems": 256,
+      "type": "array"
+    },
+    "scope": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "$ref": "predicate.schema.json#/$defs/H"
+        },
+        "entries": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "private": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        },
+        "unproven": {
+          "$ref": "predicate.schema.json#/$defs/UINT"
+        }
+      },
+      "required": [
+        "digest",
+        "entries",
+        "unproven",
+        "private"
+      ],
+      "type": "object"
+    },
+    "seq": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "snapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "predicate.schema.json#/$defs/T"
+        },
+        "graph": {
+          "additionalProperties": false,
+          "properties": {
+            "root": {
+              "$ref": "predicate.schema.json#/$defs/H"
+            },
+            "size": {
+              "$ref": "predicate.schema.json#/$defs/UINT"
+            }
+          },
+          "required": [
+            "root",
+            "size"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "at",
+        "graph"
+      ],
+      "type": "object"
+    },
+    "valid_until": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    }
+  },
+  "required": [
+    "estate",
+    "seq",
+    "issued_at",
+    "valid_until",
+    "kid",
+    "snapshot",
+    "scope",
+    "policy",
+    "disclosure",
+    "results",
+    "engine",
+    "limits"
+  ],
+  "then": {
+    "not": {
+      "required": [
+        "prev"
+      ]
+    }
+  },
+  "title": "Containment predicate v1",
+  "type": "object"
+}

@@ -1,0 +1,178 @@
+{
+  "cases": [
+    {
+      "code": "coverage_below_required",
+      "reason": "coverage_below_required"
+    },
+    {
+      "code": "possible_via_unknown_edges",
+      "reason": "possible_via_unknown_edges"
+    },
+    {
+      "code": "zone_unknown",
+      "reason": "possible_via_zone_unknown"
+    },
+    {
+      "code": "zone_unknown",
+      "reason": "zone_unknown:3"
+    },
+    {
+      "code": "zone_unknown",
+      "reason": "zone_unknown"
+    },
+    {
+      "code": "selection_too_large",
+      "reason": "overlapping_selectors_too_large"
+    },
+    {
+      "code": "host_evidence_unusable",
+      "reason": "hosts_unknown:2"
+    },
+    {
+      "code": "host_evidence_unusable",
+      "reason": "no_agent"
+    },
+    {
+      "code": "host_evidence_unusable",
+      "reason": "agent_revoked"
+    },
+    {
+      "code": "host_evidence_unusable",
+      "reason": "no_value"
+    },
+    {
+      "code": "stale_or_missing_evidence",
+      "reason": "stale"
+    },
+    {
+      "code": "stale_or_missing_evidence",
+      "reason": "future_timestamp"
+    },
+    {
+      "code": "stale_or_missing_evidence",
+      "reason": "tier_below_min"
+    },
+    {
+      "code": "stale_or_missing_evidence",
+      "reason": "no_sensor"
+    },
+    {
+      "code": "empty_selector",
+      "reason": "empty_selector:to"
+    },
+    {
+      "code": "empty_selector",
+      "reason": "empty_selector:from"
+    },
+    {
+      "code": "empty_selector",
+      "reason": "empty_selector:no_distinct_pair"
+    },
+    {
+      "code": "graph_incomplete",
+      "reason": "graph_incomplete:cidr_expansion_overflow"
+    },
+    {
+      "code": "graph_incomplete",
+      "reason": "graph_incomplete"
+    },
+    {
+      "code": "graph_incomplete",
+      "reason": "graph_unavailable"
+    },
+    {
+      "code": "invalid_definition",
+      "reason": "invalid_definition"
+    },
+    {
+      "code": "evaluation_error",
+      "reason": "evaluation_error"
+    },
+    {
+      "code": "evaluation_error",
+      "reason": "evaluation_error:TimeoutError"
+    },
+    {
+      "code": "other",
+      "reason": "no_counterexample"
+    },
+    {
+      "code": "other",
+      "reason": "witness_found"
+    },
+    {
+      "code": "other",
+      "reason": "std_unrecognised"
+    },
+    {
+      "code": "other",
+      "reason": "brand_new_reason:7"
+    },
+    {
+      "code": "other",
+      "reason": ""
+    },
+    {
+      "code": "other",
+      "reason": ":"
+    },
+    {
+      "code": "other",
+      "reason": ":coverage_below_required"
+    },
+    {
+      "code": "other",
+      "reason": "Coverage_Below_Required"
+    },
+    {
+      "code": "other",
+      "reason": "coverage_below_required "
+    },
+    {
+      "code": "other",
+      "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "code": "zone_unknown",
+      "reason": "zone_unknown:1:2"
+    }
+  ],
+  "enum": [
+    "coverage_below_required",
+    "empty_selector",
+    "evaluation_error",
+    "graph_incomplete",
+    "host_evidence_unusable",
+    "invalid_definition",
+    "other",
+    "possible_via_unknown_edges",
+    "selection_too_large",
+    "stale_or_missing_evidence",
+    "zone_unknown"
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "reason-map",
+  "prefix_map": {
+    "agent_revoked": "host_evidence_unusable",
+    "coverage_below_required": "coverage_below_required",
+    "empty_selector": "empty_selector",
+    "evaluation_error": "evaluation_error",
+    "future_timestamp": "stale_or_missing_evidence",
+    "graph_incomplete": "graph_incomplete",
+    "graph_unavailable": "graph_incomplete",
+    "hosts_unknown": "host_evidence_unusable",
+    "invalid_definition": "invalid_definition",
+    "no_agent": "host_evidence_unusable",
+    "no_sensor": "stale_or_missing_evidence",
+    "no_value": "host_evidence_unusable",
+    "overlapping_selectors_too_large": "selection_too_large",
+    "possible_via_unknown_edges": "possible_via_unknown_edges",
+    "possible_via_zone_unknown": "zone_unknown",
+    "stale": "stale_or_missing_evidence",
+    "tier_below_min": "stale_or_missing_evidence",
+    "zone_unknown": "zone_unknown"
+  },
+  "rule": "the public code is looked up by the part of the engine reason before the first colon; anything else is other",
+  "spec": "spec/02-statement-predicate.md",
+  "spec_version": "1.0"
+}

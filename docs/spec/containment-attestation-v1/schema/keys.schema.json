@@ -1,0 +1,91 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/keys.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Public, unsigned wrapper: every certificate inside is signed and authoritative; every unsigned entry field must equal the certificate payload (key.cert_subject_mismatch). Status is deliberately absent.",
+  "properties": {
+    "estate": {
+      "$ref": "predicate.schema.json#/$defs/ESTATE"
+    },
+    "issuers": {
+      "items": {
+        "$ref": "dsse-envelope.schema.json"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "type": "array"
+    },
+    "keys": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "alg": {
+            "enum": [
+              "ed25519"
+            ]
+          },
+          "cert": {
+            "$ref": "dsse-envelope.schema.json"
+          },
+          "custody": {
+            "enum": [
+              "hosted",
+              "byok-kms",
+              "byok-hsm"
+            ]
+          },
+          "kid": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "not_after": {
+            "$ref": "predicate.schema.json#/$defs/T"
+          },
+          "not_before": {
+            "$ref": "predicate.schema.json#/$defs/T"
+          },
+          "public_key": {
+            "description": "canonical standard base64 of 32 bytes",
+            "pattern": "^[A-Za-z0-9+/]{43}=$",
+            "type": "string"
+          },
+          "usage": {
+            "enum": [
+              "attest",
+              "anchor"
+            ]
+          }
+        },
+        "required": [
+          "kid",
+          "usage",
+          "alg",
+          "public_key",
+          "custody",
+          "not_before",
+          "not_after",
+          "cert"
+        ],
+        "type": "object"
+      },
+      "maxItems": 16,
+      "type": "array"
+    },
+    "revoker": {
+      "$ref": "dsse-envelope.schema.json"
+    },
+    "spec": {
+      "const": "paddock-keys/v1"
+    }
+  },
+  "required": [
+    "spec",
+    "estate",
+    "issuers",
+    "revoker",
+    "keys"
+  ],
+  "title": "keys.json",
+  "type": "object"
+}

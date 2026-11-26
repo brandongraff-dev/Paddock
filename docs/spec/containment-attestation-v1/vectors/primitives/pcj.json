@@ -1,0 +1,831 @@
+{
+  "encode": [
+    {
+      "id": "empty-object",
+      "pcj_b64": "e30=",
+      "value": {}
+    },
+    {
+      "id": "unsorted-input",
+      "pcj_b64": "eyJhIjpbdHJ1ZSxmYWxzZSwieCJdLCJiIjoxfQ==",
+      "value": {
+        "a": [
+          true,
+          false,
+          "x"
+        ],
+        "b": 1
+      }
+    },
+    {
+      "id": "byte-order-keys",
+      "pcj_b64": "eyJCIjoyLCJfIjo0LCJhIjozLCJhYSI6NSwiYiI6MX0=",
+      "value": {
+        "B": 2,
+        "_": 4,
+        "a": 3,
+        "aa": 5,
+        "b": 1
+      }
+    },
+    {
+      "id": "max-int",
+      "pcj_b64": "OTAwNzE5OTI1NDc0MDk5MQ==",
+      "value": 9007199254740991
+    },
+    {
+      "id": "zero",
+      "pcj_b64": "MA==",
+      "value": 0
+    },
+    {
+      "id": "all-printable",
+      "pcj_b64": "IiEjJCUmJygpKissLS4vMDk6Ozw9Pj9AQVpbXV5fYGF6e3x9fiAi",
+      "value": "!#$%&'()*+,-./09:;<=>?@AZ[]^_`az{|}~ "
+    },
+    {
+      "id": "nested",
+      "pcj_b64": "eyJ4IjpbW10se30sWzEsWzJdXV19",
+      "value": {
+        "x": [
+          [],
+          {},
+          [
+            1,
+            [
+              2
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "error": "not_encodable",
+      "id": "int-2^53",
+      "value": 9007199254740992
+    },
+    {
+      "error": "not_encodable",
+      "id": "negative",
+      "value": -1
+    },
+    {
+      "error": "not_encodable",
+      "id": "float",
+      "value": 1.5
+    },
+    {
+      "error": "not_encodable",
+      "id": "float-integral",
+      "value": 1.0
+    },
+    {
+      "error": "not_encodable",
+      "id": "null",
+      "value": null
+    },
+    {
+      "error": "not_encodable",
+      "id": "string-with-quote",
+      "value": "a\"b"
+    },
+    {
+      "error": "not_encodable",
+      "id": "string-with-backslash",
+      "value": "a\\b"
+    },
+    {
+      "error": "not_encodable",
+      "id": "string-non-ascii",
+      "value": "\u00e9"
+    },
+    {
+      "error": "not_encodable",
+      "id": "string-control",
+      "value": "a\tb"
+    },
+    {
+      "error": "not_encodable",
+      "id": "string-del",
+      "value": "\u007f"
+    },
+    {
+      "error": "not_encodable",
+      "id": "empty-key",
+      "value": {
+        "": 1
+      }
+    },
+    {
+      "error": "not_encodable",
+      "id": "key-with-quote",
+      "value": {
+        "a\"": 1
+      }
+    },
+    {
+      "error": "not_encodable",
+      "id": "depth-17",
+      "value": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        1
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    }
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "pcj",
+  "parse": [
+    {
+      "id": "empty-object",
+      "input_b64": "e30=",
+      "input_text": "{}",
+      "result": "accept",
+      "value": {}
+    },
+    {
+      "id": "empty-array",
+      "input_b64": "W10=",
+      "input_text": "[]",
+      "result": "accept",
+      "value": []
+    },
+    {
+      "id": "scalar-zero",
+      "input_b64": "MA==",
+      "input_text": "0",
+      "result": "accept",
+      "value": 0
+    },
+    {
+      "id": "scalar-true",
+      "input_b64": "dHJ1ZQ==",
+      "input_text": "true",
+      "result": "accept",
+      "value": true
+    },
+    {
+      "id": "simple-object",
+      "input_b64": "eyJhIjoxLCJiIjpbdHJ1ZSxmYWxzZSwieCB5Il19",
+      "input_text": "{\"a\":1,\"b\":[true,false,\"x y\"]}",
+      "result": "accept",
+      "value": {
+        "a": 1,
+        "b": [
+          true,
+          false,
+          "x y"
+        ]
+      }
+    },
+    {
+      "id": "nested-sorted",
+      "input_b64": "eyJhIjp7ImIiOnsiYyI6W119fSwieiI6MH0=",
+      "input_text": "{\"a\":{\"b\":{\"c\":[]}},\"z\":0}",
+      "result": "accept",
+      "value": {
+        "a": {
+          "b": {
+            "c": []
+          }
+        },
+        "z": 0
+      }
+    },
+    {
+      "id": "max-int",
+      "input_b64": "WzkwMDcxOTkyNTQ3NDA5OTFd",
+      "input_text": "[9007199254740991]",
+      "result": "accept",
+      "value": [
+        9007199254740991
+      ]
+    },
+    {
+      "id": "printable-ascii",
+      "input_b64": "WyIhIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQVpbXV5fYGF6e3x9fiAiXQ==",
+      "input_text": "[\"!#$%&'()*+,-./0123456789:;<=>?@AZ[]^_`az{|}~ \"]",
+      "result": "accept",
+      "value": [
+        "!#$%&'()*+,-./0123456789:;<=>?@AZ[]^_`az{|}~ "
+      ]
+    },
+    {
+      "id": "true-as-number",
+      "input_b64": "eyJzZXEiOnRydWV9",
+      "input_text": "{\"seq\":true}",
+      "note": "valid PCJ; the schema layer must still reject a boolean where an integer is required",
+      "result": "accept",
+      "value": {
+        "seq": true
+      }
+    },
+    {
+      "id": "depth-16",
+      "input_b64": "W1tbW1tbW1tbW1tbW1tbWzFdXV1dXV1dXV1dXV1dXV1d",
+      "input_text": "[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]",
+      "result": "accept",
+      "value": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      1
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "large-string-512k",
+      "note": "the value is not stored: a mapping with key a and a string of 524280 letters a",
+      "recipe": {
+        "fill": "a",
+        "head": "{\"a\":\"",
+        "length": 524288,
+        "tail": "\"}"
+      },
+      "result": "accept"
+    },
+    {
+      "id": "sorted-by-byte",
+      "input_b64": "eyJCIjoxLCJfIjoyLCJhIjozLCJhYSI6NCwiYiI6NX0=",
+      "input_text": "{\"B\":1,\"_\":2,\"a\":3,\"aa\":4,\"b\":5}",
+      "result": "accept",
+      "value": {
+        "B": 1,
+        "_": 2,
+        "a": 3,
+        "aa": 4,
+        "b": 5
+      }
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "neg-zero",
+      "input_b64": "Wy0wXQ==",
+      "input_text": "[-0]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "neg-one",
+      "input_b64": "Wy0xXQ==",
+      "input_text": "[-1]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "plus-one",
+      "input_b64": "WysxXQ==",
+      "input_text": "[+1]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "float-1.0",
+      "input_b64": "WzEuMF0=",
+      "input_text": "[1.0]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "float-1e2",
+      "input_b64": "WzFlMl0=",
+      "input_text": "[1e2]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "float-1E2",
+      "input_b64": "WzFFMl0=",
+      "input_text": "[1E2]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "float-fraction",
+      "input_b64": "WzAuNV0=",
+      "input_text": "[0.5]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "leading-zero",
+      "input_b64": "WzAxXQ==",
+      "input_text": "[01]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "nan",
+      "input_b64": "W05hTl0=",
+      "input_text": "[NaN]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "infinity",
+      "input_b64": "W0luZmluaXR5XQ==",
+      "input_text": "[Infinity]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "neg-infinity",
+      "input_b64": "Wy1JbmZpbml0eV0=",
+      "input_text": "[-Infinity]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "int-2^53",
+      "input_b64": "WzkwMDcxOTkyNTQ3NDA5OTJd",
+      "input_text": "[9007199254740992]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.number_invalid",
+      "id": "int-5000-digits",
+      "recipe": {
+        "fill": "9",
+        "head": "[",
+        "length": 5002,
+        "tail": "]"
+      },
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "null",
+      "input_b64": "W251bGxd",
+      "input_text": "[null]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "null-in-object",
+      "input_b64": "eyJhIjpudWxsfQ==",
+      "input_text": "{\"a\":null}",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_ascii",
+      "id": "non-ascii-e-acute",
+      "input_b64": "WyLDqSJd",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_ascii",
+      "id": "bom",
+      "input_b64": "77u/e30=",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_ascii",
+      "id": "del-byte",
+      "input_b64": "WyJhf2IiXQ==",
+      "input_text": "[\"a\u007fb\"]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "lone-surrogate-escape",
+      "input_b64": "WyJcdWQ4MDAiXQ==",
+      "input_text": "[\"\\ud800\"]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "lone-low-surrogate-escape",
+      "input_b64": "WyJcdWRjMDAiXQ==",
+      "input_text": "[\"\\udc00\"]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "bad-escape",
+      "input_b64": "WyJceDQxIl0=",
+      "input_text": "[\"\\x41\"]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "raw-tab-in-string",
+      "input_b64": "WyJhCWIiXQ==",
+      "input_text": "[\"a\tb\"]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "raw-newline-in-string",
+      "input_b64": "WyJhCmIiXQ==",
+      "input_text": "[\"a\nb\"]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.duplicate_key",
+      "id": "dup-keys-depth-1",
+      "input_b64": "eyJhIjoxLCJhIjoyfQ==",
+      "input_text": "{\"a\":1,\"a\":2}",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.duplicate_key",
+      "id": "dup-keys-depth-5",
+      "input_b64": "eyJhIjp7ImIiOnsiYyI6eyJkIjp7ImUiOjEsImUiOjJ9fX19fQ==",
+      "input_text": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":1,\"e\":2}}}}}",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.duplicate_key",
+      "id": "dup-keys-via-escape",
+      "input_b64": "eyJhIjoxLCJcdTAwNjEiOjJ9",
+      "input_text": "{\"a\":1,\"\\u0061\":2}",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.duplicate_key",
+      "id": "dup-keys-in-array-object",
+      "input_b64": "W3siayI6MSwiayI6MX1d",
+      "input_text": "[{\"k\":1,\"k\":1}]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.depth_exceeded",
+      "id": "depth-17",
+      "input_b64": "W1tbW1tbW1tbW1tbW1tbW1sxXV1dXV1dXV1dXV1dXV1dXV0=",
+      "input_text": "[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.depth_exceeded",
+      "id": "depth-bomb",
+      "recipe": {
+        "fill": "[",
+        "head": "[",
+        "length": 100000,
+        "tail": ""
+      },
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.too_large",
+      "id": "size-1mib-plus-1",
+      "recipe": {
+        "fill": " ",
+        "head": "[",
+        "length": 1048577,
+        "tail": "]"
+      },
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "trailing-comma",
+      "input_b64": "WzEsMixd",
+      "input_text": "[1,2,]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "missing-comma",
+      "input_b64": "WzEgMl0=",
+      "input_text": "[1 2]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "single-quotes",
+      "input_b64": "eydhJzoxfQ==",
+      "input_text": "{'a':1}",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "unterminated-string",
+      "input_b64": "WyJhYmM=",
+      "input_text": "[\"abc",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "unterminated-array",
+      "input_b64": "WzEsMg==",
+      "input_text": "[1,2",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "empty-input",
+      "input_b64": "",
+      "input_text": "",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "whitespace-only",
+      "input_b64": "ICA=",
+      "input_text": "  ",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "trailing-garbage",
+      "input_b64": "e30geA==",
+      "input_text": "{} x",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "two-documents",
+      "input_b64": "e317fQ==",
+      "input_text": "{}{}",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "comment",
+      "input_b64": "WzFdIC8vIHg=",
+      "input_text": "[1] // x",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "input.not_json",
+      "id": "bare-word",
+      "input_b64": "W3RydV0=",
+      "input_text": "[tru]",
+      "result": "reject",
+      "stage": "loads"
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-u0041",
+      "input_b64": "WyJcdTAwNDEiXQ==",
+      "input_text": "[\"\\u0041\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "A"
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-solidus",
+      "input_b64": "WyJcLyJd",
+      "input_text": "[\"\\/\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "/"
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-newline",
+      "input_b64": "WyJcbiJd",
+      "input_text": "[\"\\n\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "\n"
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-quote",
+      "input_b64": "WyJcIiJd",
+      "input_text": "[\"\\\"\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "\""
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-backslash",
+      "input_b64": "WyJcXCJd",
+      "input_text": "[\"\\\\\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "\\"
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-e-acute",
+      "input_b64": "WyJcdTAwZTkiXQ==",
+      "input_text": "[\"\\u00e9\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "\u00e9"
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-surrogate-pair",
+      "input_b64": "WyJcdWQ4M2RcdWRlMDAiXQ==",
+      "input_text": "[\"\\ud83d\\ude00\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "\ud83d\ude00"
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "escape-del",
+      "input_b64": "WyJcdTAwN2YiXQ==",
+      "input_text": "[\"\\u007f\"]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        "\u007f"
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "leading-whitespace",
+      "input_b64": "IHt9",
+      "input_text": " {}",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": {}
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "trailing-whitespace",
+      "input_b64": "e30g",
+      "input_text": "{} ",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": {}
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "trailing-newline",
+      "input_b64": "e30K",
+      "input_text": "{}\n",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": {}
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "whitespace-after-colon",
+      "input_b64": "eyJhIjogMX0=",
+      "input_text": "{\"a\": 1}",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": {
+        "a": 1
+      }
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "whitespace-after-comma",
+      "input_b64": "WzEsIDJd",
+      "input_text": "[1, 2]",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": [
+        1,
+        2
+      ]
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "unsorted-keys",
+      "input_b64": "eyJiIjoxLCJhIjoyfQ==",
+      "input_text": "{\"b\":1,\"a\":2}",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": {
+        "a": 2,
+        "b": 1
+      }
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "unsorted-keys-case",
+      "input_b64": "eyJhIjoxLCJCIjoyfQ==",
+      "input_text": "{\"a\":1,\"B\":2}",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": {
+        "B": 2,
+        "a": 1
+      }
+    },
+    {
+      "code": "schema.payload_not_canonical",
+      "id": "empty-key",
+      "input_b64": "eyIiOjF9",
+      "input_text": "{\"\":1}",
+      "result": "reject",
+      "stage": "roundtrip",
+      "value": {
+        "": 1
+      }
+    }
+  ],
+  "recipe_note": "input = head + fill * (length - len(head) - len(tail)) + tail",
+  "spec": "spec/01-conventions.md 2.1",
+  "spec_version": "1.0"
+}

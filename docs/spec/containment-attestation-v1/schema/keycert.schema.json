@@ -1,0 +1,98 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/keycert.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The PCJ payload of a DSSE envelope with payloadType application/vnd.paddock.key-cert+json, signed by the parent key. kid must equal the first 32 hex of sha256(public_key). There is no domain in a certificate.",
+  "else": {
+    "not": {
+      "required": [
+        "estate"
+      ]
+    }
+  },
+  "if": {
+    "properties": {
+      "usage": {
+        "enum": [
+          "attest",
+          "anchor"
+        ]
+      }
+    },
+    "required": [
+      "usage"
+    ]
+  },
+  "properties": {
+    "_type": {
+      "const": "https://paddock.dev/key-cert/v1"
+    },
+    "alg": {
+      "enum": [
+        "ed25519"
+      ]
+    },
+    "custody": {
+      "enum": [
+        "hosted",
+        "byok-kms",
+        "byok-hsm"
+      ]
+    },
+    "estate": {
+      "$ref": "predicate.schema.json#/$defs/ESTATE"
+    },
+    "issuer_kid": {
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "kid": {
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "not_after": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "not_before": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "public_key": {
+      "description": "canonical standard base64 of 32 bytes",
+      "pattern": "^[A-Za-z0-9+/]{43}=$",
+      "type": "string"
+    },
+    "serial": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "usage": {
+      "enum": [
+        "attest",
+        "anchor",
+        "issue-cert",
+        "revoke"
+      ]
+    }
+  },
+  "required": [
+    "_type",
+    "alg",
+    "custody",
+    "issuer_kid",
+    "kid",
+    "not_after",
+    "not_before",
+    "public_key",
+    "serial",
+    "usage"
+  ],
+  "then": {
+    "required": [
+      "estate"
+    ]
+  },
+  "title": "Key certificate payload",
+  "type": "object"
+}

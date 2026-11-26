@@ -1,0 +1,162 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/acceptance-policy.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a consumer requires. The baseline profile (no policy) requires nothing of the content: authentic, chained to a pinned root, bound by DNS, not revoked, current, 95 percent coverage on every disclosed HOLDS, no disclosed violation, std digests pinned. A strict YAML subset is accepted as sugar (spec/08).",
+  "properties": {
+    "anchor": {
+      "enum": [
+        "off",
+        "optional",
+        "required"
+      ]
+    },
+    "disclosure": {
+      "enum": [
+        "any",
+        "complete"
+      ]
+    },
+    "engine_advisories": {
+      "enum": [
+        "reject",
+        "warn"
+      ]
+    },
+    "history": {
+      "enum": [
+        "required",
+        "if_available",
+        "off"
+      ]
+    },
+    "max_age": {
+      "pattern": "^(0|[1-9][0-9]*)[smhd]$",
+      "type": "string"
+    },
+    "max_exceptions": {
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "max_stop_at_share": {
+      "oneOf": [
+        {
+          "description": "decimal with at most four places, 0 to 1; compared as basis points",
+          "pattern": "^(0|1)(\\.[0-9]{1,4})?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "min_coverage": {
+      "description": "decimal with at most four places, 0 to 1; compared as basis points",
+      "pattern": "^(0|1)(\\.[0-9]{1,4})?$",
+      "type": "string"
+    },
+    "name": {
+      "pattern": "^[A-Za-z0-9._:-]{1,64}$",
+      "type": "string"
+    },
+    "policy_version": {
+      "const": 1
+    },
+    "require": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "$ref": "predicate.schema.json#/$defs/H"
+          },
+          "invariant": {
+            "$ref": "predicate.schema.json#/$defs/INV"
+          },
+          "max_age": {
+            "pattern": "^(0|[1-9][0-9]*)[smhd]$",
+            "type": "string"
+          },
+          "min_coverage": {
+            "description": "decimal with at most four places, 0 to 1; compared as basis points",
+            "pattern": "^(0|1)(\\.[0-9]{1,4})?$",
+            "type": "string"
+          },
+          "min_tier": {
+            "enum": [
+              "configured",
+              "observed",
+              "tested"
+            ]
+          },
+          "verdict": {
+            "const": "HOLDS"
+          }
+        },
+        "required": [
+          "invariant"
+        ],
+        "type": "object"
+      },
+      "maxItems": 256,
+      "type": "array"
+    },
+    "require_latest": {
+      "type": "boolean"
+    },
+    "std_registry": {
+      "enum": [
+        "strict",
+        "warn"
+      ]
+    },
+    "trust": {
+      "additionalProperties": false,
+      "properties": {
+        "dns_binding": {
+          "enum": [
+            "required",
+            "optional"
+          ]
+        },
+        "dnssec": {
+          "enum": [
+            "off",
+            "required"
+          ]
+        },
+        "revocation": {
+          "enum": [
+            "required",
+            "best_effort"
+          ]
+        },
+        "revocation_max_age": {
+          "pattern": "^(0|[1-9][0-9]*)[smhd]$",
+          "type": "string"
+        },
+        "vendor_cert": {
+          "enum": [
+            "required",
+            "optional"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "violations": {
+      "enum": [
+        "reject",
+        "warn"
+      ]
+    }
+  },
+  "required": [
+    "policy_version"
+  ],
+  "title": "Acceptance policy (normative JSON form)",
+  "type": "object"
+}

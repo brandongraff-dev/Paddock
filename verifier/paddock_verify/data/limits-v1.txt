@@ -1,0 +1,8 @@
+1. This attestation lists, for each invariant named in it, whether a search of the evidence available to Paddock found a counterexample. HOLDS means that no counterexample was found under that evidence, that coverage and that freshness. It does not mean that the organisation, its systems or its network are secure.
+2. It says nothing about invariants that are not listed. The policy counts show how many invariants are declared, enabled and disclosed; the issuer chooses which results to disclose.
+3. It covers only assets for which Paddock had evidence. Assets without evidence are blind spots. Coverage figures are measured over the assets relevant to each invariant, and a result can hold while some assets are blind.
+4. Evidence strength differs. "configured" means a configuration was read; it does not show that a system behaves as configured. "observed" means traffic or an outside scan was seen; not seeing something is not proof that it is absent. "tested" means an approved active test succeeded.
+5. Host evidence is reported by software running on the host. A compromised host can report false data. This attestation does not detect malware, intrusions or misuse of valid credentials.
+6. It is not a vulnerability assessment, a penetration test, an audit, a compliance certification or insurance, and it does not predict future conditions. It applies only to the named subject and only until the stated time.
+7. The engine and its rules can contain defects. Check the published advisories for the engine version named in the attestation.
+8. Identifiers in this attestation are labels chosen by the issuer, not endorsements.

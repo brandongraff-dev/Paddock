@@ -172,16 +172,19 @@ def test_the_digest_of_a_valid_document_is_unchanged(name):
     assert digest(parse_invariant(text)) == want
 
 
-def test_every_shipped_std_invariant_still_parses_to_the_same_digest():
-    from paddock_assurance import stdlib   # noqa: F401  (package import: the yaml files ship inside it)
+def test_every_shipped_std_invariant_parses_the_same_with_and_without_the_collecting_context():
+    # the collecting path (parse_invariant) and the plain path (a library user calling the model) must give the same
+    # Invariant, hence the same digest, for every valid document we ship
     import pathlib
-    root = pathlib.Path(stdlib.__file__).parent if hasattr(stdlib, "__file__") and stdlib.__file__ \
-        else pathlib.Path(list(stdlib.__path__)[0])
+
+    from paddock_assurance import stdlib
+    root = pathlib.Path(list(stdlib.__path__)[0])
     files = sorted(root.glob("*.yaml"))
     assert files
     for f in files:
-        inv = parse_invariant(f.read_text())
-        assert digest(inv) == digest(parse_invariant(f.read_text()))      # stable across parses
+        text = f.read_text()
+        plain = Invariant.model_validate(load_document(text))
+        assert digest(parse_invariant(text)) == digest(plain), f.name
 
 
 # --------------------------------------------------------------------------------------------

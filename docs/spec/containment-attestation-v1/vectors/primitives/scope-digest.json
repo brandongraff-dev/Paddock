@@ -1,0 +1,574 @@
+{
+  "cases": [
+    {
+      "desc": "the section 13 example",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "example.com"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:be3fe528ef2b63fbb572c9bf47918ef6eacb45d7233231581fbb06c193044b7c",
+        "doc": {
+          "entries": [
+            {
+              "kind": "domain",
+              "value": "example.com"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"domain\",\"value\":\"example.com\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "one-domain"
+    },
+    {
+      "desc": "no entries: the digest of an empty document",
+      "entries": [],
+      "expect": {
+        "digest": "sha256:ab47c668cf7264d451c8dad52cf0a87defbb1b5cc87743c37bc4c6836c00f4ff",
+        "doc": {
+          "entries": [],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[],\"v\":1}",
+        "entries": 0,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "empty"
+    },
+    {
+      "desc": "lowercase, no trailing dot",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "Example.COM."
+        }
+      ],
+      "expect": {
+        "digest": "sha256:be3fe528ef2b63fbb572c9bf47918ef6eacb45d7233231581fbb06c193044b7c",
+        "doc": {
+          "entries": [
+            {
+              "kind": "domain",
+              "value": "example.com"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"domain\",\"value\":\"example.com\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "domain-case-and-dot"
+    },
+    {
+      "desc": "A-label (punycode)",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "b\u00fccher.example"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:6cb85df22a2a5492318b1e20dd25ec175de82e260f8a73361e5666f0c34633a5",
+        "doc": {
+          "entries": [
+            {
+              "kind": "domain",
+              "value": "xn--bcher-kva.example"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"domain\",\"value\":\"xn--bcher-kva.example\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "idn-domain"
+    },
+    {
+      "desc": "the *. prefix is kept",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "subdomain_wildcard",
+          "proof": "verified",
+          "value": "*.Example.com"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:a794687f9ef1f41c94c0ecff4f7e9838e26461fc7d371b18883e2af651bb3b41",
+        "doc": {
+          "entries": [
+            {
+              "kind": "subdomain_wildcard",
+              "value": "*.example.com"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"subdomain_wildcard\",\"value\":\"*.example.com\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "wildcard-kept"
+    },
+    {
+      "desc": "",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "b.example"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "asn",
+          "proof": "verified",
+          "value": "64500"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "a.example"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "verified",
+          "value": "8.8.8.0/24"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:4fd22167a105f0a98ab362a9f2ae06482c75f177c65a102daac32f462a46d350",
+        "doc": {
+          "entries": [
+            {
+              "kind": "asn",
+              "value": "AS64500"
+            },
+            {
+              "kind": "domain",
+              "value": "a.example"
+            },
+            {
+              "kind": "domain",
+              "value": "b.example"
+            },
+            {
+              "kind": "ipv4_cidr",
+              "value": "8.8.8.0/24"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"asn\",\"value\":\"AS64500\"},{\"kind\":\"domain\",\"value\":\"a.example\"},{\"kind\":\"domain\",\"value\":\"b.example\"},{\"kind\":\"ipv4_cidr\",\"value\":\"8.8.8.0/24\"}],\"v\":1}",
+        "entries": 4,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "sorted-by-kind-then-value"
+    },
+    {
+      "desc": "",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "a.example"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "A.example"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:32fb34ea2be76724421e14cc77310cc2ed09b210caece71552e621bd33948d56",
+        "doc": {
+          "entries": [
+            {
+              "kind": "domain",
+              "value": "a.example"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"domain\",\"value\":\"a.example\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "duplicates-collapse"
+    },
+    {
+      "desc": "strict=False: host bits cleared",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "verified",
+          "value": "8.8.8.8/24"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:e39f02401622bb60f55347c4ca7918c02f99b6fd9f7b5168a5a586d7b9618640",
+        "doc": {
+          "entries": [
+            {
+              "kind": "ipv4_cidr",
+              "value": "8.8.8.0/24"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"ipv4_cidr\",\"value\":\"8.8.8.0/24\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "cidr-canonical"
+    },
+    {
+      "desc": "compressed canonical text",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv6_cidr",
+          "proof": "verified",
+          "value": "2606:4700:0:0::/32"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:73e17e26d8f763ba587dcb23019e97a6236c03355a6836d516ea5190a00b5712",
+        "doc": {
+          "entries": [
+            {
+              "kind": "ipv6_cidr",
+              "value": "2606:4700::/32"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"ipv6_cidr\",\"value\":\"2606:4700::/32\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "ipv6-canonical"
+    },
+    {
+      "desc": "AS<n>",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "asn",
+          "proof": "verified",
+          "value": "as64500"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "asn",
+          "proof": "verified",
+          "value": "AS64501"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "asn",
+          "proof": "verified",
+          "value": "64502"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:c66a897203bde7aa252d3762877194575c533b50ae7b0df302975cd80f73618c",
+        "doc": {
+          "entries": [
+            {
+              "kind": "asn",
+              "value": "AS64500"
+            },
+            {
+              "kind": "asn",
+              "value": "AS64501"
+            },
+            {
+              "kind": "asn",
+              "value": "AS64502"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"asn\",\"value\":\"AS64500\"},{\"kind\":\"asn\",\"value\":\"AS64501\"},{\"kind\":\"asn\",\"value\":\"AS64502\"}],\"v\":1}",
+        "entries": 3,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "asn-forms"
+    },
+    {
+      "desc": "non-global ranges are counted, not listed",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "verified",
+          "value": "10.1.0.0/16"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "verified",
+          "value": "192.168.1.0/24"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "verified",
+          "value": "8.8.8.0/24"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv6_cidr",
+          "proof": "verified",
+          "value": "fd00::/8"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "verified",
+          "value": "100.64.0.0/10"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:e39f02401622bb60f55347c4ca7918c02f99b6fd9f7b5168a5a586d7b9618640",
+        "doc": {
+          "entries": [
+            {
+              "kind": "ipv4_cidr",
+              "value": "8.8.8.0/24"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"ipv4_cidr\",\"value\":\"8.8.8.0/24\"}],\"v\":1}",
+        "entries": 1,
+        "private": 4,
+        "unproven": 0
+      },
+      "id": "private-cidrs-excluded"
+    },
+    {
+      "desc": "a /0 is not inside any single special-purpose range",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "verified",
+          "value": "0.0.0.0/0"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:37d3c5604ce3c05074d6e80d3b5bddf01b33311a4444127e0450e59b8df0670f",
+        "doc": {
+          "entries": [
+            {
+              "kind": "ipv4_cidr",
+              "value": "0.0.0.0/0"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"ipv4_cidr\",\"value\":\"0.0.0.0/0\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "whole-internet-cidr-is-not-private"
+    },
+    {
+      "desc": "pending and expired proofs are counted as unproven",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "pending",
+          "value": "a.example"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "attested",
+          "value": "b.example"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "expired",
+          "value": "c.example"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:4eb3d939d0a6250bb0c9aa9ff99d9c341abfadf075606467c1cdd66ba6903f6d",
+        "doc": {
+          "entries": [
+            {
+              "kind": "domain",
+              "value": "b.example"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"domain\",\"value\":\"b.example\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 2
+      },
+      "id": "unproven-excluded"
+    },
+    {
+      "desc": "neither counted nor listed",
+      "entries": [
+        {
+          "active": false,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "a.example"
+        },
+        {
+          "active": true,
+          "expired": true,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "b.example"
+        },
+        {
+          "active": true,
+          "expired": false,
+          "kind": "domain",
+          "proof": "verified",
+          "value": "c.example"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:e9e0f049851302cbae7044967c1db17c38b7d95aa029178777f04eb446a81ed2",
+        "doc": {
+          "entries": [
+            {
+              "kind": "domain",
+              "value": "c.example"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"domain\",\"value\":\"c.example\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "inactive-and-expired-skipped"
+    },
+    {
+      "desc": "attested entries count",
+      "entries": [
+        {
+          "active": true,
+          "expired": false,
+          "kind": "ipv4_cidr",
+          "proof": "attested",
+          "value": "203.0.114.0/24"
+        }
+      ],
+      "expect": {
+        "digest": "sha256:a94cac571052f0b718b23f914f7a3b9e8227edbd9748c435d3fcc7cb6d48a78e",
+        "doc": {
+          "entries": [
+            {
+              "kind": "ipv4_cidr",
+              "value": "203.0.114.0/24"
+            }
+          ],
+          "v": 1
+        },
+        "doc_pcj": "{\"entries\":[{\"kind\":\"ipv4_cidr\",\"value\":\"203.0.114.0/24\"}],\"v\":1}",
+        "entries": 1,
+        "private": 0,
+        "unproven": 0
+      },
+      "id": "attested-cidr"
+    }
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "scope-digest",
+  "private_ranges": [
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    "::/128",
+    "::1/128",
+    "::ffff:0:0/96",
+    "64:ff9b::/96",
+    "100::/64",
+    "2001:db8::/32",
+    "fc00::/7",
+    "fe80::/10",
+    "ff00::/8"
+  ],
+  "rule": "scope.digest = sha256(PCJ({\"entries\":[{kind,value}...sorted by (kind,value)],\"v\":1})); informative for issuers",
+  "spec": "spec/02-statement-predicate.md (scope) and spec/06-bundle.md (scope.json)",
+  "spec_version": "1.0"
+}

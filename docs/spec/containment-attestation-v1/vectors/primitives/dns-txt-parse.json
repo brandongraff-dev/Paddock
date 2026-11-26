@@ -1,0 +1,1201 @@
+{
+  "cases": [
+    {
+      "desc": "three required tags",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "minimal",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "optional keys hint",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": "https://example.com/.well-known/paddock/keys.json",
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "with-keys",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+        ]
+      ]
+    },
+    {
+      "desc": "the space after the semicolon is optional",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "no-spaces",
+      "records": [
+        [
+          "v=1;kid=2ceb61e24df5fde7c0ab24b2a2774fa4;fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "one trailing semicolon is allowed",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "trailing-semicolon",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8;"
+        ]
+      ]
+    },
+    {
+      "desc": "a trailing space is not",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "trailing-semicolon-space",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; "
+        ]
+      ]
+    },
+    {
+      "desc": "chunks are concatenated with no separator",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": "https://example.com/.well-known/paddock/keys.json",
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "chunked-3",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df",
+          "5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e2",
+          "4df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+        ]
+      ]
+    },
+    {
+      "desc": "a chunk boundary can fall inside a value",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "chunked-mid-token",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab2",
+          "4b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "255-byte chunks",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": "https://example.com/.well-known/paddock/keys.json",
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "chunked-255",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+        ]
+      ]
+    },
+    {
+      "desc": "'=' inside a value",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": "https://h.example/k.json?a=b&c=d",
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "keys-with-query",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://h.example/k.json?a=b&c=d"
+        ]
+      ]
+    },
+    {
+      "desc": "unknown tags are ignored",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "unknown-tag-ignored",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=1; future-tag=abc"
+        ]
+      ]
+    },
+    {
+      "desc": "order of tags is free",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "tag-order-free",
+      "records": [
+        [
+          "fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4"
+        ]
+      ]
+    },
+    {
+      "desc": "forward compatibility: ignored silently",
+      "expect": {
+        "records": [
+          {
+            "status": "ignored"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "version-2-ignored",
+      "records": [
+        [
+          "v=2; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "an unknown version is not parsed further",
+      "expect": {
+        "records": [
+          {
+            "status": "ignored"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "version-2-with-garbage",
+      "records": [
+        [
+          "v=2; ~~~ nonsense ;;"
+        ]
+      ]
+    },
+    {
+      "desc": "any v other than 1 is ignored",
+      "expect": {
+        "records": [
+          {
+            "status": "ignored"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "version-0",
+      "records": [
+        [
+          "v=0; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "the version is compared as text",
+      "expect": {
+        "records": [
+          {
+            "status": "ignored"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "version-01",
+      "records": [
+        [
+          "v=01; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "a duplicate tag makes the record malformed",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "duplicate-kid",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; kid=2ceb61e24df5fde7c0ab24b2a2774fa4"
+        ]
+      ]
+    },
+    {
+      "desc": "duplicates count for unknown tags too",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "duplicate-unknown-tag",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=1; x=2"
+        ]
+      ]
+    },
+    {
+      "desc": "two v tags",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "duplicate-v",
+      "records": [
+        [
+          "v=1; v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "tags are lowercase: V is an unknown tag, v is missing",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "uppercase-key",
+      "records": [
+        [
+          "V=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "KID is unknown, kid is missing",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "uppercase-kid-tag",
+      "records": [
+        [
+          "v=1; KID=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "hex is lowercase",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "uppercase-hex",
+      "records": [
+        [
+          "v=1; kid=2CEB61E24DF5FDE7C0AB24B2A2774FA4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "hex is lowercase",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "uppercase-fp-hex",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2CEB61E24DF5FDE7C0AB24B2A2774FA4CCCECBB50A4B7F487B874C4BAF7807A8"
+        ]
+      ]
+    },
+    {
+      "desc": "kid must be the first 32 hex of fp",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "kid-not-prefix-of-fp",
+      "records": [
+        [
+          "v=1; kid=5f8a1d41d9d98fa38c01448c27488b74; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "kid is exactly 32 hex",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "kid-short",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774f; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "fp starts with sha256:",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "fp-missing-prefix",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "fp is 64 hex",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "fp-short",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807"
+        ]
+      ]
+    },
+    {
+      "desc": "only sha256",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "fp-other-alg",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha512:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "fp is required",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "missing-fp",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4"
+        ]
+      ]
+    },
+    {
+      "desc": "kid is required",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "missing-kid",
+      "records": [
+        [
+          "v=1; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "v is required",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "missing-v",
+      "records": [
+        [
+          "kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "keys must be https",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "keys-http",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=http://example.com/k.json"
+        ]
+      ]
+    },
+    {
+      "desc": "keys must be https",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "keys-ftp",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=ftp://example.com/k.json"
+        ]
+      ]
+    },
+    {
+      "desc": "https:// alone is not a location",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "keys-empty-host",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://"
+        ]
+      ]
+    },
+    {
+      "desc": "empty value",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "keys-empty-value",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys="
+        ]
+      ]
+    },
+    {
+      "desc": "nothing",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "empty-record",
+      "records": [
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "desc": "a TXT record with no strings",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "empty-record-no-chunks",
+      "records": [
+        []
+      ]
+    },
+    {
+      "desc": "",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "only-semicolon",
+      "records": [
+        [
+          ";"
+        ]
+      ]
+    },
+    {
+      "desc": "",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "whitespace-only",
+      "records": [
+        [
+          "   "
+        ]
+      ]
+    },
+    {
+      "desc": "",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "field-without-equals",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; junk"
+        ]
+      ]
+    },
+    {
+      "desc": "an empty field",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "double-semicolon",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8;; x=1"
+        ]
+      ]
+    },
+    {
+      "desc": "no spaces around =",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "space-around-equals",
+      "records": [
+        [
+          "v = 1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "at most one space",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "two-spaces-after-semicolon",
+      "records": [
+        [
+          "v=1;  kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "no space before a semicolon",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "space-before-semicolon",
+      "records": [
+        [
+          "v=1 ; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "tab-separator",
+      "records": [
+        [
+          "v=1;\tkid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "leading-space",
+      "records": [
+        [
+          " v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "non-ascii",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=caf\u00e9"
+        ]
+      ]
+    },
+    {
+      "desc": "a foreign TXT string under the label",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "other-txt-purpose",
+      "records": [
+        [
+          "google-site-verification=abc123"
+        ]
+      ]
+    },
+    {
+      "desc": "the version token is not a plain token, so the record is parsed and rejected",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "spf-like",
+      "records": [
+        [
+          "v=spf1 include:_spf.example.com ~all"
+        ]
+      ]
+    },
+    {
+      "desc": "any plain version token other than 1 is ignored",
+      "expect": {
+        "records": [
+          {
+            "status": "ignored"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "version-token-with-letters",
+      "records": [
+        [
+          "v=beta2; kid=x"
+        ]
+      ]
+    },
+    {
+      "desc": "over 1024 bytes",
+      "expect": {
+        "records": [
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "too-long-record",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ]
+    },
+    {
+      "desc": "exactly 1024 bytes",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "max-length-record",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ]
+    },
+    {
+      "desc": "two kids at once (rotation)",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:5f8a1d41d9d98fa38c01448c27488b744638eb14a5ba47169285cfaf3891f994",
+            "keys": null,
+            "kid": "5f8a1d41d9d98fa38c01448c27488b74",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "two-records-rotation",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=5f8a1d41d9d98fa38c01448c27488b74; fp=sha256:5f8a1d41d9d98fa38c01448c27488b744638eb14a5ba47169285cfaf3891f994"
+        ]
+      ]
+    },
+    {
+      "desc": "eight records are allowed",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "eight-records",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "more than eight is dns.too_many_records",
+      "expect": {
+        "records": [],
+        "too_many": true
+      },
+      "id": "nine-records",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ]
+      ]
+    },
+    {
+      "desc": "five records of about 900 bytes exceed 4 KiB in total",
+      "expect": {
+        "records": [],
+        "too_many": true
+      },
+      "id": "over-4096-bytes-total",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ]
+    },
+    {
+      "desc": "four records of about 900 bytes are fine",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "under-4096-bytes-total",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; x=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ]
+    },
+    {
+      "desc": "per record statuses",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "status": "ignored"
+          },
+          {
+            "status": "malformed"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "mixed-ok-ignored-malformed",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=2; x"
+        ],
+        [
+          "garbage"
+        ]
+      ]
+    },
+    {
+      "desc": "both parse; the conflict is a verification-time rule (dns.record_conflict)",
+      "expect": {
+        "records": [
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          },
+          {
+            "fp": "sha256:2ceb61e24df5fde7c0ab24b2a2774fa400000000000000000000000000000000",
+            "keys": null,
+            "kid": "2ceb61e24df5fde7c0ab24b2a2774fa4",
+            "status": "ok"
+          }
+        ],
+        "too_many": false
+      },
+      "id": "same-kid-two-fps",
+      "records": [
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8"
+        ],
+        [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa400000000000000000000000000000000"
+        ]
+      ]
+    }
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "dns-txt-parse",
+  "limits": {
+    "max_records": 8,
+    "max_total_bytes": 4096,
+    "record_max_bytes": 1024
+  },
+  "spec": "spec/05-keys-certs-revocation-dns.md",
+  "spec_version": "1.0",
+  "statuses": {
+    "ignored": "v is not 1: ignored silently",
+    "malformed": "ignored with warning dns.record_ignored",
+    "ok": "usable"
+  }
+}

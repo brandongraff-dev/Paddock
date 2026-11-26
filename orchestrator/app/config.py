@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -109,6 +110,20 @@ class Settings(BaseSettings):
     assurance_backstop_min: int = 15       # re-evaluate even if nothing changed
     assurance_edge_window_h: int = 24      # observed flow edges older than this are dropped
     assurance_external_max_age_h: int = 168  # external-scan observations older than this are ignored
+    # --- P2.1 (docs/ASSURANCE_P2_1.md 7.2). Bounds are enforced at startup: a value that would widen trust or turn a
+    # bound into "no bound" refuses to start instead of being applied.
+    # The KEV invariant (A): collecting and matching are free, the std invariants stay under the `assurance` feature.
+    assurance_kev_enabled: bool = True
+    # A feed snapshot older than this reads UNKNOWN `advisory_stale`; Known.until is clamped to fetched_at + this (D14).
+    assurance_advisory_max_age_h: int = Field(default=48, ge=1)
+    # Per-tenant cap on stored package lists (agent_manifests); over it the oldest unreferenced rows are evicted.
+    fleet_manifest_tenant_max_mb: int = Field(default=512, ge=1)
+    # A pairing whose cloud asset was last seen longer ago than this is inert (D29).
+    assurance_pairing_asset_max_age_h: int = Field(default=72, ge=1)
+    # The longest a scan-conflict acknowledgement may live (D30). The contract's absolute maximum is 720 h.
+    assurance_conflict_ack_max_h: int = Field(default=720, ge=1, le=720)
+    # invariant_runs older than this are compacted (witness detail dropped); deletion is RETENTION_INVARIANT_RUNS_DAYS.
+    assurance_runs_compact_days: int = Field(default=30, ge=1)
     scheduler_interval_sec: int = 60
     scheduler_default_minutes: int = 60
 

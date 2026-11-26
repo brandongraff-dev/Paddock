@@ -1,0 +1,320 @@
+{
+  "cases": [
+    {
+      "desc": "RFC 8032 section 7.1 test1",
+      "expect": "valid",
+      "id": "rfc8032-test1",
+      "msg_hex": "",
+      "pub_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "sig_hex": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    },
+    {
+      "desc": "RFC 8032 section 7.1 test2",
+      "expect": "valid",
+      "id": "rfc8032-test2",
+      "msg_hex": "72",
+      "pub_hex": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+      "sig_hex": "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+    },
+    {
+      "desc": "RFC 8032 section 7.1 test3",
+      "expect": "valid",
+      "id": "rfc8032-test3",
+      "msg_hex": "af82",
+      "pub_hex": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+      "sig_hex": "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a"
+    },
+    {
+      "desc": "an ordinary signature by the public test key tenant-a",
+      "expect": "valid",
+      "id": "valid-tenant-a",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "the malleable twin S + L of a valid signature: some libraries accept it",
+      "expect": "sig.noncanonical_s",
+      "id": "s-plus-l",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad15773382e52b9a13d38de2f64971fc2d3a80756c6c0ee1456f674d009f4166dbbb0d10"
+    },
+    {
+      "desc": "S == L",
+      "expect": "sig.noncanonical_s",
+      "id": "s-equal-l",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad157733edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010"
+    },
+    {
+      "desc": "S = 2^256 - 1",
+      "expect": "sig.noncanonical_s",
+      "id": "s-all-ones",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad157733ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "desc": "S = L - 1 is reduced, so only the equation fails",
+      "expect": "sig.invalid",
+      "id": "s-minus-one-of-l",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad157733ecd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010"
+    },
+    {
+      "desc": "valid signature, different message",
+      "expect": "sig.invalid",
+      "id": "message-tampered",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d65737361676521",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "one bit of R changed",
+      "expect": "sig.invalid",
+      "id": "r-bit-flipped",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "32a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "one bit of S changed",
+      "expect": "sig.invalid",
+      "id": "s-bit-flipped",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339411363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "valid under tenant-a, offered with the tenant-b key",
+      "expect": "sig.invalid",
+      "id": "wrong-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "9d236572f3ae4f8a48f713803c4a25443e801c36d678f3982c05d17b845a99fe",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "signature one byte short",
+      "expect": "sig.malformed",
+      "id": "sig-63-bytes",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d"
+    },
+    {
+      "desc": "signature one byte long",
+      "expect": "sig.malformed",
+      "id": "sig-65-bytes",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d0000"
+    },
+    {
+      "desc": "empty signature",
+      "expect": "sig.malformed",
+      "id": "sig-empty",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e69",
+      "sig_hex": ""
+    },
+    {
+      "desc": "public key one byte short",
+      "expect": "sig.weak_key",
+      "id": "pub-31-bytes",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "public key one byte long",
+      "expect": "sig.weak_key",
+      "id": "pub-33-bytes",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "492258a7e491cec8deec063f38f1ee70e73af924d5329a6a1c3bdd611f4e2e6900",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "identity public key with R = identity, S = 0: accepted by some libraries for ANY message",
+      "expect": "sig.weak_key",
+      "id": "identity-key-identity-sig",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "same, empty message",
+      "expect": "sig.weak_key",
+      "id": "identity-key-identity-sig-empty-msg",
+      "msg_hex": "",
+      "pub_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (order4-key)",
+      "expect": "sig.weak_key",
+      "id": "order4-key-000000000000",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (order4-key)",
+      "expect": "sig.weak_key",
+      "id": "order4-key-000000000080",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0000000000000000000000000000000000000000000000000000000000000080",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (identity-key)",
+      "expect": "sig.weak_key",
+      "id": "identity-key-010000000000",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (order8-key)",
+      "expect": "sig.weak_key",
+      "id": "order8-key-26e8958ffc05",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (order8-key)",
+      "expect": "sig.weak_key",
+      "id": "order8-key-26e8958ffc85",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (order8-key)",
+      "expect": "sig.weak_key",
+      "id": "order8-key-c7176a70037a",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (order8-key)",
+      "expect": "sig.weak_key",
+      "id": "order8-key-c7176a7003fa",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order point (two-torsion-key)",
+      "expect": "sig.weak_key",
+      "id": "two-torsion-key-ecffffffff7f",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order public key",
+      "expect": "sig.weak_key",
+      "id": "two-torsion-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order public key",
+      "expect": "sig.weak_key",
+      "id": "order4-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "small-order public key",
+      "expect": "sig.weak_key",
+      "id": "order8-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "y = p + 1 encodes the identity non-canonically",
+      "expect": "sig.weak_key",
+      "id": "noncanonical-y-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "y = p encodes an order-4 point non-canonically",
+      "expect": "sig.weak_key",
+      "id": "noncanonical-y-order4-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "y = 3 + p: a non-canonical encoding of an ordinary curve point (not small order), rejected for its encoding alone",
+      "expect": "sig.weak_key",
+      "id": "noncanonical-y-regular-point-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "x = 0 with the sign bit set",
+      "expect": "sig.weak_key",
+      "id": "noncanonical-sign-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0100000000000000000000000000000000000000000000000000000000000080",
+      "sig_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "desc": "y = 2 has no x on the curve",
+      "expect": "sig.weak_key",
+      "id": "not-on-curve-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0200000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "33a69bb2cd499501f61b3ff1712e1a8228f1cf823051852eb7f0cc45ad1577339511363df96f7b8a20ad79594f40a1606c6c0ee1456f674d009f4166dbbb0d00"
+    },
+    {
+      "desc": "both rules apply: the weak key is reported first",
+      "expect": "sig.weak_key",
+      "id": "weak-key-and-s-ge-l",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "0100000000000000000000000000000000000000000000000000000000000000edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010"
+    },
+    {
+      "desc": "length is checked before the key",
+      "expect": "sig.malformed",
+      "id": "sig-wrong-length-and-weak-key",
+      "msg_hex": "706164646f636b20636f6e666f726d616e6365206d657373616765",
+      "pub_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "sig_hex": "33a69bb2cd499501f61b"
+    }
+  ],
+  "check_order": [
+    "sig length 64 (sig.malformed)",
+    "public key 32 bytes, canonical, not small order (sig.weak_key)",
+    "S < L (sig.noncanonical_s)",
+    "verify (sig.invalid)"
+  ],
+  "generator": "tools/gen_vectors.py",
+  "kind": "ed25519",
+  "small_order_encodings": [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+  ],
+  "spec": "spec/01-conventions.md 2.5",
+  "spec_version": "1.0"
+}

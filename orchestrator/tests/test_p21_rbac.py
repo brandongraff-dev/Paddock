@@ -169,3 +169,63 @@ def test_every_new_rule_is_explicit_not_a_default():
 def test_rule_patterns_are_anchored():
     for _methods, pat, _cap in auth_svc._RULES:
         assert pat.pattern.startswith("^") and pat.pattern.endswith("$")
+
+
+# --------------------------------------------------------------------------- #
+# settings (docs/ASSURANCE_P2_1.md 7.2; the seam package owns config.py alone)
+# --------------------------------------------------------------------------- #
+
+P21_SETTINGS = {
+    "assurance_kev_enabled": True,
+    "assurance_advisory_max_age_h": 48,
+    "fleet_manifest_tenant_max_mb": 512,
+    "assurance_pairing_asset_max_age_h": 72,
+    "assurance_conflict_ack_max_h": 720,
+    "assurance_runs_compact_days": 30,
+}
+
+
+def test_p21_settings_exist_with_the_contract_defaults(monkeypatch):
+    from app.config import Settings
+
+    for name in P21_SETTINGS:
+        monkeypatch.delenv(name.upper(), raising=False)
+    s = Settings(_env_file=None)
+    assert {k: getattr(s, k) for k in P21_SETTINGS} == P21_SETTINGS
+
+
+def test_p21_settings_are_overridable_from_the_environment(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setenv("ASSURANCE_KEV_ENABLED", "false")
+    monkeypatch.setenv("ASSURANCE_ADVISORY_MAX_AGE_H", "24")
+    monkeypatch.setenv("FLEET_MANIFEST_TENANT_MAX_MB", "64")
+    monkeypatch.setenv("ASSURANCE_PAIRING_ASSET_MAX_AGE_H", "12")
+    monkeypatch.setenv("ASSURANCE_CONFLICT_ACK_MAX_H", "48")
+    monkeypatch.setenv("ASSURANCE_RUNS_COMPACT_DAYS", "7")
+    s = Settings(_env_file=None)
+    assert (s.assurance_kev_enabled, s.assurance_advisory_max_age_h, s.fleet_manifest_tenant_max_mb,
+            s.assurance_pairing_asset_max_age_h, s.assurance_conflict_ack_max_h, s.assurance_runs_compact_days
+            ) == (False, 24, 64, 12, 48, 7)
+
+
+@pytest.mark.parametrize("name,bad", [
+    ("ASSURANCE_CONFLICT_ACK_MAX_H", "721"),         # D30: an acknowledgement may never outlive 720 h
+    ("ASSURANCE_CONFLICT_ACK_MAX_H", "0"),
+    ("ASSURANCE_ADVISORY_MAX_AGE_H", "0"),
+    ("ASSURANCE_ADVISORY_MAX_AGE_H", "-1"),
+    ("ASSURANCE_PAIRING_ASSET_MAX_AGE_H", "0"),
+    ("FLEET_MANIFEST_TENANT_MAX_MB", "0"),
+    ("ASSURANCE_RUNS_COMPACT_DAYS", "0"),
+    ("ASSURANCE_RUNS_COMPACT_DAYS", "-5"),
+])
+def test_a_nonsensical_p21_setting_is_refused_at_startup_not_silently_widened(monkeypatch, name, bad):
+    """Fail safe: the process does not start with a value that would widen trust (an ack past its maximum) or turn
+    a bound into 'no bound' (0 MB cap, 0-day compaction that would wipe witnesses at once)."""
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    monkeypatch.setenv(name, bad)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

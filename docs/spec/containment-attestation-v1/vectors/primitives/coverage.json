@@ -1,0 +1,457 @@
+{
+  "generator": "tools/gen_vectors.py",
+  "kind": "coverage",
+  "meets": [
+    {
+      "covered": 19,
+      "note": "19 of 20 at 0.95",
+      "ok": true,
+      "required_bp": 9500,
+      "universe": 20
+    },
+    {
+      "covered": 18,
+      "note": "18 of 20 at 0.95",
+      "ok": false,
+      "required_bp": 9500,
+      "universe": 20
+    },
+    {
+      "covered": 41,
+      "note": "97.6 percent against 98",
+      "ok": false,
+      "required_bp": 9800,
+      "universe": 42
+    },
+    {
+      "covered": 41,
+      "note": "just under 41/42",
+      "ok": true,
+      "required_bp": 9761,
+      "universe": 42
+    },
+    {
+      "covered": 41,
+      "note": "just over 41/42",
+      "ok": false,
+      "required_bp": 9762,
+      "universe": 42
+    },
+    {
+      "covered": 1,
+      "note": "",
+      "ok": true,
+      "required_bp": 3333,
+      "universe": 3
+    },
+    {
+      "covered": 1,
+      "note": "1/3 vs 0.3334",
+      "ok": false,
+      "required_bp": 3334,
+      "universe": 3
+    },
+    {
+      "covered": 2,
+      "note": "",
+      "ok": true,
+      "required_bp": 6666,
+      "universe": 3
+    },
+    {
+      "covered": 2,
+      "note": "",
+      "ok": false,
+      "required_bp": 6667,
+      "universe": 3
+    },
+    {
+      "covered": 0,
+      "note": "an empty universe is never covered",
+      "ok": false,
+      "required_bp": 0,
+      "universe": 0
+    },
+    {
+      "covered": 0,
+      "note": "empty universe",
+      "ok": false,
+      "required_bp": 9500,
+      "universe": 0
+    },
+    {
+      "covered": 0,
+      "note": "floor zero",
+      "ok": true,
+      "required_bp": 0,
+      "universe": 1
+    },
+    {
+      "covered": 1,
+      "note": "",
+      "ok": true,
+      "required_bp": 10000,
+      "universe": 1
+    },
+    {
+      "covered": 3,
+      "note": "",
+      "ok": true,
+      "required_bp": 10000,
+      "universe": 3
+    },
+    {
+      "covered": 1,
+      "note": "floor above 100 percent",
+      "ok": false,
+      "required_bp": 10001,
+      "universe": 1
+    },
+    {
+      "covered": 21,
+      "note": "covered above universe is inconsistent",
+      "ok": false,
+      "required_bp": 5000,
+      "universe": 20
+    },
+    {
+      "covered": 9007199254740991,
+      "note": "large",
+      "ok": true,
+      "required_bp": 10000,
+      "universe": 9007199254740991
+    },
+    {
+      "covered": 9007199254740990,
+      "note": "large, one short",
+      "ok": false,
+      "required_bp": 10000,
+      "universe": 9007199254740991
+    },
+    {
+      "covered": 95,
+      "note": "",
+      "ok": true,
+      "required_bp": 9500,
+      "universe": 100
+    },
+    {
+      "covered": 94,
+      "note": "",
+      "ok": false,
+      "required_bp": 9500,
+      "universe": 100
+    },
+    {
+      "covered": 995,
+      "note": "",
+      "ok": true,
+      "required_bp": 9950,
+      "universe": 1000
+    },
+    {
+      "covered": 994,
+      "note": "",
+      "ok": false,
+      "required_bp": 9950,
+      "universe": 1000
+    }
+  ],
+  "percent": [
+    {
+      "covered": 41,
+      "pct_floor": 97,
+      "universe": 42
+    },
+    {
+      "covered": 0,
+      "pct_floor": 0,
+      "universe": 5
+    },
+    {
+      "covered": 5,
+      "pct_floor": 100,
+      "universe": 5
+    },
+    {
+      "covered": 1,
+      "pct_floor": 33,
+      "universe": 3
+    },
+    {
+      "covered": 2,
+      "pct_floor": 66,
+      "universe": 3
+    },
+    {
+      "covered": 19,
+      "pct_floor": 95,
+      "universe": 20
+    },
+    {
+      "covered": 199,
+      "pct_floor": 99,
+      "universe": 200
+    },
+    {
+      "covered": 1,
+      "pct_floor": 0,
+      "universe": 1000
+    },
+    {
+      "covered": 999,
+      "pct_floor": 99,
+      "universe": 1000
+    },
+    {
+      "covered": 1,
+      "pct_floor": 100,
+      "universe": 1
+    },
+    {
+      "covered": 97,
+      "pct_floor": 97,
+      "universe": 100
+    },
+    {
+      "covered": 9999,
+      "pct_floor": 99,
+      "universe": 10000
+    }
+  ],
+  "required_bp": [
+    {
+      "bp": 9500,
+      "float_repr": "0.95"
+    },
+    {
+      "bp": 9950,
+      "float_repr": "0.995"
+    },
+    {
+      "bp": 10000,
+      "float_repr": "1.0"
+    },
+    {
+      "bp": 3334,
+      "float_repr": "0.3334"
+    },
+    {
+      "bp": 3000,
+      "float_repr": "0.3"
+    },
+    {
+      "bp": 3000,
+      "float_repr": "0.30000000000000004"
+    },
+    {
+      "bp": 9999,
+      "float_repr": "0.99999"
+    },
+    {
+      "bp": 0,
+      "float_repr": "0.0"
+    },
+    {
+      "bp": 0,
+      "float_repr": "0.00001"
+    },
+    {
+      "bp": 9999,
+      "float_repr": "0.9999999999999999"
+    },
+    {
+      "bp": 1000,
+      "float_repr": "0.1"
+    },
+    {
+      "bp": 5700,
+      "float_repr": "0.57"
+    },
+    {
+      "bp": 5800,
+      "float_repr": "0.58"
+    },
+    {
+      "bp": 2900,
+      "float_repr": "0.29"
+    },
+    {
+      "bp": 700,
+      "float_repr": "0.07"
+    },
+    {
+      "bp": 5000,
+      "float_repr": "0.5"
+    },
+    {
+      "bp": 9999,
+      "float_repr": "0.9999"
+    },
+    {
+      "bp": 1,
+      "float_repr": "0.0001"
+    }
+  ],
+  "rule": "a result is covered enough iff universe >= 1 and covered <= universe and covered * 10000 >= required_bp * universe",
+  "spec": "spec/03-verdicts-tiers-coverage-freshness.md",
+  "spec_version": "1.0",
+  "threshold": [
+    {
+      "bp": 9500,
+      "input": "0.95",
+      "valid": true
+    },
+    {
+      "bp": 10000,
+      "input": "1",
+      "valid": true
+    },
+    {
+      "bp": 10000,
+      "input": "1.0",
+      "valid": true
+    },
+    {
+      "bp": 0,
+      "input": "0",
+      "valid": true
+    },
+    {
+      "bp": 0,
+      "input": "0.0",
+      "valid": true
+    },
+    {
+      "bp": 9501,
+      "input": "0.9501",
+      "valid": true
+    },
+    {
+      "bp": 5000,
+      "input": "0.5",
+      "valid": true
+    },
+    {
+      "bp": 10000,
+      "input": "1.0000",
+      "valid": true
+    },
+    {
+      "bp": 1,
+      "input": "0.0001",
+      "valid": true
+    },
+    {
+      "bp": 3334,
+      "input": "0.3334",
+      "valid": true
+    },
+    {
+      "bp": 5700,
+      "input": "0.57",
+      "valid": true
+    },
+    {
+      "bp": 9999,
+      "input": "0.9999",
+      "valid": true
+    },
+    {
+      "input": "",
+      "valid": false
+    },
+    {
+      "input": "0.95001",
+      "valid": false
+    },
+    {
+      "input": "1.0001",
+      "valid": false
+    },
+    {
+      "input": "1.1",
+      "valid": false
+    },
+    {
+      "input": "2",
+      "valid": false
+    },
+    {
+      "input": "-0.1",
+      "valid": false
+    },
+    {
+      "input": "-0",
+      "valid": false
+    },
+    {
+      "input": ".5",
+      "valid": false
+    },
+    {
+      "input": "5.",
+      "valid": false
+    },
+    {
+      "input": "95%",
+      "valid": false
+    },
+    {
+      "input": "0.95 ",
+      "valid": false
+    },
+    {
+      "input": " 0.95",
+      "valid": false
+    },
+    {
+      "input": "1e0",
+      "valid": false
+    },
+    {
+      "input": "NaN",
+      "valid": false
+    },
+    {
+      "input": "Infinity",
+      "valid": false
+    },
+    {
+      "input": "0x1",
+      "valid": false
+    },
+    {
+      "input": "1,5",
+      "valid": false
+    },
+    {
+      "input": "\uff11",
+      "valid": false
+    },
+    {
+      "input": "01",
+      "valid": false
+    },
+    {
+      "input": "00.5",
+      "valid": false
+    },
+    {
+      "input": "0.95\n",
+      "valid": false
+    },
+    {
+      "input": "+0.5",
+      "valid": false
+    },
+    {
+      "input": "0.",
+      "valid": false
+    },
+    {
+      "input": "1.00001",
+      "valid": false
+    }
+  ]
+}

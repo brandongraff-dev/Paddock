@@ -1,0 +1,92 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/revoked.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The PCJ payload of a DSSE envelope with payloadType application/vnd.paddock.revocation-list+json, signed by the revoker or the issuer key. Stale after next_update plus 48 hours.",
+  "properties": {
+    "_type": {
+      "const": "https://paddock.dev/revocation-list/v1"
+    },
+    "estate": {
+      "$ref": "predicate.schema.json#/$defs/ESTATE"
+    },
+    "issued_at": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "next_update": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "revoked": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "kid": {
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "key_compromise",
+              "superseded",
+              "cessation"
+            ]
+          },
+          "revoked_at": {
+            "$ref": "predicate.schema.json#/$defs/T"
+          }
+        },
+        "required": [
+          "kid",
+          "reason",
+          "revoked_at"
+        ],
+        "type": "object"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "seq": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "superseded": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "$ref": "predicate.schema.json#/$defs/T"
+          },
+          "min_seq": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "subject": {
+            "$ref": "predicate.schema.json#/$defs/SUBJECT"
+          }
+        },
+        "required": [
+          "subject",
+          "min_seq",
+          "at"
+        ],
+        "type": "object"
+      },
+      "maxItems": 11,
+      "type": "array"
+    }
+  },
+  "required": [
+    "_type",
+    "estate",
+    "seq",
+    "issued_at",
+    "next_update",
+    "revoked",
+    "superseded"
+  ],
+  "title": "Revocation list payload",
+  "type": "object"
+}

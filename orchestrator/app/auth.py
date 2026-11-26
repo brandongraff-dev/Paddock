@@ -1307,7 +1307,9 @@ def client_ip(request: Request) -> ClientAddr | None:
     getting a plain ``str`` (``ClientAddr`` is one); the audit row adds ``ip_proxied`` when it says so. A wrong
     ``TRUSTED_PROXY_HOPS`` degrades to the socket peer (a shared limiter bucket: availability), never to a forged
     address. Nothing outside this module may read the forwarded-for header (a static test pins it)."""
-    state = request.state
+    state = getattr(request, "state", None)
+    if state is None:                      # not a Starlette request (a bare fake): nothing to cache on
+        return client_ip_strict(request)
     cached = getattr(state, "client_addr", _UNSET)
     if cached is not _UNSET:
         return cached

@@ -1,0 +1,57 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/statement.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Exactly one subject, whose digest is the sha256 of the UTF-8 bytes of its name. A statement with another predicateType is not interpreted beyond steps 0 to 3 of the procedure (predicate.unsupported_version).",
+  "properties": {
+    "_type": {
+      "const": "https://in-toto.io/Statement/v1"
+    },
+    "predicate": {
+      "$ref": "predicate.schema.json"
+    },
+    "predicateType": {
+      "const": "https://paddock.dev/attestation/containment/v1"
+    },
+    "subject": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "additionalProperties": false,
+            "properties": {
+              "sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "name": {
+            "$ref": "predicate.schema.json#/$defs/SUBJECT"
+          }
+        },
+        "required": [
+          "name",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "maxItems": 1,
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "_type",
+    "subject",
+    "predicateType",
+    "predicate"
+  ],
+  "title": "in-toto Statement v1 with the containment predicate",
+  "type": "object"
+}

@@ -1,0 +1,5 @@
+{
+  "advisories_version": 1,
+  "description": "Engine versions with known defects that could produce a false HOLDS. A listed version is rejected by default (effect reject) or warned about (warn). Empty at the first release.",
+  "items": []
+}

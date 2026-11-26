@@ -1,0 +1,56 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$id": "https://paddock.dev/spec/containment-attestation/v1/anchor.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A PCJ document in the bundle at anchors/<max_id>.json. The signature input is the bytes paddock-anchor/v2 followed by a line feed, then the PCJ of this document without sig. hash_alg is the hash family only.",
+  "properties": {
+    "alg": {
+      "const": "ed25519"
+    },
+    "at": {
+      "$ref": "predicate.schema.json#/$defs/T"
+    },
+    "estate": {
+      "$ref": "predicate.schema.json#/$defs/ESTATE"
+    },
+    "hash_alg": {
+      "enum": [
+        "sha256",
+        "hmac-sha256"
+      ]
+    },
+    "head": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "kid": {
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "max_id": {
+      "$ref": "predicate.schema.json#/$defs/UINT"
+    },
+    "sig": {
+      "description": "canonical standard base64 of 64 bytes",
+      "pattern": "^[A-Za-z0-9+/]{86}==$",
+      "type": "string"
+    },
+    "v": {
+      "const": 2
+    }
+  },
+  "required": [
+    "alg",
+    "at",
+    "estate",
+    "hash_alg",
+    "head",
+    "kid",
+    "max_id",
+    "sig",
+    "v"
+  ],
+  "title": "Public anchor document v2",
+  "type": "object"
+}
