@@ -44,6 +44,10 @@ class AnchorSinkError(RuntimeError):
     """A sink could not publish or read back an anchor."""
 
 
+#: hash families a public anchor document may name (the HMAC key id of ``hmac-sha256:<kid>`` is never published)
+_HASH_FAMILIES = ("sha256", "hmac-sha256")
+
+
 @dataclass
 class Anchor:
     tenant_id: str
@@ -54,18 +58,59 @@ class Anchor:
     v: int = 1
     kid: str | None = None
     sig: str | None = None
+    #: v2 detached signatures (docs/ASSURANCE_P3.md 3.7): ``[{"v":2,"alg":"ed25519","kid","estate","at","sig"}]``.
+    #: NOT part of ``signed_body()`` and omitted from the JSON while ``None``, so a legacy-only anchor serialises and
+    #: verifies byte-for-byte as before (adding any field to the signed bytes would turn every stored HMAC anchor into
+    #: ``bad_signature``, and Object-Lock objects cannot be rewritten).
+    sigs: list[dict[str, Any]] | None = None
 
     def signed_body(self) -> bytes:
-        """Canonical bytes the signature covers (everything except ``sig``)."""
+        """Canonical bytes the HMAC covers: the LEGACY fields only (everything except ``sig`` and ``sigs``)."""
         d = asdict(self)
         d.pop("sig", None)
+        d.pop("sigs", None)
         return json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
+    def to_dict(self) -> dict[str, Any]:
+        """``asdict`` without the ``sigs`` key while it is ``None`` (the legacy shape)."""
+        d = asdict(self)
+        if d.get("sigs") is None:
+            d.pop("sigs", None)
+        return d
+
     def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+
+    def to_public(self, estate: str, kid: str, sig: str | None = None) -> dict[str, Any]:
+        """The public anchor document (spec Appendix B): ``alg, at, estate, hash_alg, head, kid, max_id, v`` plus
+        ``sig`` when given. ``at`` is ``ts`` floored to whole seconds in UTC, ``hash_alg`` the family only, and the
+        tenant id appears nowhere (the random estate id replaces it)."""
+        family = (self.hash_alg or "").split(":", 1)[0]
+        if family not in _HASH_FAMILIES:
+            raise ValueError(f"unknown anchor hash family {family!r}")
+        text = self.ts[:-1] + "+00:00" if self.ts.endswith("Z") else self.ts
+        moment = datetime.fromisoformat(text)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        at = moment.astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+        doc: dict[str, Any] = {
+            "alg": "ed25519", "at": at, "estate": estate, "hash_alg": family, "head": self.head_hash,
+            "kid": kid, "max_id": self.max_id, "v": 2,
+        }
+        if sig is not None:
+            doc["sig"] = sig
+        return doc
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Anchor":
+        sigs: list[dict[str, Any]] | None = None
+        if d.get("sigs") is not None:
+            raw = d["sigs"]
+            # a tampered value must reach the status check as something that fails, never silently become None
+            if isinstance(raw, list) and raw and all(isinstance(e, dict) for e in raw):
+                sigs = [dict(e) for e in raw]
+            else:
+                sigs = [{"malformed": True}]
         return cls(
             tenant_id=str(d["tenant_id"]),
             max_id=int(d["max_id"]),
@@ -75,6 +120,7 @@ class Anchor:
             v=int(d.get("v", 1)),
             kid=d.get("kid"),
             sig=d.get("sig"),
+            sigs=sigs,
         )
 
     def order_key(self) -> tuple[int, str]:

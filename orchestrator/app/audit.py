@@ -37,10 +37,9 @@ import hashlib
 import hmac
 import json
 import logging
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from . import tenancy
 from .audit_anchor import Anchor, AnchorSinkError, sink_from_settings
@@ -465,6 +464,45 @@ def check_anchor(anchor: Anchor) -> str:
     return "ok" if hmac.compare_digest(want, anchor.sig) else "bad_signature"
 
 
+# --------------------------------------------------------------------------- #
+# Anchor v2 hooks (docs/ASSURANCE_P3.md 3.7)
+# --------------------------------------------------------------------------- #
+
+#: Detached-signature hooks. ``anchor_head`` awaits each ``await signer(pool, anchor)`` after ``sign_anchor`` and before
+#: ``sink.publish``. A signer attaches ``anchor.sigs`` (never touches the HMAC fields) and may fail: a failure is logged
+#: and the legacy-only anchor is published, so anchoring (a core integrity control) never depends on attestation
+#: infrastructure. ``app.attest.anchor_sig.register`` appends the production signer.
+ANCHOR_SIGNERS: list[Callable[[Any, Anchor], Awaitable[None]]] = []
+_SIGNERS_BOOTSTRAPPED = False
+
+
+def _bootstrap_signers() -> None:
+    """Register the production signer once, lazily (it lives in ``app.attest``, which imports this module, and the
+    lifespan hook belongs to another package). Best effort: without it every anchor is simply legacy-only."""
+    global _SIGNERS_BOOTSTRAPPED
+    if _SIGNERS_BOOTSTRAPPED:
+        return
+    _SIGNERS_BOOTSTRAPPED = True
+    try:
+        from .attest import anchor_sig
+
+        anchor_sig.register()
+    except Exception:  # noqa: BLE001 -- never block anchoring
+        logger.warning("audit_anchor_signer_unavailable", exc_info=True)
+
+
+async def _anchor_sig_check(pool, tenant: str, anchor: Anchor) -> str:
+    """``ok`` | ``bad_signature`` | ``downgrade`` | ``unknown_key`` | ``unavailable`` for the v2 side of an anchor
+    (see ``attest.anchor_sig.anchor_sig_status``). Anything but ``ok`` fails verification closed."""
+    try:
+        from .attest import anchor_sig
+
+        return await anchor_sig.anchor_sig_status(pool, anchor, tenant_id=tenant)
+    except Exception:  # noqa: BLE001 -- verification fails closed
+        logger.warning("audit_anchor_sig_check_failed", exc_info=True)
+        return "unavailable"
+
+
 _UNSET: Any = object()
 
 
@@ -543,6 +581,10 @@ async def verify(
         if status == "unsigned" and not ring:
             status = "ok"  # no key configured anywhere: unsigned is all there is
         if status == "ok":
+            # the v2 side: every listed signature must verify under the pinned vendor chain, and a legacy-only anchor
+            # is accepted only while allowed and before the first v2 anchor (no silent downgrade)
+            status = await _anchor_sig_check(pool, tenant, anchor)
+        if status == "ok":
             if head_id is None or head_id < anchor.max_id:
                 status = "truncated"
             elif w.seen.get(anchor.max_id) != anchor.head_hash:
@@ -576,7 +618,7 @@ async def anchor_head(pool, sink: Any = _UNSET, *, tenant_id: str | None = None)
             raise AuditIntegrityError(f"chain is empty but was anchored at id {prev.max_id}")
         return {"anchored": False, "reason": "empty chain"}
     if prev is not None and prev.max_id == head_id and prev.head_hash == head_hash:
-        return {"anchored": False, "reason": "head already anchored", "anchor": asdict(prev)}
+        return {"anchored": False, "reason": "head already anchored", "anchor": prev.to_dict()}
 
     after_id, prev_hash, keyed = 0, GENESIS_HASH, False
     if prev is not None:
@@ -603,9 +645,17 @@ async def anchor_head(pool, sink: Any = _UNSET, *, tenant_id: str | None = None)
             ts=datetime.now(timezone.utc).isoformat(),
         )
     )
+    _bootstrap_signers()
+    for signer in list(ANCHOR_SIGNERS):
+        before = anchor.sigs
+        try:
+            await signer(pool, anchor)
+        except Exception as exc:  # noqa: BLE001 -- a signer never blocks the anchor; the legacy-only one is published
+            anchor.sigs = before
+            logger.warning("audit_anchor_signer_failed", extra={"tenant_id": tenant, "error": type(exc).__name__})
     receipt = await sink.publish(anchor)
     logger.info("audit_anchored", extra={"tenant_id": tenant, "max_id": head_id})
-    return {"anchored": True, "anchor": asdict(anchor), "receipt": receipt}
+    return {"anchored": True, "anchor": anchor.to_dict(), "receipt": receipt}
 
 
 async def anchor_all_tenants(pool, sink: Any = _UNSET) -> list[dict[str, Any]]:
