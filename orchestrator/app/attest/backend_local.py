@@ -11,6 +11,9 @@ table (this file and ``crypto.py`` are the only code that may name it). Properti
   public key that differs from the one derived from the seed refuses too (a swapped ``public_key`` column).
 * No KEK means no key can be created (``KekNotConfigured``, a ``BackendUnavailable``): there is no ephemeral dev key.
 * The backend has no export, dump or private-key surface and carries no state beyond the pool.
+* The handle is not a capability: every call requires the handle's tenant to equal the current tenant context (and,
+  with ``conn=``, the tenant the connection is stamped for). A request running for tenant A cannot sign with, probe,
+  destroy or create keys for tenant B, even with a real handle of B. The context is never replaced from the handle.
 
 SQL names the tenant explicitly in addition to row-level security (the tenant is part of the AAD, so even an
 unstamped connection must never touch another tenant's row); the value always comes from the handle or the caller.
