@@ -10,7 +10,7 @@ import datetime as dt
 import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from . import hostexpr as X
 from . import ports as P
@@ -57,6 +57,27 @@ def _check_text(value: Optional[str]) -> Optional[str]:
         if tok in low:
             raise ValueError(f"text may describe a control, not an attack step (found {tok!r})")
     return value
+
+
+# ``parse_invariant`` validates with ``context={ASSERT_PROBLEMS: []}`` so that a bad ``assert:`` does not abort the
+# whole model and hide every other schema error (P2.1 D36). The bad assert is recorded in the list and replaced by
+# a PLACEHOLDER literal so field validation can go on. The placeholder is never a valid document: ``_shape`` refuses
+# it with ``PLACEHOLDER_REFUSED`` (which ``parse_invariant`` drops from the report), so no caller can obtain an
+# ``Invariant`` that judges ``covered`` where its author wrote something else.
+ASSERT_PROBLEMS = "assert_problems"
+PLACEHOLDER = "covered"
+PLACEHOLDER_REFUSED = "assert: placeholder is not a valid invariant"
+
+
+def _assert_problems(info: Optional[ValidationInfo]) -> Optional[list]:
+    """The collecting list of this validation run, or None when nobody asked for collection (then every
+    validator raises exactly as it always did)."""
+    ctx = getattr(info, "context", None)
+    if isinstance(ctx, dict):
+        found = ctx.get(ASSERT_PROBLEMS)
+        if isinstance(found, list):
+            return found
+    return None
 
 
 def _listify(v: Any) -> Any:
@@ -209,8 +230,11 @@ class Invariant(_Strict):
 
     @model_validator(mode="before")
     @classmethod
-    def _host_assert(cls, data: Any) -> Any:
-        """``assert:`` is a literal, or a predicate / ``{all|any|not: ...}`` (host-config)."""
+    def _host_assert(cls, data: Any, info: ValidationInfo) -> Any:
+        """``assert:`` is a literal, or a predicate / ``{all|any|not: ...}`` (host-config).
+
+        A bad ``assert:`` raises, unless the caller asked for collection (``context={'assert_problems': []}``):
+        then the problem is appended and a placeholder takes the assert's place so the other errors still surface."""
         if not isinstance(data, dict):
             return data
         if "expr" in data:
@@ -221,16 +245,24 @@ class Invariant(_Strict):
         raw = data[keys[0]]
         if isinstance(raw, str) and raw in _LITERAL_ASSERTS:
             return data
+        collected = _assert_problems(info)
+
+        def bad(message: str) -> Any:
+            if collected is None:
+                raise ValueError(message)
+            collected.append(("assert", message))
+            return dict(data, **{keys[0]: PLACEHOLDER})
+
         if raw is None or isinstance(raw, (bool, int, float, list)):
-            raise ValueError("assert: must be unreachable, exposes-only, covered, a predicate "
-                             "string or a mapping with all, any or not")
+            return bad("assert: must be unreachable, exposes-only, covered, a predicate "
+                       "string or a mapping with all, any or not")
         try:
             tree = X.parse_assertion(raw)
         except X.ExprError as exc:
             hint = ""
             if isinstance(raw, str) and not any(c in raw for c in " (=<>!"):
                 hint = " (not one of unreachable, exposes-only, covered)"
-            raise ValueError(f"{exc}{hint}") from None
+            return bad(f"{exc}{hint}")
         out = dict(data)
         out[keys[0]] = "host-config"
         out["expr"] = tree
@@ -265,7 +297,11 @@ class Invariant(_Strict):
         return None if v is None else P.format_ports(P.parse_ports(v))
 
     @model_validator(mode="after")
-    def _shape(self) -> "Invariant":
+    def _shape(self, info: ValidationInfo) -> "Invariant":
+        if _assert_problems(info):
+            # a placeholder assert stands in for a bad one: the shape rules would judge the PLACEHOLDER (and add
+            # noise like "'covered' needs subjects.to"), and the model must never come out of validation
+            raise ValueError(PLACEHOLDER_REFUSED)
         if (self.assert_ == "host-config") != (self.expr is not None):
             raise ValueError("assert: 'host-config' is not written literally; give a predicate "
                              "or a mapping with all, any or not")

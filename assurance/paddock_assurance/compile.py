@@ -14,7 +14,12 @@ from .parse import digest, parse_invariant
 
 
 class CompileError(ValueError):
-    pass
+    """The invariant is valid but cannot be compiled. ``problems`` lists every issue (the message joins them), so an
+    author sees all of them in one round trip (P2.1 D36)."""
+
+    def __init__(self, problems: "str | list[str]") -> None:
+        self.problems = [problems] if isinstance(problems, str) else list(problems)
+        super().__init__("; ".join(self.problems))
 
 
 class PlanKind(str, Enum):
@@ -49,13 +54,17 @@ def _compile_host(inv: Invariant) -> Plan:
     tree = inv.expr
     assert tree is not None
     leaves = X.leaves(tree)
+    problems: list[str] = []
     for lf in leaves:
         spec = HF.REGISTRY[lf.field]
         if inv.evidence.min_tier.rank > spec.max_tier.rank:
-            raise CompileError(
-                f"evidence.min_tier {inv.evidence.min_tier.value} is above the strongest evidence "
-                f"{spec.name} can ever have ({spec.max_tier.value}: an agent-signed fact is never "
-                "lifted), so this invariant could never hold")
+            msg = (f"evidence.min_tier {inv.evidence.min_tier.value} is above the strongest evidence "
+                   f"{spec.name} can ever have ({spec.max_tier.value}: an agent-signed fact is never "
+                   "lifted), so this invariant could never hold")
+            if msg not in problems:       # the same field twice is one problem
+                problems.append(msg)
+    if problems:
+        raise CompileError(problems)
     return Plan(
         invariant=inv, digest=digest(inv), kind=PlanKind.HOSTCONFIG,
         max_age=parse_duration(inv.evidence.max_age), min_tier=inv.evidence.min_tier,

@@ -53,7 +53,10 @@ from .graph import INTERNET, DirState, Edge, Node, ReachGraph, direction_state, 
 from .model import Allow, Tier
 
 MAX_WITNESSES = 5
-PSEUDO_KINDS = frozenset({"internet", "cidr"})   # not coverable: outside the coverage universe
+# Not coverable: outside the coverage universe. ``estate`` is the residual a cloud builder adds for security-group
+# members it could not prove complete (P2.1 D31): it can never be instrumented, so it must not drag a ratio down,
+# yet it stays a blind node in the reach search (an unknown edge reaches it and a known edge leaves it).
+PSEUDO_KINDS = frozenset({"internet", "cidr", "estate"})
 MAX_COVERED_WITNESSES = 50   # one per uncovered node: the list is the work queue
 MAX_VIOLATING_TARGETS = 5000   # cap on Result.violating_targets (the flag says when it bites)
 MAX_OVERLAP = 64             # |from-selection AND to-selection| beyond which we answer UNKNOWN

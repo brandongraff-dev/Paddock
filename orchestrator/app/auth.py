@@ -738,6 +738,24 @@ _rule("POST", rf"/v1/fleet/agents/{_ANY}/keys/{_ANY}/revoke", "admin")
 # a malformed id must not drop to the weaker default `read` for GET.
 _rule("GET", rf"/v1/fleet/agents/{_ANY}/posture", "triage")
 
+# --- P2.1 (docs/ASSURANCE_P2_1.md 1.11, 4.3, 6.1, 7.1): every rule is explicit and pinned by test_p21_rbac.py ----- #
+# Added by the seam package BEFORE the handlers exist (a rule for a route that does not exist yet is harmless), so no
+# later package can ship a GET under the default `read`. `_ANY` on purpose (a malformed id must not weaken a rule), and
+# the `(/.*)?` tails make every neighbouring shape nobody implements triage/admin as well, never the default.
+# The agent principal holds only the capability `agent`, so none of these is reachable with an agent credential.
+# KEV per host names CVEs, so it is triage, not viewer-safe.
+_rule("GET", rf"/v1/fleet/agents/{_ANY}/kev(/.*)?", "triage")
+# Global advisory-feed status ("why is my host UNKNOWN"): no tenant data, read.
+_rule("GET", r"/v1/assurance/advisories", "read")
+# Pairing and conflict acknowledgement: the reads reveal asset addresses, operator justifications and scan
+# observations (triage); every write is admin (never four-eyes, D26). The billing gate on PUT is the handler's.
+_rule("GET", rf"/v1/fleet/agents/{_ANY}/(pairing|conflicts)(/.*)?", "triage")
+_rule("GET", r"/v1/fleet/pairings(/.*)?", "triage")
+_rule("PUT POST PATCH DELETE", rf"/v1/fleet/agents/{_ANY}/(pairing|conflicts|kev)(/.*)?", "admin")
+_rule("POST PUT PATCH DELETE", r"/v1/fleet/pairings(/.*)?", "admin")
+# Humans-only release of the findings of an invariant that is not active (never billing-gated, never by a service key).
+_rule("POST PUT PATCH DELETE", rf"/v1/invariants/{_ANY}/findings/release", "admin")
+
 
 def required_capability(method: str, path: str) -> str | None:
     """Return the capability a route needs, or None for public routes.
@@ -1086,6 +1104,9 @@ class GovernanceMiddleware(BaseHTTPMiddleware):
         ip = client_ip(request)
         if details is None:
             details = {"denied": True} if denied else {}
+        if getattr(ip, "proxied", False):
+            # the address may be that of a forwarding hop, not of the client (D35): say so on the row
+            details = {**details, "ip_proxied": True}
         if principal is not None and principal.kind == "service":
             # A shared service key acting in a tenant it named: record WHICH.
             details = {**details, "via": "service_key",
@@ -1154,28 +1175,6 @@ def _trusted_proxies() -> tuple:
     return tuple(nets)
 
 
-def client_ip(request: Request) -> str | None:
-    """Socket peer, or the X-Forwarded-For client ONLY when the peer is a
-    configured trusted proxy. Otherwise XFF is attacker-controlled."""
-    import ipaddress
-
-    peer = request.client.host if request.client else None
-    fwd = request.headers.get("x-forwarded-for")
-    if not (peer and fwd):
-        return peer
-    try:
-        peer_ip = ipaddress.ip_address(peer)
-    except ValueError:
-        return peer
-    if any(peer_ip.version == n.version and peer_ip in n for n in _trusted_proxies()):
-        cand = fwd.split(",")[0].strip()
-        try:
-            return str(ipaddress.ip_address(cand))
-        except ValueError:
-            return peer
-    return peer
-
-
 def _trusted_hops() -> int:
     """The configured number of appending proxies in front of the app (>= 1; anything else means 1)."""
     try:
@@ -1213,6 +1212,28 @@ def _header_lines(request: Request, name: str) -> list[str]:
         return list(getlist(name))
     one = headers.get(name)
     return [] if one is None else [one]
+
+
+#: at most one misconfiguration warning per window (a request-rate log line would be a flood)
+_HOPS_WARN_EVERY_S = 300.0
+_HOPS_WARNED_AT = 0.0
+
+
+def _warn_short_chain(have: int, hops: int) -> None:
+    """A trusted peer sent an ``X-Forwarded-For`` chain with fewer entries than ``TRUSTED_PROXY_HOPS``: the operator
+    configured more appending proxies than the request went through. The address fails closed to the peer."""
+    global _HOPS_WARNED_AT
+    now = time.time()
+    if _HOPS_WARNED_AT and now - _HOPS_WARNED_AT < _HOPS_WARN_EVERY_S:
+        return
+    _HOPS_WARNED_AT = now
+    logger.warning(
+        "trusted_proxy_hops_mismatch: X-Forwarded-For carries %d entr%s but TRUSTED_PROXY_HOPS=%d; the client "
+        "address fails closed to the socket peer (one shared rate-limit bucket). Set TRUSTED_PROXY_HOPS to the "
+        "number of proxies that APPEND to X-Forwarded-For and list only the ingress addresses in "
+        "TRUSTED_PROXY_CIDRS.", have, "y" if have == 1 else "ies", hops,
+        extra={"entries": have, "trusted_proxy_hops": hops},
+    )
 
 
 def client_ip_strict(request: Request) -> ClientAddr | None:
@@ -1259,6 +1280,7 @@ def client_ip_strict(request: Request) -> ClientAddr | None:
     hops = _trusted_hops()
     parts = [p.strip() for p in ",".join(lines).split(",")]
     if len(parts) < hops:
+        _warn_short_chain(len(parts), hops)
         return ClientAddr(peer, True)
     addrs = []
     for part in parts[-hops:]:                  # leftmost of these is the client as the outermost proxy saw it
@@ -1269,6 +1291,29 @@ def client_ip_strict(request: Request) -> ClientAddr | None:
     if not all(is_trusted(a) for a in addrs[1:]):
         return ClientAddr(peer, True)
     return ClientAddr(str(addrs[0]), is_trusted(addrs[0]))
+
+
+_UNSET = object()
+
+
+def client_ip(request: Request) -> ClientAddr | None:
+    """THE client address of a request: the strict one (``client_ip_strict``), computed once and cached on
+    ``request.state.client_addr`` (docs/ASSURANCE_P2_1.md 6.3, D35).
+
+    It used to take the LEFTMOST ``X-Forwarded-For`` entry from a trusted proxy. A proxy that appends (nginx, an ALB)
+    leaves the client-written entries in front, so that entry was attacker-chosen: a forged audit ip, a per-IP
+    limiter bypassed or poisoned, a victim locked out through the login/enroll keys. Two functions of different trust
+    is how the next call site gets the wrong one, so there is one: every limiter, audit row and JSON consumer keeps
+    getting a plain ``str`` (``ClientAddr`` is one); the audit row adds ``ip_proxied`` when it says so. A wrong
+    ``TRUSTED_PROXY_HOPS`` degrades to the socket peer (a shared limiter bucket: availability), never to a forged
+    address. Nothing outside this module may read the forwarded-for header (a static test pins it)."""
+    state = request.state
+    cached = getattr(state, "client_addr", _UNSET)
+    if cached is not _UNSET:
+        return cached
+    addr = client_ip_strict(request)
+    state.client_addr = addr
+    return addr
 
 
 # --------------------------------------------------------------------------- #

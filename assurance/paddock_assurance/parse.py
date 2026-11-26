@@ -9,7 +9,7 @@ import yaml
 from pydantic import ValidationError
 
 from . import hostexpr as X
-from .model import Invariant
+from .model import ASSERT_PROBLEMS, PLACEHOLDER_REFUSED, Invariant
 
 MAX_BYTES = 64 * 1024
 MAX_DEPTH = 14      # a host-config assert nests two document levels per all/any/not (6 levels allowed)
@@ -80,16 +80,31 @@ def load_document(text: str) -> Any:
     return doc
 
 
+def _assert_message(message: str) -> str:
+    """A collected assert problem as the author reads it. Most messages already start ``assert`` (``assert: position
+    8: ...``, ``assert.all[0]: ...``): those are kept, anything else gets the ``assert: `` label."""
+    return message if message.startswith("assert") else f"assert: {message}"
+
+
 def parse_invariant(text: str) -> Invariant:
+    """Parse and validate. EVERY problem is reported in one ``ParseError`` (P2.1 D36): a bad ``assert:`` is collected
+    and listed first, then the field errors, instead of hiding them. Valid documents are unaffected (same model, same
+    digest); a document with a bad assert never yields an ``Invariant``."""
     doc = load_document(text)
+    context: dict[str, list] = {ASSERT_PROBLEMS: []}
     try:
-        return Invariant.model_validate(doc)
+        inv = Invariant.model_validate(doc, context=context)
     except ValidationError as exc:
-        problems = []
+        problems = [_assert_message(m) for _, m in context[ASSERT_PROBLEMS]]
         for err in exc.errors():
+            if not err["loc"] and err["msg"] == f"Value error, {PLACEHOLDER_REFUSED}":
+                continue          # our own refusal of the placeholder (exact match: never an author's text)
             loc = ".".join(str(p) for p in err["loc"]) or "(document)"
             problems.append(f"{loc}: {err['msg']}")
         raise ParseError(problems) from exc
+    if context[ASSERT_PROBLEMS]:       # unreachable while _shape refuses the placeholder; never hand it back anyway
+        raise ParseError([_assert_message(m) for _, m in context[ASSERT_PROBLEMS]])
+    return inv
 
 
 def canonical_json(inv: Invariant) -> str:

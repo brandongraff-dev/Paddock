@@ -10,7 +10,7 @@ from .hostexpr import ExprError
 from .model import Invariant, Tier
 from .parse import ParseError, parse_invariant
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "CompileError", "ExprError", "GraphError", "Invariant", "ParseError", "Plan", "PlanKind", "ReachGraph",

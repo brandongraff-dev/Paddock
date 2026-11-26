@@ -159,7 +159,48 @@ async def test_invalid_yaml_is_422_with_the_librarys_problem_list(client):
     assert r.status_code == 422
     assert any("assert" in p and "expected an operator" in p for p in r.json()["detail"]["problems"])
 
-    # nothing was stored
+    # P2.1 (D36): a bad `assert:` no longer hides the other schema errors. Both problems are reported in ONE 422,
+    # the assert first and labelled `assert:` (not `(document): Value error, `), then the severity with its path.
+    both = inv_yaml(severity="catastrophic").replace("assert: unreachable", "assert: nonsense")
+    r = await client.post("/v1/invariants", json={"yaml": both})
+    assert r.status_code == 422
+    problems = r.json()["detail"]["problems"]
+    assert len(problems) == 2, problems
+    assert problems[0].startswith("assert:") and "expected an operator" in problems[0]
+    assert problems[1].startswith("severity:")
+    assert not any("(document)" in p or "Value error" in p for p in problems)
+
+    # the same through PUT on an existing invariant: nothing changes, both problems are named
+    inv = await _create(client, "acme:both-wrong")
+    r = await client.put(f"/v1/invariants/{inv['id']}",
+                         json={"yaml": inv_yaml("acme:both-wrong", severity="catastrophic")
+                               .replace("assert: unreachable", "assert: nonsense")})
+    assert r.status_code == 422
+    assert [p.split(":")[0] for p in r.json()["detail"]["problems"]] == ["assert", "severity"]
+    assert (await client.get(f"/v1/invariants/{inv['id']}")).json()["digest"] == inv["digest"]
+
+    # nothing was stored beyond the one valid invariant created above
+    assert (await client.get("/v1/invariants")).json()["total"] == 1
+
+
+async def test_a_compile_error_names_every_offending_leaf(client):
+    # P2.1 (D36): `_compile_host` collects every leaf whose min_tier is above what its field can ever have, so the
+    # operator fixes them in one go. The router may present them as one joined message or as a list: both name each field.
+    text = """apiVersion: paddock.dev/invariant/v1
+id: acme:two-bad-leaves
+title: Two leaves above their tier
+subjects:
+  to: { tag: [server] }
+assert:
+  all:
+    - host.sshd.installed == true
+    - host.fw.ipv6_enabled == false
+evidence: { min_tier: observed, max_age: 6h }
+"""
+    r = await client.post("/v1/invariants", json={"yaml": text})
+    assert r.status_code == 422
+    blob = " | ".join(r.json()["detail"]["problems"])
+    assert "host.sshd.installed" in blob and "host.fw.ipv6_enabled" in blob and "never lifted" in blob
     assert (await client.get("/v1/invariants")).json()["total"] == 0
 
 
