@@ -17,6 +17,17 @@ Soundness rules (a false HOLDS is the worst failure, so every unknown widens, D6
 * Not modeled, so not claimed (D7): NACLs, route tables, egress, peering routes, ENIs of services
   we do not read (Lambda, Fargate, endpoints). They are over-approximated where a rule points at
   them and listed as blind spots, never treated as closed.
+
+**Builder contract rule (docs/ASSURANCE_P2_1.md section 5.1, builders-7): every set-valued source must denote its
+COMPLETE membership or add a residual node.** Anything that is not a node is invisible to the evaluator, so
+soundness lives here. A rule whose source is a security group that was synced draws edges from its modeled
+members; if the membership of that group is not PROVEN complete it also draws a configured edge
+``estate:<acct>:<region>:<vpc|none> -> dst`` from a residual node (kind ``estate``: never covered, zone unknown,
+never CIDR expanded) that stands for "whatever else may sit in that group". Membership is proven only by the
+connector's ``DescribeNetworkInterfaces`` inventory (``eni_inventory`` / ``eni_members`` in the group's asset
+metadata): complete, read within an hour of the group's own sync, not truncated, no unmodeled interface, and every
+listed instance and load balancer a modeled member of THAT group. A partial region read (``inventory_complete:
+false``) leaves the node blind. There is no operator label that overrides this (D31).
 """
 from __future__ import annotations
 
@@ -26,7 +37,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
-from ..refs import INTERNET, asset_ref, cidr_ref
+from ..refs import INTERNET, RefError, asset_ref, cidr_ref, estate_ref
 from ..types import BuildOutput, CoverageOut, EdgeOut, NodeOut
 
 SOURCE = "aws_sg"
@@ -37,6 +48,14 @@ TIER = "configured"
 MAX_EXPANDED_EDGES = 50_000
 
 _NODE_KIND = {"instance": "cloud_instance", "db_instance": "cloud_db"}
+# The typed spelling of a load balancer in the connector's ``eni_members.lbs`` (see connectors/aws.lb_typed_name).
+_LB_PREFIX = {"application_load_balancer": "app", "network_load_balancer": "net",
+              "gateway_load_balancer": "gwy", "classic_load_balancer": "classic"}
+# An inventory older (or newer) than this relative to the group's own sync is not the inventory of that sync, and a
+# read dated after the build clock by more than this skew is not believable.
+INVENTORY_MAX_SKEW = dt.timedelta(hours=1)
+CLOCK_SKEW = dt.timedelta(minutes=5)
+MAX_ESTATE_SGS = 64
 _PROTOS = ("tcp", "udp", "icmp", "any")
 _WORLD4 = ipaddress.ip_network("0.0.0.0/0")
 _SELECT = """
@@ -156,6 +175,9 @@ class _Res:
     last_seen: dt.datetime
     ips: tuple[Any, ...]
     attrs: dict[str, Any]
+    instance_id: str = ""                         # the EC2 instance id (cloud_instance), matched against the ENI inventory
+    lb_key: str = ""                              # the typed load balancer name (cloud_lb), likewise
+    inventory_complete: Optional[bool] = None     # False: the connector's region listing was partial
 
 
 @dataclass
@@ -164,6 +186,10 @@ class _Sg:
     rules: Optional[list[Any]]
     truncated: bool
     last_seen: dt.datetime
+    vpc_id: str = ""
+    eni_inventory: Any = None                     # raw ``metadata.eni_inventory`` (validated at use, never trusted)
+    eni_members: Any = None
+    inventory_complete: Optional[bool] = None
 
 
 @dataclass
@@ -214,6 +240,25 @@ def _str(v: Any) -> str:
     return v if isinstance(v, str) else ""
 
 
+def _aware_ts(v: Any) -> Optional[dt.datetime]:
+    """An ISO-8601 timestamp WITH a zone, else ``None`` (a naive time is not a point in time)."""
+    if not isinstance(v, str):
+        return None
+    try:
+        d = dt.datetime.fromisoformat(v)
+    except ValueError:
+        return None
+    return d if d.tzinfo else None
+
+
+def _nonneg_int(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _str_list(v: Any) -> Optional[list[str]]:
+    return list(v) if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
+
+
 def _resource(row: dict[str, Any], now: dt.datetime) -> Optional[_Res]:
     md = row.get("metadata") or {}
     kind = _node_kind(md.get("resource_type"))
@@ -238,8 +283,14 @@ def _resource(row: dict[str, Any], now: dt.datetime) -> Optional[_Res]:
     if md.get("vpc_id"):
         attrs["vpc_id"] = str(md["vpc_id"])
     label = str(md.get("name") or md.get("instance_id") or row.get("canonical") or ref)[:200]
+    rtype = md.get("resource_type")
     return _Res(ref, str(row["id"]), kind, label, str(row.get("canonical") or ""), acct, region,
-                sg_ids, addr, min(seen, now), _ips(md), attrs)
+                sg_ids, addr, min(seen, now), _ips(md), attrs,
+                instance_id=_str(md.get("instance_id")) if kind == "cloud_instance" else "",
+                lb_key=(f"{_LB_PREFIX[rtype]}/{md['name']}" if kind == "cloud_lb" and rtype in _LB_PREFIX
+                        and isinstance(md.get("name"), str) and md["name"] else ""),
+                inventory_complete=md.get("inventory_complete") if isinstance(md.get("inventory_complete"), bool)
+                else None)
 
 
 def _security_group(row: dict[str, Any], now: dt.datetime) -> Optional[tuple[tuple[str, str, str], _Sg]]:
@@ -253,7 +304,9 @@ def _security_group(row: dict[str, Any], now: dt.datetime) -> Optional[tuple[tup
     rules = md.get("ingress_rules")
     return (acct, region, gid), _Sg(
         str(row.get("canonical") or ""), rules if isinstance(rules, list) else None,
-        md.get("ingress_truncated") is True, min(seen, now))
+        md.get("ingress_truncated") is True, min(seen, now), _str(md.get("vpc_id")),
+        md.get("eni_inventory"), md.get("eni_members"),
+        md.get("inventory_complete") if isinstance(md.get("inventory_complete"), bool) else None)
 
 
 class _Builder:
@@ -278,6 +331,8 @@ class _Builder:
                 self.members.setdefault((r.account, r.region, gid), []).append(ref)
         self.edges: dict[tuple[str, str, str, int, int], _Edge] = {}
         self.cidr_nodes: dict[str, str] = {}
+        self.estates: dict[str, dict[str, Any]] = {}      # estate ref -> node attrs (sgs is a set until output)
+        self._proofs: dict[tuple[str, str, str], tuple[bool, bool]] = {}
         self.coverage: list[CoverageOut] = []
         self.notes: dict[str, set[str]] = {}
         self.expanded = 0
@@ -343,18 +398,32 @@ class _Builder:
             self.note("prefix", value)
         elif stype == "sg":
             key = (_str(src.get("account")) or dst.account, dst.region, value)
-            if key not in self.sgs:
+            sg = self.sgs.get(key)
+            if sg is None:
                 net = _WORLD4
                 lists["unresolved_sg"] = value
                 self.note("unresolved", value)
             else:
-                members = [m for m in self.members.get(key, []) if m != dst.ref]
-                if not self.members.get(key):
+                modelled = self.members.get(key, [])
+                members = [m for m in modelled if m != dst.ref]
+                usable, proven = self._proof(key, sg, modelled)
+                if not usable:
+                    self.note("eni", value)
+                if modelled:
+                    lists["via_sg"] = value
+                if not proven and (modelled or usable):
+                    # The group has members this build cannot name: add the residual, never the world.
+                    if self._add_estate(dst, key, sg, rule, sg_id, idx, last, value):
+                        self.note("estate", value)
+                    else:
+                        net = _WORLD4
+                        lists = {"unmodeled_sg_members": value}
+                        self.note("estate_unrepresentable", value)
+                elif not modelled and not usable:
+                    # nothing to draw from and nothing proven: the pre-existing widening (kept, never both)
                     net = _WORLD4
                     lists["unmodeled_sg_members"] = value
                     self.note("unmodeled", value)
-                else:
-                    lists["via_sg"] = value
         else:
             net = _WORLD4
             flags.add("unparsed_source")
@@ -379,12 +448,70 @@ class _Builder:
                           lists=lists)
         return True
 
+    # -- membership proof (builders-7) ---------------------------------------- #
+    def _proof(self, key: tuple[str, str, str], sg: _Sg, modelled: list[str]) -> tuple[bool, bool]:
+        """``(inventory usable, membership proven)`` for one referenced group, computed once per group (a hub group
+        referenced by many rules would otherwise be re-walked for every rule)."""
+        got = self._proofs.get(key)
+        if got is None:
+            usable = self._inventory_usable(key, sg)
+            got = self._proofs[key] = (usable, usable and self._members_proven(sg, modelled))
+        return got
+
+    def _inventory_usable(self, key: tuple[str, str, str], sg: _Sg) -> bool:
+        """Is ``sg``'s ENI inventory a complete, fresh, untruncated, well-formed read of THIS group in THIS region?
+        Anything else (absent, a failed read, stale, from the future, malformed) is NOT usable: unknown widens."""
+        if sg.inventory_complete is False:
+            return False
+        inv, mem = sg.eni_inventory, sg.eni_members
+        if not isinstance(inv, dict) or inv.get("complete") is not True or inv.get("region") != key[1]:
+            return False
+        read_at = _aware_ts(inv.get("read_at"))
+        if read_at is None or abs(sg.last_seen - read_at) > INVENTORY_MAX_SKEW or read_at > self.now + CLOCK_SKEW:
+            return False
+        if not isinstance(mem, dict) or mem.get("truncated") is not False:
+            return False
+        unmodeled = mem.get("unmodeled")
+        return (_str_list(mem.get("instances")) is not None and _str_list(mem.get("lbs")) is not None
+                and isinstance(unmodeled, dict) and _nonneg_int(unmodeled.get("count")))
+
+    def _members_proven(self, sg: _Sg, modelled: list[str]) -> bool:
+        """Given a usable inventory: nothing outside the model, and every listed instance and load balancer a
+        modeled member of this very group. (The caller guarantees ``_inventory_usable``.)"""
+        mem = sg.eni_members
+        if mem["unmodeled"]["count"] != 0:
+            return False
+        have_i = {self.res[m].instance_id for m in modelled if self.res[m].kind == "cloud_instance"}
+        have_l = {self.res[m].lb_key for m in modelled if self.res[m].kind == "cloud_lb"}
+        return all(i and i in have_i for i in mem["instances"]) and all(n and n in have_l for n in mem["lbs"])
+
+    def _add_estate(self, dst: _Res, key: tuple[str, str, str], sg: _Sg, rule: _Rule, rule_sg: str, idx: int,
+                    last: dt.datetime, via: str) -> bool:
+        """Draw ``estate -> dst`` for one rule. ``False`` when the residual cannot be named (the caller widens)."""
+        try:
+            try:
+                eref = estate_ref(dst.account, dst.region, sg.vpc_id or None)
+            except RefError:
+                eref = estate_ref(dst.account, dst.region, None)      # an unreadable vpc id is "no vpc", not a skip
+        except RefError:
+            return False
+        vpc = eref.rsplit(":", 1)[1]
+        node = self.estates.setdefault(eref, {"account_id": dst.account, "region": dst.region, "vpc_id": vpc,
+                                               "sgs": set()})
+        node["sgs"].add(via)
+        self.add_edge(eref, dst, rule, rule_sg, idx, min(last, sg.last_seen),
+                      flags={"unmodeled_members"}, lists={"via_sg": via})
+        return True
+
     # -- per destination ----------------------------------------------------- #
     def process(self, dst: _Res) -> None:
         if not dst.sg_ids or not dst.account or not dst.region:
             self.note("nosg", dst.label)
             return
         complete, oldest = True, dst.last_seen
+        if dst.inventory_complete is False:      # the region's instance or group listing was partial
+            self.note("partial", dst.label)
+            complete = False
         for gid in dst.sg_ids:
             sg = self.sgs.get((dst.account, dst.region, gid))
             if sg is None:
@@ -392,6 +519,9 @@ class _Builder:
                 complete = False
                 continue
             oldest = min(oldest, sg.last_seen)
+            if sg.inventory_complete is False:
+                self.note("partial", gid)
+                complete = False
             if sg.rules is None:
                 self.note("norules", gid)
                 complete = False
@@ -419,6 +549,9 @@ class _Builder:
                  for _, r in sorted(self.res.items())]
         for ref, net in sorted(self.cidr_nodes.items()):
             nodes.append(NodeOut(ref, "cidr", net, None, {"cidr": net}))
+        for ref, est in sorted(self.estates.items()):
+            attrs = {**est, "sgs": sorted(est["sgs"])[:MAX_ESTATE_SGS]}
+            nodes.append(NodeOut(ref, "estate", f"unmodeled members in {est['vpc_id']} ({est['region']})", None, attrs))
         if any(k[0] == INTERNET for k in self.edges):
             nodes.append(NodeOut(INTERNET, "internet", "internet"))
         nodes.sort(key=lambda n: n.ref)
@@ -451,6 +584,13 @@ class _Builder:
             "unresolved": "referenced security group(s) not synced, treated as world-open: ",
             "unmodeled": "referenced security group(s) with no modeled member (ENIs of unread "
                          "services?), treated as world-open: ",
+            "partial": "node(s) or security group(s) of a region whose instance or group listing was partial "
+                       "(node left blind): ",
+            "eni": "SG(s) referenced by rules have unenumerated members (ENI inventory missing): ",
+            "estate": "referenced security group(s) whose members are not all modeled, so an estate edge stands "
+                      "for the rest: ",
+            "estate_unrepresentable": "referenced security group(s) whose estate node cannot be named, treated "
+                                      "as world-open: ",
         }
         out = []
         for key in sorted(self.notes):

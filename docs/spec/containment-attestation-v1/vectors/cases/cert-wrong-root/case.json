@@ -1,0 +1,46 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "The issuer certificate is signed by a root that is not pinned.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "key.root_unknown",
+      "revocation.unverifiable"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "key.root_unknown",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "cert-wrong-root",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 1"
+  ],
+  "state": null,
+  "tags": [
+    "trust"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

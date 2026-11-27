@@ -1,0 +1,45 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "now is 301 seconds before issued_at.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "time.not_yet_valid"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "time.not_yet_valid",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "issued-in-future",
+  "now": "2026-12-01T08:54:59Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "07 step 5"
+  ],
+  "state": null,
+  "tags": [
+    "time"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

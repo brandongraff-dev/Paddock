@@ -1,0 +1,47 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "The identity public key with the identity signature (accepted by some libraries for any message).",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json",
+          "v=1; kid=01d0fabd251fcbbe2b93b4b927b26ad2; fp=sha256:01d0fabd251fcbbe2b93b4b927b26ad2a1a99077152e45ded1e678afa45dbec5"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "sig.weak_key"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "sig.weak_key",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "weak-key-identity",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "01 section 2.5"
+  ],
+  "state": null,
+  "tags": [
+    "authenticity",
+    "ed25519"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

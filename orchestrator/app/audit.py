@@ -37,9 +37,12 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+import asyncpg
 
 from . import tenancy
 from .audit_anchor import Anchor, AnchorSinkError, sink_from_settings
@@ -491,10 +494,39 @@ def _bootstrap_signers() -> None:
         logger.warning("audit_anchor_signer_unavailable", exc_info=True)
 
 
+_LEGACY_TRUE = ("1", "true", "yes", "on")
+
+
+def anchor_legacy_allowed() -> bool:
+    """``AUDIT_ANCHOR_ALLOW_LEGACY`` (read from the environment, which a database writer cannot change): unset means
+    yes; an explicit value must be a true word (fail safe)."""
+    raw = os.environ.get("AUDIT_ANCHOR_ALLOW_LEGACY")
+    return True if raw is None else raw.strip().lower() in _LEGACY_TRUE
+
+
+async def legacy_anchor_status(pool, tenant: str) -> str:
+    """``ok`` or ``downgrade`` for an anchor WITHOUT ``sigs``: accepted only while ``AUDIT_ANCHOR_ALLOW_LEGACY`` is true
+    (the default) AND the tenant's estate has never published a v2 anchor (``attest_estates.anchor_v2_since`` is NULL,
+    sticky). Needs no verifier library, so a deployment without attestation verifies legacy anchors exactly as before; a
+    database that predates the attestation tables has no estates."""
+    if not anchor_legacy_allowed():
+        return "downgrade"
+    with tenancy.tenant_context(tenant):
+        async with pool.acquire() as con:
+            try:
+                since = await con.fetchval(
+                    "SELECT anchor_v2_since FROM attest_estates WHERE tenant_id = $1::uuid", tenant)
+            except asyncpg.UndefinedTableError:
+                return "ok"
+    return "ok" if since is None else "downgrade"
+
+
 async def _anchor_sig_check(pool, tenant: str, anchor: Anchor) -> str:
     """``ok`` | ``bad_signature`` | ``downgrade`` | ``unknown_key`` | ``unavailable`` for the v2 side of an anchor
     (see ``attest.anchor_sig.anchor_sig_status``). Anything but ``ok`` fails verification closed."""
     try:
+        if anchor.sigs is None:
+            return await legacy_anchor_status(pool, tenant)
         from .attest import anchor_sig
 
         return await anchor_sig.anchor_sig_status(pool, anchor, tenant_id=tenant)

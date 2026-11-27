@@ -1,0 +1,47 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "A public key of order two.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json",
+          "v=1; kid=ffe1ea08f3af443b5a2d6497c9b7c5a7; fp=sha256:ffe1ea08f3af443b5a2d6497c9b7c5a74a25a2b60ac58b44a22b7b1dd2218bfc"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "sig.weak_key"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "sig.weak_key",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "weak-key-2torsion",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "01 section 2.5"
+  ],
+  "state": null,
+  "tags": [
+    "authenticity",
+    "ed25519"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

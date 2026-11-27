@@ -354,11 +354,8 @@ def _eni(eid, groups, *, status="in-use", itype="interface", desc="", iid=None, 
          owner=ACCT, public=None, **extra):
     e = {"NetworkInterfaceId": eid, "Status": status, "InterfaceType": itype, "Description": desc,
          "RequesterManaged": managed, "Groups": [{"GroupId": g, "GroupName": g} for g in groups]}
-    if iid or status == "in-use":
-        e["Attachment"] = {"InstanceId": iid, "InstanceOwnerId": owner, "Status": "attached"} if iid else \
-            {"InstanceOwnerId": owner, "Status": "attached"}
-        if not iid:
-            e["Attachment"].pop("InstanceId")
+    if status == "in-use":
+        e["Attachment"] = {"InstanceOwnerId": owner, "Status": "attached", **({"InstanceId": iid} if iid else {})}
     if public:
         e["Association"] = {"PublicIp": public}
     e.update(extra)
@@ -380,6 +377,18 @@ def test_an_attached_instance_interface_is_modelled_only_when_the_instance_is_ou
                                 instances=inst, lb_names=set())[0] == "other"                # other region's instance
     for itype in ("trunk", "branch", "lambda", "vpc_endpoint"):
         assert _classify(_eni("eni-1", ["sg-a"], iid="i-1", itype=itype))[0] != "instance"   # pod / service ENIs
+
+
+def test_a_requester_managed_interface_attached_to_an_instance_is_not_the_instances_member():
+    # a service-managed ENI can show an instance attachment (e.g. a managed appliance): only a plain interface counts
+    assert _classify(_eni("eni-1", ["sg-a"], iid="i-1", managed=True))[0] != "instance"
+
+
+def test_classify_survives_non_string_shapes_by_counting_the_interface_unmodelled():
+    for bad in ({"x": 1}, ["interface"], 7):
+        got, who = _classify(_eni("eni-1", ["sg-a"], iid="i-1", itype=bad))
+        assert got not in ("instance", "lb") and who is None
+    assert _classify(_eni("eni-1", ["sg-a"], iid="i-1", desc=["ELB app/front/1"], managed=True))[0] == "other"
 
 
 def test_a_load_balancer_interface_is_modelled_only_when_requester_managed_and_the_typed_name_was_described():
@@ -461,11 +470,6 @@ def test_summarize_survives_garbage_interfaces_by_counting_them_unmodelled():
     assert out["sg-a"]["unmodeled"]["count"] == 1 and out["sg-a"]["instances"] == []
 
 
-def _pull_sync(conn):
-    import asyncio
-    return asyncio.run(conn.pull())
-
-
 def _sgs(batch):
     return {a["metadata"]["name"]: a["metadata"] for a in batch.assets
             if a["kind"] == "cloud_resource" and a["metadata"].get("resource_type") == "security_group"}
@@ -496,6 +500,8 @@ def _faulty(*, eni=None, instances=None, sgs=None):
                     _state["n"] += 1
                     if _state["n"] <= len(partial):
                         return SimpleNamespace(status_code=200, headers={}, content=b""), partial[_state["n"] - 1]
+                    if code is None:                          # the listed pages ARE the whole answer
+                        return SimpleNamespace(status_code=200, headers={}, content=b""), {}
                     return (SimpleNamespace(status_code=403, headers={}, content=b""),
                             {"Error": {"Code": code, "Message": "no"}, "ResponseMetadata": {"HTTPStatusCode": 403}})
 
@@ -561,6 +567,33 @@ async def test_access_denied_on_the_interface_read_degrades_to_incomplete_with_a
     assert _insts(batch)                                          # the rest of the pull is untouched
 
 
+async def test_an_interface_whose_groups_cannot_be_read_makes_the_inventory_incomplete(monkeypatch):
+    page = {"NetworkInterfaces": [_eni("eni-1", ["sg-x"]), {"NetworkInterfaceId": "eni-2", "Groups": []}]}
+    _, batch, conn = await _pull_world(monkeypatch, session=_faulty(eni=(None, [page])))
+    for md in _sgs(batch).values():
+        assert md["eni_inventory"]["complete"] is False and md["eni_members"] == {}
+    assert any("unreadable interface" in w for w in conn.last_warnings)
+
+
+async def test_an_interface_with_one_unreadable_group_entry_makes_the_inventory_incomplete(monkeypatch):
+    # the unreadable entry may be the very group a rule references: a short membership read as complete is a false HOLDS
+    bad = _eni("eni-2", ["sg-x"])
+    bad["Groups"].append({"GroupName": "no-id"})
+    page = {"NetworkInterfaces": [_eni("eni-1", ["sg-x"]), bad]}
+    _, batch, conn = await _pull_world(monkeypatch, session=_faulty(eni=(None, [page])))
+    for md in _sgs(batch).values():
+        assert md["eni_inventory"]["complete"] is False and md["eni_members"] == {}
+    assert any("unreadable interface" in w for w in conn.last_warnings)
+
+
+async def test_a_readable_complete_listing_is_complete_even_when_it_names_no_group_we_hold(monkeypatch):
+    page = {"NetworkInterfaces": [_eni("eni-1", ["sg-elsewhere"], itype="lambda")]}
+    _, batch, _ = await _pull_world(monkeypatch, session=_faulty(eni=(None, [page])))
+    web = _sgs(batch)["web"]
+    assert web["eni_inventory"]["complete"] is True and web["eni_inventory"]["eni_total"] == 1
+    assert web["eni_members"]["instances"] == [] and web["eni_members"]["unmodeled"]["count"] == 0
+
+
 async def test_a_partial_interface_page_is_incomplete_not_a_short_list(monkeypatch):
     first = {"NetworkInterfaces": [_eni("eni-1", ["sg-whatever"], itype="lambda")], "NextToken": "page-2"}
     sess = _faulty(eni=("RequestLimitExceeded", [first]))
@@ -583,9 +616,6 @@ async def test_a_failed_instance_or_group_listing_marks_the_regions_assets_incom
 async def test_a_listing_that_fails_after_its_first_page_flags_the_pages_it_did_return(monkeypatch):
     import boto3 as _boto3
 
-    def pages(monkeypatch_session):
-        pass
-
     for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
         monkeypatch.setenv(k, "testing")
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
@@ -607,8 +637,16 @@ async def test_a_later_failed_read_overwrites_a_stale_complete_inventory_in_the_
     """The metadata merge is shallow: a failed read must WRITE incomplete, never leave the old complete:true."""
     from app.integrations.ingest import apply_source_batch
 
-    _, good, _ = await _pull_world(monkeypatch)
-    _, bad, _ = await _pull_world(monkeypatch, session=_faulty(eni=("UnauthorizedOperation", [])))
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(k, "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
+    with moto.mock_aws():                      # ONE world: the same group asset is pulled twice
+        _build_world()
+        cfg = {"regions": [REGION], "role_arn": "arn:aws:iam::123456789012:role/paddock-readonly"}
+        good = await aws_mod.AwsConnector(cfg, SECRETS, http=None).pull()
+        denied = aws_mod.AwsConnector(cfg, SECRETS, http=None)
+        denied.session_factory = _faulty(eni=("UnauthorizedOperation", []))
+        bad = await denied.pull()
     await apply_source_batch(db_pool, fake_redis, good, source="integration:aws")
 
     async def stored():
@@ -645,4 +683,4 @@ def test_the_least_privilege_policy_lists_describe_network_interfaces():
     called = set(re.findall(r"ec2:Describe\w+", src))
     listed = set(re.findall(r'"(ec2:Describe\w+)"', block))
     assert called <= listed, called - listed
-    assert "network interface" in doc.lower() and "unenumerated" in doc.lower() or "ENI inventory" in doc
+    assert "ENI inventory" in doc and "estate" in doc          # the doc says what the read is for

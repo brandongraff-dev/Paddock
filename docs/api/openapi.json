@@ -7005,6 +7005,18 @@
       },
       "InvariantDetail": {
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "coverage": {
             "anyOf": [
               {
@@ -7044,6 +7056,29 @@
             "title": "Digest",
             "type": "string"
           },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled At"
+          },
+          "disabled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled By"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
@@ -7058,6 +7093,12 @@
               }
             ],
             "title": "Evidence Tier"
+          },
+          "findings_not_rechecked": {
+            "default": 0,
+            "description": "Of those, the ones nobody is re-checking (the invariant is disabled, archived, invalid or not entitled). Release them with POST /v1/invariants/{id}/findings/release.",
+            "title": "Findings Not Rechecked",
+            "type": "integer"
           },
           "id": {
             "format": "uuid",
@@ -7114,6 +7155,12 @@
             ],
             "title": "Last Verdict"
           },
+          "open_findings": {
+            "default": 0,
+            "description": "Open and triaged findings of this invariant.",
+            "title": "Open Findings",
+            "type": "integer"
+          },
           "reasons": {
             "items": {
               "type": "string"
@@ -7144,6 +7191,12 @@
             "description": "Evaluated against an older graph version than the current one.",
             "title": "Stale",
             "type": "boolean"
+          },
+          "state": {
+            "default": "active",
+            "description": "active | disabled | archived | invalid_definition | not_entitled. A non-active invariant is not evaluated: its open findings stay open and are annotated, never closed by the machine.",
+            "title": "State",
+            "type": "string"
           },
           "status": {
             "description": "HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED",
@@ -7227,6 +7280,18 @@
       },
       "InvariantOut": {
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "coverage": {
             "anyOf": [
               {
@@ -7265,6 +7330,29 @@
           "digest": {
             "title": "Digest",
             "type": "string"
+          },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled At"
+          },
+          "disabled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled By"
           },
           "enabled": {
             "title": "Enabled",
@@ -7348,6 +7436,12 @@
             "description": "Evaluated against an older graph version than the current one.",
             "title": "Stale",
             "type": "boolean"
+          },
+          "state": {
+            "default": "active",
+            "description": "active | disabled | archived | invalid_definition | not_entitled. A non-active invariant is not evaluated: its open findings stay open and are annotated, never closed by the machine.",
+            "title": "State",
+            "type": "string"
           },
           "status": {
             "description": "HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED",
@@ -8705,6 +8799,44 @@
           "client_id"
         ],
         "title": "OIDCConfig",
+        "type": "object"
+      },
+      "ObservedPrefix": {
+        "properties": {
+          "flows": {
+            "description": "Distinct flow records touching the prefix in the window.",
+            "title": "Flows",
+            "type": "integer"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "prefix": {
+            "description": "An IPv4 /24 seen as a flow source or destination by THIS sensor.",
+            "title": "Prefix",
+            "type": "string"
+          },
+          "private": {
+            "default": true,
+            "description": "RFC 1918 or shared (100.64/10) address space. Any other prefix (public, or special-use such as loopback, link-local, multicast) is shown but never suggested or flagged: every sensor sees the internet's endpoints.",
+            "title": "Private",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "prefix",
+          "flows"
+        ],
+        "title": "ObservedPrefix",
         "type": "object"
       },
       "OnboardingCounts": {
@@ -10937,6 +11069,37 @@
         "title": "RedeemIn",
         "type": "object"
       },
+      "ReleaseIn": {
+        "additionalProperties": false,
+        "properties": {
+          "justification": {
+            "description": "Why these findings are given up on (10+ characters; audited and written into each finding's status reason).",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Justification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "justification"
+        ],
+        "title": "ReleaseIn",
+        "type": "object"
+      },
+      "ReleaseOut": {
+        "properties": {
+          "released": {
+            "description": "Findings marked wontfix.",
+            "title": "Released",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "released"
+        ],
+        "title": "ReleaseOut",
+        "type": "object"
+      },
       "RemediationDetail": {
         "properties": {
           "base_branch": {
@@ -11551,6 +11714,19 @@
       },
       "RunOut": {
         "properties": {
+          "compacted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the heavy parts of ``result`` (target lists, blind spots, all but the first 5 witnesses) were dropped after the compaction horizon; the decision itself is kept.",
+            "title": "Compacted At"
+          },
           "coverage_covered": {
             "title": "Coverage Covered",
             "type": "integer"
@@ -11580,6 +11756,12 @@
           "invariant_id": {
             "title": "Invariant Id",
             "type": "string"
+          },
+          "pinned": {
+            "default": false,
+            "description": "Held whole: never compacted or deleted (attestations pin rows).",
+            "title": "Pinned",
+            "type": "boolean"
           },
           "reasons": {
             "items": {
@@ -13664,6 +13846,31 @@
         "title": "SegmentOut",
         "type": "object"
       },
+      "SensorObserved": {
+        "properties": {
+          "prefixes": {
+            "items": {
+              "$ref": "#/components/schemas/ObservedPrefix"
+            },
+            "title": "Prefixes",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "description": "More prefixes were seen than listed.",
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "window_days": {
+            "default": 7,
+            "description": "The flows were read from the last N days (the flow table keeps a bounded history, so possibly less).",
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "title": "SensorObserved",
+        "type": "object"
+      },
       "SensorOut": {
         "properties": {
           "batches_total": {
@@ -13763,6 +13970,12 @@
               }
             ],
             "title": "Offline Since"
+          },
+          "scope_declared": {
+            "default": false,
+            "description": "The sensor has a declared scope (`/v1/assurance/sensor-scopes`). Without one it covers nothing for the reach graph, however much traffic it sees.",
+            "title": "Scope Declared",
+            "type": "boolean"
           },
           "silent_after_s": {
             "title": "Silent After S",
@@ -13903,6 +14116,14 @@
           },
           "scope": {
             "$ref": "#/components/schemas/SensorScopeOut"
+          },
+          "warnings": {
+            "description": "Things worth a second look: a declared CIDR this sensor saw no flows in, a scope on a sensor that is offline or revoked.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -13951,6 +14172,12 @@
       },
       "SensorScopeIn": {
         "properties": {
+          "allow_wide": {
+            "default": false,
+            "description": "Accept a prefix shorter than /16 (IPv4) or /48 (IPv6). Needs a justification of at least 20 characters; the audit row records it.",
+            "title": "Allow Wide",
+            "type": "boolean"
+          },
           "cidrs": {
             "description": "The networks this sensor can actually see (mirror/SPAN coverage). Coverage is asserted only for hosts inside them.",
             "items": {
@@ -14008,11 +14235,26 @@
       },
       "SensorScopeOut": {
         "properties": {
+          "advisory_notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Advisory Notes",
+            "type": "array"
+          },
           "cidrs": {
             "items": {
               "type": "string"
             },
             "title": "Cidrs",
+            "type": "array"
+          },
+          "declared_but_unobserved": {
+            "description": "Declared IPv4 CIDRs with no observed address inside in the window.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Declared But Unobserved",
             "type": "array"
           },
           "justification": {
@@ -14030,6 +14272,25 @@
               }
             ],
             "title": "Name"
+          },
+          "observed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SensorObserved"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What this sensor actually saw (evidence for what to declare). Observed coverage proves 'no such traffic was seen', never 'impossible'."
+          },
+          "observed_outside_scope": {
+            "description": "Private /24s this sensor saw that no declared CIDR overlaps.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Observed Outside Scope",
+            "type": "array"
           },
           "online": {
             "anyOf": [
@@ -14096,6 +14357,14 @@
               }
             ],
             "title": "Status"
+          },
+          "suggested_cidrs": {
+            "description": "The observed private /24s merged into at most 16 supernets, none shorter than /16. A suggestion to review, never applied by itself.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Suggested Cidrs",
+            "type": "array"
           }
         },
         "required": [
@@ -21540,7 +21809,7 @@
     },
     "/v1/assurance/sensor-scopes": {
       "get": {
-        "description": "Declared sensor scopes, plus the active sensors that have none (they cover nothing).",
+        "description": "Declared sensor scopes, plus the active sensors that have none (they cover nothing).\n\nEvery item also says what that sensor actually saw in the last 7 days (observed /24 prefixes, declared CIDRs it saw\nnothing in, private prefixes outside the declared scope, a suggested scope). The declared scope stays an\naccountability record (who declared what and why), not an equality check: a sensor cannot prove what it does not\nsee, and observed coverage proves \"no such traffic was seen\", never \"impossible\".",
         "operationId": "list_sensor_scopes_v1_assurance_sensor_scopes_get",
         "responses": {
           "200": {
@@ -21616,7 +21885,7 @@
         ]
       },
       "put": {
-        "description": "Declare (replace) the networks a sensor can see. Admin only; justification required.\n\nChanging the CIDR set bumps the graph version and marks the builders due at once, so coverage\nthat this change withdraws is withdrawn on the next tick, not after the rebuild interval.",
+        "description": "Declare (replace) the networks a sensor can see. Admin only; justification required.\n\nA prefix shorter than /16 (IPv4) or /48 (IPv6) is refused with 422 ``scope_too_wide`` unless ``allow_wide`` is set\nAND the justification has at least 20 characters (a /8 declared silently would assert \"no such traffic seen\" for a\nwhole campus); the audit row records it. The response's ``warnings`` list a declared CIDR this sensor saw no flows\nin and a scope on a sensor that is offline or revoked.\n\nChanging the CIDR set bumps the graph version and marks the builders due at once, so coverage\nthat this change withdraws is withdrawn on the next tick, not after the rebuild interval.",
         "operationId": "put_sensor_scope_v1_assurance_sensor_scopes__sensor_uuid__put",
         "parameters": [
           {
@@ -28937,7 +29206,7 @@
     },
     "/v1/invariants/{invariant_id}": {
       "delete": {
-        "description": "Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay\n(they are evidence); the runner stops evaluating it. ``PUT {\"enabled\": true}`` brings it back.\nNever gated: a downgraded tenant can always switch containment checks off cleanly.",
+        "description": "Archive: disable and mark deleted. The row, every ``invariant_versions`` row and the run ledger stay\n(they are evidence); the runner stops evaluating it, and its open findings stay open, annotated\n``invariant_state: archived`` (nothing re-checks them, so nothing may close them; a person can release them with\n``POST .../findings/release``). ``PUT {\"enabled\": true}`` brings it back.\nNever gated: a downgraded tenant can always switch containment checks off cleanly.",
         "operationId": "delete_invariant_v1_invariants__invariant_id__delete",
         "parameters": [
           {
@@ -29086,6 +29355,60 @@
           }
         },
         "summary": "Update Invariant",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/v1/invariants/{invariant_id}/findings/release": {
+      "post": {
+        "description": "Give up on the open findings of an invariant that is NOT being evaluated (a human decision, admin only).\n\nAllowed only when nobody re-checks the invariant: it is disabled or archived, or the runner marked its findings\n``invalid_definition`` / ``not_entitled`` (otherwise 409 ``invariant_active``: an active invariant closes its own\nfindings when it holds). Sets ``wontfix`` with the reason ``invariant <state>: <justification>``, leaves\n``fix_verified_at`` empty (this is a decision, not a verification) and writes a history row per finding and one\naudit row. A later re-enable, violation or HOLDS never reopens a ``wontfix`` (the machine does not undo a human\ndecision; a person can reopen with PATCH). Never billing-gated.",
+        "operationId": "release_invariant_findings_v1_invariants__invariant_id__findings_release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invariant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invariant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Invariant Findings",
         "tags": [
           "assurance"
         ]

@@ -61,7 +61,7 @@ def cidr_ref(net: str) -> str:
 
 
 _ESTATE_ACCOUNT_RE = re.compile(r"[0-9]{12}")
-_ESTATE_REGION_RE = re.compile(r"[a-z]{2}(?:-[a-z]+)+-[0-9]{1,2}")
+_ESTATE_REGION_RE = re.compile(r"[a-z]{2,4}(?:-[a-z]+)+-[0-9]{1,2}")
 _ESTATE_VPC_RE = re.compile(r"vpc-[0-9a-f]{1,32}")
 
 
@@ -99,6 +99,12 @@ def parse_ref(ref: str) -> tuple[str, Optional[str]]:
     if canon != ref:
         raise RefError(f"non-canonical ref {ref!r} (expected {canon!r})")
     return prefix, value
+
+
+def is_estate_ref(ref: object) -> bool:
+    """True for any ``estate:`` ref (valid or not): the prefix alone decides where a node may carry coverage,
+    facts or labels, so a malformed spelling cannot slip past a check that only looks at valid refs."""
+    return isinstance(ref, str) and ref.startswith("estate:")
 
 
 def is_valid_ref(ref: str) -> bool:

@@ -1,0 +1,46 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "The key's algorithm is not Ed25519: unverifiable, never a fallback.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "sig.alg_unsupported"
+    ],
+    "decision": "unverifiable",
+    "exit": 2,
+    "forbidden_terms": true,
+    "primary": "sig.alg_unsupported",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "alg-unsupported",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "01 section 2.5"
+  ],
+  "state": null,
+  "tags": [
+    "ed25519",
+    "strictness"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

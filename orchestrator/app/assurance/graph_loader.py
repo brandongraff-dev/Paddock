@@ -30,7 +30,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .refs import INTERNET, KINDS, is_valid_ref
+from .refs import INTERNET, KINDS, is_estate_ref, is_valid_ref
 from . import store
 from .store import Zone, ZoneIndex, _zone
 
@@ -136,7 +136,7 @@ def _add_qualifiers(fact: dict[str, str], detail: Any) -> bool:
 
 
 def _default_kind(ref: str) -> str:
-    return {"internet": "internet", "ip": "ip", "cidr": "cidr"}.get(ref.partition(":")[0], "host")
+    return {"internet": "internet", "ip": "ip", "cidr": "cidr", "estate": "estate"}.get(ref.partition(":")[0], "host")
 
 
 def _ips_of(*sources: Any) -> list[str]:
@@ -244,6 +244,11 @@ def _node_doc(ref: str, kind: str, labels: dict[str, tuple[int, str]], md: dict[
               zone_unknown: bool = False) -> dict[str, Any]:
     """Labels: ``declared`` rows override metadata-derived defaults (crown jewel, data store, and
     the ``agent`` tag a node with host facts gets)."""
+    if kind == "estate":
+        # The residual of a security group whose membership is not proven (docs/ASSURANCE_P2_1.md D31). It is
+        # defined by what it lacks: no coverage in either direction, no zone (it may sit in ANY declared zone),
+        # no class, no facts and no operator label. Nothing stored for it can change that.
+        return {"id": ref, "kind": "estate", "zone_unknown": True, "tags": []}
     tags: set[str] = set()
     cls: Optional[str] = None
     if has_agent:
@@ -257,7 +262,7 @@ def _node_doc(ref: str, kind: str, labels: dict[str, tuple[int, str]], md: dict[
             if value:
                 cls = value
         elif tag == "kind":
-            if value in KINDS:
+            if value in KINDS and value != "estate":      # an estate is minted by a builder, never by a label
                 kind = value
         elif tag != "zone":
             if value.strip().lower() in _FALSE_VALUES:
@@ -369,7 +374,9 @@ def _expand_cidr_sources(nodes: list[dict[str, Any]], edges: list[dict[str, Any]
         return []
     have = {(e["src"], e["dst"], e["proto"], e.get("ports"), e["basis"], e["source"]) for e in edges}
     members: dict[str, list[str]] = {}
-    candidates = sorted(r for r in addrs if r != INTERNET and not r.startswith("cidr:"))
+    # an estate residual stands for "unmodelled members of one referenced group", not for an address: a CIDR rule
+    # never reaches it (it already has its own configured edge per rule that references the group)
+    candidates = sorted(r for r in addrs if r != INTERNET and not r.startswith("cidr:") and not is_estate_ref(r))
     added: list[dict[str, Any]] = []
     unexpanded: list[str] = []
     for dst in sorted(by_dst):
@@ -549,6 +556,8 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
     attrs: dict[str, dict[str, Any]] = {}
     for r in snap["nodes"]:
         kinds[r["node_ref"]] = r["kind"] if r["kind"] in KINDS else _default_kind(r["node_ref"])
+        if is_estate_ref(r["node_ref"]) != (kinds[r["node_ref"]] == "estate"):
+            kinds[r["node_ref"]] = _default_kind(r["node_ref"])     # the prefix decides, never a stored kind
         a = _loads(r["attrs"])
         attrs[r["node_ref"]] = a if isinstance(a, dict) else {}
     for e in snap["edges"]:
@@ -565,14 +574,14 @@ def _assemble(snap: dict[str, Any], assets: dict[str, dict[str, Any]],
     # as a `server` with no agent facts, which is UNKNOWN (no_agent), never a pass.
     for ref, lab in labels.items():
         value = (lab.get("server") or (0, "false"))[1]
-        if ref != INTERNET and "server" in lab and value.strip().lower() not in _FALSE_VALUES:
+        if ref != INTERNET and not is_estate_ref(ref) and "server" in lab and value.strip().lower() not in _FALSE_VALUES:
             kinds.setdefault(ref, _default_kind(ref))
     asset_ids = _asset_ids(snap)
 
     cov_by: dict[str, list[dict[str, str]]] = {}
     for r in snap["cov"]:
-        if r["node_ref"] == INTERNET:
-            continue                              # the internet is never covered
+        if r["node_ref"] == INTERNET or is_estate_ref(r["node_ref"]):
+            continue                              # the internet and an estate residual are never covered
         fact = {"direction": r["direction"], "tier": r["tier"],
                 "observed_at": _iso(r["observed_at"]), "source": r["source"]}
         if not _add_qualifiers(fact, _loads(r["detail"])):

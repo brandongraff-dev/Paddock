@@ -1,0 +1,46 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "An anchor key signs a statement.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json",
+          "v=1; kid=9aef608fe4565a8f55947deec61af518; fp=sha256:9aef608fe4565a8f55947deec61af518fda30e0e5373a51af847340285e13969"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "key.cert_subject_mismatch"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "key.cert_subject_mismatch",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "cert-wrong-usage",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 2"
+  ],
+  "state": null,
+  "tags": [
+    "trust"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

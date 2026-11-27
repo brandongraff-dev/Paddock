@@ -26,6 +26,11 @@ dependencies = [
     "idna>=3.4",            # growth: IDN/punycode domain validation
     "jinja2>=3.1",          # report templates (HTML)
     "weasyprint>=62",       # report PDFs (needs Pango: see Dockerfile)
+    # Provable containment: the pure evaluator. Installed from assurance/ (the Dockerfile and CI install it BEFORE
+    # this package, it is not on an index). 0.4.0 knows the `estate` pseudo kind the AWS reach builder emits; an older
+    # library would only count it in the coverage ratio (UNKNOWN, safe), so the pin is a version floor, not a feature
+    # probe (docs/ASSURANCE_P2_1.md D38).
+    "paddock-assurance>=0.4.0",
 ]
 
 [project.optional-dependencies]

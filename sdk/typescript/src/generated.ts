@@ -1222,18 +1222,29 @@ export interface InvariantCreate {
 }
 
 export interface InvariantDetail {
+  archived_at?: string | null;
   coverage?: Record<string, unknown> | null;
   created_at?: string | null;
   created_by?: string | null;
   digest: string;
+  disabled_at?: string | null;
+  disabled_by?: string | null;
   enabled: boolean;
   evidence_tier?: string | null;
+  /**
+   * Of those, the ones nobody is re-checking (the invariant is disabled, archived, invalid or not entitled). Release them with POST /v1/invariants/{id}/findings/release.
+   */
+  findings_not_rechecked?: number;
   id: string;
   invariant_id: string;
   last_evaluated_at?: string | null;
   last_graph_version?: number | null;
   last_result?: Record<string, unknown> | null;
   last_verdict?: string | null;
+  /**
+   * Open and triaged findings of this invariant.
+   */
+  open_findings?: number;
   reasons?: string[];
   /**
    * Parts were withheld because they name assets above the caller's clearance.
@@ -1245,6 +1256,10 @@ export interface InvariantDetail {
    * Evaluated against an older graph version than the current one.
    */
   stale?: boolean;
+  /**
+   * active | disabled | archived | invalid_definition | not_entitled. A non-active invariant is not evaluated: its open findings stay open and are annotated, never closed by the machine.
+   */
+  state?: string;
   /**
    * HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED
    */
@@ -1260,10 +1275,13 @@ export interface InvariantDetail {
 }
 
 export interface InvariantOut {
+  archived_at?: string | null;
   coverage?: Record<string, unknown> | null;
   created_at?: string | null;
   created_by?: string | null;
   digest: string;
+  disabled_at?: string | null;
+  disabled_by?: string | null;
   enabled: boolean;
   evidence_tier?: string | null;
   id: string;
@@ -1278,6 +1296,10 @@ export interface InvariantOut {
    * Evaluated against an older graph version than the current one.
    */
   stale?: boolean;
+  /**
+   * active | disabled | archived | invalid_definition | not_entitled. A non-active invariant is not evaluated: its open findings stay open and are annotated, never closed by the machine.
+   */
+  state?: string;
   /**
    * HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its evidence) | PENDING (not evaluated for this definition yet) | DISABLED
    */
@@ -1544,6 +1566,22 @@ export interface OIDCConfig {
   token_auth_method?: "client_secret_basic" | "client_secret_post" | "none";
   trust_unverified_email?: boolean;
   use_userinfo?: boolean;
+}
+
+export interface ObservedPrefix {
+  /**
+   * Distinct flow records touching the prefix in the window.
+   */
+  flows: number;
+  last_seen?: string | null;
+  /**
+   * An IPv4 /24 seen as a flow source or destination by THIS sensor.
+   */
+  prefix: string;
+  /**
+   * RFC 1918 or shared (100.64/10) address space. Any other prefix (public, or special-use such as loopback, link-local, multicast) is shown but never suggested or flagged: every sensor sees the internet's endpoints.
+   */
+  private?: boolean;
 }
 
 export interface OnboardingCounts {
@@ -1925,6 +1963,20 @@ export interface RedeemIn {
   username: string;
 }
 
+export interface ReleaseIn {
+  /**
+   * Why these findings are given up on (10+ characters; audited and written into each finding's status reason).
+   */
+  justification: string;
+}
+
+export interface ReleaseOut {
+  /**
+   * Findings marked wontfix.
+   */
+  released: number;
+}
+
 export interface RemediationDetail {
   base_branch?: string | null;
   created_at: string;
@@ -2041,6 +2093,10 @@ export interface RotateAck {
 }
 
 export interface RunOut {
+  /**
+   * Set when the heavy parts of ``result`` (target lists, blind spots, all but the first 5 witnesses) were dropped after the compaction horizon; the decision itself is kept.
+   */
+  compacted_at?: string | null;
   coverage_covered: number;
   coverage_universe: number;
   digest: string;
@@ -2048,6 +2104,10 @@ export interface RunOut {
   graph_version: number;
   id: string;
   invariant_id: string;
+  /**
+   * Held whole: never compacted or deleted (attestations pin rows).
+   */
+  pinned?: boolean;
   reasons?: string[];
   /**
    * The result had parts withheld (clearance).
@@ -2378,6 +2438,18 @@ export interface SegmentOut {
   value: string;
 }
 
+export interface SensorObserved {
+  prefixes?: ObservedPrefix[];
+  /**
+   * More prefixes were seen than listed.
+   */
+  truncated?: boolean;
+  /**
+   * The flows were read from the last N days (the flow table keeps a bounded history, so possibly less).
+   */
+  window_days?: number;
+}
+
 export interface SensorOut {
   batches_total: number;
   duplicates_total: number;
@@ -2392,6 +2464,10 @@ export interface SensorOut {
   last_upload_at: string | null;
   name: string;
   offline_since: string | null;
+  /**
+   * The sensor has a declared scope (`/v1/assurance/sensor-scopes`). Without one it covers nothing for the reach graph, however much traffic it sees.
+   */
+  scope_declared?: boolean;
   silent_after_s: number;
   site: string;
   /**
@@ -2414,6 +2490,10 @@ export interface SensorScopeChange {
   graph_version?: number | null;
   previous?: string[] | null;
   scope: SensorScopeOut;
+  /**
+   * Things worth a second look: a declared CIDR this sensor saw no flows in, a scope on a sensor that is offline or revoked.
+   */
+  warnings?: string[];
 }
 
 export interface SensorScopeDeleteOut {
@@ -2424,6 +2504,10 @@ export interface SensorScopeDeleteOut {
 }
 
 export interface SensorScopeIn {
+  /**
+   * Accept a prefix shorter than /16 (IPv4) or /48 (IPv6). Needs a justification of at least 20 characters; the audit row records it.
+   */
+  allow_wide?: boolean;
   /**
    * The networks this sensor can actually see (mirror/SPAN coverage). Coverage is asserted only for hosts inside them.
    */
@@ -2444,9 +2528,22 @@ export interface SensorScopeList {
 }
 
 export interface SensorScopeOut {
+  advisory_notes?: string[];
   cidrs?: string[];
+  /**
+   * Declared IPv4 CIDRs with no observed address inside in the window.
+   */
+  declared_but_unobserved?: string[];
   justification?: string;
   name?: string | null;
+  /**
+   * What this sensor actually saw (evidence for what to declare). Observed coverage proves 'no such traffic was seen', never 'impossible'.
+   */
+  observed?: SensorObserved | null;
+  /**
+   * Private /24s this sensor saw that no declared CIDR overlaps.
+   */
+  observed_outside_scope?: string[];
   online?: boolean | null;
   scope_declared?: boolean;
   sensor_id: string;
@@ -2454,6 +2551,10 @@ export interface SensorScopeOut {
   set_by?: string | null;
   site?: string | null;
   status?: string | null;
+  /**
+   * The observed private /24s merged into at most 16 supernets, none shorter than /16. A suggestion to review, never applied by itself.
+   */
+  suggested_cidrs?: string[];
 }
 
 export interface ServiceStatus {
@@ -3608,6 +3709,7 @@ export const OPERATIONS = {
   getInvariant: ["GET", "/v1/invariants/{invariant_id}", false],
   updateInvariant: ["PUT", "/v1/invariants/{invariant_id}", false],
   deleteInvariant: ["DELETE", "/v1/invariants/{invariant_id}", false],
+  releaseInvariantFindings: ["POST", "/v1/invariants/{invariant_id}/findings/release", false],
   listInvariantRuns: ["GET", "/v1/invariants/{invariant_id}/runs", true],
   listLabels: ["GET", "/v1/labels", true],
   setLabel: ["PUT", "/v1/labels", false],
@@ -4048,6 +4150,11 @@ export abstract class GeneratedOperations {
    * GET /v1/assurance/sensor-scopes — List Sensor Scopes
    *
    * Declared sensor scopes, plus the active sensors that have none (they cover nothing).
+   *
+   * Every item also says what that sensor actually saw in the last 7 days (observed /24 prefixes, declared CIDRs it saw
+   * nothing in, private prefixes outside the declared scope, a suggested scope). The declared scope stays an
+   * accountability record (who declared what and why), not an equality check: a sensor cannot prove what it does not
+   * see, and observed coverage proves "no such traffic was seen", never "impossible".
    */
   listSensorScopes(options?: RequestOptions): Promise<SensorScopeList> {
     return this._request<SensorScopeList>("GET", "/v1/assurance/sensor-scopes", { options });
@@ -4057,6 +4164,11 @@ export abstract class GeneratedOperations {
    * PUT /v1/assurance/sensor-scopes/{sensor_uuid} — Put Sensor Scope
    *
    * Declare (replace) the networks a sensor can see. Admin only; justification required.
+   *
+   * A prefix shorter than /16 (IPv4) or /48 (IPv6) is refused with 422 ``scope_too_wide`` unless ``allow_wide`` is set
+   * AND the justification has at least 20 characters (a /8 declared silently would assert "no such traffic seen" for a
+   * whole campus); the audit row records it. The response's ``warnings`` list a declared CIDR this sensor saw no flows
+   * in and a scope on a sensor that is offline or revoked.
    *
    * Changing the CIDR set bumps the graph version and marks the builders due at once, so coverage
    * that this change withdraws is withdrawn on the next tick, not after the rebuild interval.
@@ -5170,12 +5282,30 @@ export abstract class GeneratedOperations {
   /**
    * DELETE /v1/invariants/{invariant_id} — Delete Invariant
    *
-   * Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay
-   * (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
+   * Archive: disable and mark deleted. The row, every ``invariant_versions`` row and the run ledger stay
+   * (they are evidence); the runner stops evaluating it, and its open findings stay open, annotated
+   * ``invariant_state: archived`` (nothing re-checks them, so nothing may close them; a person can release them with
+   * ``POST .../findings/release``). ``PUT {"enabled": true}`` brings it back.
    * Never gated: a downgraded tenant can always switch containment checks off cleanly.
    */
   deleteInvariant(invariantId: string, query?: { justification?: string | null }, options?: RequestOptions): Promise<InvariantChange> {
     return this._request<InvariantChange>("DELETE", "/v1/invariants/{invariant_id}", { pathParams: { invariant_id: invariantId }, query, options });
+  }
+
+  /**
+   * POST /v1/invariants/{invariant_id}/findings/release — Release Invariant Findings
+   *
+   * Give up on the open findings of an invariant that is NOT being evaluated (a human decision, admin only).
+   *
+   * Allowed only when nobody re-checks the invariant: it is disabled or archived, or the runner marked its findings
+   * ``invalid_definition`` / ``not_entitled`` (otherwise 409 ``invariant_active``: an active invariant closes its own
+   * findings when it holds). Sets ``wontfix`` with the reason ``invariant <state>: <justification>``, leaves
+   * ``fix_verified_at`` empty (this is a decision, not a verification) and writes a history row per finding and one
+   * audit row. A later re-enable, violation or HOLDS never reopens a ``wontfix`` (the machine does not undo a human
+   * decision; a person can reopen with PATCH). Never billing-gated.
+   */
+  releaseInvariantFindings(invariantId: string, body: ReleaseIn, options?: RequestOptions): Promise<ReleaseOut> {
+    return this._request<ReleaseOut>("POST", "/v1/invariants/{invariant_id}/findings/release", { pathParams: { invariant_id: invariantId }, body, options });
   }
 
   /**

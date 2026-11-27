@@ -47,6 +47,8 @@ from paddock_verify import jsonstrict
 CERT_TYPE = "https://paddock.dev/key-cert/v1"
 PAYLOAD_TYPE = dsse.PAYLOAD_TYPE_KEY_CERT
 KEYS_SPEC = "paddock-keys/v1"
+MAX_KEYS = 16        # what the open verifier reads from one keys.json
+MAX_ISSUERS = 4
 
 USAGES = ("attest", "anchor", "issue-cert", "revoke")
 ESTATE_USAGES = ("attest", "anchor")
@@ -129,6 +131,14 @@ class Root:
 
     def window_contains(self, t: int) -> bool:
         return self.not_before <= t < self.not_after
+
+
+class RootSet(list):
+    """The parsed trust roots (a list of :class:`Root`) plus the issuers the release revokes
+    (``revoked_issuers``, from ``{"kid","usage":"issuer-revoked"}`` entries). ``verify_chain`` applies them by itself,
+    so a caller that merely passes the roots on can never forget an issuer revocation."""
+
+    revoked_issuers: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -271,9 +281,10 @@ def _fmt(epoch: int) -> str:
 # Roots
 # --------------------------------------------------------------------------- #
 
-def parse_roots(data: Any) -> list:
-    """Parse the trust-roots list: ``[{"kid","public_key"(b64),"usage":"root"|"issue-cert","not_before","not_after"}]``.
-    Strict: an invalid entry makes the whole list unusable (``config.no_trust_roots``), never a partial trust set."""
+def parse_roots(data: Any) -> RootSet:
+    """Parse the trust-roots list: ``[{"kid","public_key"(b64),"usage":"root"|"issue-cert","not_before","not_after"}]``
+    plus optional ``{"kid","usage":"issuer-revoked"}`` entries naming issuers the release revokes. Strict: an invalid
+    entry makes the whole list unusable (``config.no_trust_roots``), never a partial trust set."""
     if isinstance(data, (bytes, bytearray, str)):
         try:
             raw = data if isinstance(data, (bytes, bytearray)) else data.encode("ascii")
@@ -282,9 +293,15 @@ def parse_roots(data: Any) -> list:
             raise CertError("config.no_trust_roots", "the trust roots file is not strict JSON") from None
     if not isinstance(data, list):
         raise CertError("config.no_trust_roots", "the trust roots are a list")
-    out: list = []
+    out = RootSet()
     seen: set = set()
+    revoked: set = set()
     for item in data:
+        if isinstance(item, dict) and item.get("usage") == "issuer-revoked":
+            if set(item) != {"kid", "usage"} or not isinstance(item["kid"], str) or not _KID.match(item["kid"]):
+                raise CertError("config.no_trust_roots", "an issuer-revoked entry has exactly a 32 hex kid and usage")
+            revoked.add(item["kid"])
+            continue
         if not isinstance(item, dict) or set(item) != _ROOT_KEYS:
             raise CertError("config.no_trust_roots", "a trust root has exactly kid, public_key, usage, not_before, not_after")
         if item["usage"] not in ROOT_USAGES:
@@ -304,6 +321,7 @@ def parse_roots(data: Any) -> list:
             raise CertError("config.no_trust_roots", "duplicate trust root")
         seen.add(item["kid"])
         out.append(Root(item["kid"], pub, item["usage"], nb, na))
+    out.revoked_issuers = frozenset(revoked)
     return out
 
 
@@ -353,6 +371,7 @@ def verify_chain(cert: Any, *, issuers: Iterable = (), roots: Iterable, at: Opti
     ``issued_at``); ``None`` checks structure and signatures only (``keys.json`` history). ``valid_until`` (when given)
     must lie within the leaf's window. ``issuers`` are issuer certificate envelopes that may be needed on the way."""
     leaf = cert if isinstance(cert, Cert) else parse_cert(cert)
+    release_revoked = getattr(roots, "revoked_issuers", frozenset())
     root_list = list(roots)
     if not root_list:
         raise CertError("config.no_trust_roots", "no trust roots are configured")
@@ -360,7 +379,9 @@ def verify_chain(cert: Any, *, issuers: Iterable = (), roots: Iterable, at: Opti
         raise CertError("key.cert_subject_mismatch", "the certificate's usage is not the one required")
     if expect_estate is not None and leaf.estate != expect_estate:
         raise CertError("key.cert_subject_mismatch", "the certificate belongs to another estate")
-    revoked = set(revoked_issuers)
+    revoked = set(revoked_issuers) | set(release_revoked)
+    if leaf.usage == "issue-cert" and leaf.kid in revoked:
+        raise CertError("issuer.revoked", "the issuer is revoked")
     candidates: dict = {}
     for item in issuers:
         try:
@@ -371,8 +392,7 @@ def verify_chain(cert: Any, *, issuers: Iterable = (), roots: Iterable, at: Opti
     roots_by_kid = {r.kid: r for r in root_list}
 
     issuer_cert, root = _resolve(leaf, candidates, roots_by_kid, revoked)
-    _check_signature(leaf, (issuer_cert.public_key if issuer_cert is not None else root.public_key)
-                     if leaf.usage in ESTATE_USAGES else root.public_key)
+    _check_signature(leaf, issuer_cert.public_key if issuer_cert is not None else root.public_key)
     if issuer_cert is not None:
         _check_signature(issuer_cert, root.public_key)
     depth = 2 if issuer_cert is not None else 1
@@ -395,16 +415,25 @@ def verify_chain(cert: Any, *, issuers: Iterable = (), roots: Iterable, at: Opti
 def _resolve(leaf: Cert, candidates: dict, roots_by_kid: dict, revoked: set) -> tuple:
     """Find the signer chain for ``leaf``: returns ``(issuer certificate or None, root)``. Encodes the usage table
     of the module doc; nothing here looks at signatures or windows."""
-    if leaf.usage in ("issue-cert", "revoke"):
+    if leaf.usage == "issue-cert":
         signer = roots_by_kid.get(leaf.issuer_kid)
         if signer is None:
             if leaf.issuer_kid in candidates:
                 raise CertError("key.root_unknown", "an issuer certificate must be signed by a pinned root")
             raise CertError("key.root_unknown", "the certificate does not chain to a trusted root")
         if signer.usage != "root":
-            raise CertError("key.cert_subject_mismatch", "only a root certifies issuers and revokers")
+            raise CertError("key.cert_subject_mismatch", "only a root certifies issuers")
         return None, signer
-    # an estate key
+    if leaf.usage == "revoke":
+        # a revoker is certified by the root (offline ceremony) OR by an issuer (the open verifier's vectors), and a
+        # self-hoster's pinned issuer may certify it too: all chain to a pinned root; it can only deny
+        signer = roots_by_kid.get(leaf.issuer_kid)
+        if signer is not None:
+            if signer.usage == "issue-cert" and signer.kid in revoked:
+                raise CertError("issuer.revoked", "the issuer is revoked")
+            return None, signer
+        # fall through to the issuer-certificate search below
+    # an estate key (or an issuer-certified revoker)
     pinned = roots_by_kid.get(leaf.issuer_kid)
     if pinned is not None:
         if pinned.usage != "issue-cert":
@@ -446,6 +475,10 @@ def build_keys_json(estate: str, *, issuers: Iterable, revoker: Any, certs_: Ite
     payload, so the file cannot disagree with its certificates. Deterministic bytes; at most 64 KiB."""
     if not isinstance(estate, str) or not _ESTATE.match(estate):
         raise CertError("keys.invalid", "estate is not an estate id")
+    issuers = list(issuers)
+    certs_ = list(certs_)
+    if not 1 <= len(issuers) <= MAX_ISSUERS or len(certs_) > MAX_KEYS:
+        raise CertError("keys.invalid", f"keys.json lists 1 to {MAX_ISSUERS} issuers and at most {MAX_KEYS} keys")
     entries = []
     seen: set = set()
     for c in certs_:
@@ -487,6 +520,8 @@ def verify_keys_json(data: bytes, *, roots: Iterable, at: Optional[int] = None,
             or not isinstance(doc["keys"], list):
         raise CertError("keys.invalid", "keys.json has the wrong shape")
     estate = doc["estate"]
+    if not 1 <= len(doc["issuers"]) <= MAX_ISSUERS or len(doc["keys"]) > MAX_KEYS:
+        raise CertError("keys.invalid", "too many or too few issuers or keys")
     kids = [e.get("kid") if isinstance(e, dict) else None for e in doc["keys"]]
     if len(set(kids)) != len(kids):
         raise CertError("keys.invalid", "duplicate kid")

@@ -1617,23 +1617,29 @@ InvariantCreate = TypedDict(
 InvariantDetail = TypedDict(
     'InvariantDetail',
     {
+        'archived_at': NotRequired['str | None'],
         'coverage': NotRequired['dict[str, Any] | None'],
         'created_at': NotRequired['str | None'],
         'created_by': NotRequired['str | None'],
         'digest': Required['str'],
+        'disabled_at': NotRequired['str | None'],
+        'disabled_by': NotRequired['str | None'],
         'enabled': Required['bool'],
         'evidence_tier': NotRequired['str | None'],
+        'findings_not_rechecked': NotRequired['int'],
         'id': Required['str'],
         'invariant_id': Required['str'],
         'last_evaluated_at': NotRequired['str | None'],
         'last_graph_version': NotRequired['int | None'],
         'last_result': NotRequired['dict[str, Any] | None'],
         'last_verdict': NotRequired['str | None'],
+        'open_findings': NotRequired['int'],
         'reasons': NotRequired['list[str]'],
         'redacted': NotRequired['bool'],
         'severity': Required['str'],
         'source': Required["Literal['std', 'custom']"],
         'stale': NotRequired['bool'],
+        'state': NotRequired['str'],
         'status': Required['str'],
         'title': Required['str'],
         'updated_at': NotRequired['str | None'],
@@ -1650,10 +1656,13 @@ InvariantDetail = TypedDict(
 InvariantOut = TypedDict(
     'InvariantOut',
     {
+        'archived_at': NotRequired['str | None'],
         'coverage': NotRequired['dict[str, Any] | None'],
         'created_at': NotRequired['str | None'],
         'created_by': NotRequired['str | None'],
         'digest': Required['str'],
+        'disabled_at': NotRequired['str | None'],
+        'disabled_by': NotRequired['str | None'],
         'enabled': Required['bool'],
         'evidence_tier': NotRequired['str | None'],
         'id': Required['str'],
@@ -1665,6 +1674,7 @@ InvariantOut = TypedDict(
         'severity': Required['str'],
         'source': Required["Literal['std', 'custom']"],
         'stale': NotRequired['bool'],
+        'state': NotRequired['str'],
         'status': Required['str'],
         'title': Required['str'],
         'updated_at': NotRequired['str | None'],
@@ -2015,6 +2025,17 @@ OIDCConfig = TypedDict(
         'token_auth_method': NotRequired["Literal['client_secret_basic', 'client_secret_post', 'none']"],
         'trust_unverified_email': NotRequired['bool'],
         'use_userinfo': NotRequired['bool'],
+    },
+    total=False,
+)
+
+ObservedPrefix = TypedDict(
+    'ObservedPrefix',
+    {
+        'flows': Required['int'],
+        'last_seen': NotRequired['str | None'],
+        'prefix': Required['str'],
+        'private': NotRequired['bool'],
     },
     total=False,
 )
@@ -2507,6 +2528,22 @@ RedeemIn = TypedDict(
     total=False,
 )
 
+ReleaseIn = TypedDict(
+    'ReleaseIn',
+    {
+        'justification': Required['str'],
+    },
+    total=False,
+)
+
+ReleaseOut = TypedDict(
+    'ReleaseOut',
+    {
+        'released': Required['int'],
+    },
+    total=False,
+)
+
 RemediationDetail = TypedDict(
     'RemediationDetail',
     {
@@ -2664,6 +2701,7 @@ RotateAck = TypedDict(
 RunOut = TypedDict(
     'RunOut',
     {
+        'compacted_at': NotRequired['str | None'],
         'coverage_covered': Required['int'],
         'coverage_universe': Required['int'],
         'digest': Required['str'],
@@ -2671,6 +2709,7 @@ RunOut = TypedDict(
         'graph_version': Required['int'],
         'id': Required['str'],
         'invariant_id': Required['str'],
+        'pinned': NotRequired['bool'],
         'reasons': NotRequired['list[str]'],
         'redacted': NotRequired['bool'],
         'result': NotRequired['dict[str, Any] | None'],
@@ -3120,6 +3159,16 @@ SegmentOut = TypedDict(
     total=False,
 )
 
+SensorObserved = TypedDict(
+    'SensorObserved',
+    {
+        'prefixes': NotRequired['list[ObservedPrefix]'],
+        'truncated': NotRequired['bool'],
+        'window_days': NotRequired['int'],
+    },
+    total=False,
+)
+
 SensorOut = TypedDict(
     'SensorOut',
     {
@@ -3136,6 +3185,7 @@ SensorOut = TypedDict(
         'last_upload_at': Required['str | None'],
         'name': Required['str'],
         'offline_since': Required['str | None'],
+        'scope_declared': NotRequired['bool'],
         'silent_after_s': Required['int'],
         'site': Required['str'],
         'state': Required['str'],
@@ -3163,6 +3213,7 @@ SensorScopeChange = TypedDict(
         'graph_version': NotRequired['int | None'],
         'previous': NotRequired['list[str] | None'],
         'scope': Required['SensorScopeOut'],
+        'warnings': NotRequired['list[str]'],
     },
     total=False,
 )
@@ -3181,6 +3232,7 @@ SensorScopeDeleteOut = TypedDict(
 SensorScopeIn = TypedDict(
     'SensorScopeIn',
     {
+        'allow_wide': NotRequired['bool'],
         'cidrs': Required['list[str]'],
         'justification': Required['str'],
     },
@@ -3200,9 +3252,13 @@ SensorScopeList = TypedDict(
 SensorScopeOut = TypedDict(
     'SensorScopeOut',
     {
+        'advisory_notes': NotRequired['list[str]'],
         'cidrs': NotRequired['list[str]'],
+        'declared_but_unobserved': NotRequired['list[str]'],
         'justification': NotRequired['str'],
         'name': NotRequired['str | None'],
+        'observed': NotRequired['SensorObserved | None'],
+        'observed_outside_scope': NotRequired['list[str]'],
         'online': NotRequired['bool | None'],
         'scope_declared': NotRequired['bool'],
         'sensor_id': Required['str'],
@@ -3210,6 +3266,7 @@ SensorScopeOut = TypedDict(
         'set_by': NotRequired['str | None'],
         'site': NotRequired['str | None'],
         'status': NotRequired['str | None'],
+        'suggested_cidrs': NotRequired['list[str]'],
     },
     total=False,
 )
@@ -4666,6 +4723,7 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'get_invariant': ('GET', '/v1/invariants/{invariant_id}', False),
     'update_invariant': ('PUT', '/v1/invariants/{invariant_id}', False),
     'delete_invariant': ('DELETE', '/v1/invariants/{invariant_id}', False),
+    'release_invariant_findings': ('POST', '/v1/invariants/{invariant_id}/findings/release', False),
     'list_invariant_runs': ('GET', '/v1/invariants/{invariant_id}/runs', True),
     'list_labels': ('GET', '/v1/labels', True),
     'set_label': ('PUT', '/v1/labels', False),
@@ -5039,6 +5097,11 @@ class GeneratedOperations:
         """GET /v1/assurance/sensor-scopes -- List Sensor Scopes
 
         Declared sensor scopes, plus the active sensors that have none (they cover nothing).
+
+        Every item also says what that sensor actually saw in the last 7 days (observed /24 prefixes, declared CIDRs it saw
+        nothing in, private prefixes outside the declared scope, a suggested scope). The declared scope stays an
+        accountability record (who declared what and why), not an equality check: a sensor cannot prove what it does not
+        see, and observed coverage proves "no such traffic was seen", never "impossible".
         """
         return self._request('GET', '/v1/assurance/sensor-scopes')
 
@@ -5046,6 +5109,11 @@ class GeneratedOperations:
         """PUT /v1/assurance/sensor-scopes/{sensor_uuid} -- Put Sensor Scope
 
         Declare (replace) the networks a sensor can see. Admin only; justification required.
+
+        A prefix shorter than /16 (IPv4) or /48 (IPv6) is refused with 422 ``scope_too_wide`` unless ``allow_wide`` is set
+        AND the justification has at least 20 characters (a /8 declared silently would assert "no such traffic seen" for a
+        whole campus); the audit row records it. The response's ``warnings`` list a declared CIDR this sensor saw no flows
+        in and a scope on a sensor that is offline or revoked.
 
         Changing the CIDR set bumps the graph version and marks the builders due at once, so coverage
         that this change withdraws is withdrawn on the next tick, not after the rebuild interval.
@@ -5953,14 +6021,30 @@ class GeneratedOperations:
     def delete_invariant(self, invariant_id: str, *, justification: str | None = None) -> InvariantChange:
         """DELETE /v1/invariants/{invariant_id} -- Delete Invariant
 
-        Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay
-        (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
+        Archive: disable and mark deleted. The row, every ``invariant_versions`` row and the run ledger stay
+        (they are evidence); the runner stops evaluating it, and its open findings stay open, annotated
+        ``invariant_state: archived`` (nothing re-checks them, so nothing may close them; a person can release them with
+        ``POST .../findings/release``). ``PUT {"enabled": true}`` brings it back.
         Never gated: a downgraded tenant can always switch containment checks off cleanly.
 
         Args:
             justification: Optional: why (audited).
         """
         return self._request('DELETE', '/v1/invariants/{invariant_id}', path_params={'invariant_id': invariant_id}, query={'justification': justification})
+
+    def release_invariant_findings(self, invariant_id: str, body: ReleaseIn | dict[str, Any]) -> ReleaseOut:
+        """POST /v1/invariants/{invariant_id}/findings/release -- Release Invariant Findings
+
+        Give up on the open findings of an invariant that is NOT being evaluated (a human decision, admin only).
+
+        Allowed only when nobody re-checks the invariant: it is disabled or archived, or the runner marked its findings
+        ``invalid_definition`` / ``not_entitled`` (otherwise 409 ``invariant_active``: an active invariant closes its own
+        findings when it holds). Sets ``wontfix`` with the reason ``invariant <state>: <justification>``, leaves
+        ``fix_verified_at`` empty (this is a decision, not a verification) and writes a history row per finding and one
+        audit row. A later re-enable, violation or HOLDS never reopens a ``wontfix`` (the machine does not undo a human
+        decision; a person can reopen with PATCH). Never billing-gated.
+        """
+        return self._request('POST', '/v1/invariants/{invariant_id}/findings/release', path_params={'invariant_id': invariant_id}, body=body)
 
     def list_invariant_runs(self, invariant_id: str, *, verdict: Literal['HOLDS', 'VIOLATED', 'UNKNOWN'] | None = None, include_result: bool | None = None, limit: int | None = None, offset: int | None = None) -> RunPage:
         """GET /v1/invariants/{invariant_id}/runs -- List Invariant Runs

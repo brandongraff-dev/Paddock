@@ -125,14 +125,19 @@ def make_platform(
     revoker_window: tuple[int, int] = (T0 - 150 * DAY, T0 + 365 * DAY),
     root_usage: str = "root",
     passphrase: str = PASSPHRASE,
+    revoker_certified_by: str = "root",
 ) -> Platform:
     directory.mkdir(parents=True, exist_ok=True)
     root, issuer, revoker = (Ed25519PrivateKey.generate() for _ in range(3))
     root_kid = kid_of(raw_pub(root))
     issuer_cert = make_cert(root, root_kid, usage="issue-cert", pub=raw_pub(issuer), not_before=issuer_window[0],
                             not_after=issuer_window[1], serial=1)
-    revoker_cert = make_cert(root, root_kid, usage="revoke", pub=raw_pub(revoker), not_before=revoker_window[0],
-                             not_after=revoker_window[1], serial=2)
+    if revoker_certified_by == "issuer":          # the open verifier's own vectors certify the revoker through the issuer
+        revoker_cert = make_cert(issuer, kid_of(raw_pub(issuer)), usage="revoke", pub=raw_pub(revoker),
+                                 not_before=revoker_window[0], not_after=revoker_window[1], serial=2)
+    else:
+        revoker_cert = make_cert(root, root_kid, usage="revoke", pub=raw_pub(revoker), not_before=revoker_window[0],
+                                 not_after=revoker_window[1], serial=2)
     roots = [{"kid": root_kid, "public_key": b64.encode(raw_pub(root)), "usage": root_usage,
               "not_before": ts(root_window[0]), "not_after": ts(root_window[1])}]
     plat = Platform(directory, root, issuer, revoker, issuer_cert, revoker_cert, roots, root_kid=root_kid,

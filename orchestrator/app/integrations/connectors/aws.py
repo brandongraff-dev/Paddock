@@ -3,6 +3,9 @@
 Pulls, per configured region:
 
 * EC2 instances (public IP / DNS, security groups, instance profile)
+* EC2 network interfaces (``DescribeNetworkInterfaces``): not as assets, but as the security-group MEMBERSHIP
+  inventory the reach builder needs to prove that a group referenced by a rule holds nothing it does not model
+  (Lambda, Fargate, endpoints, ...; docs/ASSURANCE_P2_1.md section 5)
 * ELBv2 (ALB/NLB/GWLB) + classic ELB, their listeners and registered targets
 * security groups: which ports are open to 0.0.0.0/0 or ::/0
 * RDS instances (``PubliclyAccessible``, endpoint, security groups)
@@ -44,9 +47,11 @@ docs/INTEGRATIONS-CONTEXT.md. boto3 is an optional dependency
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import fnmatch
 import ipaddress
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -319,6 +324,144 @@ def crown_jewel_by_tags(tags: dict[str, str], wanted: list[str]) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# ENI inventory: who sits in a security group (docs/ASSURANCE_P2_1.md section 5.3, D32)
+# --------------------------------------------------------------------------- #
+
+# Bounds on one group's summary (an asset row is not a database). Hitting either sets ``truncated`` and the reach
+# builder then refuses to call the membership proven.
+MAX_ENI_INSTANCES = 512
+MAX_ENI_LBS = 128
+MAX_ENI_SAMPLE = 10
+
+_ELBV2_PREFIX = {"application": "app", "network": "net", "gateway": "gwy"}
+_ARN_ECS = re.compile(r"^arn:aws[a-z-]*:ecs:")
+# What a requester-managed load balancer interface reports as its type.
+_LB_ITYPES = frozenset({"interface", "network_load_balancer", "gateway_load_balancer", "load_balancer"})
+# An instance's own interface. Pod ("branch"/"trunk"), Lambda, endpoint and NAT interfaces are never the instance.
+_INSTANCE_ITYPES = frozenset({"interface", "efa"})
+
+
+def lb_typed_name(lb_type: Any, name: Any) -> Optional[str]:
+    """``app/<name>``, ``net/<name>``, ``gwy/<name>`` or ``classic/<name>`` (the spelling the builder matches)."""
+    if not isinstance(name, str) or not name:
+        return None
+    if lb_type == "classic":
+        return f"classic/{name}"
+    prefix = _ELBV2_PREFIX.get(str(lb_type))
+    return f"{prefix}/{name}" if prefix else None
+
+
+def _eni_lb_key(desc: Any) -> Optional[str]:
+    """The typed load balancer name an ENI description claims: ``ELB app/<name>/<id>`` or ``ELB <classic name>``."""
+    if not isinstance(desc, str) or not desc.startswith("ELB "):
+        return None
+    parts = desc[4:].split("/")
+    if len(parts) == 3 and parts[0] in _ELBV2_PREFIX.values() and parts[1] and parts[2]:
+        return f"{parts[0]}/{parts[1]}"
+    if len(parts) == 1 and parts[0]:
+        return f"classic/{parts[0]}"
+    return None
+
+
+def classify_eni(eni: Any, *, region: str, account: str, instances: dict[str, Any],
+                 lb_names: set[str]) -> tuple[str, Optional[str]]:
+    """``(kind, who)`` of one interface. Only two kinds are MODELLED, and each needs more than a string a user
+    can write: ``instance`` (attached, in use, an instance this pull described in this region and account;
+    ``who`` is its id) and ``lb`` (requester-managed, in use, whose typed name a load balancer of this pull
+    carries; ``who`` is the typed name: a user-created interface can be given any description, but not
+    ``RequesterManaged``). Everything else is UNMODELLED (D32): ``lambda``, ``ecs``, ``rds`` (on purpose),
+    ``vpce``, ``nat_gateway``, ``detached``, ``other``. Unknown widens: an interface we cannot place is ``other``."""
+    if not isinstance(eni, dict):
+        return "other", None
+    status = eni.get("Status")
+    itype = eni.get("InterfaceType") or "interface"
+    if not isinstance(itype, str):          # a shape botocore cannot produce: unplaceable, never hashed
+        itype = "?"
+    desc = eni.get("Description") if isinstance(eni.get("Description"), str) else ""
+    managed = eni.get("RequesterManaged") is True
+    att = eni.get("Attachment") if isinstance(eni.get("Attachment"), dict) else {}
+    in_use = status == "in-use"
+    iid = att.get("InstanceId")
+    if in_use and not managed and itype in _INSTANCE_ITYPES and isinstance(iid, str) and iid:
+        inst = instances.get(iid)
+        owner = att.get("InstanceOwnerId")
+        if inst is not None and inst.region == region and (owner is None or owner == account):
+            return "instance", iid
+    if in_use and managed and itype in _LB_ITYPES:
+        key = _eni_lb_key(desc)
+        if key is not None and key in lb_names:
+            return "lb", key
+    if itype == "lambda" or desc.startswith("AWS Lambda VPC ENI"):
+        return "lambda", None
+    if itype in ("vpc_endpoint", "gateway_load_balancer_endpoint") or desc.startswith("VPC Endpoint Interface"):
+        return "vpce", None
+    if itype == "nat_gateway":
+        return "nat_gateway", None
+    if _ARN_ECS.match(desc):
+        return "ecs", None
+    if desc.startswith("RDSNetworkInterface"):
+        return "rds", None
+    if status == "available":
+        return "detached", None
+    return "other", None
+
+
+def eni_group_ids(eni: Any) -> list[str]:
+    """The security group ids of one interface (``[]`` when the answer is unreadable)."""
+    groups = eni.get("Groups") if isinstance(eni, dict) else None
+    if not isinstance(groups, list):
+        return []
+    return sorted({g["GroupId"] for g in groups if isinstance(g, dict) and isinstance(g.get("GroupId"), str)
+                   and g["GroupId"]})
+
+
+def eni_groups_readable(eni: Any) -> bool:
+    """Every security group entry of the interface names its group (a non-empty ``GroupId`` string), and there is
+    at least one. A partly readable list could hide the very group a rule references."""
+    groups = eni.get("Groups") if isinstance(eni, dict) else None
+    return (isinstance(groups, list) and bool(groups)
+            and all(isinstance(g, dict) and isinstance(g.get("GroupId"), str) and bool(g["GroupId"]) for g in groups))
+
+
+def summarize_enis(enis: list[Any], *, region: str, account: str, instances: dict[str, Any], lb_names: set[str],
+                   sg_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Per security group in ``sg_ids``: the modelled members, the unmodelled interfaces and whether a cap hit.
+    Pure and order independent (sorted before capping). An interface in several groups counts in each."""
+    inst: dict[str, set[str]] = {g: set() for g in sg_ids}
+    lbs: dict[str, set[str]] = {g: set() for g in sg_ids}
+    kinds: dict[str, dict[str, int]] = {g: {} for g in sg_ids}
+    sample: dict[str, list[tuple[str, str, bool]]] = {g: [] for g in sg_ids}
+    count: dict[str, int] = {g: 0 for g in sg_ids}
+    for eni in enis:
+        groups = [g for g in eni_group_ids(eni) if g in sg_ids]
+        if not groups:
+            continue
+        kind, who = classify_eni(eni, region=region, account=account, instances=instances, lb_names=lb_names)
+        eid = str(eni.get("NetworkInterfaceId") or "")[:64]
+        public = isinstance(eni.get("Association"), dict) and bool(eni["Association"].get("PublicIp"))
+        for g in groups:
+            if kind == "instance" and who:
+                inst[g].add(who)
+            elif kind == "lb" and who:
+                lbs[g].add(who)
+            else:
+                count[g] += 1
+                kinds[g][kind] = kinds[g].get(kind, 0) + 1
+                sample[g].append((eid, kind, public))
+    out: dict[str, dict[str, Any]] = {}
+    for g in sorted(sg_ids):
+        ids, names = sorted(inst[g]), sorted(lbs[g])
+        out[g] = {
+            "instances": ids[:MAX_ENI_INSTANCES], "lbs": names[:MAX_ENI_LBS],
+            "unmodeled": {"count": count[g], "kinds": dict(sorted(kinds[g].items())),
+                          "sample": [{"id": i, "kind": k, "public": p}
+                                     for i, k, p in sorted(sample[g])[:MAX_ENI_SAMPLE]]},
+            "truncated": len(ids) > MAX_ENI_INSTANCES or len(names) > MAX_ENI_LBS,
+        }
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Builder: accumulates the batch while the pull walks the account
 # --------------------------------------------------------------------------- #
 
@@ -351,6 +494,12 @@ class _State:
     roles_by_instance: dict[str, list[str]] = field(default_factory=dict)
     role_grants: dict[str, list[tuple[list[str], list[str], str]]] = field(default_factory=dict)
     buckets: list[str] = field(default_factory=list)
+    # region -> every DescribeSecurityGroups and DescribeInstances page came back (False: the lists are partial)
+    region_ok: dict[str, bool] = field(default_factory=dict)
+    # region -> the interface inventory read: {complete, read_at, eni_total, members{sg_id: summary}}
+    eni_inv: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # region -> typed names (``app/<n>``, ``net/<n>``, ``gwy/<n>``, ``classic/<n>``) of the load balancers described
+    lb_names: dict[str, set[str]] = field(default_factory=dict)
 
     def arn(self, service: str, region: str, resource: str) -> str:
         return f"arn:{self.partition}:{service}:{region}:{self.account}:{resource}"
@@ -466,7 +615,11 @@ class AwsConnector(Connector):
                 st.warnings.append(f"{what}: {code}")
             return default
 
-    def _pages(self, st: _State, what: str, client: Any, op: str, key: str, **kw: Any) -> list[Any]:
+    def _pages_ok(self, st: _State, what: str, client: Any, op: str, key: str,
+                  **kw: Any) -> tuple[list[Any], bool]:
+        """Every page of a paginated call, and whether ALL of them arrived. A failed page is a warning and
+        ``ok=False``: the items before it are returned (they are real), but the caller must not treat the list
+        as the whole answer."""
         from botocore.exceptions import BotoCoreError, ClientError
 
         out: list[Any] = []
@@ -475,7 +628,11 @@ class AwsConnector(Connector):
                 out.extend(page.get(key) or [])
         except (ClientError, BotoCoreError) as exc:
             st.warnings.append(f"{what}: {self._code(exc)}")
-        return out
+            return out, False
+        return out, True
+
+    def _pages(self, st: _State, what: str, client: Any, op: str, key: str, **kw: Any) -> list[Any]:
+        return self._pages_ok(st, what, client, op, key, **kw)[0]
 
     # ------------------------------------------------------------------ #
     # Contract
@@ -536,18 +693,46 @@ class AwsConnector(Connector):
     # -- per region ------------------------------------------------------ #
     def _region(self, st: _State, sess: Any, cfg: Any, region: str) -> None:
         ec2 = sess.client("ec2", region_name=region, config=cfg)
-        for sg in self._pages(st, f"ec2:DescribeSecurityGroups[{region}]", ec2,
-                              "describe_security_groups", "SecurityGroups"):
+        groups, sg_ok = self._pages_ok(st, f"ec2:DescribeSecurityGroups[{region}]", ec2,
+                                       "describe_security_groups", "SecurityGroups")
+        for sg in groups:
             st.sgs[sg["GroupId"]] = {**sg, "_region": region}
-
-        for res in self._pages(st, f"ec2:DescribeInstances[{region}]", ec2,
-                               "describe_instances", "Reservations"):
+        reservations, inst_ok = self._pages_ok(st, f"ec2:DescribeInstances[{region}]", ec2,
+                                               "describe_instances", "Reservations")
+        # A partial group or instance listing means nodes and rules are missing from what we write: every asset
+        # of the region says so, and the reach builder withdraws coverage for them (the metadata merge is
+        # shallow, so the flag is written True as well as False and a stale False never survives).
+        st.region_ok[region] = sg_ok and inst_ok
+        for res in reservations:
             for inst in res.get("Instances") or []:
                 self._instance(st, region, inst)
 
-        self._security_group_findings(st, region)
         self._load_balancers(st, sess, cfg, region)
+        self._eni_inventory(st, ec2, region)
+        self._security_group_findings(st, region)
         self._rds(st, sess, cfg, region)
+
+    def _eni_inventory(self, st: _State, ec2: Any, region: str) -> None:
+        """Read every network interface of the region once and summarise it per security group of the region.
+
+        A failed or partial read, or an interface whose groups cannot be read, makes the whole inventory
+        INCOMPLETE (no per-group member lists are kept: a short list read as complete is the false HOLDS this
+        exists to prevent). AccessDenied is a warning, not a failed pull."""
+        items, ok = self._pages_ok(st, f"ec2:DescribeNetworkInterfaces[{region}]", ec2,
+                                   "describe_network_interfaces", "NetworkInterfaces")
+        if ok and any(not eni_groups_readable(e) for e in items):
+            st.warnings.append(f"ec2:DescribeNetworkInterfaces[{region}]: unreadable interface")
+            ok = False
+        read_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+        members: dict[str, dict[str, Any]] = {}
+        if ok:
+            sg_ids = {sid for sid, sg in st.sgs.items() if sg.get("_region") == region}
+            members = summarize_enis(
+                items, region=region, account=st.account,
+                instances={iid: i for iid, i in st.instances.items() if i.region == region},
+                lb_names=st.lb_names.get(region, set()), sg_ids=sg_ids)
+        st.eni_inv[region] = {"complete": ok, "read_at": read_at, "eni_total": len(items) if ok else 0,
+                              "members": members}
 
     def _instance(self, st: _State, region: str, inst: dict[str, Any]) -> None:
         iid = inst["InstanceId"]
@@ -598,6 +783,7 @@ class AwsConnector(Connector):
             "security_groups": sg_ids, "iam_instance_profile": profile,
             "internet_ingress": describe_ranges(world) if public_ips else [],
             "public": public, "aws_tags": tags or None,
+            "inventory_complete": st.region_ok.get(region, True),
         }
         if crown_jewel_by_tags(tags, st.crown_tags):
             md["crown_jewel"] = True
@@ -629,6 +815,20 @@ class AwsConnector(Connector):
                 evidence={"ports": hit, "security_groups": sg_ids, "public_ips": public_ips},
             ))
 
+    @staticmethod
+    def _eni_md(st: _State, region: str, sid: str) -> dict[str, Any]:
+        """``eni_inventory`` and ``eni_members`` for one group. ALWAYS both keys: a failed or missing read writes
+        ``complete: False`` and ``{}``, so a ``complete: True`` from an earlier pull can never survive the shallow
+        metadata merge."""
+        inv = st.eni_inv.get(region)
+        if inv and inv["complete"] and sid in inv["members"]:
+            return {"eni_inventory": {"complete": True, "read_at": inv["read_at"], "region": region,
+                                      "eni_total": inv["eni_total"]},
+                    "eni_members": inv["members"][sid]}
+        read_at = inv["read_at"] if inv else dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+        return {"eni_inventory": {"complete": False, "read_at": read_at, "region": region, "eni_total": 0},
+                "eni_members": {}}
+
     def _security_group_findings(self, st: _State, region: str) -> None:
         attached: dict[str, list[str]] = {}
         for inst in st.instances.values():
@@ -648,7 +848,9 @@ class AwsConnector(Connector):
                 "name": sg.get("GroupName"), "vpc_id": sg.get("VpcId"),
                 "world_ingress": describe_ranges(world),
                 "attached_instances": attached.get(sid, []),
+                "inventory_complete": st.region_ok.get(region, True),
             }
+            md.update(self._eni_md(st, region, sid))
             # Full ingress rules for the reach graph (aws_sg builder). Present even when empty
             # ("rules synced"); omitted when the API gave no IpPermissions list at all, so a
             # malformed answer never reads as "this group admits nothing".
@@ -694,6 +896,9 @@ class AwsConnector(Connector):
             if dns:
                 st.lb_dns[dns] = arn
             st.lb_public[arn] = public
+            typed = lb_typed_name(lb.get("Type", "application"), lb.get("LoadBalancerName"))
+            if typed:
+                st.lb_names.setdefault(region, set()).add(typed)
             tgs = self._pages(st, f"elbv2:DescribeTargetGroups[{region}]", elbv2,
                               "describe_target_groups", "TargetGroups", LoadBalancerArn=arn)
             for tg in tgs:
@@ -733,6 +938,9 @@ class AwsConnector(Connector):
             if dns:
                 st.lb_dns[dns] = arn
             st.lb_public[arn] = public
+            typed = lb_typed_name("classic", name)
+            if typed:
+                st.lb_names.setdefault(region, set()).add(typed)
             for ref in lb.get("Instances") or []:
                 inst = st.instances.get(ref.get("InstanceId", ""))
                 if inst:

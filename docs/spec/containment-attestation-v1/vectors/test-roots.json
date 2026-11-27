@@ -1,0 +1,9 @@
+[
+  {
+    "kid": "58ccf8a6356bd6f132b30895fcc9ecc3",
+    "not_after": "2036-01-01T00:00:00Z",
+    "not_before": "2026-01-01T00:00:00Z",
+    "public_key": "C1KOEZ3V6Kq0BrW0IFXgHCiK3uTpHV/CNVfxfkU3+PM=",
+    "usage": "root"
+  }
+]

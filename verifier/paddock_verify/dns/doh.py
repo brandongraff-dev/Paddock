@@ -11,10 +11,11 @@ import base64
 import socket
 import ssl
 import struct
-import urllib.error
-import urllib.request
+import http.client
+import urllib.parse
 from typing import Callable, Dict, List, Optional, Tuple
 
+from .. import fetch
 from .resolver import DnsAnswer
 
 MAX_MESSAGE = 4096
@@ -177,18 +178,39 @@ def _parse(msg: bytes, qid: int, qname: str, source: str) -> DnsAnswer:
 Transport = Callable[[str, Dict[str, str], float, int], bytes]
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):   # a DoH endpoint that redirects is refused
-        return None
-
-
-def _urllib_transport(url: str, headers: Dict[str, str], timeout: float, max_bytes: int) -> bytes:
-    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ssl.create_default_context()))
-    req = urllib.request.Request(url, headers=headers, method="GET")
-    with opener.open(req, timeout=timeout) as resp:
-        if resp.status != 200:
-            raise OSError("HTTP %d" % resp.status)
-        body = resp.read(max_bytes + 1)
+def _https_transport(url: str, headers: Dict[str, str], timeout: float, max_bytes: int) -> bytes:
+    """GET over TLS (host name checked), no redirects, under one wall-clock deadline for connect, headers and body."""
+    parts = urllib.parse.urlsplit(url)
+    host, port = parts.hostname, parts.port or 443
+    if parts.scheme != "https" or not host:
+        raise OSError("a DoH endpoint is an https URL")
+    target = (parts.path or "/") + (("?" + parts.query) if parts.query else "")
+    ctx = ssl.create_default_context()
+    dl = fetch.Deadline(timeout)
+    raw = tls = conn = None
+    try:
+        raw = fetch.bounded_call(lambda: socket.create_connection((host, port), timeout=dl.remaining()), dl.remaining())
+        tls = ctx.wrap_socket(raw, server_hostname=host, do_handshake_on_connect=False)
+        dl.watch(tls)
+        tls.settimeout(dl.remaining())
+        tls.do_handshake()
+        conn = http.client.HTTPSConnection(host, port, timeout=dl.remaining(), context=ctx)
+        conn.sock = tls
+        status, _hdrs, body = fetch.read_exchange(conn, target, headers, max_bytes, dl)
+    except Exception:
+        if dl.expired():
+            raise socket.timeout("deadline") from None
+        raise
+    finally:
+        dl.close()
+        for c in (conn, tls, raw):
+            try:
+                if c is not None:
+                    c.close()
+            except OSError:
+                pass
+    if status != 200:                                                # a redirect or any other status is a failure
+        raise OSError("HTTP %d" % status)
     if len(body) > max_bytes:
         raise OSError("response over %d bytes" % max_bytes)
     return body
@@ -205,7 +227,7 @@ class DohResolver(object):
             raise ValueError("a DoH URL carries no credentials")
         self.url = url
         self.name = "doh:" + url
-        self._transport = transport or _urllib_transport
+        self._transport = transport or _https_transport
 
     def resolve_txt(self, qname: str, timeout: float) -> DnsAnswer:
         try:
@@ -218,10 +240,6 @@ class DohResolver(object):
             body = self._transport(url, {"Accept": "application/dns-message", "Accept-Encoding": "identity"}, timeout, MAX_MESSAGE)
         except (socket.timeout, TimeoutError):
             return DnsAnswer("timeout", [], None, self.name)
-        except urllib.error.URLError as e:
-            if isinstance(getattr(e, "reason", None), (socket.timeout, TimeoutError)):
-                return DnsAnswer("timeout", [], None, self.name)
-            return DnsAnswer("error", [], None, self.name)
         except Exception:
             return DnsAnswer("error", [], None, self.name)
         a = parse_response(body, 0, qname, self.name)

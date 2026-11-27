@@ -1,0 +1,35 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "No resolver is available offline.",
+  "dns": null,
+  "expect": {
+    "codes": [
+      "dns.skipped_offline"
+    ],
+    "decision": "unverifiable",
+    "exit": 2,
+    "forbidden_terms": true,
+    "primary": "dns.skipped_offline",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "dns-offline",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 6.3"
+  ],
+  "state": null,
+  "tags": [
+    "dns"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

@@ -17,6 +17,7 @@ import os
 import re
 import socket
 import ssl
+import threading
 import time
 import urllib.parse
 from typing import Callable, Dict, List, NamedTuple, Optional
@@ -108,17 +109,118 @@ def locate(target: str, keys: Optional[str] = None, revoked: Optional[str] = Non
     if os.path.isdir(target):
         for rel in ("", ".well-known/paddock"):
             root = os.path.join(target, *rel.split("/")) if rel else target
-            if os.path.isfile(os.path.join(root, "attestation", "latest.json")):
+            latest = os.path.join(root, "attestation", "latest.json")
+            if os.path.isfile(latest):
                 return Bundle(DirSource(root), "attestation/latest.json", overrides=overrides, label=target, budget=budget)
+            if os.path.lexists(latest):
+                raise FetchError("input.unreadable", "attestation/latest.json is not a regular file")
         raise FetchError("input.not_found", "no attestation/latest.json under the directory")
     if os.path.isfile(target):
         parent = os.path.dirname(os.path.abspath(target))
         root = os.path.dirname(parent) if os.path.basename(parent) == "attestation" else parent
         return Bundle(DirSource(root), None, envelope_file=target, overrides=overrides, label=target, budget=budget)
+    if os.path.lexists(target):
+        raise FetchError("input.unreadable", "not a regular file or a directory")
     raise FetchError("input.not_found", "no such file or directory")
 
 
 # --------------------------------------------------------------------------------------------- https
+class Deadline(object):
+    """One wall-clock bound over a whole network exchange (connect, handshake, headers and body).
+
+    A per-operation socket timeout is not a deadline: a server that sends one byte every few seconds satisfies it
+    forever. A watchdog therefore shuts the socket down when the time is up, which wakes any blocked read; the
+    caller must then treat the exchange as failed (``expired``), never as a short success.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self.end = time.monotonic() + max(0.05, float(seconds))
+        self.fired = False
+        self._sock = None  # type: Optional[socket.socket]
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(max(0.05, float(seconds)), self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def remaining(self) -> float:
+        return max(0.05, self.end - time.monotonic())
+
+    def expired(self) -> bool:
+        return self.fired or time.monotonic() > self.end
+
+    def watch(self, sock: socket.socket) -> None:
+        with self._lock:
+            self._sock = sock
+            late = self.fired
+        if late:
+            self._shutdown(sock)
+
+    @staticmethod
+    def _shutdown(sock: socket.socket) -> None:
+        try:
+            socket.socket.shutdown(sock, socket.SHUT_RDWR)          # not SSLSocket.shutdown: it would drop the TLS object under a reader
+        except (OSError, ValueError):
+            pass
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.fired = True
+            sock = self._sock
+        if sock is not None:
+            self._shutdown(sock)
+
+    def close(self) -> None:
+        self._timer.cancel()
+
+
+def bounded_call(fn: Callable, seconds: float):
+    """``fn()`` with a wall-clock bound; ``TimeoutError`` when it does not return in time (the thread is abandoned)."""
+    box = []  # type: List
+
+    def run() -> None:
+        try:
+            box.append((True, fn()))
+        except BaseException as e:                                  # handed back to the caller's thread
+            box.append((False, e))
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(max(0.05, seconds))
+    if not box:
+        raise TimeoutError("deadline")
+    ok, value = box[0]
+    if not ok:
+        raise value
+    return value
+
+
+def read_exchange(conn: "http.client.HTTPSConnection", target: str, headers: Dict[str, str], max_bytes: int, dl: Deadline):
+    """GET ``target`` on an open ``conn`` and read at most ``max_bytes + 1`` of the body under ``dl``.
+
+    Returns ``(status, lowercase headers, body)``. Raises ``socket.timeout`` when the deadline passed and ``OSError``
+    when the body is shorter than its declared length; a truncated body is never returned as a success.
+    """
+    conn.request("GET", target, headers=headers)
+    r = conn.getresponse()
+    chunks, total = [], 0
+    while total <= max_bytes:
+        if dl.expired():
+            raise socket.timeout("deadline")
+        piece = r.read(min(8192, max_bytes + 1 - total))
+        if not piece:
+            break
+        chunks.append(piece)
+        total += len(piece)
+    if dl.expired():
+        raise socket.timeout("deadline")
+    hdrs = dict((k.lower(), v) for k, v in r.getheaders())
+    if total <= max_bytes and "content-length" in hdrs:
+        declared = hdrs["content-length"].strip()
+        if not declared.isdigit() or int(declared) != total:
+            raise OSError("the body is not as long as declared")
+    return r.status, hdrs, b"".join(chunks)
+
+
 class Response(NamedTuple):
     status: int
     headers: Dict[str, str]      # lowercase names
@@ -189,12 +291,19 @@ class HttpSource(object):
     def read(self, path: str, max_bytes: int) -> Optional[bytes]:
         check_relative(path)
         url = self.base + path
+        end = time.monotonic() + self.timeout                       # one bound for the whole read, redirects included
         for hop in range(self.max_redirects + 1):
+            left = end - time.monotonic()
+            if left <= 0:
+                raise FetchError("input.fetch_failed", "deadline exceeded")
             host, port, _target = split_url(url)
-            ips = self._addresses(host, port)
+            ips = self._addresses(host, port, left)
+            left = end - time.monotonic()
+            if left <= 0:
+                raise FetchError("input.fetch_failed", "deadline exceeded")
             try:
                 resp = self._transport(url, ips, {"User-Agent": USER_AGENT, "Accept": "application/json", "Accept-Encoding": "identity"},
-                                       self.timeout, max_bytes)
+                                       left, max_bytes)
             except FetchError:
                 raise
             except Exception:
@@ -217,9 +326,9 @@ class HttpSource(object):
             return resp.body
         raise FetchError("input.fetch_failed", "too many redirects")
 
-    def _addresses(self, host: str, port: int) -> List[str]:
+    def _addresses(self, host: str, port: int, seconds: float = DEFAULT_TIMEOUT) -> List[str]:
         try:
-            ips = list(self._resolve(host, port))
+            ips = list(bounded_call(lambda: self._resolve(host, port), seconds))
         except Exception:
             raise FetchError("input.fetch_failed", "name resolution failed") from None
         if not ips:
@@ -231,38 +340,41 @@ class HttpSource(object):
     def _tls_transport(self, url: str, ips: List[str], headers: Dict[str, str], timeout: float, max_bytes: int) -> Response:
         host, port, target = split_url(url)
         ctx = self._ctx or ssl.create_default_context()
-        deadline = time.monotonic() + timeout
-        last = None  # type: Optional[Exception]
-        raw = None
-        for ip in ips:
-            try:
-                raw = socket.create_connection((ip, port), timeout=max(0.05, deadline - time.monotonic()))
-                break
-            except OSError as e:
-                last = e
-        if raw is None:
-            raise last if last is not None else OSError("no address")
-        conn = http.client.HTTPSConnection(host, port, timeout=timeout, context=ctx)
+        dl = Deadline(timeout)
+        raw = tls = None
+        conn = None
         try:
-            conn.sock = ctx.wrap_socket(raw, server_hostname=host)          # SNI and certificate checks use the host name
-            conn.request("GET", target, headers=headers)
-            r = conn.getresponse()
-            chunks, total = [], 0
-            while total <= max_bytes:
-                if time.monotonic() > deadline:
-                    raise socket.timeout("deadline")
-                piece = r.read(min(8192, max_bytes + 1 - total))
-                if not piece:
+            last = None  # type: Optional[Exception]
+            for ip in ips:
+                if dl.expired():
                     break
-                chunks.append(piece)
-                total += len(piece)
-            return Response(r.status, dict((k.lower(), v) for k, v in r.getheaders()), b"".join(chunks))
+                try:
+                    raw = socket.create_connection((ip, port), timeout=dl.remaining())
+                    break
+                except OSError as e:
+                    last = e
+            if raw is None:
+                raise last if last is not None else OSError("no address")
+            tls = ctx.wrap_socket(raw, server_hostname=host, do_handshake_on_connect=False)   # SNI and certificate checks use the host name
+            dl.watch(tls)
+            tls.settimeout(dl.remaining())
+            tls.do_handshake()
+            conn = http.client.HTTPSConnection(host, port, timeout=dl.remaining(), context=ctx)
+            conn.sock = tls
+            status, hdrs, body = read_exchange(conn, target, headers, max_bytes, dl)
+            return Response(status, hdrs, body)
+        except Exception:
+            if dl.expired():
+                raise socket.timeout("deadline") from None
+            raise
         finally:
-            conn.close()
-            try:
-                raw.close()
-            except OSError:
-                pass
+            dl.close()
+            for c in (conn, tls, raw):
+                try:
+                    if c is not None:
+                        c.close()
+                except OSError:
+                    pass
 
 
 def default_base(domain: str) -> str:

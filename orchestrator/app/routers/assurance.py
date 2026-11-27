@@ -10,12 +10,16 @@ Conventions (all of them are load-bearing for the isolation sweeps):
   *same* body (RLS makes a foreign row invisible), and body validation always runs before any
   lookup, so a caller can never tell "not yours" from "does not exist".
 * **RBAC.** Reads are ``read`` (the safe-method default); every mutation falls through to the
-  deny-closed ``admin`` default in ``auth.required_capability``. No rule is added for them.
+  deny-closed ``admin`` default in ``auth.required_capability``. The one explicit rule is the human-only
+  ``POST /v1/invariants/{id}/findings/release`` (admin, never billing-gated, P2.1 6.1).
 * **Billing.** Mutations that create or change paid work are gated with
   ``billing_gate.require_paid("assurance")``; reads and DELETEs are never gated (a downgraded
   tenant can read what it has and clean up, as for the other gated features).
 * **Audit.** Every mutation writes a semantic ``audit.record`` (best effort, never fails the
   request); the middleware's generic per-request row exists as well.
+* **Lifecycle (P2.1 6.1, D33: annotate, never close).** Disabling or archiving an invariant annotates its open and
+  triaged findings (``metadata.invariant_state``) in the same transaction and never changes a status: nothing re-checks
+  them, so nothing may close them. A person gives up on them with the release route (``wontfix``, sticky).
 * **Soundness.** A verdict is never reported fresher than it is: an invariant that was disabled
   and re-enabled, or whose definition changed, has its ``last_graph_version`` cleared so the runner
   treats it as due, and the list shows it as ``PENDING`` rather than as a stale ``HOLDS``.
@@ -38,10 +42,10 @@ from typing import Annotated, Any, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_validator, model_validator
 
-from .. import audit, tenancy
-from ..assurance import store
+from .. import audit, lifecycle, tenancy
+from ..assurance import housekeeping, store
 from ..auth import CLASS_RANK, Principal, classification_rank_sql, current_principal
 from ..billing import gate as billing_gate
 from ..config import settings
@@ -71,6 +75,14 @@ MAX_TOTAL_ZONE_CIDRS = 4096
 MAX_LABELS = 20_000
 #: CIDRs a sensor's declared scope may list.
 MAX_SENSOR_CIDRS = 64
+#: a declared scope shorter than this is a "wide" scope: refused unless ``allow_wide`` and a real reason (D37).
+WIDE_V4_PREFIX, WIDE_V6_PREFIX = 16, 48
+WIDE_JUSTIFICATION_MIN = 20
+#: sensor advisories read this many days of flows, show this many prefixes and consider this many per sensor.
+SCOPE_WINDOW_DAYS = 7
+OBSERVED_SHOWN = 32
+OBSERVED_SCAN = 512
+SUGGEST_MAX = 16
 #: an ``allow`` exception may not run longer than this from today (review finding security-7: a
 #: 3-letter reason with ``expires: 9999-12-31`` is a permanent, silent hole).
 MAX_ALLOW_DAYS = 90
@@ -109,6 +121,18 @@ def _not_found(what: str) -> HTTPException:
 def _unprocessable(msg: str, field: str = "body") -> HTTPException:
     return HTTPException(status_code=422, detail=[{"loc": ["body", field], "msg": msg,
                                                    "type": "value_error"}])
+
+
+def _storable(v: str) -> str:
+    """Text Postgres can store: a NUL byte raises ``CharacterNotInRepertoire``, an unhandled 500 (a lone surrogate
+    cannot arrive: the JSON parser and the query decoder refuse it first)."""
+    if "\x00" in v:
+        raise ValueError("must not contain a NUL byte")
+    return v
+
+
+def _storable_opt(v: Optional[str]) -> Optional[str]:
+    return v if v is None else _storable(v)
 
 
 def _j(value: Any, default: Any) -> Any:
@@ -360,7 +384,7 @@ class _Justified(BaseModel):
     @field_validator("justification")
     @classmethod
     def _strip(cls, v: str) -> str:
-        v = v.strip()
+        v = _storable(v).strip()
         if not v:
             raise ValueError("a justification is required")
         return v
@@ -377,6 +401,12 @@ class InvariantOut(BaseModel):
     version: int
     status: str = Field(description="HOLDS | VIOLATED | UNKNOWN | EXPIRED (a HOLDS that outlived its "
                                     "evidence) | PENDING (not evaluated for this definition yet) | DISABLED")
+    state: str = Field("active", description="active | disabled | archived | invalid_definition | not_entitled. "
+                                             "A non-active invariant is not evaluated: its open findings stay open "
+                                             "and are annotated, never closed by the machine.")
+    disabled_at: Optional[datetime] = None
+    disabled_by: Optional[str] = None
+    archived_at: Optional[datetime] = None
     last_verdict: Optional[str] = None
     stale: bool = Field(False, description="Evaluated against an older graph version than the current one.")
     reasons: list[str] = Field(default_factory=list)
@@ -400,6 +430,10 @@ class InvariantVersionOut(BaseModel):
 
 
 class InvariantDetail(InvariantOut):
+    open_findings: int = Field(0, description="Open and triaged findings of this invariant.")
+    findings_not_rechecked: int = Field(
+        0, description="Of those, the ones nobody is re-checking (the invariant is disabled, archived, invalid or "
+                       "not entitled). Release them with POST /v1/invariants/{id}/findings/release.")
     yaml: str
     redacted: bool = Field(False, description="Parts were withheld because they name assets above the "
                                               "caller's clearance.")
@@ -414,7 +448,7 @@ class InvariantPage(BaseModel):
     offset: int
 
 
-_OptWhy = Annotated[Optional[str], StringConstraints(max_length=1000)]
+_OptWhy = Annotated[Optional[str], StringConstraints(max_length=1000), AfterValidator(_storable_opt)]
 
 
 class InvariantCreate(BaseModel):
@@ -470,6 +504,10 @@ class RunOut(BaseModel):
     coverage_universe: int
     evaluated_at: datetime
     valid_until: Optional[datetime] = None
+    compacted_at: Optional[datetime] = Field(
+        None, description="Set when the heavy parts of ``result`` (target lists, blind spots, all but the first 5 "
+                          "witnesses) were dropped after the compaction horizon; the decision itself is kept.")
+    pinned: bool = Field(False, description="Held whole: never compacted or deleted (attestations pin rows).")
     result: Optional[dict[str, Any]] = None
 
 
@@ -478,6 +516,25 @@ class RunPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ReleaseIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    justification: str = Field(min_length=1, max_length=1000,
+                               description="Why these findings are given up on (10+ characters; audited and written "
+                                           "into each finding's status reason).")
+
+    @field_validator("justification")
+    @classmethod
+    def _enough(cls, v: str) -> str:
+        v = _storable(v).strip()
+        if len(v) < 10:
+            raise ValueError("a justification of at least 10 characters is required")
+        return v
+
+
+class ReleaseOut(BaseModel):
+    released: int = Field(description="Findings marked wontfix.")
 
 
 class EvaluateIn(BaseModel):
@@ -491,6 +548,25 @@ class SensorScopeIn(_Justified):
         min_length=1, max_length=MAX_SENSOR_CIDRS,
         description="The networks this sensor can actually see (mirror/SPAN coverage). Coverage is "
                     "asserted only for hosts inside them.")
+    allow_wide: bool = Field(
+        False, description="Accept a prefix shorter than /16 (IPv4) or /48 (IPv6). Needs a justification of at "
+                           "least 20 characters; the audit row records it.")
+
+
+class ObservedPrefix(BaseModel):
+    prefix: str = Field(description="An IPv4 /24 seen as a flow source or destination by THIS sensor.")
+    flows: int = Field(description="Distinct flow records touching the prefix in the window.")
+    last_seen: Optional[datetime] = None
+    private: bool = Field(True, description="RFC 1918 or shared (100.64/10) address space. Any other prefix (public, or "
+                                            "special-use such as loopback, link-local, multicast) is shown but never "
+                                            "suggested or flagged: every sensor sees the internet's endpoints.")
+
+
+class SensorObserved(BaseModel):
+    prefixes: list[ObservedPrefix] = Field(default_factory=list)
+    truncated: bool = Field(False, description="More prefixes were seen than listed.")
+    window_days: int = Field(SCOPE_WINDOW_DAYS, description="The flows were read from the last N days (the flow "
+                                                           "table keeps a bounded history, so possibly less).")
 
 
 class SensorScopeOut(BaseModel):
@@ -504,6 +580,17 @@ class SensorScopeOut(BaseModel):
     set_by: Optional[str] = None
     justification: str = ""
     set_at: Optional[datetime] = None
+    observed: Optional[SensorObserved] = Field(
+        None, description="What this sensor actually saw (evidence for what to declare). Observed coverage proves "
+                          "'no such traffic was seen', never 'impossible'.")
+    declared_but_unobserved: list[str] = Field(
+        default_factory=list, description="Declared IPv4 CIDRs with no observed address inside in the window.")
+    observed_outside_scope: list[str] = Field(
+        default_factory=list, description="Private /24s this sensor saw that no declared CIDR overlaps.")
+    suggested_cidrs: list[str] = Field(
+        default_factory=list, description="The observed private /24s merged into at most 16 supernets, none "
+                                          "shorter than /16. A suggestion to review, never applied by itself.")
+    advisory_notes: list[str] = Field(default_factory=list)
 
 
 class SensorScopeList(BaseModel):
@@ -518,6 +605,8 @@ class SensorScopeChange(BaseModel):
     changed: bool
     previous: Optional[list[str]] = None
     graph_version: Optional[int] = None
+    warnings: list[str] = Field(default_factory=list, description="Things worth a second look: a declared CIDR "
+                                "this sensor saw no flows in, a scope on a sensor that is offline or revoked.")
 
 
 class SensorScopeDeleteOut(BaseModel):
@@ -640,7 +729,7 @@ class LabelDeleteOut(BaseModel):
 
 _INV_COLS = ("id, invariant_id, title, severity, enabled, source, digest, version, last_verdict, "
              "last_result, last_graph_version, last_evaluated_at, valid_until, created_by, created_at, "
-             "updated_by, updated_at")
+             "updated_by, updated_at, disabled_at, disabled_by, archived_at")
 
 
 def _status(row: Any, now: datetime) -> str:
@@ -669,6 +758,8 @@ def _inv_out(row: Any, now: datetime, graph_version: int, *, detail: bool = Fals
         "id": row["id"], "invariant_id": row["invariant_id"], "title": row["title"],
         "severity": row["severity"], "enabled": row["enabled"], "source": row["source"],
         "digest": row["digest"], "version": row["version"], "status": _status(row, now),
+        "state": housekeeping.state_of(row["enabled"], row["archived_at"], lgv, last.get("reasons")),
+        "disabled_at": row["disabled_at"], "disabled_by": row["disabled_by"], "archived_at": row["archived_at"],
         "last_verdict": row["last_verdict"], "stale": lgv is None or int(lgv) != int(graph_version),
         "reasons": [str(r) for r in (last.get("reasons") or []) if isinstance(r, str)],
         "violation_count": _int(last.get("violation_count")),
@@ -805,13 +896,44 @@ def _inv_view(row: Any, now: datetime, gv: int, vis: _Vis, *, detail: bool = Fal
     return scrubbed
 
 
+_OWN_FINDINGS = ("f.rule_source = 'invariant' AND (f.rule_id = 'invariant:' || $1::text "
+                 "OR starts_with(f.rule_id, 'invariant:' || $1::text || '@'))")
+
+
+def _visible_findings(vis: _Vis, args: list[Any]) -> str:
+    """Extra WHERE for the findings the caller may see (a finding of a classified asset above the caller's clearance is
+    neither counted nor released: it would confirm that the asset exists)."""
+    if vis.active and vis.ids:
+        args.append(vis.ids)
+        return f" AND f.asset_id::text <> ALL(${len(args)}::text[])"
+    return ""
+
+
+async def _finding_counts(con: Any, invariant_id: str, vis: _Vis) -> tuple[int, int, Optional[str]]:
+    """``(open+triaged findings, of them not re-checked, the runner-detected state if any)`` for one invariant."""
+    args: list[Any] = [invariant_id]
+    extra = _visible_findings(vis, args)
+    r = await con.fetchrow(
+        "SELECT count(*) FILTER (WHERE f.status IN ('open', 'triaged')) AS open_n, "
+        "count(*) FILTER (WHERE f.status IN ('open', 'triaged') AND f.metadata ? 'invariant_state') AS stale_n, "
+        "min(f.metadata->>'invariant_state') FILTER (WHERE f.status IN ('open', 'triaged') AND "
+        "f.metadata->>'invariant_state' IN ('invalid_definition', 'not_entitled')) AS runner_state "
+        f"FROM findings f WHERE {_OWN_FINDINGS}{extra}", *args)
+    return int(r["open_n"] or 0), int(r["stale_n"] or 0), r["runner_state"]
+
+
 async def _detail(pool: Any, inv_uuid: UUID, principal: Principal) -> dict[str, Any]:
     async with pool.acquire() as con:
         row = await _invariant_row(con, inv_uuid)
         gv = await _graph_version(con)
         vers = await _versions(con, row["invariant_id"])
         vis = await _vis(con, principal)
-    return _inv_view(row, _now(), gv, vis, detail=True, versions=vers)
+        open_n, stale_n, runner_state = await _finding_counts(con, row["invariant_id"], vis)
+    out = _inv_view(row, _now(), gv, vis, detail=True, versions=vers)
+    if out.get("state") == "active" and runner_state:
+        out["state"] = runner_state          # the runner saw something the columns cannot show (not_entitled)
+    out["open_findings"], out["findings_not_rechecked"] = open_n, stale_n
+    return out
 
 
 async def _lock_invariants(con: Any) -> None:
@@ -914,7 +1036,11 @@ async def list_std_invariants(pool=Depends(get_pool)):
 
 def _why(text: Optional[str]) -> Optional[str]:
     """An optional justification, trimmed; empty means none."""
-    t = (text or "").strip()
+    try:
+        t = _storable(text or "").strip()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=[{"loc": ["query", "justification"], "type": "value_error",
+                                                      "msg": f"Value error, {exc}"}]) from exc
     return t or None
 
 
@@ -955,8 +1081,12 @@ async def enable_std_invariant(
                     await con.execute(
                         "UPDATE invariants SET enabled = TRUE, yaml = $2, digest = $3, title = $4, "
                         "severity = $5, version = $6, last_graph_version = NULL, valid_until = NULL, "
+                        "disabled_at = NULL, disabled_by = NULL, archived_at = NULL, "
                         "updated_by = $7, updated_at = NOW() WHERE id = $1",
                         rid, e["yaml"], e["digest"], e["title"], e["severity"], ver, actor)
+                    if not cur["enabled"]:
+                        # back from disabled/archived: whatever the annotation said, the runner re-evaluates first
+                        await housekeeping.clear_annotations(con, e["id"])
                     if new_version:
                         await _insert_version(con, e["id"], e["digest"], ver, e["yaml"], actor)
         gv = await _graph_version(con)
@@ -1042,6 +1172,8 @@ async def update_invariant(
             prev = {"digest": cur["digest"], "enabled": cur["enabled"], "version": cur["version"]}
             sets: list[tuple[str, Any]] = []     # (column, value) -> "col = $n"
             clears: list[str] = []               # columns reset to NULL
+            raws: list[str] = []                 # constant assignments
+            disabled = reenabled = False
             version = cur["version"]
             if plan is not None:
                 if cur["source"] == "std":
@@ -1064,15 +1196,27 @@ async def update_invariant(
                     await _check_invariant_caps(con, adding_row=False, enabling=True)
                 sets.append(("enabled", body.enabled))
                 if body.enabled:
-                    # Re-enabled: whatever verdict is stored predates this moment. Make it due.
-                    clears += ["last_graph_version", "valid_until"]
+                    # Re-enabled: whatever verdict is stored predates this moment. Make it due. Back from disabled
+                    # or archived: the lifecycle columns reset (6.1); the findings' annotation is cleared below.
+                    clears += ["last_graph_version", "valid_until", "disabled_at", "disabled_by", "archived_at"]
+                    reenabled = True
+                else:
+                    sets.append(("disabled_by", principal.actor))
+                    raws.append("disabled_at = NOW()")
+                    disabled = True
             if changed:
                 sets.append(("updated_by", principal.actor))
                 assigns = [f"{c} = ${i}" for i, (c, _) in enumerate(sets, 1)]
-                assigns += [f"{c} = NULL" for c in dict.fromkeys(clears)]
+                assigns += [f"{c} = NULL" for c in dict.fromkeys(clears)] + raws
                 await con.execute(
                     f"UPDATE invariants SET {', '.join(assigns)}, updated_at = NOW() "
                     f"WHERE id = ${len(sets) + 1}", *[v for _, v in sets], invariant_id)
+                # Annotate, never close (D33): in the SAME transaction as the toggle, so no observer sees a disabled
+                # invariant whose findings still look live. No status changes here.
+                if disabled:
+                    await housekeeping.annotate_findings(con, cur["invariant_id"], housekeeping.STATE_DISABLED)
+                elif reenabled:
+                    await housekeeping.clear_annotations(con, cur["invariant_id"])
         gv = await _graph_version(con)
         row = await _invariant_row(con, invariant_id)
         vis = await _vis(con, principal)
@@ -1095,26 +1239,89 @@ async def delete_invariant(
     justification: Optional[str] = Query(None, max_length=1000, description="Optional: why (audited)."),
     principal: Principal = Depends(current_principal),
 ):
-    """Disable and archive. The row, every ``invariant_versions`` row and the run ledger stay
-    (they are evidence); the runner stops evaluating it. ``PUT {"enabled": true}`` brings it back.
+    """Archive: disable and mark deleted. The row, every ``invariant_versions`` row and the run ledger stay
+    (they are evidence); the runner stops evaluating it, and its open findings stay open, annotated
+    ``invariant_state: archived`` (nothing re-checks them, so nothing may close them; a person can release them with
+    ``POST .../findings/release``). ``PUT {"enabled": true}`` brings it back.
     Never gated: a downgraded tenant can always switch containment checks off cleanly."""
     why = _why(justification)
     async with pool.acquire() as con:
         async with con.transaction():
             cur = await _invariant_row(con, invariant_id, lock=True)
-            changed = bool(cur["enabled"])
+            was_state = housekeeping.state_of(cur["enabled"], cur["archived_at"])
+            changed = cur["archived_at"] is None
             if changed:
-                await con.execute("UPDATE invariants SET enabled = FALSE, updated_by = $2, "
-                                  "updated_at = NOW() WHERE id = $1", invariant_id, principal.actor)
+                await con.execute(
+                    "UPDATE invariants SET enabled = FALSE, archived_at = NOW(), "
+                    "disabled_at = COALESCE(disabled_at, NOW()), disabled_by = COALESCE(disabled_by, $2), "
+                    "updated_by = $2, updated_at = NOW() WHERE id = $1", invariant_id, principal.actor)
+                await housekeeping.annotate_findings(con, cur["invariant_id"], housekeeping.STATE_ARCHIVED)
         gv = await _graph_version(con)
         row = await _invariant_row(con, invariant_id)
         vis = await _vis(con, principal)
     await _audit(request, pool, principal, action="assurance_invariant_archive",
                  resource_type="invariants", resource_id=str(invariant_id), justification=why,
                  details={"invariant_id": row["invariant_id"], "digest": row["digest"],
-                          "was_enabled": changed, "rows_kept": True})
+                          "was_enabled": bool(cur["enabled"]), "was_state": was_state, "rows_kept": True})
     return {"invariant": _inv_view(row, _now(), gv, vis), "changed": changed, "created": False,
             "new_version": False}
+
+
+@router.post("/v1/invariants/{invariant_id}/findings/release", response_model=ReleaseOut)
+async def release_invariant_findings(
+    invariant_id: UUID, body: ReleaseIn, request: Request, pool=Depends(get_pool),
+    principal: Principal = Depends(current_principal),
+):
+    """Give up on the open findings of an invariant that is NOT being evaluated (a human decision, admin only).
+
+    Allowed only when nobody re-checks the invariant: it is disabled or archived, or the runner marked its findings
+    ``invalid_definition`` / ``not_entitled`` (otherwise 409 ``invariant_active``: an active invariant closes its own
+    findings when it holds). Sets ``wontfix`` with the reason ``invariant <state>: <justification>``, leaves
+    ``fix_verified_at`` empty (this is a decision, not a verification) and writes a history row per finding and one
+    audit row. A later re-enable, violation or HOLDS never reopens a ``wontfix`` (the machine does not undo a human
+    decision; a person can reopen with PATCH). Never billing-gated.
+    """
+    actor = principal.actor
+    async with pool.acquire() as con:
+        async with con.transaction():
+            cur = await _invariant_row(con, invariant_id, lock=True)
+            vis = await _vis(con, principal)
+            own = housekeeping.state_of(cur["enabled"], cur["archived_at"])     # disabled | archived | active
+            flagged = (" AND f.metadata->>'invariant_state' IN ('invalid_definition', 'not_entitled')"
+                       if own == "active" else "")
+            if own == "active":
+                # an enabled invariant: only what the runner flagged as not being re-checked may be released
+                # counted as the caller sees them: a flagged finding of an asset above their clearance must not turn
+                # the 409 into a 200 (that would confirm it exists)
+                cnt_args: list[Any] = [cur["invariant_id"]]
+                cnt_extra = _visible_findings(vis, cnt_args)
+                n_flagged = await con.fetchval(
+                    "SELECT count(*) FROM findings f WHERE " + _OWN_FINDINGS +
+                    " AND f.status IN ('open', 'triaged')" + flagged + cnt_extra, *cnt_args)
+                if not n_flagged:
+                    raise HTTPException(status_code=409, detail={
+                        "error": "invariant_active",
+                        "message": "this invariant is active: it re-checks and closes its own findings; disable "
+                                   "or delete it first to release them by hand"})
+            # $4 is the state named in the reason: the invariant's own, or (enabled) the one the runner flagged
+            args: list[Any] = [cur["invariant_id"], body.justification, actor, own]
+            extra = _visible_findings(vis, args)
+            rows = await con.fetch(
+                "WITH due AS (SELECT f.id, f.status FROM findings f WHERE " + _OWN_FINDINGS +
+                " AND f.status IN ('open', 'triaged')" + flagged + extra + " FOR UPDATE) "
+                "UPDATE findings f SET status = 'wontfix', "
+                "status_reason = 'invariant ' || CASE WHEN $4::text = 'active' THEN f.metadata->>'invariant_state' ELSE $4::text END || ': ' || $2::text, "
+                "status_by = $3::text, status_changed_at = now(), accepted_until = NULL, fix_verified_at = NULL "
+                "FROM due WHERE f.id = due.id RETURNING f.id, due.status AS from_status, f.status_reason",
+                *args)
+            for r in rows:
+                await lifecycle.record_history(con, r["id"], r["from_status"], "wontfix", r["status_reason"],
+                                               None, actor)
+    await _audit(request, pool, principal, action="assurance_findings_release", resource_type="invariants",
+                 resource_id=str(invariant_id), justification=body.justification,
+                 details={"invariant_id": cur["invariant_id"], "state": own if own != "active" else "runner_flagged",
+                          "released": len(rows), "finding_ids": [str(r["id"]) for r in rows[:50]]})
+    return {"released": len(rows)}
 
 
 @router.get("/v1/invariants/{invariant_id}/runs", response_model=RunPage)
@@ -1139,7 +1346,8 @@ async def list_invariant_runs(
         total = await con.fetchval(f"SELECT count(*) FROM invariant_runs {clause}", *args)
         rows = await con.fetch(
             "SELECT id, invariant_id, digest, verdict, reasons, result, graph_version, violation_count, "
-            f"coverage_covered, coverage_universe, evaluated_at, valid_until FROM invariant_runs {clause} "
+            "coverage_covered, coverage_universe, evaluated_at, valid_until, compacted_at, pinned "
+            f"FROM invariant_runs {clause} "
             f"ORDER BY evaluated_at DESC, id LIMIT ${len(args) + 1} OFFSET ${len(args) + 2}",
             *args, limit, offset)
     items = []
@@ -1655,7 +1863,11 @@ async def _zone_by_id(con: Any, zone_id: UUID) -> Any:
 def _need_why(justification: Optional[str]) -> str:
     """A removal that moves verdicts must say why (review finding security-7): at least 3 characters
     after trimming, else 422 (an absent parameter is FastAPI's own 422 first)."""
-    why = (justification or "").strip()
+    try:
+        why = _storable(justification or "").strip()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=[{"loc": ["query", "justification"], "type": "value_error",
+                                                      "msg": f"Value error, {exc}"}]) from exc
     if len(why) < 3:
         raise HTTPException(status_code=422, detail=[{
             "loc": ["query", "justification"], "type": "value_error",
@@ -1923,9 +2135,149 @@ async def delete_label(
 
 _SCOPE_COLS = "sensor_id, cidrs, set_by, justification, set_at"
 
+#: a strict dotted quad (0-255 per octet, no leading zeros): the flow table stores whatever a sensor sent as text, and
+#: the ``::inet`` cast of anything else would fail the whole query.
+_V4_RE = (r"^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$")
 
-def _scope_out(sensor_id: Any, scope: Optional[Any], sensor: Optional[Any]) -> dict[str, Any]:
+#: Per sensor, the busiest /24s it saw as a flow endpoint. NB the network is ``network(set_masklen(ip, 24))``: the
+#: contract's sketch used ``host(...) || '/24'``, which yields a HOST address with mask bits ('10.20.0.5/24').
+_OBSERVED_SQL = f"""
+WITH ends AS (
+  SELECT id, sensor_id, src_ip AS ip, last_seen FROM reach_flow_obs
+   WHERE sensor_id = ANY($2::uuid[]) AND last_seen >= $1 AND src_ip ~ '{_V4_RE}'
+  UNION ALL
+  SELECT id, sensor_id, dst_ip AS ip, last_seen FROM reach_flow_obs
+   WHERE sensor_id = ANY($2::uuid[]) AND last_seen >= $1 AND dst_ip ~ '{_V4_RE}'
+), grouped AS (
+  SELECT sensor_id, network(set_masklen(ip::inet, 24))::text AS prefix,
+         count(DISTINCT id) AS flows, max(last_seen) AS last_seen
+    FROM ends GROUP BY 1, 2
+), ranked AS (
+  SELECT g.*, row_number() OVER (PARTITION BY sensor_id ORDER BY flows DESC, prefix) AS rn FROM grouped g
+)
+SELECT sensor_id, prefix, flows, last_seen FROM ranked WHERE rn <= $3 ORDER BY sensor_id, rn
+"""
+
+
+_V4_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
+#: the networks an operator can sensibly declare as "what this sensor sees": RFC 1918 and shared address space (CGNAT).
+_LAN_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"))
+
+
+def _effective_net(net: Any) -> Any:
+    """The network the sentry_flows builder reads for ``net``: a v4-mapped IPv6 network (``::ffff:a.b.c.d/N``) is the
+    IPv4 network ``a.b.c.d/(N-96)``. The wide-scope guard and the advisories must judge THAT, or ``::ffff:10.0.0.0/104``
+    declares a /8 under a /104 name."""
+    if net.version == 6 and net.subnet_of(_V4_MAPPED):
+        return ipaddress.ip_network((net.network_address.ipv4_mapped, net.prefixlen - 96), strict=False)
+    return net
+
+
+def _is_lan(net: Any) -> bool:
+    """A network worth suggesting or flagging: private or shared address space. Public prefixes (every sensor sees the
+    internet's endpoints) and special-use ones (0.0.0.0/8, 127/8, link-local, multicast, reserved, broadcast) are not."""
+    return net.version == 4 and any(net.subnet_of(n) for n in _LAN_NETS)
+
+
+def _wide_cidrs(cidrs: list[str]) -> list[str]:
+    """The entries shorter than /16 (IPv4) or /48 (IPv6), in the given order. A v4-mapped IPv6 entry counts as the
+    IPv4 network it means (see ``_effective_net``)."""
+    out = []
+    for c in cidrs:
+        net = _effective_net(ipaddress.ip_network(c, strict=False))
+        if net.prefixlen < (WIDE_V4_PREFIX if net.version == 4 else WIDE_V6_PREFIX):
+            out.append(c)
+    return out
+
+
+def _clamp16(nets: list[Any]) -> list[Any]:
+    """No network shorter than /16: a collapsed run of /24s may have become a /15; split it back into /16s."""
+    out: list[Any] = []
+    for n in nets:
+        out.extend(n.subnets(new_prefix=16) if n.prefixlen < 16 else [n])
+    return out
+
+
+def _suggest(private: list[dict[str, Any]], notes: list[str]) -> list[str]:
+    """The observed private /24s merged to at most ``SUGGEST_MAX`` supernets, none shorter than /16.
+
+    Exact first (adjacent /24s collapse losslessly); if that is still too many, widen to /22, /20, /18, /16 until it
+    fits; if even the /16s are too many, the busiest ones, and the note says so. Deterministic."""
+    nets = [(ipaddress.ip_network(p["prefix"]), int(p["flows"])) for p in private]
+    if not nets:
+        return []
+    exact = _clamp16(list(ipaddress.collapse_addresses(n for n, _ in nets)))
+    if len(exact) <= SUGGEST_MAX:
+        return [str(n) for n in sorted(exact)]
+    for plen in (22, 20, 18, 16):
+        grouped = sorted({n.supernet(new_prefix=plen) for n, _ in nets})
+        if len(grouped) <= SUGGEST_MAX:
+            return [str(n) for n in grouped]
+    weight: dict[Any, int] = {}
+    for n, flows in nets:
+        sup = n.supernet(new_prefix=16)
+        weight[sup] = weight.get(sup, 0) + flows
+    top = sorted(weight, key=lambda k: (-weight[k], k))[:SUGGEST_MAX]
+    notes.append(f"the sensor saw {len(weight)} distinct /16 networks: only the {SUGGEST_MAX} busiest are suggested")
+    return [str(n) for n in sorted(top)]
+
+
+def scope_advisories(declared: list[str], seen: list[dict[str, Any]], *, capped: bool) -> dict[str, Any]:
+    """Evidence-based advisories for one sensor (pure). ``seen``: its /24 prefixes (``prefix``, ``flows``,
+    ``last_seen``, ``private``), any order. ``capped``: the scan hit ``OBSERVED_SCAN`` so the list is not complete.
+
+    * ``declared_but_unobserved``: declared IPv4 CIDRs overlapping no observed /24 (not judged when the scan was capped:
+      an absent prefix proves nothing then; IPv6 is not judged at all, only IPv4 flows are read);
+    * ``observed_outside_scope``: private /24s overlapping no declared CIDR (public ones are every sensor's);
+    * ``suggested_cidrs``: see ``_suggest``.
+    Nothing here changes a scope: it is evidence for the operator, never an enforced equality (D37)."""
+    ordered = sorted(seen, key=lambda p: (-int(p["flows"]), p["prefix"]))
+    notes: list[str] = []
+    obs_nets = [(ipaddress.ip_network(p["prefix"]), p) for p in ordered]
+    declared_nets = [_effective_net(ipaddress.ip_network(c, strict=False)) for c in declared]
+    v4_declared = [n for n in declared_nets if n.version == 4]
+    if any(n.version == 6 for n in declared_nets):
+        notes.append("IPv6 scopes are not compared with observations (only IPv4 flows are read)")
+    unobserved: list[str] = []
+    if capped:
+        notes.append("too many distinct prefixes were seen to compare with the declared scope; "
+                     "declared_but_unobserved is not judged")
+    else:
+        unobserved = [str(n) for n in v4_declared if not any(n.overlaps(o) for o, _ in obs_nets)]
+    private = [p for o, p in obs_nets if p.get("private", True)]
+    outside = sorted((o for o, p in obs_nets if p.get("private", True)
+                      and declared_nets and not any(o.overlaps(d) for d in v4_declared)))
     return {
+        "observed": {"prefixes": [dict(p) for p in ordered[:OBSERVED_SHOWN]],
+                     "truncated": bool(capped or len(ordered) > OBSERVED_SHOWN),
+                     "window_days": SCOPE_WINDOW_DAYS},
+        "declared_but_unobserved": unobserved,
+        "observed_outside_scope": [str(n) for n in outside],
+        "suggested_cidrs": _suggest(private, notes),
+        "notes": notes,
+    }
+
+
+async def _observed(con: Any, sensor_ids: list[Any], since: datetime) -> dict[Any, tuple[list[dict[str, Any]], bool]]:
+    """``{sensor id: (prefixes, capped)}`` for the sensors named (their own flows only, never pooled)."""
+    out: dict[Any, tuple[list[dict[str, Any]], bool]] = {sid: ([], False) for sid in sensor_ids}
+    if not sensor_ids:
+        return out
+    rows = await con.fetch(_OBSERVED_SQL, since, list(sensor_ids), OBSERVED_SCAN + 1)
+    by: dict[Any, list[dict[str, Any]]] = {}
+    for r in rows:
+        net = ipaddress.ip_network(r["prefix"])
+        by.setdefault(r["sensor_id"], []).append(
+            {"prefix": str(net), "flows": int(r["flows"]), "last_seen": r["last_seen"], "private": _is_lan(net)})
+    for sid, lst in by.items():
+        capped = len(lst) > OBSERVED_SCAN
+        out[sid] = (lst[:OBSERVED_SCAN], capped)
+    return out
+
+
+def _scope_out(sensor_id: Any, scope: Optional[Any], sensor: Optional[Any],
+               advisory: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    out = {
         "sensor_id": sensor_id,
         "name": sensor["name"] if sensor else None, "site": sensor["site"] if sensor else None,
         "status": sensor["status"] if sensor else None, "online": sensor["online"] if sensor else None,
@@ -1934,6 +2286,11 @@ def _scope_out(sensor_id: Any, scope: Optional[Any], sensor: Optional[Any]) -> d
         "justification": (scope["justification"] or "") if scope else "",
         "set_at": scope["set_at"] if scope else None,
     }
+    if advisory is not None:
+        out.update(observed=advisory["observed"], declared_but_unobserved=advisory["declared_but_unobserved"],
+                   observed_outside_scope=advisory["observed_outside_scope"],
+                   suggested_cidrs=advisory["suggested_cidrs"], advisory_notes=advisory["notes"])
+    return out
 
 
 def _sensor_cidrs(cidrs: list[str]) -> list[str]:
@@ -1947,17 +2304,34 @@ def _sensor_cidrs(cidrs: list[str]) -> list[str]:
     return out
 
 
+def _since() -> datetime:
+    return _now() - timedelta(days=SCOPE_WINDOW_DAYS)
+
+
 @router.get("/v1/assurance/sensor-scopes", response_model=SensorScopeList)
 async def list_sensor_scopes(pool=Depends(get_pool)):
-    """Declared sensor scopes, plus the active sensors that have none (they cover nothing)."""
+    """Declared sensor scopes, plus the active sensors that have none (they cover nothing).
+
+    Every item also says what that sensor actually saw in the last 7 days (observed /24 prefixes, declared CIDRs it saw
+    nothing in, private prefixes outside the declared scope, a suggested scope). The declared scope stays an
+    accountability record (who declared what and why), not an equality check: a sensor cannot prove what it does not
+    see, and observed coverage proves "no such traffic was seen", never "impossible"."""
+    since = _since()
     async with pool.acquire() as con:
         scopes = await con.fetch(f"SELECT {_SCOPE_COLS} FROM sensor_scopes ORDER BY set_at, sensor_id LIMIT 1000")
         sensors = {r["id"]: r for r in await con.fetch(
             "SELECT id, name, site, status, online FROM sensors ORDER BY name, id LIMIT 5000")}
-    have = {r["sensor_id"] for r in scopes}
-    items = [_scope_out(r["sensor_id"], r, sensors.get(r["sensor_id"])) for r in scopes]
-    unscoped = [_scope_out(sid, None, r) for sid, r in sensors.items()
-                if sid not in have and r["status"] == "active"][:200]
+        have = {r["sensor_id"] for r in scopes}
+        unscoped_rows = [(sid, r) for sid, r in sensors.items() if sid not in have and r["status"] == "active"][:200]
+        seen = await _observed(con, [*have, *(sid for sid, _ in unscoped_rows)], since)
+
+    def adv(sid: Any, cidrs: list[str]) -> dict[str, Any]:
+        lst, capped = seen.get(sid, ([], False))
+        return scope_advisories(cidrs, lst, capped=capped)
+
+    items = [_scope_out(r["sensor_id"], r, sensors.get(r["sensor_id"]), adv(r["sensor_id"], list(r["cidrs"] or ())))
+             for r in scopes]
+    unscoped = [_scope_out(sid, None, r, adv(sid, [])) for sid, r in unscoped_rows]
     return {"items": items, "unscoped_sensors": unscoped, "total": len(items)}
 
 
@@ -1969,9 +2343,21 @@ async def put_sensor_scope(
 ):
     """Declare (replace) the networks a sensor can see. Admin only; justification required.
 
+    A prefix shorter than /16 (IPv4) or /48 (IPv6) is refused with 422 ``scope_too_wide`` unless ``allow_wide`` is set
+    AND the justification has at least 20 characters (a /8 declared silently would assert "no such traffic seen" for a
+    whole campus); the audit row records it. The response's ``warnings`` list a declared CIDR this sensor saw no flows
+    in and a scope on a sensor that is offline or revoked.
+
     Changing the CIDR set bumps the graph version and marks the builders due at once, so coverage
     that this change withdraws is withdrawn on the next tick, not after the rebuild interval."""
     cidrs = _sensor_cidrs(body.cidrs)
+    wide = _wide_cidrs(cidrs)
+    if wide and not (body.allow_wide and len(body.justification) >= WIDE_JUSTIFICATION_MIN):
+        raise HTTPException(status_code=422, detail={
+            "error": "scope_too_wide", "cidrs": wide[:10],
+            "message": f"{', '.join(wide[:3])}: shorter than /{WIDE_V4_PREFIX} (IPv4) or /{WIDE_V6_PREFIX} (IPv6); "
+                       f"set allow_wide and give a justification of {WIDE_JUSTIFICATION_MIN}+ characters"})
+    since = _since()
     async with pool.acquire() as con:
         async with con.transaction():
             sensor = await con.fetchrow("SELECT id, name, site, status, online FROM sensors WHERE id = $1",
@@ -1995,13 +2381,29 @@ async def put_sensor_scope(
                 version = await store.bump_graph_version(con)
                 await _rebuild_soon(con)
         row = await con.fetchrow(f"SELECT {_SCOPE_COLS} FROM sensor_scopes WHERE sensor_id = $1", sensor_uuid)
+        seen, capped = (await _observed(con, [sensor_uuid], since))[sensor_uuid]
+    warnings = _scope_warnings(cidrs, sensor, seen, capped)
     await _audit(request, pool, principal, action="assurance_sensor_scope_set",
                  resource_type="sensor_scopes", resource_id=str(sensor_uuid),
                  justification=body.justification,
                  details={"sensor": sensor["name"], "previous_cidrs": before, "cidrs": cidrs,
-                          "changed": changed, "graph_version": version})
+                          "changed": changed, "graph_version": version,
+                          "allow_wide": bool(body.allow_wide), "wide_cidrs": wide})
     return {"scope": _scope_out(sensor_uuid, row, sensor), "changed": changed,
-            "previous": before, "graph_version": version}
+            "previous": before, "graph_version": version, "warnings": warnings}
+
+
+def _scope_warnings(cidrs: list[str], sensor: Any, seen: list[dict[str, Any]], capped: bool) -> list[str]:
+    out: list[str] = []
+    adv = scope_advisories(cidrs, seen, capped=capped)
+    for c in adv["declared_but_unobserved"]:
+        out.append(f"{c}: this sensor saw no flows in it in the last {SCOPE_WINDOW_DAYS} days "
+                   "(declare only what the sensor can see)")
+    if sensor["status"] != "active":
+        out.append(f"the sensor is {sensor['status']}: a revoked sensor covers nothing")
+    elif not sensor["online"]:
+        out.append("the sensor is offline: it covers nothing while it is offline")
+    return out
 
 
 @router.delete("/v1/assurance/sensor-scopes/{sensor_uuid}", response_model=SensorScopeDeleteOut)

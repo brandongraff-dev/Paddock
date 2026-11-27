@@ -7,6 +7,7 @@ import os
 import socket
 import ssl
 import threading
+import time
 
 import pytest
 
@@ -154,6 +155,23 @@ def test_locate_errors(tmp_path):
     assert ei.value.code == "input.insecure_transport"
 
 
+def test_present_but_unusable_targets_are_unreadable_not_missing(tmp_path):
+    root = tmp_path / "b"
+    (root / "attestation" / "latest.json").mkdir(parents=True)                      # latest.json is a directory
+    with pytest.raises(fetch.FetchError) as ei:
+        fetch.locate(str(root))
+    assert ei.value.code == "input.unreadable"
+    fifo = tmp_path / "pipe"
+    os.mkfifo(str(fifo))
+    with pytest.raises(fetch.FetchError) as ei:
+        fetch.locate(str(fifo))
+    assert ei.value.code == "input.unreadable"
+    os.symlink(str(tmp_path / "nowhere"), str(tmp_path / "dangling"))
+    with pytest.raises(fetch.FetchError) as ei:
+        fetch.locate(str(tmp_path / "dangling"))
+    assert ei.value.code == "input.unreadable"
+
+
 def test_oversize_envelope_target_is_input_too_large(tmp_path):
     root = make_bundle(tmp_path / "b")
     (root / "attestation" / "latest.json").write_bytes(b" " * (512 * 1024 + 1))
@@ -183,7 +201,7 @@ def test_https_get_success_headers_and_not_found():
     assert s.read("keys.json", 1000) == b'{"k":1}'
     assert s.read("revoked.json", 1000) is None                                  # 404 is absence, not an error
     c = net.calls[0]
-    assert c["headers"]["Accept-Encoding"] == "identity" and c["max_bytes"] == 1000 and c["timeout"] == 10.0
+    assert c["headers"]["Accept-Encoding"] == "identity" and c["max_bytes"] == 1000 and 9.0 < c["timeout"] <= 10.0   # the remaining share of one overall deadline
     assert not any(k.lower() in ("authorization", "cookie", "proxy-authorization") for k in c["headers"])
     assert c["ips"] == [PUBLIC]
 
@@ -337,7 +355,7 @@ def _self_signed(host):
     from cryptography.x509.oid import NameOID
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key()).serial_number(1)
             .not_valid_before(now - datetime.timedelta(days=1)).not_valid_after(now + datetime.timedelta(days=1))
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
@@ -412,5 +430,100 @@ def test_real_tls_transport_rejects_a_certificate_for_another_host(tmp_path):
         with pytest.raises(fetch.FetchError) as ei:
             s.read("keys.json", 100)
         assert ei.value.code == "input.fetch_failed"
+    finally:
+        srv.close()
+
+
+# ------------------------------------------------------------------------------- one overall deadline
+class DripServer(object):
+    """A TLS server that never finishes: the status line, then one byte of body (or of header) at a time."""
+
+    def __init__(self, tmp_path, host, drip_headers=False, content_length=100000, interval=0.3):
+        cert, key = _self_signed(host)
+        (tmp_path / "dc.pem").write_bytes(cert)
+        (tmp_path / "dk.pem").write_bytes(key)
+        self.cafile = str(tmp_path / "dc.pem")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(self.cafile, str(tmp_path / "dk.pem"))
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(5)
+        self.port = self.sock.getsockname()[1]
+        self.ctx, self.drip_headers, self.length, self.interval = ctx, drip_headers, content_length, interval
+        self.stop = False
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while not self.stop:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn):
+        try:
+            with self.ctx.wrap_socket(conn, server_side=True) as tls:
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    data += tls.recv(4096)
+                if self.drip_headers:
+                    for ch in b"HTTP/1.1 200 OK\r\nX-Slow: " + b"a" * 4000:
+                        if self.stop:
+                            return
+                        tls.sendall(bytes([ch]))
+                        time.sleep(self.interval)
+                else:
+                    tls.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % self.length)
+                    while not self.stop:
+                        tls.sendall(b"x")
+                        time.sleep(self.interval)
+        except Exception:
+            pass
+
+    def close(self):
+        self.stop = True
+        self.sock.close()
+
+
+@pytest.mark.parametrize("drip_headers", [False, True])
+def test_a_server_that_drips_bytes_cannot_hold_the_fetch_past_the_deadline(tmp_path, drip_headers):
+    srv = DripServer(tmp_path, "paddock.test", drip_headers=drip_headers)
+    try:
+        ctx = ssl.create_default_context(cafile=srv.cafile)
+        s = fetch.HttpSource("https://paddock.test:%d/" % srv.port, timeout=1.0, allow_private=True,
+                             resolve=lambda h, p: ["127.0.0.1"], ssl_context=ctx)
+        t0 = time.monotonic()
+        with pytest.raises(fetch.FetchError) as ei:
+            s.read("keys.json", 262144)
+        assert ei.value.code == "input.fetch_failed"
+        assert time.monotonic() - t0 < 4.0, "the deadline is one wall-clock bound over connect, headers and body"
+    finally:
+        srv.close()
+
+
+def test_a_body_shorter_than_its_content_length_is_a_failed_fetch_not_a_short_success(tmp_path):
+    srv = TlsServer(tmp_path, "paddock.test", lambda req: b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\nConnection: close\r\n\r\n{\"a\":1}")
+    try:
+        ctx = ssl.create_default_context(cafile=srv.cafile)
+        s = fetch.HttpSource("https://paddock.test:%d/" % srv.port, timeout=2.0, allow_private=True,
+                             resolve=lambda h, p: ["127.0.0.1"], ssl_context=ctx)
+        with pytest.raises(fetch.FetchError) as ei:
+            s.read("keys.json", 1000)
+        assert ei.value.code == "input.fetch_failed"
+    finally:
+        srv.close()
+
+
+def test_the_doh_transport_has_the_same_overall_deadline(tmp_path, monkeypatch):
+    from paddock_verify.dns import doh
+    srv = DripServer(tmp_path, "localhost")
+    try:
+        ctx = ssl.create_default_context(cafile=srv.cafile)
+        monkeypatch.setattr(doh.ssl, "create_default_context", lambda *a, **k: ctx)
+        t0 = time.monotonic()
+        with pytest.raises(Exception):
+            doh._https_transport("https://localhost:%d/dns-query?dns=AAAA" % srv.port, {"Accept": "application/dns-message"}, 1.0, 4096)
+        assert time.monotonic() - t0 < 4.0
     finally:
         srv.close()

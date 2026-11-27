@@ -1,0 +1,38 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "A policy that requires DNS rejects a subject with no domain.",
+  "dns": null,
+  "expect": {
+    "codes": [
+      "dns.not_applicable"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "dns.not_applicable",
+    "profile": "policy",
+    "warnings": []
+  },
+  "id": "estate-subject-policy-requires-dns",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": {
+    "policy_version": 1
+  },
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 6.3"
+  ],
+  "state": null,
+  "tags": [
+    "dns",
+    "policy"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

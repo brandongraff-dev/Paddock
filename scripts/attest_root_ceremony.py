@@ -261,6 +261,19 @@ def _root_window(root_key_path: str, root_pub: bytes, explicit: str | None) -> t
     raise CeremonyError(f"{candidate} does not list this root key")
 
 
+def _issuer_window(a: argparse.Namespace, issuer_pub: bytes) -> tuple:
+    if not a.issuer_cert_file:
+        raise CeremonyError("--issuer-key-file needs --issuer-cert-file (its window bounds the revoker's)")
+    try:
+        env = dsse.parse_envelope(Path(a.issuer_cert_file).expanduser().read_bytes(), expected_type=dsse.PAYLOAD_TYPE_KEY_CERT)
+        body = canon.roundtrip(env.payload)
+        if body["usage"] != "issue-cert" or b64.strict_decode(body["public_key"]) != issuer_pub:
+            raise ValueError("not this issuer's certificate")
+        return timefmt.parse(body["not_before"]), timefmt.parse(body["not_after"])
+    except (OSError, ValueError, KeyError, JsonError):
+        raise CeremonyError("--issuer-cert-file is not the certificate of --issuer-key-file") from None
+
+
 def _certify(a: argparse.Namespace, *, usage: str, label: str) -> int:
     out = Path(a.out_dir).expanduser()
     if _inside_repo(out):
@@ -271,15 +284,26 @@ def _certify(a: argparse.Namespace, *, usage: str, label: str) -> int:
             raise CeremonyError(f"{p} exists; never overwrite (pick a new --out-dir)")
     if a.serial < 1:
         raise CeremonyError("--serial is a positive integer")
-    root = _load_root_key(a.root_key_file, _passphrase(ROOT_PASSPHRASE_ENV, "attestation root", confirm=False))
+    if getattr(a, "issuer_key_file", None) and usage != "revoke":
+        raise CeremonyError("--issuer-key-file applies to certify-revoker only (an issuer is certified by the root)")
+    if getattr(a, "issuer_key_file", None):
+        # the revoker certified through the ISSUER (the open verifier accepts both): the issuer key signs, online
+        root = _load_root_key(a.issuer_key_file, _passphrase(PLATFORM_PASSPHRASE_ENV, "issuer", confirm=False))
+    else:
+        root = _load_root_key(a.root_key_file, _passphrase(ROOT_PASSPHRASE_ENV, "attestation root", confirm=False))
     root_pub = _raw(root)
     nb = _t(a.not_before, "--not-before") if a.not_before else _now()
     na = _t(a.not_after, "--not-after") if a.not_after else _add_years(nb, 1)
     if not nb < na:
         raise CeremonyError("the window is empty")
-    window = _root_window(a.root_key_file, root_pub, a.roots_file)
-    if window is not None and not (window[0] <= nb and na <= window[1]):
-        raise CeremonyError("the requested window is outside the root's validity window")
+    if getattr(a, "issuer_key_file", None):
+        window = _issuer_window(a, root_pub)
+        if not (window[0] <= nb and na <= window[1]):
+            raise CeremonyError("the requested window is outside the issuer's validity window")
+    else:
+        window = _root_window(a.root_key_file, root_pub, a.roots_file)
+        if window is not None and not (window[0] <= nb and na <= window[1]):
+            raise CeremonyError("the requested window is outside the root's validity window")
 
     generated: Ed25519PrivateKey | None = None
     if a.public_key_file:
@@ -292,9 +316,13 @@ def _certify(a: argparse.Namespace, *, usage: str, label: str) -> int:
                             serial=a.serial)
     envelope = dsse.build_envelope(dsse.PAYLOAD_TYPE_KEY_CERT, payload, kid_of(root_pub),
                                    root.sign(dsse.pae(dsse.PAYLOAD_TYPE_KEY_CERT, payload)))
-    root_entry = window[2] if window is not None else {
-        "kid": kid_of(root_pub), "public_key": b64.encode(root_pub), "usage": "root",
-        "not_before": timefmt.format(nb), "not_after": timefmt.format(na)}
+    if getattr(a, "issuer_key_file", None):
+        root_entry = {"kid": kid_of(root_pub), "public_key": b64.encode(root_pub), "usage": "issue-cert",
+                      "not_before": timefmt.format(window[0]), "not_after": timefmt.format(window[1])}
+    else:
+        root_entry = window[2] if window is not None else {
+            "kid": kid_of(root_pub), "public_key": b64.encode(root_pub), "usage": "root",
+            "not_before": timefmt.format(nb), "not_after": timefmt.format(na)}
     _self_test_cert(envelope, root_pub, usage, root_entry)
 
     out.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -389,6 +417,9 @@ def main(argv: list | None = None) -> int:
         c.add_argument("--not-after", help="default one year after --not-before")
         c.add_argument("--public-key-file", help="certify this public key instead of generating a key pair")
         c.add_argument("--roots-file", help="trust_roots.json to read the root window from (default: next to the root key)")
+        if name == "certify-revoker":
+            c.add_argument("--issuer-key-file", help="certify the revoker through the (online) issuer key instead of the root")
+            c.add_argument("--issuer-cert-file", help="the issuer's certificate (bounds the revoker's window)")
         c.set_defaults(fn=fn)
 
     f = sub.add_parser("fingerprint", help="print a public key's kid and fingerprint")

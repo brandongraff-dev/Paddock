@@ -3,7 +3,9 @@
 Two online Ed25519 keys, certified offline by the attestation root (``scripts/attest_root_ceremony.py``):
 
 * the **issuer** (usage ``issue-cert``) certifies each estate's ``attest`` and ``anchor`` keys,
-* the **revoker** (usage ``revoke``) signs revocation lists; it can only deny.
+* the **revoker** (usage ``revoke``) signs revocation lists; it can only deny. Its certificate is signed by the root
+  (``certify-revoker``) or by the issuer (what the open verifier's own vectors do); a self-hoster's pinned issuer
+  may certify it too.
 
 Both live in PKCS8 PEM files encrypted with ``PADDOCK_ATTEST_PLATFORM_KEY_PASSPHRASE`` (``..._ISSUER_KEY_FILE`` and
 ``..._REVOKER_KEY_FILE``) next to their certificate files; the pinned trust roots come from
@@ -89,7 +91,7 @@ class PlatformKey:
 class PlatformKeys:
     issuer: PlatformKey
     revoker: PlatformKey
-    roots: tuple
+    roots: Any                 # certs.RootSet: the pinned roots and the issuers the release revokes
 
     def __repr__(self) -> str:
         return f"PlatformKeys(issuer={self.issuer.kid!r}, revoker={self.revoker.kid!r}, roots={len(self.roots)})"
@@ -175,7 +177,8 @@ def _raw_public(key: Ed25519PrivateKey) -> bytes:
     return key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
 
-def _load_one(usage: str, key_file: str, cert_file: str, passphrase: bytes, roots: list, now: int) -> PlatformKey:
+def _load_one(usage: str, key_file: str, cert_file: str, passphrase: bytes, roots: list, now: int,
+              issuers: tuple = ()) -> PlatformKey:
     label = "issuer" if usage == "issue-cert" else "revoker"
     try:
         cert = certs.parse_cert(_read(cert_file, f"{label} certificate"))
@@ -189,15 +192,54 @@ def _load_one(usage: str, key_file: str, cert_file: str, passphrase: bytes, root
         raise PlatformKeysError(f"the {label} private key does not match its certificate", "key.cert_subject_mismatch")
     pinned = next((r for r in roots if r.kid == cert.kid and r.usage == "issue-cert"), None)
     try:
+        if cert.kid in getattr(roots, "revoked_issuers", ()):
+            raise certs.CertError("issuer.revoked", "the release revokes this issuer")
         if usage == "issue-cert" and pinned is not None:
             # a self-hoster's pinned issuer (chain length 1): trusted by being pinned, window judged here
             if not (pinned.window_contains(now) and cert.window_contains(now)):
                 raise certs.CertError("issuer.outside_validity", "the pinned issuer is not valid now")
         else:
-            certs.verify_chain(cert, issuers=[], roots=roots, at=now, expect_usage=usage)
+            certs.verify_chain(cert, issuers=list(issuers), roots=roots, at=now, expect_usage=usage)
     except certs.CertError as exc:
         raise PlatformKeysError(f"the {label} certificate does not verify: {exc.detail}", exc.code) from None
     return PlatformKey(usage, cert, key)
+
+
+def previous_issuer_certs() -> list:
+    """Earlier issuer certificates, kept so keys certified by a previous issuer stay listable: every ``*.json`` file in
+    the directory ``<PADDOCK_ATTEST_ISSUER_CERT_FILE>.d`` (if it exists). Unreadable or invalid files are ignored. The
+    chain of each is judged by whoever uses it (``certs.verify_chain``), not here."""
+    base = settings.issuer_cert_file
+    out: list = []
+    if not base:
+        return out
+    directory = base + ".d"
+    try:
+        names = sorted(n for n in os.listdir(directory) if n.endswith(".json"))
+    except OSError:
+        return out
+    for name in names:
+        try:
+            with open(os.path.join(directory, name), "rb") as fh:
+                out.append(certs.parse_cert(fh.read(65536)))
+        except (OSError, certs.CertError):
+            logger.warning("attest_previous_issuer_cert_ignored", extra={"file": name})
+    return out
+
+
+def issuer_certificates() -> list:
+    """The issuer certificates a chain may pass through (the current one, then the earlier ones): public data, read
+    without decrypting any key. Used to verify anchors and certificates in processes that never sign."""
+    out: list = []
+    path = settings.issuer_cert_file
+    if _present(path):
+        try:
+            out.append(certs.parse_cert(_read(path, "issuer certificate")))
+        except (certs.CertError, PlatformKeysError):
+            logger.warning("attest_issuer_cert_unreadable")
+    seen = {c.kid for c in out}
+    out.extend(c for c in previous_issuer_certs() if c.kid not in seen)
+    return out
 
 
 def load(*, now: Any = None) -> PlatformKeys:
@@ -217,5 +259,6 @@ def load(*, now: Any = None) -> PlatformKeys:
         raise PlatformNotConfigured(tuple(missing))
     roots = load_roots()
     issuer = _load_one("issue-cert", settings.issuer_key_file, settings.issuer_cert_file, passphrase, roots, when)
-    revoker = _load_one("revoke", settings.revoker_key_file, settings.revoker_cert_file, passphrase, roots, when)
-    return PlatformKeys(issuer=issuer, revoker=revoker, roots=tuple(roots))
+    revoker = _load_one("revoke", settings.revoker_key_file, settings.revoker_cert_file, passphrase, roots, when,
+                        issuers=(issuer.cert,))
+    return PlatformKeys(issuer=issuer, revoker=revoker, roots=roots)

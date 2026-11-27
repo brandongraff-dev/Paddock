@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
-from .refs import INTERNET, KINDS, RefError, cidr_ref, is_valid_ref, is_valid_tag, parse_ref
+from .refs import INTERNET, KINDS, RefError, cidr_ref, is_estate_ref, is_valid_ref, is_valid_tag, parse_ref
 from .types import BuildOutput, FactOut
 
 logger = logging.getLogger(__name__)
@@ -79,10 +79,10 @@ _FACT_KEYS = frozenset({"status", "signed", "key_id", "seq", "evidence_ref", "co
 
 # Generic kinds never overwrite a more specific one (two builders emit the same node; a
 # kind that ping-ponged would bump graph_version on every build).
-_KIND_RANK = {"cloud_instance": 3, "cloud_db": 3, "cloud_lb": 3, "device": 3,
+_KIND_RANK = {"cloud_instance": 3, "cloud_db": 3, "cloud_lb": 3, "device": 3, "estate": 3,
               "host": 2, "internet": 2, "ip": 1, "cidr": 1}
 _KIND_RANK_SQL = ("(CASE {c} WHEN 'cloud_instance' THEN 3 WHEN 'cloud_db' THEN 3 "
-                  "WHEN 'cloud_lb' THEN 3 WHEN 'device' THEN 3 WHEN 'host' THEN 2 "
+                  "WHEN 'cloud_lb' THEN 3 WHEN 'device' THEN 3 WHEN 'estate' THEN 3 WHEN 'host' THEN 2 "
                   "WHEN 'internet' THEN 2 ELSE 1 END)")
 
 
@@ -325,6 +325,8 @@ def _clean_nodes(out: BuildOutput, rep: BuildReport) -> dict[str, dict[str, Any]
                 raise ValueError("bad ref/kind")
             if (n.ref == INTERNET) != (n.kind == "internet"):
                 raise ValueError("internet ref/kind mismatch")
+            if is_estate_ref(n.ref) != (n.kind == "estate"):
+                raise ValueError("estate ref/kind mismatch")      # the residual is a ref prefix AND a kind, never one alone
             asset_id = str(uuid.UUID(str(n.asset_id))) if n.asset_id else None
             attrs = _json(n.attrs if isinstance(n.attrs, dict) else None)
             if attrs is None:
@@ -418,8 +420,8 @@ def _clean_coverage(out: BuildOutput, rep: BuildReport) -> dict[tuple, dict[str,
         try:
             if c.source != out.source:
                 raise ValueError(f"coverage source {c.source!r} != build source {out.source!r}")
-            if not is_valid_ref(c.node_ref) or c.node_ref == INTERNET:
-                raise ValueError("bad node ref (the internet is never covered)")
+            if not is_valid_ref(c.node_ref) or c.node_ref == INTERNET or is_estate_ref(c.node_ref):
+                raise ValueError("bad node ref (the internet and an estate residual are never covered)")
             if c.direction not in DIRECTIONS or c.tier not in BASES:
                 raise ValueError("bad direction/tier")
             if not isinstance(c.observed_at, dt.datetime) or c.observed_at.tzinfo is None:
@@ -694,8 +696,8 @@ def _clean_facts(out: BuildOutput, rep: BuildReport) -> dict[str, dict[str, Any]
                 raise ValueError("not a FactOut")
             if f.source != out.source:
                 raise ValueError(f"fact source {f.source!r} != build source {out.source!r}")
-            if not is_valid_ref(f.node_ref) or f.node_ref == INTERNET:
-                raise ValueError("bad node ref (the internet carries no host facts)")
+            if not is_valid_ref(f.node_ref) or f.node_ref == INTERNET or is_estate_ref(f.node_ref):
+                raise ValueError("bad node ref (the internet and an estate residual carry no host facts)")
             if f.tier not in BASES:
                 raise ValueError("bad tier")
             if not isinstance(f.observed_at, dt.datetime) or f.observed_at.tzinfo is None:
@@ -1134,6 +1136,10 @@ def validate_label(node_ref: str, tag: str, value: str) -> tuple[str, str, str]:
         raise ValueError(str(exc)) from exc
     if node_ref == INTERNET:
         raise ValueError("the internet node cannot be labelled")
+    if is_estate_ref(node_ref):
+        # a residual is not a thing an operator can place, class or exempt: its absence of coverage and its
+        # unknown zone are what make it sound (docs/ASSURANCE_P2_1.md D31, no operator override)
+        raise ValueError("an estate node cannot be labelled")
     if not is_valid_tag(tag):
         raise ValueError("tags match ^[a-z][a-z0-9_-]{0,47}$")
     value = (value or "").strip()
@@ -1141,8 +1147,8 @@ def validate_label(node_ref: str, tag: str, value: str) -> tuple[str, str, str]:
         raise ValueError("label value too long")
     if tag == "zone":
         validate_zone_name(value)
-    if tag == "kind" and value not in KINDS:
-        raise ValueError(f"kind must be one of {KINDS}")
+    if tag == "kind" and (value not in KINDS or value == "estate"):
+        raise ValueError(f"kind must be one of {tuple(k for k in KINDS if k != 'estate')}")
     return node_ref, tag, value
 
 

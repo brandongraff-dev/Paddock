@@ -24,7 +24,13 @@ CHUNK = 500
 
 
 class UploadError(RuntimeError):
-    pass
+    """A request that did not work. ``status`` and ``body`` are set when the server answered (the body is kept whole,
+    up to 4 KB, so a caller can show the server's own explanation; the message keeps only the first 200 characters)."""
+
+    def __init__(self, message: str = "", *, status: int | None = None, body: str = "") -> None:
+        super().__init__(message)
+        self.status = status
+        self.body = body
 
 
 def config_path() -> Path:
@@ -76,6 +82,17 @@ def api_key() -> str:
     return key
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: urllib copies every header (the API key included) onto the redirected request, to
+    whatever host the answer names, over whatever scheme."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, D102
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _request(method: str, url: str, key: str | None, body: Any = None, timeout: float = 30) -> Any:
     headers = {"Accept": "application/json", "User-Agent": f"paddock-cli/{__version__}"}
     if key:
@@ -86,12 +103,17 @@ def _request(method: str, url: str, key: str | None, body: Any = None, timeout: 
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - scheme checked
+        with _OPENER.open(req, timeout=timeout) as resp:  # noqa: S310 - scheme checked
             raw = resp.read().decode("utf-8", "replace")
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:200]
-        raise UploadError(f"server answered HTTP {exc.code}: {detail}") from exc
+        full = exc.read().decode("utf-8", "replace")[:4096]
+        if 300 <= exc.code < 400:
+            where = (exc.headers.get("Location") or "")[:200] if exc.headers else ""
+            raise UploadError(f"the server redirected the request (HTTP {exc.code}, to {where or 'somewhere else'}); "
+                              "the CLI never follows a redirect with your API key: use the final server URL",
+                              status=exc.code, body=full) from exc
+        raise UploadError(f"server answered HTTP {exc.code}: {full[:200]}", status=exc.code, body=full) from exc
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
         raise UploadError(f"cannot reach {url}: {exc}") from exc
 

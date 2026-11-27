@@ -1,0 +1,1 @@
+{"domain":"example.com","generated_at":"2026-12-01T09:00:01Z","head":{"digest":"sha256:ddaa13adc1f08b9b46d17b53a32b44cb7d9cb0298ce0273d9c862994a0523607","seq":2},"paths":["attestation/latest.json","keys.json","revoked.json"],"spec":"paddock-attest-bundle/v1"}

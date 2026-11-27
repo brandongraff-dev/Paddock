@@ -1,0 +1,42 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "No DNS is available and the policy makes the binding optional.",
+  "dns": null,
+  "expect": {
+    "codes": [],
+    "decision": "accepted",
+    "exit": 0,
+    "forbidden_terms": true,
+    "primary": null,
+    "profile": "policy",
+    "warnings": [
+      "dns.skipped_offline"
+    ]
+  },
+  "id": "valid-dns-optional-offline",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": {
+    "policy_version": 1,
+    "trust": {
+      "dns_binding": "optional"
+    }
+  },
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 6.3"
+  ],
+  "state": null,
+  "tags": [
+    "dns",
+    "policy",
+    "valid"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

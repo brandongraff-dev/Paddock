@@ -191,6 +191,7 @@ Install the optional dependency: `pip install 'paddock-orchestrator[aws]'`
         "ec2:DescribeRegions",
         "ec2:DescribeInstances",
         "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkInterfaces",
         "elasticloadbalancing:DescribeLoadBalancers",
         "elasticloadbalancing:DescribeListeners",
         "elasticloadbalancing:DescribeTargetGroups",
@@ -234,6 +235,25 @@ Install the optional dependency: `pip install 'paddock-orchestrator[aws]'`
 
 No `s3:GetObject`, no `Put*`/`Create*`/`Delete*`, no `iam:Pass*`. (The AWS
 managed `SecurityAudit` policy also covers this but is much broader.)
+
+**Why `ec2:DescribeNetworkInterfaces`** (provable containment, reach graph).
+A security group a rule refers to ("the database admits `sg-app`") may hold
+interfaces Paddock does not model: Lambda in a VPC, Fargate tasks, VPC
+endpoints, RDS and NAT interfaces, detached interfaces. The ENI inventory is
+how the reach builder proves a referenced group contains **only** instances
+and load balancers it knows. Where it cannot prove that (the permission is
+missing, a page failed, the read is stale or truncated, or an unmodelled
+interface exists) it adds an **estate** node to the graph and the invariants
+that depend on it read UNKNOWN, never HOLDS. Without this permission the sync
+still succeeds: the call is reported as a warning (`partial:
+ec2:DescribeNetworkInterfaces[<region>]: UnauthorizedOperation`), every
+security group is written with `eni_inventory.complete = false`, and the
+`aws_sg` builder notes "SG(s) referenced by rules have unenumerated members
+(ENI inventory missing)". Remedies: grant the permission, move non-modelled
+services into their own security group, or add a time-boxed `allow:` exception
+on the invariant. Interfaces created after a sync are invisible until the next
+one (the evidence `max_age` bounds that exposure). Only interface ids, types,
+descriptions and group ids are read; nothing about their traffic.
 Missing permissions do not fail the sync: each failed call becomes a warning
 in the run's `detail` ("partial: s3:GetBucketPolicyStatus: AccessDenied").
 

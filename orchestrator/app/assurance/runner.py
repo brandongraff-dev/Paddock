@@ -38,11 +38,16 @@ DOCUMENT differs from the one it was evaluated on) a different ``doc_sha``. The 
 catches inputs that do not move ``graph_version`` (node attrs, asset metadata). A graph the CIDR
 expansion could not complete makes every invariant UNKNOWN (``graph_incomplete:...``).
 
-Known policy gap (not changed here, needs a product decision): disabling or deleting an invariant
-leaves its open findings open. The runner only visits enabled invariants, so nothing re-evaluates
-them and no HOLDS can close them; closing them as "fixed" would be a false verification, so they
-stay open (a person can close them) until a lifecycle policy such as an "invariant disabled"
-annotation exists.
+Lifecycle (docs/ASSURANCE_P2_1.md 6.1, D33: annotate, never close). The runner only visits enabled
+invariants, so nothing re-evaluates the findings of a disabled or archived one and no HOLDS can close
+them; closing them as "fixed" would be a false verification, so they stay open. They are ANNOTATED
+(``findings.metadata.invariant_state``: ``disabled``, ``archived``, ``invalid_definition``,
+``not_entitled``) so nobody mistakes them for live ones: the API toggles annotate in the same
+transaction, the runner annotates what only it can see (an invariant whose stored definition does not
+compile, a tenant that is not entitled to ``assurance``) and ``housekeeping.reconcile_orphans`` repairs
+drift once per tick. A person gives up on them with ``POST /v1/invariants/{id}/findings/release``
+(``wontfix``, sticky). A result computed for an invariant that was disabled while it was evaluated is
+discarded (``invariant_disabled``) and writes nothing.
 
 ``paddock_assurance`` is imported lazily inside functions so ``scripts/export_openapi.py`` and the
 SDK checks (which install only the orchestrator) can import this module.
@@ -67,7 +72,7 @@ from typing import Any, Optional
 from .. import tenancy
 from ..config import settings
 from . import builders as builders_pkg
-from . import findings_sync, graph_loader, store
+from . import findings_sync, graph_loader, housekeeping, store
 from .types import BuildOutput
 
 logger = logging.getLogger(__name__)
@@ -88,6 +93,10 @@ HEARTBEAT = timedelta(days=1)
 AGENT_POSTURE_MAX_AGE_H = 6
 MAX_STORED_BLIND_SPOTS = 200
 PROCESS_ID = f"{socket.gethostname()}:{os.getpid()}"
+#: a tenant's annotation drift is repaired at most this often (process-local); the toggles themselves annotate at once.
+RECONCILE_EVERY_S = 120.0
+#: tenant id -> (monotonic time of the last reconcile, the ``entitled`` flag it ran with)
+_RECONCILE_LAST: dict[str, tuple[float, bool]] = {}
 
 _app_redis: Any = None
 #: tenant id -> source -> what the last build of that source did (process-local; see last_build).
@@ -350,10 +359,14 @@ async def _record(pool: Any, owner: str, d: _Def, rd: dict[str, Any], valid_unti
             if await store.fence_lease(conn, owner) is None:
                 raise _Discarded("lease_lost")
             cur = await conn.fetchrow(
-                "SELECT yaml, digest, last_verdict, last_graph_version FROM invariants WHERE id = $1 FOR UPDATE",
-                d.row["id"])
+                "SELECT yaml, digest, enabled, last_verdict, last_graph_version FROM invariants "
+                "WHERE id = $1 FOR UPDATE", d.row["id"])
             if cur is None or cur["yaml"] != d.row["yaml"] or cur["digest"] != d.row["digest"]:
                 return None
+            if not cur["enabled"]:
+                # Disabled or archived while this pass evaluated it: record nothing and (the caller) sync nothing. A
+                # verdict written now would look like a fresh check of an invariant the operator switched off.
+                raise _Discarded("invariant_disabled")
             if cur["last_graph_version"] is not None and graph_version < int(cur["last_graph_version"]):
                 raise _Discarded("stale_result")      # never overwrite a newer world's verdict
             await conn.execute(
@@ -373,6 +386,62 @@ async def _record(pool: Any, owner: str, d: _Def, rd: dict[str, Any], valid_unti
                     json.dumps(stored), graph_version, int(rd.get("violation_count") or 0),
                     int(cov.get("covered") or 0), int(cov.get("universe") or 0), now, valid_until)
     return cur["last_verdict"] != verdict
+
+
+#: how long the enabled guard may wait for a toggle that is committing right now (it is a few milliseconds in practice)
+_GUARD_LOCK_TIMEOUT = "5s"
+
+
+@contextlib.asynccontextmanager
+async def _enabled_guard(pool: Any, d: _Def) -> Any:
+    """Yield ``True`` (enabled), ``False`` (disabled or archived) or ``None`` (could not tell) for ``d`` and, while
+    the body runs, keep the invariant row ``FOR SHARE``-locked on a connection of its own.
+
+    This is what makes "no machine closes a finding of an invariant that is not enabled" hold without a change to the
+    findings sync: a toggle (PUT enabled=false, DELETE) takes ``FOR UPDATE`` on the same row before it writes, so it
+    WAITS for the sync that was admitted while the invariant was enabled and lands strictly after it, instead of
+    landing between the check and the close (the verifier's RACE1) or between the check and the runner's own
+    annotation clear (RACE2). A finding the sync closes is thus closed by an evaluation that finished while the
+    invariant was enabled; the toggle then annotates whatever is still open. The body must not write ``invariants``
+    for this row (it would wait for its own share lock): ``_mark_retry`` runs after the guard.
+
+    ``None`` (lock wait timed out or the look-up failed) is NOT treated as enabled: the caller skips the sync and
+    marks the invariant due again (fail safe, nothing is closed on a guess)."""
+    async with pool.acquire() as conn:
+        tx = conn.transaction()
+        await tx.start()
+        try:
+            state: Optional[bool] = None
+            try:
+                await conn.execute(f"SET LOCAL lock_timeout = '{_GUARD_LOCK_TIMEOUT}'")
+                enabled = await conn.fetchval("SELECT enabled AND archived_at IS NULL FROM invariants "
+                                              "WHERE id = $1 FOR SHARE", d.row["id"])
+                state = None if enabled is None else bool(enabled)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("assurance_enabled_check_failed", extra={"invariant": d.invariant_id})
+            yield state
+        finally:
+            with contextlib.suppress(Exception):
+                await tx.rollback()
+
+
+async def _note_state(pool: Any, d: _Def) -> None:
+    """After a verdict is recorded: an invariant whose definition does not compile annotates its findings
+    ``invalid_definition`` (they are not being re-checked); one that was evaluated clears any annotation (it is
+    being checked again, and only while it is enabled: a disable that just landed keeps its annotation). Best effort:
+    ``reconcile_orphans`` repairs a miss. Never changes a finding's status."""
+    try:
+        async with pool.acquire() as conn:
+            if d.plan is None:
+                await housekeeping.annotate_findings(conn, d.invariant_id, housekeeping.STATE_INVALID)
+            else:
+                await housekeeping.clear_annotations(conn, d.invariant_id, only_if_enabled=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception("assurance_note_state_failed", extra={"invariant": d.invariant_id})
 
 
 async def _mark_retry(pool: Any, d: _Def) -> None:
@@ -625,28 +694,43 @@ async def _evaluate_one(pool: Any, redis: Any, owner: str, d: _Def, snap: _Snaps
             item.update(skipped="definition_changed")
             return item
         item["changed"] = changed
-        on_violation = d.plan.invariant.on_violation if d.plan is not None else None
-        try:
-            rep = await findings_sync.sync_findings(
-                pool, redis, invariant_id=d.invariant_id, title=d.row["title"] or d.invariant_id,
-                finding_enabled=True if on_violation is None else on_violation.finding,
-                proposed_fixes=tuple(on_violation.propose) if on_violation is not None else (),
-                result=rd, graph_version=snap.version, now=now, lease_owner=owner)
-            item["findings"] = rep.as_dict()
-            if rep.skipped in ("lease_lost", "graph_moved"):
-                # the verdict is recorded but the findings were fenced out: make it due again
-                item["skipped"] = rep.skipped
-                await _mark_retry(pool, d)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("assurance_findings_sync_failed", extra={"invariant": d.invariant_id})
-            item["findings"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
-            await _mark_retry(pool, d)
+        retry = False
+        async with _enabled_guard(pool, d) as enabled:
+            if enabled is False:
+                # switched off after the verdict was recorded and before the findings were synced: the toggle already
+                # annotated them, and a close now would be a "fixed" from an invariant its owner just turned off
+                item.update(skipped="invariant_disabled")
+                return item
+            if enabled is None:
+                item.update(skipped="enabled_check_failed")        # cannot tell: close nothing, look again next tick
+                retry = True
+            else:
+                await _note_state(pool, d)
+                on_violation = d.plan.invariant.on_violation if d.plan is not None else None
+                try:
+                    rep = await findings_sync.sync_findings(
+                        pool, redis, invariant_id=d.invariant_id, title=d.row["title"] or d.invariant_id,
+                        finding_enabled=True if on_violation is None else on_violation.finding,
+                        proposed_fixes=tuple(on_violation.propose) if on_violation is not None else (),
+                        result=rd, graph_version=snap.version, now=now, lease_owner=owner)
+                    item["findings"] = rep.as_dict()
+                    if rep.skipped in ("lease_lost", "graph_moved"):
+                        # the verdict is recorded but the findings were fenced out: make it due again
+                        item["skipped"] = rep.skipped
+                        retry = True
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("assurance_findings_sync_failed", extra={"invariant": d.invariant_id})
+                    item["findings"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
+                    retry = True
+        if retry:
+            await _mark_retry(pool, d)          # after the guard: it writes the row the guard share-locked
     except _Discarded as gone:
         logger.warning("assurance_result_discarded",
                        extra={"invariant": d.invariant_id, "reason": gone.reason})
-        item.update(skipped=gone.reason, discarded=True)
+        # an invariant switched off mid-pass is the operator's decision, not a fault: skipped, not an error
+        item.update(skipped=gone.reason, discarded=gone.reason != "invariant_disabled")
     except asyncio.CancelledError:
         # Cancelled (hard timeout, shutdown) after the verdict may already be committed and before
         # the findings sync finished: without this the row looks up to date and the sync is lost
@@ -887,6 +971,22 @@ async def _entitled(pool: Any, tid: str) -> bool:
         return True
 
 
+async def _reconcile(pool: Any, tid: str, entitled: bool) -> None:
+    """Once per tick per tenant (at most every ``RECONCILE_EVERY_S``, or at once when the entitlement flipped): repair
+    the lifecycle annotation of the tenant's findings. Never raises, never changes a status."""
+    mono = time.monotonic()
+    last = _RECONCILE_LAST.get(tid)
+    if last is not None and last[1] == entitled and mono - last[0] < RECONCILE_EVERY_S:
+        return
+    _RECONCILE_LAST[tid] = (mono, entitled)
+    try:
+        await housekeeping.reconcile_orphans(pool, tid, entitled=entitled)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 -- housekeeping must never stop the loop
+        logger.exception("assurance_reconcile_failed", extra={"tenant": tid})
+
+
 async def tick_once(pool: Any, *, redis: Any = None, now: Optional[datetime] = None) -> dict[str, dict[str, Any]]:
     """One pass over every tenant. Each tenant is independent: a failure, a timeout or a held lease
     for one never delays the budgeted work of the next beyond its own hard cap. Tenants that are
@@ -894,7 +994,9 @@ async def tick_once(pool: Any, *, redis: Any = None, now: Optional[datetime] = N
     out: dict[str, dict[str, Any]] = {}
     for tid in await tenancy.list_tenant_ids(pool):
         try:
-            if not await _entitled(pool, tid):
+            entitled = await _entitled(pool, tid)
+            await _reconcile(pool, tid, entitled)
+            if not entitled:
                 out[tid] = {"ok": True, "tenant_id": tid, "skipped": "not_entitled", "built": False,
                             "builders": {}, "graph_version": None, "evaluated": 0, "results": [], "errors": []}
                 continue

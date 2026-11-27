@@ -1,4 +1,14 @@
-"""Assurance housekeeping: ``invariant_runs`` compaction (docs/ASSURANCE_P2_1.md 6.2, D34).
+"""Assurance housekeeping (docs/ASSURANCE_P2_1.md 6.1 and 6.2, D33 and D34).
+
+Two jobs live here because both are about what stays true about OLD data while the invariants move on:
+
+1. **Finding annotation for invariants nobody re-checks (6.1, D33).** A disabled, archived, invalid or unentitled
+   invariant is never evaluated, so its open findings are never re-verified: they stay open (closing them would be a
+   false verification) and are *annotated* ``metadata.invariant_state`` so nobody mistakes them for live ones. The router
+   annotates in the same transaction as the toggle, the runner annotates what it detects (``invalid_definition``,
+   ``not_entitled``), and ``reconcile_orphans`` repairs any drift on the loop's tick (per tenant, at most every
+   ``runner.RECONCILE_EVERY_S``). Nothing here ever changes a finding's status, and nothing here closes anything.
+2. **``invariant_runs`` compaction (6.2).**
 
 The run ledger (``invariant_runs``) gets a row on every verdict or digest change and once a day per invariant. Each row
 carries the full stored result: witnesses, up to 200 blind spots, up to 5000 + 5000 target refs, up to 5000 passing
@@ -25,6 +35,11 @@ from .. import tenancy
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+#: the annotation values (``findings.metadata.invariant_state``); "active" is the absence of the key
+STATE_DISABLED, STATE_ARCHIVED = "disabled", "archived"
+STATE_INVALID, STATE_NOT_ENTITLED = "invalid_definition", "not_entitled"
+STATES = (STATE_DISABLED, STATE_ARCHIVED, STATE_INVALID, STATE_NOT_ENTITLED)
 
 #: ``pg_try_advisory_lock`` key of the compaction pass ("PADDCO"); one replica at a time.
 COMPACT_LOCK_KEY = 0x5041_4444_434F
@@ -114,3 +129,91 @@ async def run_compaction(pool: Any, *, days: Optional[int] = None, batch: Option
     if done:
         logger.info("assurance_runs_compacted", extra={"counts": done})
     return done
+
+
+# --------------------------------------------------------------------------------------------
+# Finding annotation (6.1, D33)
+# --------------------------------------------------------------------------------------------
+
+#: which findings belong to the invariant ``$1``: its own rule id, or an estate finding ``<rule id>@<target>``. The
+#: ``@`` keeps ``acme:aa`` from matching ``acme:aa-bb``.
+_OWN = "(f.rule_id = 'invariant:' || {inv} OR starts_with(f.rule_id, 'invariant:' || {inv} || '@'))"
+
+
+def state_of(enabled: bool, archived_at: Any, last_graph_version: Any = None, last_reasons: Any = None) -> str:
+    """The invariant's lifecycle state from its stored columns: ``archived``, ``disabled``, ``invalid_definition`` (an
+    enabled one whose last recorded evaluation was the synthetic ``invalid_definition`` UNKNOWN) or ``active``.
+    ``not_entitled`` is decided by the runner against billing, not by columns."""
+    if archived_at is not None:
+        return STATE_ARCHIVED
+    if not enabled:
+        return STATE_DISABLED
+    if last_graph_version is not None and isinstance(last_reasons, list) and last_reasons == [STATE_INVALID]:
+        return STATE_INVALID
+    return "active"
+
+
+async def annotate_findings(con: Any, invariant_id: str, state: str) -> int:
+    """Mark the open and triaged findings of ``invariant_id`` with ``state``; returns how many CHANGED (a finding that
+    already carries this state keeps its original ``invariant_state_at``). Never touches a status."""
+    if state not in STATES:
+        raise ValueError(f"unknown invariant state {state!r}")
+    rows = await con.fetch(
+        "UPDATE findings f SET metadata = f.metadata || jsonb_build_object("
+        "'invariant_state', $2::text, 'invariant_state_at', to_jsonb(now())) "
+        "WHERE f.rule_source = 'invariant' AND f.status IN ('open', 'triaged') AND " + _OWN.format(inv="$1::text") +
+        " AND f.metadata->>'invariant_state' IS DISTINCT FROM $2::text RETURNING f.id", invariant_id, state)
+    return len(rows)
+
+
+async def clear_annotations(con: Any, invariant_id: str, *, only_if_enabled: bool = False) -> int:
+    """Remove the annotation from every finding of ``invariant_id`` (whatever its status: a closed finding keeps the
+    reason in its history, not a stale "disabled" flag). Used on re-enable (the row is enabled by then) and by the
+    runner when a verdict is back. ``only_if_enabled`` makes it a no-op unless the invariant row is enabled and not
+    archived right now: the runner's clear must never wipe the annotation of a disable that landed a moment ago."""
+    guard = (" AND EXISTS (SELECT 1 FROM invariants i WHERE i.invariant_id = $1::text AND i.enabled "
+             "AND i.archived_at IS NULL)") if only_if_enabled else ""
+    rows = await con.fetch(
+        "UPDATE findings f SET metadata = f.metadata - 'invariant_state' - 'invariant_state_at' "
+        "WHERE f.rule_source = 'invariant' AND f.metadata ? 'invariant_state' AND " + _OWN.format(inv="$1::text") +
+        guard + " RETURNING f.id", invariant_id)
+    return len(rows)
+
+
+_WANT = """
+WITH want AS (
+  SELECT invariant_id,
+         CASE WHEN archived_at IS NOT NULL THEN 'archived'
+              WHEN NOT enabled THEN 'disabled'
+              WHEN NOT $1::boolean THEN 'not_entitled'
+              WHEN last_graph_version IS NOT NULL AND last_result->'reasons' = '["invalid_definition"]'::jsonb
+                   THEN 'invalid_definition'
+         END AS state
+    FROM invariants
+)
+"""
+_ANNOTATE_ALL = _WANT + (
+    "UPDATE findings f SET metadata = f.metadata || jsonb_build_object("
+    "'invariant_state', w.state, 'invariant_state_at', to_jsonb(now())) FROM want w "
+    "WHERE w.state IS NOT NULL AND f.rule_source = 'invariant' AND f.status IN ('open', 'triaged') AND "
+    + _OWN.format(inv="w.invariant_id") + " AND f.metadata->>'invariant_state' IS DISTINCT FROM w.state "
+    "RETURNING f.id")
+_CLEAR_ALL = _WANT + (
+    "UPDATE findings f SET metadata = f.metadata - 'invariant_state' - 'invariant_state_at' FROM want w "
+    "WHERE w.state IS NULL AND f.rule_source = 'invariant' AND f.metadata ? 'invariant_state' AND "
+    + _OWN.format(inv="w.invariant_id") + " RETURNING f.id")
+
+
+async def reconcile_orphans(pool: Any, tenant_id: str, *, entitled: bool = True) -> dict[str, int]:
+    """Bring every annotation of one tenant in line with what its invariants are now (idempotent, set based).
+
+    Repairs what the toggle routes cannot: an invariant disabled or re-enabled behind the API's back (a restore, a
+    script, a std copy toggled elsewhere), a finding created by an evaluation that raced a disable, and the states only
+    the runner can see (``invalid_definition`` from the last recorded verdict, ``not_entitled`` from billing).
+    ``{"annotated": n, "cleared": m}``. Never changes a finding's status."""
+    with tenancy.tenant_context(tenant_id):
+        async with pool.acquire() as con:
+            async with con.transaction():
+                annotated = await con.fetch(_ANNOTATE_ALL, bool(entitled))
+                cleared = await con.fetch(_CLEAR_ALL, bool(entitled))
+    return {"annotated": len(annotated), "cleared": len(cleared)}

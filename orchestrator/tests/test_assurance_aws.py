@@ -53,10 +53,25 @@ def sg_row(gid, rules, *, acct=ACCT, region=REG, seen=T_NEW, truncated=False, na
             f"arn:aws:ec2:{region}:{acct}:security-group/{gid}", "last_seen": seen, "metadata": md}
 
 
+def inventory(row, *, instances=(), lbs=(), read_at=T_NEW):
+    """Give a security-group row the COMPLETE ENI inventory the connector writes (docs/ASSURANCE_P2_1.md 5.3):
+    the listed instances and load balancers are all that sits in the group. Without it a group referenced by a
+    rule has unproven membership and draws an estate edge (tests/test_assurance_aws_builders7.py)."""
+    row["metadata"].update(
+        inventory_complete=True,
+        eni_inventory={"complete": True, "read_at": read_at.isoformat(), "region": row["metadata"]["region"],
+                       "eni_total": len(instances) + len(lbs)},
+        eni_members={"instances": sorted(instances), "lbs": sorted(lbs), "truncated": False,
+                     "unmodeled": {"count": 0, "kinds": {}, "sample": []}})
+    return row
+
+
 def inst_row(name, sgs, *, public=("54.0.0.1",), private=("10.0.0.5",), acct=ACCT, region=REG,
-             seen=T_NEW):
+             seen=T_NEW, iid=None):
     md = {"provider": "aws", "resource_type": "instance", "account_id": acct, "region": region,
           "name": name, "private_ips": list(private)}
+    if iid:
+        md["instance_id"] = iid
     if sgs is not None:
         md["security_groups"] = list(sgs)
     if public is not None:
@@ -234,10 +249,14 @@ def test_broad_public_cidr_is_the_world_but_broad_private_is_not():
 
 
 def test_sg_source_is_every_member_of_that_group():
-    rows = [inst_row("web1", ["sg-web"]), inst_row("web2", ["sg-web"], public=[], private=["10.0.0.6"]),
+    # sg-web is referenced by a rule, so its membership must be proven (else an estate edge is added): a
+    # complete inventory naming exactly its three modeled members does that
+    rows = [inst_row("web1", ["sg-web"], iid="i-web1"),
+            inst_row("web2", ["sg-web"], public=[], private=["10.0.0.6"], iid="i-web2"),
             lb_row("alb", ["sg-web", "sg-lb"]), inst_row("other", ["sg-other"]),
             db_row("db", ["sg-db"]),
-            sg_row("sg-web", []), sg_row("sg-lb", []), sg_row("sg-other", []),
+            inventory(sg_row("sg-web", []), instances=["i-web1", "i-web2"], lbs=["app/alb"]),
+            sg_row("sg-lb", []), sg_row("sg-other", []),
             sg_row("sg-db", [rule("tcp", 5432, 5432, {"type": "sg", "value": "sg-web"})])]
     out = run(rows)
     assert edge_keys(out) == {(ref(m), ref("db"), "tcp", 5432, 5432) for m in ("web1", "web2", "alb")}
@@ -248,8 +267,9 @@ def test_sg_source_is_every_member_of_that_group():
 
 
 def test_sg_self_reference_connects_members_but_not_a_node_to_itself():
-    out = run([inst_row("a", ["sg-c"]), inst_row("b", ["sg-c"]),
-               sg_row("sg-c", [rule("tcp", 9000, 9000, {"type": "sg", "value": "sg-c"})])])
+    out = run([inst_row("a", ["sg-c"], iid="i-a"), inst_row("b", ["sg-c"], iid="i-b"),
+               inventory(sg_row("sg-c", [rule("tcp", 9000, 9000, {"type": "sg", "value": "sg-c"})]),
+                         instances=["i-a", "i-b"])])
     assert edge_keys(out) == {(ref("a"), ref("b"), "tcp", 9000, 9000),
                               (ref("b"), ref("a"), "tcp", 9000, 9000)}
 

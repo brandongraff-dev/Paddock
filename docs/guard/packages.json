@@ -1,0 +1,751 @@
+[
+  {
+    "id": "G0",
+    "title": "Foundation: model, files, config, suppress, baseline, ledger, registry, engine, outputs, CLI wiring, isolation tests",
+    "wave": 1,
+    "deps": [],
+    "owns": [
+      "cli/paddock_cli/guard/__init__.py",
+      "cli/paddock_cli/guard/__main__.py",
+      "cli/paddock_cli/guard/errors.py",
+      "cli/paddock_cli/guard/model.py",
+      "cli/paddock_cli/guard/textsafe.py",
+      "cli/paddock_cli/guard/files.py",
+      "cli/paddock_cli/guard/context.py",
+      "cli/paddock_cli/guard/config.py",
+      "cli/paddock_cli/guard/suppress.py",
+      "cli/paddock_cli/guard/ledger.py",
+      "cli/paddock_cli/guard/registry.py",
+      "cli/paddock_cli/guard/rulepack.py",
+      "cli/paddock_cli/guard/prompts.py",
+      "cli/paddock_cli/guard/engine.py",
+      "cli/paddock_cli/guard/output.py",
+      "cli/paddock_cli/guard/yamlish.py",
+      "cli/paddock_cli/guard/catalogue.py",
+      "cli/paddock_cli/guard/cli.py",
+      "cli/paddock_cli/guard/api.py",
+      "cli/paddock_cli/guard/cmd_check.py",
+      "cli/paddock_cli/guard/cmd_explain.py",
+      "cli/paddock_cli/guard/cmd_list.py",
+      "cli/paddock_cli/guard/cmd_status.py",
+      "cli/paddock_cli/guard/cmd_baseline.py",
+      "cli/paddock_cli/guard/cmd_ledger.py",
+      "cli/paddock_cli/guard/cmd_catalogue.py",
+      "cli/paddock_cli/guard/checks/__init__.py",
+      "cli/paddock_cli/guard/data/__init__.py",
+      "cli/paddock_cli/guard/packs/example.toml",
+      "cli/paddock_cli/guard/PROVENANCE.md",
+      "cli/tests/guard/conftest.py",
+      "cli/tests/guard/fakes.py",
+      "cli/tests/guard/support/**",
+      "cli/tests/guard/fixtures/apps/clean-app/**",
+      "cli/tests/guard/test_g0_*.py",
+      "cli/tests/guard/test_isolation.py",
+      "cli/tests/guard/test_network_allowlist.py",
+      "cli/tests/guard/test_no_promotion_strings.py",
+      "cli/tests/guard/test_regex_safety.py",
+      "cli/tests/guard/test_textsafe.py",
+      "cli/paddock_cli/main.py",
+      "cli/pyproject.toml",
+      "cli/paddock_cli/guard/gitutil.py",
+      "cli/paddock_cli/guard/fixers/__init__.py",
+      "cli/paddock_cli/guard/packs/__init__.py",
+      "ruff.toml"
+    ],
+    "spec_sections": [
+      "3.2",
+      "3.3",
+      "3.4",
+      "3.5",
+      "3.6",
+      "3.7",
+      "3.9",
+      "3.10",
+      "4.0",
+      "D4",
+      "D5",
+      "D9",
+      "D10",
+      "D11",
+      "D12",
+      "D13"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && ruff check cli/paddock_cli/guard cli/tests/guard/*.py cli/tests/guard/support",
+      "cd /home/user/Paddock && ruff check ."
+    ],
+    "acceptance": [
+      "python -m paddock_cli.guard --help/list/explain/check run offline with exit codes per D12",
+      "delta mode against a temporary git repo: legacy findings hidden, new finding shown, moved code keeps its fingerprint; --staged reads index content (git show :path), not the working tree",
+      "suppressions: valid, missing reason, ignore-file, inline_suppressible=False ignored with a note; baseline create/update; ledger append, 5 MB rotation, mode 0600, no contents recorded",
+      "config precedence, unknown key error, project allow_loopback ignored with a warning, --config-ref",
+      "files.py: symlinks, FIFO, traversal in a faked git listing, oversize, binary, limits give complete=false; BaseTree hostile tar rejected",
+      "textsafe removes categories Cc Cf Cs Co Cn and ANSI; redact never returns more than 4 characters",
+      "outputs text/json/sarif/markdown match section 3.4 and a hostile finding is clean in all four",
+      "test_isolation resolves every import to an absolute module that must be stdlib or start with paddock_cli.guard (relative imports leaving the package, __import__ and importlib are violations), bans shell=True/os.system/eval/exec/pickle and file writes outside files.py; test_network_allowlist (subprocess only in gitutil.py; network hosts per module), test_no_promotion_strings (word-boundary regexes over every emitted string, no URL in User-Agent or init output), SPDX headers, registry invariants, catalogue counts (4.10 only when all packs are built), cmd modules import light, generic fixture runner",
+      "cli/paddock_cli/main.py change is one additive hunk of at most 8 lines (section 3.5); cli/pyproject.toml change is exactly the paddock-guard script and the *.toml package-data entry; clean-venv wheel has no third-party packages and paddock-guard --version works",
+      "existing cli suite: 0 failures and 0 errors on 3.13 with the known aiohttp test deselected, against the baseline pass count G0 records in its report before editing anything (no literal count); guard tests green on 3.11 and 3.13",
+      "new G0 pieces (3.11, 3.12): files.safe_write/safe_append refuse symlinked .paddock, CLAUDE.md, .gitignore and ledger; gitutil.run_git runs nothing for a hostile .git/config (fsmonitor sentinel) and rejects refs starting with '-'; state directory outside the repo, --no-cache writes nothing; git listing only when toplevel equals root; hostile parser inputs bounded; textsafe vectors and ascii_escape; prompt data line (hostile file, package, policy and pack-title names never in an instruction sentence)",
+      "tighten-only project config and trusted user-level config (inside-project env dir, symlink, world-writable all rejected); REQUIRE_TIERS agrees with GUARD_VERSION; registry.discover() finds pkg.checks and urlcheck.checks when present; FIXER_NAMES stub makes test_registry_invariants pass in wave 2; test_catalogue_counts asserts the 4.10 numbers only when all_packs_built.py exists",
+      "test support: neutral fixture names with rename map, expand_fixture and expand_app.py, git stanza, TP variants, git helper works with ambient commit.gpgsign=true, launcher and guard_env, fixtures not collected by pytest and not linted (ruff check . clean), unique test basenames, wheel lists guard/packs/example.toml"
+    ]
+  },
+  {
+    "id": "G1",
+    "title": "Package guard: npm and PyPI verdicts, deps diff, install shim, top lists",
+    "wave": 2,
+    "deps": [
+      "G0"
+    ],
+    "owns": [
+      "cli/paddock_cli/guard/pkg/**",
+      "cli/paddock_cli/guard/cmd_pkg.py",
+      "cli/paddock_cli/guard/cmd_deps.py",
+      "cli/paddock_cli/guard/cmd_shim.py",
+      "scripts/guard_refresh_toplists.py",
+      "cli/tests/guard/pkg/**"
+    ],
+    "spec_sections": [
+      "5",
+      "4.8",
+      "D16",
+      "3.3",
+      "7.9 (U-15, U-27)"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard/pkg",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard/pkg",
+      "cd /home/user/Paddock/cli && PADDOCK_GUARD_NET=1 python -m pytest -x -q -p no:cacheprovider tests/guard/pkg -k live",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && ruff check cli/paddock_cli/guard/pkg"
+    ],
+    "acceptance": [
+      "every verdict row of 5.6 has a test; 7 PKG checks each with 3 TP and 3 NEG fixtures through the fake registry",
+      "egress test: hosts exactly registry.npmjs.org, api.npmjs.org, pypi.org, api.osv.dev; bodies and headers only the 5.1 fields; .npmrc token never in any recorded byte; invalid names never reach the transport",
+      "cache TTLs, offline, stale fallback, malformed and oversize entries ignored, modes 0600 and 0700",
+      "deps_diff against temporary git repos for package.json, package-lock.json, requirements.txt, pyproject.toml",
+      "install-command parser table of at least 60 lines across tool families",
+      "shim tested through subprocess with a fake npm: block, allow, unknown, bypass, missing real tool, uninstall exact, --write-rc block added and removed",
+      "top_npm.json and top_pypi.json with at least 4000 names each plus provenance, fetch date and the U-27 result; look-alike rule flag count on a 200-name sample printed",
+      "one live smoke test gated by PADDOCK_GUARD_NET=1 that must fail (not skip) with a clear message when a host is unreachable; run once and result reported; Simple API probed live once and recorded; only pkg/net.py imports urllib.request",
+      "hostile-command egress test (60 lines, tokens in every flag position, nothing token-shaped reaches the transport); never-sent names (private, workspace, alias, non-public resolved host, org scope); first-run disclosure with --yes and --dry-run; Simple API and releases-less fixtures give unknown(format_changed); look-alike rule meets the 5.4 bar; shim-check parsed by the real argparse tree; deadline honoured; wheel lists guard/pkg/data/top_npm.json, top_pypi.json and known_legit_near.json"
+    ]
+  },
+  {
+    "id": "G2a",
+    "title": "Checks: PG-SEC (11), PG-BAAS (7), PG-WEB (12)",
+    "wave": 2,
+    "deps": [
+      "G0"
+    ],
+    "owns": [
+      "cli/paddock_cli/guard/checks/secrets.py",
+      "cli/paddock_cli/guard/checks/baas.py",
+      "cli/paddock_cli/guard/checks/web.py",
+      "cli/paddock_cli/guard/checks/_common_a.py",
+      "cli/paddock_cli/guard/packs/guard-a-*.toml",
+      "docs/guard/sources/secrets.md",
+      "docs/guard/sources/web.md",
+      "docs/guard/sources/baas.md",
+      "docs/guard/sources/similarity-a.md",
+      "cli/tests/guard/fixtures/checks/PG-SEC-*/**",
+      "cli/tests/guard/fixtures/checks/PG-BAAS-*/**",
+      "cli/tests/guard/fixtures/checks/PG-WEB-*/**",
+      "cli/tests/guard/fixtures/apps/vulnerable-app/a/**",
+      "cli/tests/guard/test_checks_a_*.py",
+      "cli/paddock_cli/guard/checks/vendor_demo_keys.json"
+    ],
+    "spec_sections": [
+      "4.0",
+      "4.1",
+      "4.2",
+      "4.3",
+      "7.9 (U-16, U-18, U-19, U-20, U-26)",
+      "3.9"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard -k 'checks_a or regex_safety or fixture_runner'",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard -k 'checks_a or regex_safety or fixture_runner'",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && ruff check cli/paddock_cli/guard/checks"
+    ],
+    "acceptance": [
+      "30 checks implemented exactly as 4.1 to 4.3, each with at least 3 TP and 3 NEG fixture dirs, expect.json and NOTE.md; fixture runner green",
+      "registry invariants green; PG-SEC-003 is proposed medium with unverified_ids U-16",
+      "docs/guard/sources/secrets.md gives the provider documentation URL and read date for each token family; families without a source removed",
+      "no finding exposes more than 4 characters of a secret (property test over all SEC fixtures)",
+      "all module-level patterns pass test_regex_safety; 5000-file synthetic tree plus fixtures under 20 s on one core; 1 MB single-line file handled by windowing",
+      "TOKEN_FAMILIES, match_tokens, decode_jwt_role exported from _common_a for G4",
+      "handoff note lists finding counts over cli/tests/fixtures/vuln-repo, dashboard/src and cli/ (read only) for false-positive review",
+      "vulnerable-app/a plants at least one instance from each of SEC, BAAS, WEB",
+      "neutral fixture names, TP variants (CRLF, tab, BOM, blank lines) fire, known-miss fixtures for taint, lexer and tokenizer checks, lexer desync corpus ends in skipped; anchors and fingerprints contain no character or hash of a secret; sub-rule caps for SEC-001, 002, 006, 009; declared medium for BAAS-001 and WEB-003, 004, 006, 008, 011; docs/guard/sources/{secrets,web,baas,similarity-a}.md with documentation URLs; performance by CPU-time ratio, not wall clock"
+    ]
+  },
+  {
+    "id": "G2b",
+    "title": "Checks: PG-AGT (6), PG-SUP (5), PG-CI (4), PG-DKR (4)",
+    "wave": 2,
+    "deps": [
+      "G0"
+    ],
+    "owns": [
+      "cli/paddock_cli/guard/checks/agentcfg.py",
+      "cli/paddock_cli/guard/checks/supply.py",
+      "cli/paddock_cli/guard/checks/ci.py",
+      "cli/paddock_cli/guard/checks/docker.py",
+      "cli/paddock_cli/guard/checks/_common_b.py",
+      "cli/paddock_cli/guard/packs/guard-b-*.toml",
+      "docs/guard/sources/agent.md",
+      "docs/guard/sources/cicd.md",
+      "docs/guard/sources/similarity-b.md",
+      "cli/tests/guard/fixtures/checks/PG-AGT-*/**",
+      "cli/tests/guard/fixtures/checks/PG-SUP-*/**",
+      "cli/tests/guard/fixtures/checks/PG-CI-*/**",
+      "cli/tests/guard/fixtures/checks/PG-DKR-*/**",
+      "cli/tests/guard/fixtures/apps/vulnerable-app/b/**",
+      "cli/tests/guard/test_checks_b_*.py"
+    ],
+    "spec_sections": [
+      "4.0",
+      "4.4",
+      "4.5",
+      "4.6",
+      "4.7",
+      "7.9 (U-02, U-17, U-21)",
+      "3.9"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard -k 'checks_b or regex_safety or fixture_runner'",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard -k 'checks_b or regex_safety or fixture_runner'",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && ruff check cli/paddock_cli/guard/checks"
+    ],
+    "acceptance": [
+      "19 checks implemented exactly as 4.4 to 4.7, each with at least 3 TP and 3 NEG fixtures",
+      "PG-AGT-003 proposed medium with unverified_ids U-02; every AGT, SUP, PG-CI-001 and PG-CI-002 check has inline_suppressible=False with a test that an inline ignore does not silence it",
+      "hidden-Unicode fixtures generated from code point lists at test time; no invisible character committed; Persian, emoji ZWJ and BOM negatives pass; evidence never contains decoded hidden text",
+      "docs/guard/sources/cicd.md cites the GitHub security-hardening page for the context list and pinning advice; entries not on it are dropped",
+      "json_loads_lenient handles comments, trailing commas and reports duplicate keys; workflow reader skips unparseable files with a reason",
+      "all module-level patterns pass test_regex_safety",
+      "vulnerable-app/b plants at least one instance from each of AGT, SUP, CI, DKR",
+      "neutral fixture names, TP variants and known misses as G2a; yamlish supported subset recorded in docs/guard/sources/cicd.md, anchors, merge keys and flow style give skipped plus a note; CI-002 contexts cited per context (GitHub Security Lab, CodeQL) and capped at medium until the core contexts are cited; AGT-003 declared medium with U-02 closed and both rule syntaxes covered; AGT-005 --from handling; AGT-001 emoji VS16 table and two ZWJ/ZWNJ/LRM rules"
+    ]
+  },
+  {
+    "id": "G3",
+    "title": "Verify loop and deterministic fixers",
+    "wave": 3,
+    "deps": [
+      "G0",
+      "G2a",
+      "G2b"
+    ],
+    "owns": [
+      "cli/paddock_cli/guard/verify.py",
+      "cli/paddock_cli/guard/cmd_verify.py",
+      "cli/paddock_cli/guard/cmd_fix.py",
+      "cli/paddock_cli/guard/fixers/[a-z]*.py",
+      "cli/tests/guard/test_verify*.py",
+      "cli/tests/guard/test_fixers*.py",
+      "cli/tests/guard/fixtures/fixers/**"
+    ],
+    "spec_sections": [
+      "4.0.5",
+      "4.0.6",
+      "D14",
+      "D15",
+      "3.3"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard -k 'verify or fixers'",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard -k 'verify or fixers'",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && ruff check cli/paddock_cli/guard/verify.py cli/paddock_cli/guard/fixers"
+    ],
+    "acceptance": [
+      "every status of 4.0.5 reached by a test: verified, still_present, suppressed (inline and baseline), regressed, unverifiable, file removed",
+      "each fixer: exact before/after bytes, CRLF and mode preserved, atomic write, refuses a changed file, second apply is a no-op, diff redacts the literal, ast.parse passes for Python edits",
+      "--allow-breaking required by the breaking fixers and rejected by the others",
+      "full loop on fixtures: verified for SEC-011, AGT-001 and CI-004 (read-only workflow fixture), and with --allow-breaking for SUP-002 and SEC-001/002/003",
+      "last-report.json consumed by verify --fingerprint",
+      "workflow_permissions refuses workflows with write-capable steps; pin_from_lockfile and secret_to_env are breaking (--allow-breaking required, refused through the API/MCP, secret_to_env refused in client files); verify reports removed-from-tree for secrets and judges ordinal-anchored findings by group count; adversarial verify tests (split secret, renamed variable, moved file); every FIXER_NAMES entry has a module"
+    ]
+  },
+  {
+    "id": "G4",
+    "title": "URL check: read-only, SSRF-hard fetch of one URL",
+    "wave": 3,
+    "deps": [
+      "G0",
+      "G2a"
+    ],
+    "owns": [
+      "cli/paddock_cli/guard/urlcheck/**",
+      "cli/paddock_cli/guard/cmd_url.py",
+      "cli/tests/guard/url/**"
+    ],
+    "spec_sections": [
+      "6",
+      "4.9",
+      "D17",
+      "3.6",
+      "7.9"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard/url",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard/url",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && ruff check cli/paddock_cli/guard/urlcheck"
+    ],
+    "acceptance": [
+      "every P1 to P25 row has a test; vector corpus of at least 80 vectors all rejected without opening a transport",
+      "rebinding resolver called once per hop and connection uses the IP literal; redirect rules; cross-origin script never fetched; limits (requests, bytes, injected clock); header set equals P13; Content-Encoding discarded",
+      "PG-URL-001..004 each with 3 TP and 3 NEG against the fake site",
+      "loopback: project opt-in ignored with warning; no CLI option, env var or function parameter enables it (signature introspection); one real-socket test against http.server on 127.0.0.1 with a temporary user-level config",
+      "output never contains a raw secret; target text cleaned; only urlcheck/fetch.py imports socket, ssl, http.client",
+      "User-Agent without URL; deny list asserted directly per Python version; every asset request validated on its own; absolute deadline per read; chunked-decoding caps; HTML parsed up to 512 KB within the deadline"
+    ]
+  },
+  {
+    "id": "G5",
+    "title": "Hooks, init, rule files, MCP config, pre-commit",
+    "wave": 3,
+    "deps": [
+      "G0",
+      "G1",
+      "G2a",
+      "G2b"
+    ],
+    "owns": [
+      "cli/paddock_cli/guard/hooks/**",
+      "cli/paddock_cli/guard/initgen/**",
+      "cli/paddock_cli/guard/cmd_init.py",
+      "cli/paddock_cli/guard/cmd_hook.py",
+      ".pre-commit-hooks.yaml",
+      "cli/tests/guard/hooks/**",
+      "cli/tests/guard/test_init*.py"
+    ],
+    "spec_sections": [
+      "7.1",
+      "7.2",
+      "7.3",
+      "7.4",
+      "7.5",
+      "7.9 (U-01..U-09)",
+      "D18",
+      "D19"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard/hooks tests/guard/test_init*.py",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard/hooks tests/guard/test_init*.py",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && ruff check cli/paddock_cli/guard/hooks cli/paddock_cli/guard/initgen"
+    ],
+    "acceptance": [
+      "hook handler per 7.1: every event and tool variant, at least 20 malformed-input cases, exit-code table, loop breaker over 3 calls, stderr caps, no repository URL in any hook output, subprocess end-to-end run",
+      "settings merge per 7.2: existing hooks preserved in order, idempotent by sha256, indent and CRLF kept, duplicate-key and JSONC refused with snippet, symlink refused, --remove exact, backups under .paddock/backups",
+      "rule files per 7.3: body text equals the contract, modified and corrupt detection, CRLF, --remove, .paddock/init.json",
+      "MCP config entries per 7.4 and deeplink round trips, labelled UNVERIFIED",
+      "pre-commit per 7.5: generated entry invokes check --staged (the scan mode itself is G0); .pre-commit-hooks.yaml appended exactly once",
+      "init --all --dry-run changes nothing; init --all twice gives identical bytes",
+      "each UNVERIFIED row U-01..U-09 used here has its fake-harness test; .pre-commit-hooks.yaml change is an appended, marker-guarded block only",
+      "hooks advisory: deadlines (timeout minus 10 s) with an injected clock, root resolution bounded (no scan of HOME), sensitive files fail closed, loop-breaker counter outside the repo; init requires --yes in a non-tty; AGENTS.md-only repos get CLAUDE.md with @AGENTS.md; init --all output produces zero Guard findings and no URL; handler never imports guard.verify"
+    ]
+  },
+  {
+    "id": "G7",
+    "title": "Receipts, badge, GitHub Action, guard workflows, Makefile targets",
+    "wave": 4,
+    "deps": [
+      "G0",
+      "G1",
+      "G2b",
+      "G3",
+      "G5"
+    ],
+    "owns": [
+      "cli/paddock_cli/guard/receipt.py",
+      "cli/paddock_cli/guard/badge.py",
+      "cli/paddock_cli/guard/cmd_receipt.py",
+      "cli/paddock_cli/guard/cmd_badge.py",
+      "integrations/github-action/**",
+      ".github/workflows/guard.yml",
+      ".github/workflows/guard-release.yml",
+      "Makefile",
+      "cli/tests/guard/test_receipt*.py",
+      "cli/tests/guard/test_badge*.py",
+      "cli/tests/guard/test_workflows.py",
+      "cli/tests/guard/test_pr_comment.py"
+    ],
+    "spec_sections": [
+      "7.7",
+      "D7",
+      "D25",
+      "D30",
+      "9.9 (badge wording)"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard -k 'receipt or badge or workflows or pr_comment'",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard -k 'receipt or badge or workflows or pr_comment'",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests --ignore=tests/guard --deselect tests/test_upload_init_cli.py::test_zero_third_party_imports",
+      "cd /home/user/Paddock && make -n guard-test"
+    ],
+    "acceptance": [
+      "the one human-facing URL line appears in text and markdown receipts and the PR comment footer unless PADDOCK_NO_PROMPT or config suppresses it; never in JSON, SARIF, hook or MCP output",
+      "post_pr_comment against a fake GitHub transport: create, update by marker, pagination, bot-author match, fork-forbidden fallback, https-only API base, markdown neutralisation, 60000-character cap",
+      "test_workflows: no pull_request_target, every third-party uses is a 40-hex SHA (equal to the pin in release.yml where release.yml uses the same action), permissions present, tag filter guard-v*.*.*, release workflow header says UNVERIFIED-IN-SANDBOX",
+      "the action and both workflows pass the repository's own PG-CI checks",
+      "badge text never says secure or safe; Makefile targets run under make -n",
+      "ci.yml and release.yml unchanged; Makefile change is appended guard-* lines only",
+      "text receipt only carries the URL line; PR comment posts only when GITHUB_ACTIONS=true to api.github.com or the GITHUB_SERVER_URL host, exact github-actions[bot] login, injection-safe table; PR adding paddock:ignore exits 1; badge refuses 0 blocking for incomplete, offline or non-default-tier runs; pins are peeled commit SHAs; guard-release gate asserts tag, cli, mcp, guard-dist and GUARD_VERSION agree; example workflows pass PG-CI-003 (needs G2b)"
+    ]
+  },
+  {
+    "id": "G8",
+    "title": "Benchmark harness, prompts, oracles, conditions, adapters",
+    "wave": 4,
+    "deps": [
+      "G0",
+      "G3"
+    ],
+    "owns": [
+      "bench/README.md",
+      "bench/run.py",
+      "bench/score.py",
+      "bench/report.py",
+      "bench/import_run.py",
+      "bench/stats.py",
+      "bench/parse_files.py",
+      "bench/.gitignore",
+      "bench/prompts/**",
+      "bench/oracles/**",
+      "bench/conditions/**",
+      "bench/adapters/**",
+      "bench/tests/**"
+    ],
+    "spec_sections": [
+      "9.2",
+      "9.3",
+      "9.4",
+      "9.5",
+      "9.6",
+      "D23",
+      "D24",
+      "7.9 (U-25)"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock && python -m pytest -x -q -p no:cacheprovider bench/tests",
+      "cd /home/user/Paddock && ruff check bench"
+    ],
+    "acceptance": [
+      "36 prompts: 18 dev and 18 test over 9 stacks; banned-word and Guard-vocabulary tests pass; test.sha256 committed",
+      "oracles/CLASSES.md written first; one oracle per class used, each with 2 vulnerable and 2 safe fixtures classified correctly; oracles import nothing from paddock_cli (AST test)",
+      "stats.py reproduces the Wilson reference vectors of 9.5 to 4 decimals; paired bootstrap seeded; Fleiss kappa tested",
+      "adapters shape requests against recorded fixtures with no network and never persist keys; parse_files rejects hostile file lists",
+      "report.py refuses to print a number absent from a scored run; synthetic run produces scores.jsonl and summary.json",
+      "conditions include generic_review; FREEZE writer works; scoring calls the guard CLI by subprocess",
+      "generic_review required for any contrast; controls on at least 6 prompts; clean-room manifest and INVALID_FOR_CLAIMS refusal; permutation test, exact binomial, no interval below 10 discordant prompts; honesty metrics pre-registered; oracles authored without the checks directory; duplicate test basenames fail; bench imports nothing from paddock_cli and accepts no input outside bench/"
+    ]
+  },
+  {
+    "id": "G6",
+    "title": "MCP guard tools (paddock-guard-mcp)",
+    "wave": 5,
+    "deps": [
+      "G0",
+      "G1",
+      "G3",
+      "G4",
+      "G7"
+    ],
+    "owns": [
+      "mcp/paddock_mcp/guard_tools.py",
+      "mcp/paddock_mcp/guard_server.py",
+      "mcp/tests/conftest.py",
+      "mcp/tests/test_guard_tools.py",
+      "mcp/tests/test_guard_server.py",
+      "mcp/pyproject.toml",
+      "mcp/README.md",
+      "mcp/guard-dist/pyproject.toml",
+      "mcp/guard-dist/README.md"
+    ],
+    "spec_sections": [
+      "8",
+      "D20",
+      "D21",
+      "7.8 (mcp-name line)",
+      "7.9 (U-22)"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/mcp && python -m pytest -x -q -p no:cacheprovider tests",
+      "python3 -m venv /tmp/guard-mcp130 && /tmp/guard-mcp130/bin/pip install -q 'mcp==1.30.0' httpx pytest pytest-asyncio && cd /home/user/Paddock/mcp && /tmp/guard-mcp130/bin/python -m pytest -x -q -p no:cacheprovider tests",
+      "cd /home/user/Paddock && ruff check mcp"
+    ],
+    "acceptance": [
+      "existing 18 tests pass unchanged on mcp 2.3.0 and 1.30.0; new tests pass on both",
+      "tools, inputs and caps exactly as 8.2; guard_fix_apply registered only with --allow-write or PADDOCK_GUARD_ALLOW_WRITE=1; no loopback or SSRF parameter anywhere",
+      "hostile-repository fixture: no forbidden character class, no raw key, results under 24000 bytes, path traversal and symlink escape rejected, descriptions constant across projects",
+      "stdio subprocess end-to-end with PADDOCK_URL unset; --transport http refused; stdout carries only JSON-RPC",
+      "pyproject gains only the guard extra, the paddock-guard-mcp script and readme; README gains the Guard section and mcp-name line",
+      "mcp/guard-dist (thin distribution paddock-guard-mcp, mcp-name line, same-version dependencies); network tools absent without --allow-network-tools, guard_url host allow-list; guard_check pure; test_guard_isolation; subprocess tests through a launcher"
+    ]
+  },
+  {
+    "id": "G9",
+    "title": "Precision study harness and pinned corpus",
+    "wave": 5,
+    "deps": [
+      "G0",
+      "G1",
+      "G2a",
+      "G2b",
+      "G3",
+      "G4",
+      "G8"
+    ],
+    "owns": [
+      "bench/precision/corpus.json",
+      "bench/precision/corpus.sha256",
+      "bench/precision/fetch.py",
+      "bench/precision/run.py",
+      "bench/precision/packet.py",
+      "bench/precision/aggregate.py",
+      "bench/precision/gate.py",
+      "bench/precision/AUDIT.md",
+      "bench/precision/tests/**"
+    ],
+    "spec_sections": [
+      "9.7",
+      "9.8",
+      "D8",
+      "D23",
+      "7.9 (U-24)"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock && python -m pytest -x -q -p no:cacheprovider bench/precision/tests",
+      "cd /home/user/Paddock && PADDOCK_GUARD_NET=1 python bench/precision/fetch.py --verify-sample 5",
+      "cd /home/user/Paddock && ruff check bench"
+    ],
+    "acceptance": [
+      "corpus.json has at least 100 libraries, 15 templates, 25 apps, every entry pinned (sha256 or commit plus tree digest), corpus.sha256 recorded, 50/50 split reproducible by test",
+      "re-fetch of 5 entries reproduces their hashes (network gated); hardened extractor tests (zip-slip, symlink, device, bomb)",
+      "packets omit tier, severity and fix text, redact secrets, carry 12 lines of context",
+      "aggregation tests: majority, abstention, disputed, kappa, conservative and optimistic precision, Wilson via bench/stats.py, tiering at n of 15, 16, 40 and 45 of 50",
+      "run.py refuses holdout without a matching freeze; gate.py --release fails on a missing check or an unmeasured high",
+      "nothing in the package imports paddock_cli",
+      "extraction outside git work trees, files_listed checks, .git entries dropped, npm pack --ignore-scripts, clone without submodules; clustered split and per-repository caps; actionable axis, not-labellable, ai-estimated versus measured; CHANGELOG.json rule; gate.py compares rules_sha and corpus_sha; no committed excerpts"
+    ]
+  },
+  {
+    "id": "G11a",
+    "title": "Launch surface without numbers: plugin, registry files, templates, contributor docs",
+    "wave": 5,
+    "deps": [
+      "G0",
+      "G1",
+      "G2a",
+      "G2b",
+      "G3",
+      "G4",
+      "G5",
+      "G7"
+    ],
+    "owns": [
+      "integrations/claude-code-plugin/**",
+      "integrations/smithery/**",
+      ".claude-plugin/marketplace.json",
+      "server.json",
+      "smithery.yaml",
+      "llms.txt",
+      ".github/ISSUE_TEMPLATE/guard_*.md",
+      ".github/PULL_REQUEST_TEMPLATE.md",
+      "CONTRIBUTING.md",
+      "docs/guard/CHECKS.md",
+      "docs/guard/ADD_A_CHECK.md",
+      "docs/guard/RULE_PACKS.md",
+      "docs/guard/INSTALL.md",
+      "docs/guard/HOOKS.md",
+      "docs/guard/PACKAGES.md",
+      "docs/guard/URL_CHECK.md",
+      "docs/guard/MCP.md",
+      "docs/guard/CI.md",
+      "docs/guard/STARTERS.md",
+      "docs/guard/THREAT_MODEL.md",
+      "docs/guard/GROWTH.md",
+      "docs/guard/claims_allow.json",
+      "cli/tests/guard/test_launch_files.py",
+      "docs/guard/sources/platform.md"
+    ],
+    "spec_sections": [
+      "7.6",
+      "7.8",
+      "D3",
+      "D26",
+      "9.9",
+      "7.9 (U-05..U-12)"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard/test_launch_files.py",
+      "python3.11 -m venv /tmp/guard-py311 && /tmp/guard-py311/bin/pip install -q pytest pyyaml",
+      "cd /home/user/Paddock/cli && /tmp/guard-py311/bin/python -m pytest -x -q -p no:cacheprovider tests/guard/test_launch_files.py",
+      "cd /home/user/Paddock/cli && python -m paddock_cli.guard catalogue --check --no-cache"
+    ],
+    "acceptance": [
+      "plugin and marketplace satisfy the manifest rules in 7.6 by hand check; claude plugin validate --strict run if a claude binary exists, otherwise recorded as not run",
+      "server.json description is at most 100 characters with required fields; smithery.yaml has startCommand; llms.txt links resolve",
+      "CHECKS.md equals paddock guard catalogue output (--check, static columns only); TIERS.md holds the effective tiers and is generated by G10; the mcp-name assertion is not tested here (G12 gate); claude plugin validate --strict run on the marketplace root and the plugin directory and recorded; marketplace.json has a description, plugin has a README; claims_allow.json has hero_approved true; platform.md records the CONFIRMED rows",
+      "ADD_A_CHECK.md lets a newcomer add a check (id, fields, fixtures with fake tokens, tier rules, test command)",
+      "THREAT_MODEL.md covers assets, adversaries, trust boundaries, what is sent where and the residual filename-as-sentence risk",
+      "no forbidden phrase, no number outside derived counts, no promotion text; external submissions marked UNVERIFIED with read-the-CONTRIBUTING note"
+    ]
+  },
+  {
+    "id": "G10",
+    "title": "Data collection runs and generated reports",
+    "wave": 6,
+    "deps": [
+      "G1",
+      "G2a",
+      "G2b",
+      "G3",
+      "G4",
+      "G8",
+      "G9"
+    ],
+    "owns": [
+      "bench/data/**",
+      "bench/FREEZE.json",
+      "bench/precision/FREEZE.json",
+      "docs/guard/PRECISION.md",
+      "docs/guard/BENCHMARK.md",
+      "cli/paddock_cli/guard/data/tiers.json",
+      "docs/guard/TIERS.md",
+      "bench/precision/CHANGELOG.json"
+    ],
+    "spec_sections": [
+      "9.2",
+      "9.4",
+      "9.7",
+      "9.8",
+      "9.9",
+      "D8",
+      "D23"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock && python bench/precision/gate.py --release --tiers cli/paddock_cli/guard/data/tiers.json",
+      "cd /home/user/Paddock && python bench/report.py --check docs/guard/BENCHMARK.md",
+      "cd /home/user/Paddock && python bench/precision/aggregate.py --check",
+      "cd /home/user/Paddock/cli && python -m paddock_cli.guard catalogue --check --no-cache"
+    ],
+    "acceptance": [
+      "manifests complete: model family and exact id as reported by the harness, tool allow-list, could_read_repo, seeds, caveats, post_freeze_changes",
+      "N achieved stated; shortfall against 108 test generations and 40-per-check samples explained; partial runs reported as partial",
+      "tiers.json has 60 entries; gate.py --release result recorded whatever it is",
+      "reports generated by scripts only; null or negative results unchanged; every disputed finding listed; human_audit not performed",
+      "labels by AI agents marked AI-labelled everywhere; no number appears that is not in a data file",
+      "dev split before the single freeze, test split after, both freezes share rules_sha; every run listed in bench/data/INDEX.json; runs with could_read_repo other than false are INVALID_FOR_CLAIMS; tiers.json entries carry rules_sha and corpus_sha; TIERS.md generated"
+    ]
+  },
+  {
+    "id": "G11b",
+    "title": "README, platform doc move, landing copy, claims lint",
+    "wave": 7,
+    "deps": [
+      "G10",
+      "G11a"
+    ],
+    "owns": [
+      "README.md",
+      "docs/PLATFORM.md",
+      "docs/guard/index.md",
+      "docs/index.md",
+      "docs/CLI.md",
+      "docs/CONNECT.md",
+      "docs/VISION.md",
+      "cli/README.md",
+      "SECURITY.md",
+      "CLAUDE.md",
+      "scripts/guard_claims_lint.py",
+      "cli/tests/guard/test_claims_lint.py",
+      "dashboard/src/pages/Landing.tsx",
+      "dashboard/src/pages/landing/faqData.ts",
+      "dashboard/index.html"
+    ],
+    "spec_sections": [
+      "D3",
+      "D27",
+      "D28",
+      "9.9",
+      "12"
+    ],
+    "test_cmds": [
+      "cd /home/user/Paddock && python scripts/guard_claims_lint.py",
+      "cd /home/user/Paddock/cli && python -m pytest -x -q -p no:cacheprovider tests/guard/test_claims_lint.py",
+      "cd /home/user/Paddock/dashboard && npx vitest run tests/brand.test.tsx"
+    ],
+    "acceptance": [
+      "README is hero-first with the verbatim hero sentence and the scoping sentence within 3 lines, a 3-command quickstart, the five layers, and only claims copied from generated reports",
+      "docs/PLATFORM.md holds the previous README body unchanged; anchors quickstart, what-you-get, how-it-works, integrations, safety-by-design exist or are re-pointed; project-status hard rules text preserved",
+      "landing copy aligned (hero-foot, one FAQ entry kept identical in faqData.ts and the JSON-LD, CTA text); agent names and links kept; nothing from the deliberately-removed list added; CLAUDE.md gains Product focus and the UI baseline is unchanged",
+      "claims lint passes on its scope and fails on a planted bad sentence",
+      "SECURITY.md change is an appended section 13 pointer only, sections 1 to 12 unchanged; mkdocs build --strict and the vitest brand test run if available, else recorded as not run",
+      "relative links of README.md and docs/PLATFORM.md verified to resolve; PLATFORM.md is the old README body apart from the recorded link rewrite; grep for sign-off wording in CLAUDE.md unchanged; hero only where D28 allows, tagline on titles, meta, JSON-LD, registry fields and llms.txt; capabilities that are not default-on are marked opt-in"
+    ]
+  },
+  {
+    "id": "G12",
+    "title": "Adversarial review, fixes, gates, status",
+    "wave": 8,
+    "deps": [
+      "G0",
+      "G1",
+      "G2a",
+      "G2b",
+      "G3",
+      "G4",
+      "G5",
+      "G6",
+      "G7",
+      "G8",
+      "G9",
+      "G10",
+      "G11a",
+      "G11b"
+    ],
+    "owns": [
+      "docs/GUARD_CONTRACT.md",
+      "docs/guard/REVIEW_LOG.md",
+      "cli/paddock_cli/guard/data/verified.json",
+      "mkdocs.yml",
+      "docs/guard/packages.json",
+      "cli/tests/guard/all_packs_built.py"
+    ],
+    "spec_sections": [
+      "11",
+      "12",
+      "13",
+      "9.8"
+    ],
+    "test_cmds": [
+      "see section 11.2 (ten ordered gate commands)"
+    ],
+    "acceptance": [
+      "all 11.2 gates green or each failure recorded in section 12",
+      "hostile review items 1 to 27 attempted by reviewers who did not write the code; no important finding left open",
+      "CHECKS.md and TIERS.md regenerated; all_packs_built.py created; verified.json entries for ids with source rows; mcp-name line present in mcp/guard-dist/README.md; staleness rule of 9.4 item 3 applied; Gate A items A1 to A6 evidenced; section 13 filled",
+      "git status shows only files in the ownership map plus generated data",
+      "G12 may edit a file owned by another package only to fix a recorded review finding, each edit listed in docs/guard/REVIEW_LOG.md; GUARD_CONTRACT.md edits limited to section 13 and recorded corrections; mkdocs.yml edited only under the D26 condition"
+    ]
+  }
+]

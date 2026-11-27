@@ -1,0 +1,53 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "The policy requires an invariant that is not in the attestation.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "invariant.missing"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "invariant.missing",
+    "profile": "policy",
+    "warnings": []
+  },
+  "id": "required-missing",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": {
+    "policy_version": 1,
+    "require": [
+      {
+        "invariant": "std:public-ports-allowlist",
+        "verdict": "HOLDS"
+      }
+    ]
+  },
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "08"
+  ],
+  "state": null,
+  "tags": [
+    "policy"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

@@ -96,6 +96,7 @@ def test_a_golden_legacy_line_still_parses_and_its_hmac_verifies(monkeypatch):
     kid = audit_svc.key_id(KEY.encode())
     body = json.loads(GOLDEN_LINE)
     body["kid"] = kid
+    body["hash_alg"] = f"hmac-sha256:{kid}"
     body.pop("sig")
     old = Anchor.from_dict(body)
     want = hmac.new(KEY.encode(), b"paddock-anchor/v1\n" + GOLDEN_SIGNED_BODY.replace(b"0123abcd", kid.encode()),

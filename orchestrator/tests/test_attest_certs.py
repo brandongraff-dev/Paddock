@@ -356,6 +356,38 @@ def test_garbage_is_a_cert_error_not_a_crash(plat, roots):
             certs.verify_chain(junk, issuers=[], roots=roots, at=T0)
 
 
+@pytest.mark.parametrize("by,depth", [("root", 1), ("issuer", 2)])
+def test_a_revoker_chains_through_the_root_or_through_the_issuer(tmp_path, by, depth):
+    p = fk.make_platform(tmp_path / by, revoker_certified_by=by)
+    res = certs.verify_chain(p.revoker_cert, issuers=[p.issuer_cert], roots=certs.parse_roots(p.roots), at=T0,
+                             expect_usage="revoke")
+    assert res.cert.usage == "revoke" and res.depth == depth and res.root.kid == p.root_kid
+
+
+def test_a_pinned_issuer_may_certify_the_revoker_so_a_self_hoster_needs_no_root(tmp_path):
+    p = fk.make_platform(tmp_path / "p", revoker_certified_by="issuer")
+    pinned = [{"kid": p.issuer_kid, "public_key": b64.encode(p.issuer_pub), "usage": "issue-cert",
+               "not_before": fk.ts(T0 - 100 * DAY), "not_after": fk.ts(T0 + 300 * DAY)}]
+    res = certs.verify_chain(p.revoker_cert, issuers=[], roots=certs.parse_roots(pinned), at=T0)
+    assert res.depth == 1 and res.issuer is None
+    reject("issuer.revoked", p.revoker_cert, issuers=[], roots=certs.parse_roots(pinned + [{"kid": p.issuer_kid, "usage": "issuer-revoked"}]), at=T0)
+
+
+def test_only_a_root_or_an_issuer_may_certify_a_revoker(plat, leaf_key, roots):
+    rogue = Ed25519PrivateKey.generate()
+    attest_cert_env = attest_cert(plat, rogue)
+    for signer, signer_kid, issuers in ((plat.revoker_priv, plat.revoker_kid, [plat.revoker_cert]),      # a revoker
+                                         (rogue, fk.kid_of(fk.raw_pub(rogue)), [attest_cert_env])):       # an estate key
+        env = fk.make_cert(signer, signer_kid, usage="revoke", pub=fk.raw_pub(leaf_key), not_before=T0, not_after=T0 + DAY)
+        with pytest.raises(certs.CertError) as ei:
+            certs.verify_chain(env, issuers=issuers, roots=roots, at=T0)
+        assert ei.value.code in ("key.cert_subject_mismatch", "key.root_unknown")
+    stranger = Ed25519PrivateKey.generate()
+    env = fk.make_cert(stranger, fk.kid_of(fk.raw_pub(stranger)), usage="revoke", pub=fk.raw_pub(leaf_key), not_before=T0,
+                       not_after=T0 + DAY)
+    reject("key.root_unknown", env, issuers=[plat.issuer_cert], roots=roots, at=T0)
+
+
 # --------------------------------------------------------------------------- #
 # trust roots
 # --------------------------------------------------------------------------- #
@@ -379,6 +411,39 @@ def test_parse_roots_validates_every_entry(plat):
         certs.parse_roots([good, good])               # duplicate kid
     with pytest.raises(certs.CertError):
         certs.parse_roots({"not": "a list"})
+
+
+def test_trust_roots_may_carry_issuer_revoked_entries_that_verify_chain_applies_by_itself(plat, leaf_key):
+    """The verifier release lists revoked issuers inside its roots data (``{"kid","usage":"issuer-revoked"}``): the
+    parsed roots carry them, so passing them to ``verify_chain`` is enough to refuse that issuer."""
+    data = plat.roots + [{"kid": plat.issuer_kid, "usage": "issuer-revoked"}]
+    roots = certs.parse_roots(data)
+    assert [r.kid for r in roots] == [plat.root_kid] and roots.revoked_issuers == frozenset({plat.issuer_kid})
+    reject("issuer.revoked", attest_cert(plat, leaf_key), issuers=[plat.issuer_cert], roots=roots, at=T0)
+    certs.verify_chain(attest_cert(plat, leaf_key), issuers=[plat.issuer_cert], roots=certs.parse_roots(plat.roots), at=T0)
+    for bad in ({"kid": plat.issuer_kid, "usage": "issuer-revoked", "extra": 1}, {"kid": "zz", "usage": "issuer-revoked"},
+                {"usage": "issuer-revoked"}):
+        with pytest.raises(certs.CertError):
+            certs.parse_roots(plat.roots + [bad])
+
+
+def test_a_pinned_issuer_that_the_release_also_revokes_is_refused(plat, leaf_key):
+    pinned = [{"kid": plat.issuer_kid, "public_key": b64.encode(plat.issuer_pub), "usage": "issue-cert",
+               "not_before": fk.ts(T0 - 100 * DAY), "not_after": fk.ts(T0 + 300 * DAY)},
+              {"kid": plat.issuer_kid, "usage": "issuer-revoked"}]
+    reject("issuer.revoked", attest_cert(plat, leaf_key), issuers=[], roots=certs.parse_roots(pinned), at=T0)
+
+
+def test_platform_keys_whose_issuer_the_release_revokes_are_refused(plat, monkeypatch, tmp_path):
+    from app.attest import config as c
+
+    path = tmp_path / "revoking_roots.json"
+    path.write_text(json.dumps(plat.roots + [{"kid": plat.issuer_kid, "usage": "issuer-revoked"}]))
+    monkeypatch.setattr(c.settings, "trust_roots_file", str(path))
+    platform_keys.reset_cache()
+    with pytest.raises(platform_keys.PlatformKeysError) as ei:
+        platform_keys.load(now=T0)
+    assert ei.value.code == "issuer.revoked"
 
 
 # --------------------------------------------------------------------------- #
@@ -463,11 +528,16 @@ def test_keys_json_rejects_a_bad_certificate_inside(plat, roots, leaf_key):
     assert ei.value.code in ("key.cert_invalid", "schema.base64_invalid", "input.not_json")
 
 
-def test_keys_json_refuses_to_grow_past_the_size_cap(plat):
-    ks = [certs.parse_cert(attest_cert(plat, Ed25519PrivateKey.generate())) for _ in range(90)]
+def test_keys_json_has_at_most_16_keys_and_1_to_4_issuers_like_the_open_verifier_reads_it(plat):
+    ks = [certs.parse_cert(attest_cert(plat, Ed25519PrivateKey.generate())) for _ in range(17)]
+    certs.build_keys_json(ESTATE_A, issuers=[plat.issuer_cert], revoker=plat.revoker_cert, certs_=ks[:16])
     with pytest.raises(certs.CertError) as ei:
         certs.build_keys_json(ESTATE_A, issuers=[plat.issuer_cert], revoker=plat.revoker_cert, certs_=ks)
-    assert ei.value.code == "input.too_large"
+    assert ei.value.code == "keys.invalid"
+    for issuers in ([], [plat.issuer_cert] * 5):
+        with pytest.raises(certs.CertError) as ei:
+            certs.build_keys_json(ESTATE_A, issuers=issuers, revoker=plat.revoker_cert, certs_=ks[:1])
+        assert ei.value.code == "keys.invalid"
 
 
 # --------------------------------------------------------------------------- #
@@ -608,6 +678,13 @@ def test_a_root_that_did_not_sign_the_certs_is_refused(plat, tmp_path, monkeypat
     assert ei.value.code == "key.root_unknown"
 
 
+def test_an_issuer_certified_revoker_loads(tmp_path, monkeypatch):
+    p = fk.make_platform(tmp_path / "p", revoker_certified_by="issuer")
+    fk.install(monkeypatch, p)
+    pk = platform_keys.load(now=T0)
+    assert pk.revoker.cert.issuer_kid == p.issuer_kid and pk.revoker.kid == p.revoker_kid
+
+
 def test_a_pinned_issuer_is_accepted_without_a_root_and_the_revoker_then_needs_its_own_root(plat, monkeypatch, tmp_path):
     """Self-hosters pin the issuer (chain length 1); the revoker cert must still chain to a pinned ``root``."""
     pinned = tmp_path / "pinned.json"
@@ -729,6 +806,38 @@ def test_certify_issuer_and_revoker_produce_certs_that_production_accepts(cer, c
     platform_keys.reset_cache()
     pk = platform_keys.load(now=T0)
     assert pk.issuer.cert.serial == 11 and pk.revoker.cert.serial == 12 and pk.issuer.kid != pk.revoker.kid
+
+
+def test_certify_revoker_through_the_issuer_when_asked(cer, ceremony, tmp_path, monkeypatch):
+    iss = _certify(cer, ceremony, tmp_path, "issuer", "11")
+    out = tmp_path / "revoker-via-issuer"
+    assert cer.main(["certify-revoker", "--issuer-key-file", str(iss / "issuer.pem"), "--issuer-cert-file",
+                     str(iss / "issuer.cert.json"), "--root-key-file", str(ceremony / "paddock-attest-root.pem"),
+                     "--out-dir", str(out), "--serial", "12", "--not-before", "2026-06-01T00:00:00Z",
+                     "--not-after", "2027-06-01T00:00:00Z"]) == 0
+    issuer_pub = b64.strict_decode((iss / "issuer.pub").read_text().strip())
+    body = fk.independent_cert_check((out / "revoker.cert.json").read_bytes(), issuer_pub)
+    assert body["usage"] == "revoke" and body["issuer_kid"] == fk.kid_of(issuer_pub)
+    from pydantic import SecretStr
+
+    from app.attest import config as c
+
+    for attr, path in (("issuer_key_file", iss / "issuer.pem"), ("issuer_cert_file", iss / "issuer.cert.json"),
+                       ("revoker_key_file", out / "revoker.pem"), ("revoker_cert_file", out / "revoker.cert.json"),
+                       ("trust_roots_file", ceremony / "trust_roots.json")):
+        monkeypatch.setattr(c.settings, attr, str(path))
+    monkeypatch.setattr(c.settings, "platform_key_passphrase", SecretStr(fk.PASSPHRASE))
+    platform_keys.reset_cache()
+    assert platform_keys.load(now=T0).revoker.cert.serial == 12
+    with pytest.raises(SystemExit) as ei:                                    # the window may not exceed the issuer's
+        cer.main(["certify-revoker", "--issuer-key-file", str(iss / "issuer.pem"), "--issuer-cert-file",
+                  str(iss / "issuer.cert.json"), "--root-key-file", str(ceremony / "paddock-attest-root.pem"),
+                  "--out-dir", str(tmp_path / "late"), "--serial", "13", "--not-before", "2026-06-01T00:00:00Z",
+                  "--not-after", "2030-01-01T00:00:00Z"])
+    assert "issuer" in str(ei.value).lower()
+    with pytest.raises(SystemExit):                                          # only a revoker may go through the issuer
+        cer.main(["certify-issuer", "--issuer-key-file", str(iss / "issuer.pem"), "--root-key-file",
+                  str(ceremony / "paddock-attest-root.pem"), "--out-dir", str(tmp_path / "x"), "--serial", "1"])
 
 
 def test_certify_defaults_to_a_one_year_window_and_certifies_a_given_public_key(cer, ceremony, tmp_path):

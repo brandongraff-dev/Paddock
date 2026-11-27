@@ -331,9 +331,9 @@ def _parse_require_spec(spec: str) -> Tuple[str, str]:
 
 
 def apply_overrides(p: Policy, max_age: Optional[str] = None, min_coverage: Optional[str] = None,
-                    require: Optional[List[str]] = None) -> Policy:
-    """``--max-age``, ``--min-coverage`` and ``--require ID[:TIER]`` on top of a policy or the baseline."""
-    if max_age is None and min_coverage is None and not require:
+                    require: Optional[List[str]] = None, history: Optional[str] = None) -> Policy:
+    """``--max-age``, ``--min-coverage``, ``--require ID[:TIER]`` and ``--history`` on top of a policy or the baseline."""
+    if max_age is None and min_coverage is None and not require and history is None:
         return p
     d = dict(p.source) if p.source else {"policy_version": 1}
     if max_age is not None:
@@ -341,6 +341,8 @@ def apply_overrides(p: Policy, max_age: Optional[str] = None, min_coverage: Opti
         d["max_age"] = max_age
     if min_coverage is not None:
         d["min_coverage"] = _threshold_text(min_coverage, "--min-coverage")
+    if history is not None:
+        d["history"] = history
     if require:
         items = list(d.get("require", []))
         for spec in require:

@@ -1,0 +1,67 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "The policy requires DNSSEC and the resolvers assert it.",
+  "dns": {
+    "resolvers": [
+      {
+        "ad": true,
+        "answers": {
+          "_paddock-attest.example.com": {
+            "status": "ok",
+            "txt": [
+              "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+            ]
+          }
+        },
+        "resolver": "r1"
+      },
+      {
+        "ad": true,
+        "answers": {
+          "_paddock-attest.example.com": {
+            "status": "ok",
+            "txt": [
+              "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4; fp=sha256:2ceb61e24df5fde7c0ab24b2a2774fa4cccecbb50a4b7f487b874c4baf7807a8; keys=https://example.com/.well-known/paddock/keys.json"
+            ]
+          }
+        },
+        "resolver": "r2"
+      }
+    ]
+  },
+  "expect": {
+    "codes": [],
+    "decision": "accepted",
+    "exit": 0,
+    "forbidden_terms": true,
+    "primary": null,
+    "profile": "policy",
+    "warnings": []
+  },
+  "id": "valid-dnssec-required-asserted",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": {
+    "policy_version": 1,
+    "trust": {
+      "dnssec": "required"
+    }
+  },
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 6.3"
+  ],
+  "state": null,
+  "tags": [
+    "dns",
+    "policy",
+    "valid"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

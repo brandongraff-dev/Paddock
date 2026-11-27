@@ -1,0 +1,45 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "The domain names another key only.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=5f8a1d41d9d98fa38c01448c27488b74; fp=sha256:5f8a1d41d9d98fa38c01448c27488b744638eb14a5ba47169285cfaf3891f994"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "dns.no_binding"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "dns.no_binding",
+    "profile": "baseline",
+    "warnings": []
+  },
+  "id": "dns-foreign-kid-only",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 6.3"
+  ],
+  "state": null,
+  "tags": [
+    "dns"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

@@ -198,6 +198,21 @@ def test_a_sync_clock_ahead_of_now_cannot_make_a_stale_read_fresh():
     assert len(estate_edges(run(rows))) == 1
 
 
+def test_a_read_much_newer_than_the_groups_own_last_seen_is_unproven_too():
+    # the skew is two sided: an inventory read 90 minutes AFTER the group row was last seen does not describe
+    # the membership the rules were read against (the rest of the sync may be that old)
+    old = NOW - dt.timedelta(hours=2)
+
+    def rows(read_at):
+        rs = world(inv(read_at=read_at))
+        for r in rs:
+            r["last_seen"] = old
+        return rs
+
+    assert estate_edges(run(rows(old))) == []                                    # control: same instant, proven
+    assert len(estate_edges(run(rows(NOW - dt.timedelta(minutes=30))))) == 1     # 90 min newer: unproven
+
+
 def test_the_inventory_boundary_is_one_hour_inclusive():
     assert estate_edges(run(world(inv(read_at=T_NEW - dt.timedelta(hours=1))))) == []
     assert estate_edges(run(world(inv(read_at=T_NEW + dt.timedelta(minutes=15))))) == []   # NOW + 5 min of skew
@@ -501,10 +516,27 @@ async def test_estate_ignores_operator_labels_in_the_document(db_pool, app_pool)
             "INSERT INTO asset_labels (node_ref, tag, value, source, set_by, justification, set_at) VALUES "
             "($1, 'zone', 'dmz', 'declared', 'x', 'y', $2), ($1, 'class', 'data_store', 'declared', 'x', 'y', $2), "
             "($1, 'kind', 'host', 'declared', 'x', 'y', $2)", ESTATE, now)
+        for direction in ("in", "out"):       # ... and so is coverage written around the store
+            await con.execute(
+                "INSERT INTO reach_coverage (node_ref, direction, source, tier, observed_at) "
+                "VALUES ($1, $2, 'aws_sg', 'configured', $3)", ESTATE, direction, now)
         doc = await graph_loader.load_graph_doc(con, now)
     est = next(n for n in doc["nodes"] if n["id"] == ESTATE)
     assert est["kind"] == "estate" and est.get("zone_unknown") is True
     assert "zone" not in est and "class" not in est and not est.get("tags") and not est.get("coverage")
+
+
+async def test_the_loader_lets_the_ref_prefix_decide_the_kind_of_a_node_written_around_the_store(db_pool, app_pool):
+    none_ref = f"estate:{ACCT}:{REG}:none"
+    async with conn_for(app_pool) as con:
+        await con.execute(
+            "INSERT INTO reach_nodes (node_ref, kind, source) VALUES ($1, 'host', 'x'), ('ip:10.9.9.9', 'estate', 'x')",
+            none_ref)
+        doc = await graph_loader.load_graph_doc(con, NOW)
+    kinds = {n["id"]: n["kind"] for n in doc["nodes"]}
+    assert kinds[none_ref] == "estate" and kinds["ip:10.9.9.9"] == "ip"
+    assert next(n for n in doc["nodes"] if n["id"] == none_ref)["zone_unknown"] is True
+    assert "zone_unknown" not in next(n for n in doc["nodes"] if n["id"] == "ip:10.9.9.9")
 
 
 async def test_estate_kind_and_ref_are_tied_together_by_the_store(db_pool, app_pool):
@@ -545,8 +577,10 @@ async def test_persisting_the_estate_is_stable_and_it_leaves_when_the_proof_arri
 # --------------------------------------------------------------------------- #
 
 def test_the_orchestrator_pins_the_library_that_knows_the_estate_kind():
+    import importlib
+
     import paddock_assurance as lib
-    from paddock_assurance import evaluate as lib_eval
+    lib_eval = importlib.import_module("paddock_assurance.evaluate")   # the package re-exports the function
 
     root = Path(__file__).resolve().parents[1]
     text = (root / "pyproject.toml").read_text()

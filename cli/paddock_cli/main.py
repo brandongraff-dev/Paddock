@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import __version__, fixplan, initcmd, scanner, ui, upload
+from . import __version__, fixplan, initcmd, scanner, scopes, ui, upload
 from .applyfix import ApplyError, apply_plans, verify_plans
 from .gitpr import PrError, open_pr
 from .model import SEVERITIES, ScanResult, rank
@@ -337,6 +337,11 @@ def cmd_upload(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_scopes(a: argparse.Namespace) -> int:
+    """`paddock assurance scopes ...`: opt-in, talks to a Paddock server with PADDOCK_API_KEY (see scopes.py)."""
+    return scopes.run(a, Out(a))
+
+
 def cmd_init(a: argparse.Namespace) -> int:
     o = Out(a)
     root = Path(a.path)
@@ -411,6 +416,11 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--project", metavar="NAME", help="project/asset name (default: directory name)")
     u.add_argument("-q", "--quiet", action="store_true")
     u.set_defaults(fn=cmd_upload)
+
+    asr = sub.add_parser("assurance", help="provable containment: sensor scopes (talks to a Paddock server)")
+    asub = asr.add_subparsers(dest="assurance_area", required=True, metavar="AREA")
+    sc = asub.add_parser("scopes", help="declare what a Sentry sensor can actually see (list, suggest, set, clear)")
+    scopes.register(sc, cmd_scopes)
 
     i = sub.add_parser("init", help="add a GitHub Actions workflow and a pre-commit hook")
     i.add_argument("path", nargs="?", default=".")

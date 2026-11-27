@@ -54,6 +54,14 @@ def test_estate_ref_is_canonical_and_parses_back():
     assert refs.is_valid_ref("estate:000000000001:us-gov-west-1:none")
 
 
+@pytest.mark.parametrize("region", ["eusc-de-east-1", "us-gov-west-1", "us-iso-east-1", "us-isob-east-1",
+                                    "ap-southeast-4", "il-central-1", "me-central-1"])
+def test_estate_ref_accepts_every_aws_partition_region_spelling(region):
+    # a region we cannot spell would drop the residual into the world-open fallback (over-report, never under)
+    r = refs.estate_ref("123456789012", region, "none")
+    assert r == f"estate:123456789012:{region}:none" and refs.is_valid_ref(r)
+
+
 def test_estate_is_a_node_kind_and_a_ref_prefix_but_not_an_agent_style_kind():
     assert "estate" in refs.KINDS
     assert "estate" in refs._PREFIXES

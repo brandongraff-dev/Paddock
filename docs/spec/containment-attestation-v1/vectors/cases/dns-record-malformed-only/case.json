@@ -1,0 +1,47 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "The only record is malformed: ignored with a warning, so no binding.",
+  "dns": {
+    "answers": {
+      "_paddock-attest.example.com": {
+        "status": "ok",
+        "txt": [
+          "v=1; kid=2ceb61e24df5fde7c0ab24b2a2774fa4"
+        ]
+      }
+    },
+    "resolver": "r1"
+  },
+  "expect": {
+    "codes": [
+      "dns.no_binding"
+    ],
+    "decision": "rejected",
+    "exit": 1,
+    "forbidden_terms": true,
+    "primary": "dns.no_binding",
+    "profile": "baseline",
+    "warnings": [
+      "dns.record_ignored"
+    ]
+  },
+  "id": "dns-record-malformed-only",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 6.2"
+  ],
+  "state": null,
+  "tags": [
+    "dns"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}

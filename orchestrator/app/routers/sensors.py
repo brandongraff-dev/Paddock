@@ -128,6 +128,9 @@ class SensorOut(BaseModel):
     silent_after_s: int
     health: dict[str, Any]
     warnings: list[str]
+    scope_declared: bool = Field(
+        False, description="The sensor has a declared scope (`/v1/assurance/sensor-scopes`). Without one it covers "
+                           "nothing for the reach graph, however much traffic it sees.")
     batches_total: int
     flows_total: int
     duplicates_total: int
@@ -184,6 +187,7 @@ def _sensor_out(row: Any) -> SensorOut:
         last_seen_at=row["last_seen_at"], last_heartbeat_at=row["last_heartbeat_at"],
         last_upload_at=row["last_upload_at"], offline_since=row["offline_since"],
         silent_after_s=row["silent_after_s"], health=health, warnings=svc.warnings_for(row),
+        scope_declared=bool(row["scope_declared"]),
         batches_total=row["batches_total"], flows_total=row["flows_total"],
         duplicates_total=row["duplicates_total"],
     )
@@ -192,7 +196,10 @@ def _sensor_out(row: Any) -> SensorOut:
 _SENSOR_COLS = (
     "id, name, site, status, version, hostname, interfaces, enrolled_at, last_seen_at, "
     "last_heartbeat_at, last_upload_at, offline_since, silent_after_s, health, online, "
-    "batches_total, flows_total, duplicates_total"
+    "batches_total, flows_total, duplicates_total, "
+    # P2.1 (6.5): does the sensor have a declared, non-empty scope? (RLS scopes the subquery to the tenant)
+    "EXISTS (SELECT 1 FROM sensor_scopes ss WHERE ss.sensor_id = sensors.id "
+    "AND cardinality(ss.cidrs) > 0) AS scope_declared"
 )
 
 

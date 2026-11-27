@@ -1,0 +1,36 @@
+{
+  "anchor": null,
+  "args": [],
+  "description": "A statement about a paddock-estate subject has no domain to bind.",
+  "dns": null,
+  "expect": {
+    "codes": [],
+    "decision": "accepted",
+    "exit": 0,
+    "forbidden_terms": true,
+    "primary": null,
+    "profile": "baseline",
+    "warnings": [
+      "dns.not_applicable"
+    ]
+  },
+  "id": "valid-estate-subject-no-dns",
+  "now": "2026-12-01T12:00:00Z",
+  "policy": null,
+  "producer": false,
+  "recipes": [],
+  "registry": "default",
+  "roots": "test",
+  "spec_refs": [
+    "05 section 6.3"
+  ],
+  "state": null,
+  "tags": [
+    "dns",
+    "valid"
+  ],
+  "target": {
+    "kind": "dir",
+    "path": ".well-known/paddock"
+  }
+}
