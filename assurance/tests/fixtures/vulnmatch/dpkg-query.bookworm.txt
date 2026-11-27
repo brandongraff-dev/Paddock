@@ -1,0 +1,7 @@
+libc6	2.36-9+deb12u2	amd64	ii 	glibc	2.36-9+deb12u2
+openssh-server	1:9.2p1-2+deb12u2	amd64	ii 	openssh	1:9.2p1-2+deb12u2
+libssl3	3.0.11-1~deb12u2	amd64	ii 	openssl	3.0.11-1~deb12u2
+linux-image-6.1.0-17-amd64	6.1.69-1	amd64	ii 	linux-signed-amd64	6.1.69+1
+linux-image-6.1.0-18-amd64	6.1.76-1	amd64	ii 	linux-signed-amd64	6.1.76+1
+nginx	1.24.0-1~bookworm	amd64	ii 	nginx	1.24.0-1~bookworm
+bash	5.2.15-2+b2	amd64	hi 	bash	5.2.15-2

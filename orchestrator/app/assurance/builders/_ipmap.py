@@ -32,9 +32,11 @@ builder (``host_fw``) run ONE function and the graph and ``fleet_agents.node_ref
 """
 from __future__ import annotations
 
+import datetime as dt
 import ipaddress
 import json
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
 
@@ -296,10 +298,14 @@ class Claim:
 @dataclass(frozen=True)
 class Decision:
     """``ref`` is the ``asset:<uuid>`` the agent is merged into, or ``None`` (it stays ``agent:<uuid>``,
-    ``claimed``). ``note`` says why not (``""`` when merged or nothing to say)."""
+    ``claimed``). ``note`` says why not (``""`` when merged or nothing to say). ``basis`` is ``paired`` only for an
+    operator pairing (:func:`pairing_decision`); ``conflict`` is ``paired_peer_mismatch`` when the server saw a direct,
+    private, unshared peer address that is not one of the asset's addresses (a negative detector, D28)."""
 
     ref: Optional[str]
     note: str = ""
+    basis: str = "claimed"
+    conflict: str = ""
 
 
 def claimed_ips(identity: Any) -> list[str]:
@@ -415,6 +421,102 @@ def corroborate(claims: Iterable[Claim], amap: IpMap, *, private_peer_proof: Opt
         else:
             out[aid] = Decision(ref, "")
     return out
+
+
+# --------------------------------------------------------------------------- #
+# the operator pairing of an agent with a cloud instance (docs/ASSURANCE_P2_1.md section 4): ONE decision for the
+# ingest (``fleet_posture._resolve_node``) and the builder (``host_fw``)
+# --------------------------------------------------------------------------------------------
+
+#: a pairing says "agent row A is the machine that is cloud asset X"; it changes IDENTITY only (D27).
+PAIRED = "paired"
+#: the one conflict a pairing can raise itself: the peer address the server saw is not the asset's (D28).
+PEER_MISMATCH = "paired_peer_mismatch"
+#: how far in the future an asset's ``last_seen`` may be before it stops counting as "seen" (a date nothing can age).
+ASSET_FUTURE_SKEW = dt.timedelta(minutes=5)
+
+#: SQL both the ingest and the builder read an active pairing with (tenant-bound connection, read-only). The asset is
+#: LEFT JOINed: a deleted asset must make the pairing inert, never erase it. ``md`` holds only the address metadata.
+PAIRING_COLUMNS = (
+    "p.id AS pairing_id, p.agent_id, p.asset_id, a.id AS a_id, a.kind, a.last_seen, "
+    "jsonb_build_object('resource_type', a.metadata->'resource_type', 'private_ips', a.metadata->'private_ips', "
+    "'public_ips', a.metadata->'public_ips', 'ips', a.metadata->'ips', 'ip', a.metadata->'ip') AS md"
+)
+PAIRING_FROM = "FROM fleet_agent_pairings p LEFT JOIN assets a ON a.id = p.asset_id"
+PAIRING_SELECT_SQL = f"SELECT {PAIRING_COLUMNS} {PAIRING_FROM} WHERE p.status = 'active'"
+
+
+@dataclass(frozen=True)
+class PairingRow:
+    """An ACTIVE pairing joined with its asset. ``node_kind is None`` means the asset row is missing."""
+
+    agent_id: str
+    pairing_id: str
+    asset_ref: str
+    node_kind: Optional[str]
+    asset_ips: tuple[str, ...] = ()
+    asset_last_seen: Optional[dt.datetime] = None
+
+
+def pairing_row(rec: Mapping[str, Any]) -> Optional[PairingRow]:
+    """A :class:`PairingRow` from a ``PAIRING_SELECT_SQL`` record, or ``None`` for a malformed one (it then never
+    pairs). Only a ``cloud_resource`` asset can be a VM: a device or any other kind that merely carries VM-looking
+    metadata is ``host`` (not a VM)."""
+    try:
+        agent_id = str(uuid.UUID(str(rec["agent_id"])))
+        asset_ref = refs.asset_ref(rec["asset_id"])
+    except (KeyError, ValueError, TypeError, refs.RefError):
+        return None
+    pid = rec.get("pairing_id")
+    if rec.get("a_id") is None:
+        return PairingRow(agent_id, str(pid), asset_ref, None, (), None)
+    md = rec.get("md")
+    if isinstance(md, (str, bytes)):
+        try:
+            md = json.loads(md)
+        except ValueError:
+            md = {}
+    md = md if isinstance(md, dict) else {}
+    kind = rec.get("kind")
+    node = node_kind(str(kind), md) if kind == "cloud_resource" else "host"
+    seen = rec.get("last_seen")
+    return PairingRow(agent_id, str(pid), asset_ref, node, tuple(_ips_in(md)),
+                      seen if isinstance(seen, dt.datetime) else None)
+
+
+def _utc(t: dt.datetime) -> dt.datetime:
+    return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+
+
+def pairing_decision(claim: Claim, row: Optional[PairingRow], now: dt.datetime, max_age: dt.timedelta,
+                     peer_shared: bool) -> Decision:
+    """What an agent's operator pairing decides. Pure; ingest and builder run this one function.
+
+    * no row                           -> ``Decision(None, "")``: falls through to :func:`corroborate` (inert);
+    * the asset row is gone            -> ``pairing_inert:asset_missing``;
+    * the asset is not a cloud VM      -> ``pairing_inert:asset_not_vm``;
+    * ``last_seen`` older than ``max_age`` (or undated, or in the future) -> ``pairing_inert:asset_stale``;
+    * otherwise ``Decision(asset_ref, "", basis="paired", conflict=...)``.
+
+    An inert pairing falls back to ``agent:<uuid>`` / ``claimed`` with that note: nothing is ended automatically and
+    nothing is silently dropped. ``conflict`` is ``paired_peer_mismatch`` iff the claim is DIRECT (no forwarding hop),
+    its peer is a PRIVATE address no other agent presents (``peer_shared`` False) and the asset does not own it: the
+    peer can only withdraw trust, so a false conflict costs availability, never a false HOLDS (D28)."""
+    if row is None:
+        return Decision(None, "")
+    if row.node_kind is None:
+        return Decision(None, "pairing_inert:asset_missing")
+    if row.node_kind != INSTANCE_KIND:
+        return Decision(None, "pairing_inert:asset_not_vm")
+    seen = row.asset_last_seen
+    now = _utc(now)
+    if (seen is None or now - _utc(seen) > max_age or _utc(seen) - now > ASSET_FUTURE_SKEW):
+        return Decision(None, "pairing_inert:asset_stale")
+    conflict = ""
+    if claim.direct and claim.peer is not None and not is_public_ip(claim.peer) and not peer_shared \
+            and claim.peer not in row.asset_ips:
+        conflict = PEER_MISMATCH
+    return Decision(row.asset_ref, "", PAIRED, conflict)
 
 
 def resolve(ip_map: IpMap, ip: str) -> str:

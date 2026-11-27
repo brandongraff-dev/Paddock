@@ -28,15 +28,16 @@ FIXTURES = HERE / "fixtures"
 
 
 @pytest.fixture(autouse=True)
-def _guard_isolation(monkeypatch, tmp_path):
+def _guard_isolation(monkeypatch, tmp_path, tmp_path_factory):
     """No Guard test may see the real home, git config, state directory or network switches."""
     for var in list(os.environ):
         if var.startswith(("PADDOCK_GUARD_", "CLAUDE_")) or var in (
             "PADDOCK_NO_PROMPT", "GITHUB_ACTIONS", "CI", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
         ):
             monkeypatch.delenv(var, raising=False)
-    home = tmp_path / "guard-home"
-    home.mkdir(exist_ok=True)
+    # HOME is a sibling of tmp_path, never inside it: a test may scan tmp_path itself, and Guard
+    # refuses a root that contains HOME (3.11 H3).
+    home = tmp_path_factory.mktemp("guard-home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PADDOCK_CACHE_DIR", str(tmp_path / "guard-cache"))
     monkeypatch.setenv("PADDOCK_CONFIG_DIR", str(tmp_path / "guard-config"))

@@ -4,7 +4,8 @@ Source ``host_fw``, mode ``replace``. It turns the latest VERIFIED ``agent_postu
 agent (docs/ASSURANCE_P2.md section 7.1, agent/PAYLOAD.md) into
 
 * **nodes**   ``agent:<uuid>`` (kind ``host``), or the cloud instance ``asset:<uuid>`` when the agent is
-              corroborated as that instance. Never ``ip:`` for a managed host.
+              corroborated as that instance or an admin PAIRED it with that instance (docs/ASSURANCE_P2_1.md
+              section 4: a pairing changes identity only, never trust). Never ``ip:`` for a managed host.
 * **edges**   per non-loopback listener x source atom, by walking every input-hook base chain of the
               canonical firewall model with first-match semantics. Basis ``configured``, never ``observed``.
               Confidence 100 for a rule path that ALLOWS in an exact model, 60 for everything else.
@@ -1214,26 +1215,53 @@ def _entry(name: str, sec: Any, base: dict[str, Any], conflict: list[dict[str, A
 class _Ident:
     agent_id: str
     ref: str
-    basis: str                       # claimed | corroborated
+    basis: str                       # claimed | corroborated | paired
     note: str
     claimed: list                    # sorted claimed bind addresses (a CLAIM: never a placement)
-    node_ips: list                   # addresses the node is KNOWN by: the instance's own when corroborated, else none
+    node_ips: list                   # addresses the node is KNOWN by: the instance's own when corroborated or paired, else none
     addressable: Optional[bool]
     observed: list = field(default_factory=list)   # the server-observed peer when it is a usable address hint
+    conflict: str = ""               # ``paired_peer_mismatch`` when a paired host's direct private peer is not the asset's
 
 
 def _claimed_ips(identity: Any) -> list[str]:
     return _ipmap.claimed_ips(identity)
 
 
-def _resolve_identities(agents: list[Mapping[str, Any]], amap: _ipmap.IpMap) -> dict[str, _Ident]:
-    """Decide every agent's node with the SAME function the ingest uses (:func:`_ipmap.corroborate`, review
-    findings hostfw-2, hostfw-5, wire-5): the graph must not depend on a column a bug could have set, and the
-    column must not disagree with the graph. A cloud instance absorbs an agent ONLY when its claimed addresses
-    are a subset of that one instance's private addresses, the server saw it connect from one of those private
-    addresses, no other enrolled agent presents the same peer address and no other agent that passed the same
-    checks claims the instance. Two agents on one cloud node merge NEITHER; a claim that never passed cannot
-    demote anyone.
+DEFAULT_PAIRING_ASSET_MAX_AGE = dt.timedelta(hours=72)     # ``settings.assurance_pairing_asset_max_age_h``
+
+
+def _pairing_rows(pairings: Iterable[Mapping[str, Any]]) -> tuple[dict[str, _ipmap.PairingRow], set[str]]:
+    """``agent id -> its active pairing row`` and the agents with MORE than one (impossible: ``uq_pairing_active_agent``;
+    if the table was tampered with those agents are inert, never guessed)."""
+    out: dict[str, _ipmap.PairingRow] = {}
+    dup: set[str] = set()
+    for rec in pairings or ():
+        row = _ipmap.pairing_row(rec) if isinstance(rec, Mapping) else None
+        if row is None:
+            continue
+        if row.agent_id in out:
+            dup.add(row.agent_id)
+        else:
+            out[row.agent_id] = row
+    return out, dup
+
+
+def _resolve_identities(agents: list[Mapping[str, Any]], amap: _ipmap.IpMap,
+                        pairings: Iterable[Mapping[str, Any]] = (), now: Optional[dt.datetime] = None,
+                        pairing_max_age: Optional[dt.timedelta] = None) -> dict[str, _Ident]:
+    """Decide every agent's node with the SAME functions the ingest uses (:func:`_ipmap.pairing_decision` first, then
+    :func:`_ipmap.corroborate`, review findings hostfw-2, hostfw-5, wire-5): the graph must not depend on a column a
+    bug could have set, and the column must not disagree with the graph. A cloud instance absorbs an agent ONLY when
+    an admin paired them (docs/ASSURANCE_P2_1.md section 4) or its claimed addresses are a subset of that one
+    instance's private addresses, the server saw it connect from one of those private addresses, no other enrolled agent
+    presents the same peer address and no other agent that passed the same checks claims the instance (the second path
+    is OFF, :data:`_ipmap.PRIVATE_PEER_IS_PROOF`). Two agents on one cloud node merge NEITHER; a claim that never passed
+    cannot demote anyone.
+
+    A PAIRED agent is the asset: ``node_ips`` are the ASSET's addresses and never what the host claims (a host cannot
+    place itself by lying, review finding hostfw-1). An INERT pairing (the asset is missing, stale or not a VM) falls
+    back to ``agent:<uuid>``/``claimed`` with the note ``pairing_inert:<why>``: never silently dropped.
 
     ``node_ips`` is what the node is KNOWN by. An uncorroborated agent is known by NOTHING (review finding
     hostfw-1): the addresses it claims are the host's own signed words, so they must not decide its zone or
@@ -1246,10 +1274,27 @@ def _resolve_identities(agents: list[Mapping[str, Any]], amap: _ipmap.IpMap) -> 
     for c in claims:
         if c.peer:
             peers[c.peer] = peers.get(c.peer, 0) + 1
+    prows, dup = _pairing_rows(pairings)
+    if prows and now is None:
+        raise ValueError("pairings need the build clock")
+    max_age = pairing_max_age if isinstance(pairing_max_age, dt.timedelta) and pairing_max_age > dt.timedelta(0) \
+        else DEFAULT_PAIRING_ASSET_MAX_AGE
     out: dict[str, _Ident] = {}
     for c in claims:
         aid = c.agent_id
         d = decided[aid]
+        row = prows.get(aid)
+        if aid in dup:
+            d = _ipmap.Decision(None, "pairing_inert:pairing_ambiguous")
+        elif row is not None:
+            assert now is not None
+            d = _ipmap.pairing_decision(c, row, now, max_age, bool(c.peer) and peers.get(c.peer, 0) > 1)
+        if d.ref is not None and d.basis == _ipmap.PAIRED:
+            assert row is not None
+            ips = sorted(row.asset_ips)
+            out[aid] = _Ident(aid, d.ref, _ipmap.PAIRED, "", list(c.ips), ips,
+                              True if any(_ipmap.is_public_ip(ip) for ip in ips) else None, [], d.conflict)
+            continue
         if d.ref is not None:
             ref, basis, note = d.ref, "corroborated", ""
             node_ips = sorted(set(c.ips) | set(amap.ips_of(ref)))
@@ -1353,6 +1398,73 @@ def _agent_closed(fw: _Fw, lst: _Lst, proto: str, port: int) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# acknowledged scan conflicts (docs/ASSURANCE_P2_1.md 4.6, D30)
+# --------------------------------------------------------------------------- #
+
+#: the only conflict an operator can acknowledge; ``agent_scan_check_budget_exceeded`` and ``paired_peer_mismatch`` never.
+ACKABLE_KIND = "agent_closed_scan_open"
+#: no acknowledgement outlives this, whatever a row says (the API caps it too; this is defence in depth).
+MAX_ACK_LIFETIME = dt.timedelta(hours=720)
+
+
+def _parse_time(v: Any) -> Optional[dt.datetime]:
+    if isinstance(v, dt.datetime):
+        return _aware(v)
+    if isinstance(v, str):
+        try:
+            return _aware(dt.datetime.fromisoformat(v.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+    return None
+
+
+def _whole_second(t: dt.datetime) -> dt.datetime:
+    return t.replace(microsecond=0)
+
+
+def _apply_acks(conflicts: list[dict[str, Any]], acks: Iterable[Mapping[str, Any]],
+                now: dt.datetime) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """``(open, acknowledged)``. A conflict is acknowledged iff an ACTIVE ack of this agent exists with the same kind,
+    proto and port, ``expires_at > now`` (and a lifetime of at most 720 h) and the conflict's ``scan_seen_at`` is NOT
+    after the ack's ``through_seen_at``: an acknowledgement binds the observation the operator looked at, so a LATER
+    observation is not covered and the conflict is re-raised with its new time. Only ``agent_closed_scan_open`` can be
+    acknowledged. Times compare at whole seconds (a conflict record prints whole seconds). Anything unreadable is NOT
+    an ack. Pure; the newest covering ack (then the lowest id) is the one disclosed."""
+    now = _aware(now)
+    usable: list[tuple[dt.datetime, str, Mapping[str, Any], dt.datetime]] = []
+    for a in acks or ():
+        if not isinstance(a, Mapping) or a.get("kind") != ACKABLE_KIND:
+            continue
+        through, expires, acked_at = _parse_time(a.get("through_seen_at")), _parse_time(a.get("expires_at")), \
+            _parse_time(a.get("acked_at"))
+        if through is None or expires is None or expires <= now:
+            continue
+        if acked_at is None or expires - acked_at > MAX_ACK_LIFETIME:
+            continue
+        usable.append((_whole_second(through), str(a.get("id")), a, expires))
+    usable.sort(key=lambda t: (-t[0].timestamp(), t[1]))
+    open_: list[dict[str, Any]] = []
+    acked: list[dict[str, Any]] = []
+    for c in conflicts:
+        seen = _parse_time(c.get("scan_seen_at"))
+        hit = None
+        if c.get("kind") == ACKABLE_KIND and seen is not None:
+            for through, _id, a, expires in usable:
+                if a.get("proto") == c.get("proto") and a.get("port") == c.get("port") \
+                        and _whole_second(seen) <= through:
+                    hit = (a, expires)
+                    break
+        if hit is None:
+            open_.append(c)
+            continue
+        a, expires = hit
+        acked.append({"kind": c["kind"], "proto": c["proto"], "port": c["port"], "scan_seen_at": c["scan_seen_at"],
+                      "ack_id": str(a.get("id")), "acked_by": _text(a.get("acked_by"), 64), "expires_at": _iso(expires)})
+    acked.sort(key=lambda r: (r["proto"], r["port"]))
+    return open_, acked
+
+
+# --------------------------------------------------------------------------- #
 # inputs
 # --------------------------------------------------------------------------- #
 
@@ -1369,6 +1481,8 @@ class HostFwRows:
     ``scan_edges`` ``external_scan`` edges ``internet -> node`` already persisted by external_exposure.
     ``scan_cover`` full-port external scans of a node, completed: ``node_ref, started_at, finished_at`` (the
                   positive evidence that can clear a ``agent_closed_scan_open`` conflict).
+    ``pairings``  active operator pairings of an agent with a cloud instance (docs/ASSURANCE_P2_1.md 4.5).
+    ``acks``      active acknowledgements of a scan conflict (4.6).
     ``tombstones`` revoked or legacy agents that still have an OPEN invariant finding: ``id, hostname, status,
                   legacy, revoked_at, node_ref``. The host stays in the graph as an UNKNOWN tombstone.
     """
@@ -1378,6 +1492,12 @@ class HostFwRows:
     scan_edges: list[dict[str, Any]] = field(default_factory=list)
     tombstones: list[dict[str, Any]] = field(default_factory=list)
     scan_cover: list[dict[str, Any]] = field(default_factory=list)
+    #: ACTIVE operator pairings joined with their asset (``PAIRINGS_SQL``): ``pairing_id, agent_id, asset_id, a_id, kind,
+    #: last_seen, md``. ``a_id`` is None when the asset row is gone (the pairing is then inert).
+    pairings: list[dict[str, Any]] = field(default_factory=list)
+    #: ACTIVE scan-conflict acknowledgements (``ACKS_SQL``): ``id, agent_id, kind, proto, port, through_seen_at,
+    #: expires_at, acked_by, acked_at``.
+    acks: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -1472,7 +1592,8 @@ def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any
                max_age: dt.timedelta, edge_ttl: dt.timedelta,
                scans: Mapping[str, list[Mapping[str, Any]]], fw_cache: dict[str, _Fw],
                budget: Optional[list[int]] = None,
-               cover: Optional[Mapping[str, list[Mapping[str, Any]]]] = None) -> _Out:
+               cover: Optional[Mapping[str, list[Mapping[str, Any]]]] = None,
+               acks: Iterable[Mapping[str, Any]] = ()) -> _Out:
     out = _Out()
     aid = ident.agent_id
     hostname = _text(a.get("hostname"), 64) or aid[:8]
@@ -1534,7 +1655,12 @@ def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any
                 _widen_all(_Fw(), _Lst(), ident.addressable, reach, "reach_failed")
         out.edges = _edge_outs(reach, ident, p, observed, fw, lst, state)
         if state == "fresh":
-            conflicts = _scan_conflicts(fw, lst, ident, scans, _aware(p["collected_at"]), cover)
+            conflicts, acked = _apply_acks(_scan_conflicts(fw, lst, ident, scans, _aware(p["collected_at"]), cover),
+                                           acks, now)
+            if ident.conflict == _ipmap.PEER_MISMATCH:
+                # the peer address contradicts the pairing: no coverage, every fact in conflict, never acknowledgeable
+                conflicts.append({"kind": _ipmap.PEER_MISMATCH, "proto": "any", "port": 0,
+                                  "scan_seen_at": _iso(observed)})
             out.conflicts = len(conflicts)
             meta = {"signed": True, "key_id": _text(p.get("key_id"), 64), "seq": p.get("seq") if _is_int(p.get("seq")) else 0,
                     "evidence_ref": f"agent_posture:{aid}:{_text(p.get('key_id'), 64)}:{p.get('seq') if _is_int(p.get('seq')) else 0}"}
@@ -1548,9 +1674,10 @@ def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any
                 out.coverage = CoverageOut(
                     node_ref=ident.ref, direction="in", tier="configured", observed_at=observed, source=SOURCE,
                     detail={"agent": aid, "key_id": _text(p.get("key_id"), 64), "seq": meta["seq"],
-                            "listeners": len(lst.listeners), "families": sorted(fw.walkers)})
+                            "listeners": len(lst.listeners), "families": sorted(fw.walkers),
+                            **({"acknowledged_conflicts": len(acked)} if acked else {})})
             entries["host_agent"] = _summary_entry(a, ident, p, fw, lst, conflicts, blocked, meta, observed,
-                                                   hostname, silent_after)
+                                                   hostname, silent_after, acked)
     if "host_agent" not in entries:
         entries["host_agent"] = dict(base_meta, status="unavailable", reason=reason or "unavailable",
                                      conf="approximate", partial=True,
@@ -1605,7 +1732,7 @@ def _coverage_gate(fw: _Fw, lst: _Lst, conflicts: list, reach: _Reach) -> list[s
 
 def _summary_entry(a: Mapping[str, Any], ident: _Ident, p: Mapping[str, Any], fw: _Fw, lst: _Lst,
                    conflicts: list, blocked: list, meta: dict, observed: dt.datetime, hostname: str,
-                   silent_after: int) -> dict[str, Any]:
+                   silent_after: int, acked: Optional[list] = None) -> dict[str, Any]:
     sections = p["sections"]
     data: dict[str, Any] = {
         "agent_id": ident.agent_id, "hostname": hostname, "identity_basis": ident.basis,
@@ -1616,6 +1743,8 @@ def _summary_entry(a: Mapping[str, Any], ident: _Ident, p: Mapping[str, Any], fw
         "coverage": {"granted": not blocked, "blocked_by": sorted(blocked)},
         "conflicts": [dict(c) for c in conflicts],
     }
+    if acked:       # disclosed, never silent (D30): P3 must count these like exceptions
+        data["conflicts_acknowledged"] = [dict(r) for r in acked]
     if ident.note:
         data["identity_note"] = ident.note
     ver = a.get("agent_version")
@@ -1708,7 +1837,8 @@ def _tombstones(rows: list[dict[str, Any]], facts: dict[str, FactOut], nodes: di
 
 
 def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional[dt.timedelta] = None,
-          silent_edge_ttl: Optional[dt.timedelta] = None, **_opts: Any) -> BuildOutput:
+          silent_edge_ttl: Optional[dt.timedelta] = None, pairing_asset_max_age: Optional[dt.timedelta] = None,
+          **_opts: Any) -> BuildOutput:
     """Pure: nodes, edges, coverage and facts of every live v2 agent. Same inputs, byte-identical output."""
     now = _aware(now)
     max_age = agent_posture_max_age if isinstance(agent_posture_max_age, dt.timedelta) \
@@ -1731,7 +1861,11 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
         live.append(a)
     live.sort(key=lambda a: str(a["id"]))
     amap = _ipmap.build_ip_map([r for r in rows.assets if r.get("kind") != _ipmap.AGENT_KIND])
-    idents = _resolve_identities(live, amap)
+    idents = _resolve_identities(live, amap, rows.pairings, now, pairing_asset_max_age)
+    acks_by_agent: dict[str, list[Mapping[str, Any]]] = {}
+    for k in rows.acks:
+        if isinstance(k, dict) and k.get("agent_id") is not None:
+            acks_by_agent.setdefault(str(k["agent_id"]), []).append(k)
     scans: dict[str, list[Mapping[str, Any]]] = {}
     for e in rows.scan_edges:
         if isinstance(e, dict) and isinstance(e.get("dst_ref"), str):
@@ -1755,11 +1889,13 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
     notes: list[str] = list(rows.notes)
     clashed = 0
     shared_peer = 0
+    paired = inert = 0
     for a in live:
         aid = str(a["id"])
         ident = idents[aid]
         try:
-            o = _agent_out(a, ident, rows.postures.get(aid), now, max_age, ttl, scans, fw_cache, budget, cover)
+            o = _agent_out(a, ident, rows.postures.get(aid), now, max_age, ttl, scans, fw_cache, budget, cover,
+                           acks_by_agent.get(aid, ()))
         except Exception:  # noqa: BLE001 -- one host's surprise must not stop the others; it fails CLOSED
             logger.exception("host_fw_agent_failed", extra={"agent": aid})
             o = _failed_out(a, ident)
@@ -1769,6 +1905,10 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
             clashed += 1
         elif ident.note == "shared_peer_address":
             shared_peer += 1
+        if ident.basis == _ipmap.PAIRED:
+            paired += 1
+        elif ident.note.startswith("pairing_inert:"):
+            inert += 1
         if o.node is not None:
             nodes[o.node.ref] = o.node
         edges.extend(o.edges)
@@ -1808,6 +1948,9 @@ def build(rows: HostFwRows, now: dt.datetime, *, agent_posture_max_age: Optional
     if shared_peer:
         notes.append(f"host_fw: {shared_peer} agent(s) connect from an address another agent also connects from "
                      f"(NAT, proxy or shared egress): not merged into a cloud instance")
+    if paired or inert:
+        notes.append(f"host_fw: {paired} paired agent(s) (identity from the operator pairing), {inert} inert "
+                     f"pairing(s) (the host is judged as agent:<uuid> until the asset is seen again)")
     for k, n in sorted(blocked.items()):
         notes.append(f"host_fw: {n} fresh agent(s) without coverage: {k}")
     notes.extend(f"host_fw: {line}" for line in amap.report())
@@ -1851,6 +1994,22 @@ SELECT a.id, a.hostname, a.status, a.legacy, a.revoked_at, a.node_ref
  LIMIT 5001
 """
 MAX_TOMBSTONES = 5000
+
+# Active operator pairings (docs/ASSURANCE_P2_1.md 4.5). The asset is LEFT JOINed so a deleted asset makes the pairing
+# inert instead of erasing it; the SELECT list is shared with the ingest (``_ipmap.PAIRING_SELECT_SQL``) so the two
+# cannot read different things. No tenant in the SQL: RLS on the connection.
+PAIRINGS_SQL = _ipmap.PAIRING_SELECT_SQL + " ORDER BY p.agent_id"
+MAX_PAIRINGS = 20000
+
+# Active, unexpired acknowledgements of a scan conflict (4.6). ``acked_at`` lets the builder refuse a lifetime past 720 h.
+ACKS_SQL = """
+SELECT id, agent_id, kind, proto, port, through_seen_at, expires_at, acked_by, acked_at
+  FROM fleet_conflict_acks
+ WHERE status = 'active' AND expires_at > $1
+ ORDER BY agent_id, proto, port, id
+ LIMIT 20001
+"""
+MAX_ACKS = 20000
 
 # The NEWEST stored posture of each agent with the state of the key that signed it and that key's bytes
 # (so the signature can be checked again, here, instead of trusting the ``signed`` column).
@@ -2035,6 +2194,31 @@ async def load(conn, now: dt.datetime, *, agent_posture_max_age: Optional[dt.tim
         d["id"] = str(d["id"])
     rows.tombstones = tombs
     rows.assets = [dict(r) for r in await _ipmap.load_ip_rows(conn)]
+    # pairings and acknowledgements: a table that cannot be read is NOT "no pairing": the agents then keep their
+    # claimed identity (P2 behaviour, which only ever loses coverage) and a failed ack read leaves every conflict open
+    try:
+        pairs = [dict(r) for r in await conn.fetch(PAIRINGS_SQL)]
+        for d in pairs:
+            d["pairing_id"] = str(d["pairing_id"])
+            d["agent_id"] = str(d["agent_id"])
+            d["asset_id"] = str(d["asset_id"])
+            d["a_id"] = str(d["a_id"]) if d.get("a_id") is not None else None
+            d["md"] = _json(d.get("md"), {})
+        rows.pairings = pairs[:MAX_PAIRINGS]
+    except Exception:  # noqa: BLE001 -- asyncpg.PostgresError and friends: fail toward claimed identities
+        logger.warning("host_fw_pairings_unreadable", exc_info=True)
+        rows.notes.append("host_fw: the pairings could not be read: every agent is judged as agent:<uuid>")
+    try:
+        ack_rows = [dict(r) for r in await conn.fetch(ACKS_SQL, now)]
+        for d in ack_rows:
+            d["id"] = str(d["id"])
+            d["agent_id"] = str(d["agent_id"])
+        if len(ack_rows) > MAX_ACKS:
+            rows.notes.append("host_fw: more acknowledgements than the builder reads: the rest are ignored")
+        rows.acks = ack_rows[:MAX_ACKS]
+    except Exception:  # noqa: BLE001
+        logger.warning("host_fw_acks_unreadable", exc_info=True)
+        rows.notes.append("host_fw: the conflict acknowledgements could not be read: every conflict stays open")
     # an observation counts for the whole EXTERNAL window (``max_age``, 168 h by default), exactly as long as
     # external_exposure keeps the edge in the graph: not for the posture window (review finding hostfw-3)
     ext = _opts.get("max_age")

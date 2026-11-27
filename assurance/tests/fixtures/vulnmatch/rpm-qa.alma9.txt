@@ -1,0 +1,4 @@
+kernel-core	0	5.14.0	503.11.1.el9_5	x86_64	kernel-5.14.0-503.11.1.el9_5.src.rpm
+openssl-libs	1	3.2.2	6.el9_5.1	x86_64	openssl-3.2.2-6.el9_5.1.src.rpm
+nodejs	1	18.18.2	1.module+el9.3.0+1234+abcd	x86_64	nodejs-18.18.2-1.module+el9.3.0+1234+abcd.src.rpm
+glibc	0	2.34	125.el9_5.1.alma.1	x86_64	glibc-2.34-125.el9_5.1.alma.1.src.rpm

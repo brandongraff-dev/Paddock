@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: CC0-1.0
+#
+# Example Paddock Guard rule pack. It documents the format (contract 3.7) and is never loaded by
+# a scan: only packs named guard-*.toml in this directory are shipped rules, and a project pack
+# lives in .paddock/rules/*.toml. Text in this file is released under CC0-1.0 so you can copy it.
+#
+# Limits the loader enforces:
+#   * file <= 100 KB, <= 200 rules, TOML only, unknown keys are rejected
+#   * confidence is "medium" or "low" (a pack rule never runs at "high")
+#   * a pattern is <= 400 characters, flags are limited to (?i) and (?m), no backreferences,
+#     no nested quantifiers, no alternation under a quantifier whose branches can start with the
+#     same character, and at most ONE unbounded quantifier (*, +, {n,}); write every other
+#     repetition as {0,N} with N <= 200
+#   * a project pack is untrusted: its title, why, fix_hint and agent_prompt are replaced by
+#     generic text and its severity is capped at "medium", unless its sha256 is listed in the
+#     user-level config (trusted_packs). Guard prints the sha256 of every project pack.
+
+[pack]
+id = "example-pack"             # [a-z0-9-]{3,40}; rule ids start with PGX-<PACK ID UPPERCASED>-
+version = 1
+
+[[rule]]
+id = "PGX-EXAMPLE-PACK-001"
+title = "pickle.loads on request data"
+severity = "high"               # info | low | medium | high | critical
+confidence = "medium"           # medium | low
+files = ["**/*.py"]             # repo-relative globs, no "..", no absolute paths
+exclude = ["**/tests/**"]
+pattern = '(?i)\bpickle\.loads\(\s*request\.'
+negative_pattern = 'nosec'      # optional: a line matching this is skipped
+why = "Deserialising request data with pickle can run attacker-chosen code."
+fix_hint = "Parse the request body with json.loads and validate the result."
+agent_prompt = "Replace the pickle.loads call at {file}:{line} with json.loads and validate the parsed value."
+
+[[rule]]
+id = "PGX-EXAMPLE-PACK-002"
+title = "Debug flag left on"
+severity = "low"
+confidence = "low"
+files = ["**/settings*.py"]
+pattern = '(?m)^\s{0,8}DEBUG\s{0,4}=\s{0,4}True\b'
+why = "A debug flag left on in settings can expose internals in production."
+fix_hint = "Read the flag from the environment and default it to False."
+agent_prompt = "Make DEBUG at {file}:{line} read from the environment, defaulting to False."

@@ -1,0 +1,25 @@
+# Debian 12
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+ID=debian
+VERSION_ID="12"
+VERSION_CODENAME=bookworm
+# Ubuntu 24.04
+PRETTY_NAME="Ubuntu 24.04.1 LTS"
+ID=ubuntu
+ID_LIKE=debian
+VERSION_ID="24.04"
+VERSION_CODENAME=noble
+UBUNTU_CODENAME=noble
+# AlmaLinux 9
+NAME="AlmaLinux"
+ID="almalinux"
+ID_LIKE="rhel centos fedora"
+VERSION_ID="9.5"
+# RHEL 9
+ID="rhel"
+ID_LIKE="fedora"
+VERSION_ID="9.4"
+# Linux Mint (a derivative: ID_LIKE says ubuntu, but its package set is not Ubuntu's -> UNKNOWN distro_unsupported)
+ID=linuxmint
+ID_LIKE="ubuntu debian"
+UBUNTU_CODENAME=jammy

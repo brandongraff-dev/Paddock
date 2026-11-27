@@ -1,0 +1,101 @@
+{
+ "glibc": {
+  "CVE-2023-4911": {
+   "description": "A buffer overflow was discovered in the GNU C Library's dynamic loader ld.so whi",
+   "scope": "local",
+   "releases": {
+    "bookworm": {
+     "status": "resolved",
+     "repositories": {
+      "bookworm": "2.36-9+deb12u14",
+      "bookworm-security": "2.36-9+deb12u7"
+     },
+     "fixed_version": "2.36-9+deb12u3",
+     "urgency": "not yet assigned"
+    },
+    "trixie": {
+     "status": "resolved",
+     "repositories": {
+      "trixie": "2.41-12+deb13u5"
+     },
+     "fixed_version": "2.37-12",
+     "urgency": "not yet assigned"
+    }
+   }
+  }
+ },
+ "linux": {
+  "CVE-2024-1086": {
+   "description": "A use-after-free vulnerability in the Linux kernel's netfilter: nf_tables compon",
+   "scope": "local",
+   "releases": {
+    "bookworm": {
+     "status": "resolved",
+     "repositories": {
+      "bookworm": "6.1.176-1",
+      "bookworm-security": "6.1.192-3"
+     },
+     "fixed_version": "6.1.76-1",
+     "urgency": "not yet assigned"
+    },
+    "trixie": {
+     "status": "resolved",
+     "repositories": {
+      "trixie": "6.12.117-1",
+      "trixie-security": "6.12.118-1"
+     },
+     "fixed_version": "6.6.15-1",
+     "urgency": "not yet assigned"
+    }
+   }
+  }
+ },
+ "openssh": {
+  "CVE-2024-6387": {
+   "description": "A security regression (CVE-2006-5051) was discovered in OpenSSH's server (sshd).",
+   "scope": "local",
+   "releases": {
+    "bookworm": {
+     "status": "resolved",
+     "repositories": {
+      "bookworm": "1:9.2p1-2+deb12u10",
+      "bookworm-security": "1:9.2p1-2+deb12u9"
+     },
+     "fixed_version": "1:9.2p1-2+deb12u3",
+     "urgency": "not yet assigned"
+    },
+    "trixie": {
+     "status": "resolved",
+     "repositories": {
+      "trixie": "1:10.0p1-7+deb13u4",
+      "trixie-security": "1:10.0p1-7+deb13u2"
+     },
+     "fixed_version": "1:9.7p1-7",
+     "urgency": "not yet assigned"
+    }
+   }
+  },
+  "CVE-2026-123158": {
+   "description": "sshd in OpenSSH before 10.6p2 on Linux, when musl libc is used without PAM, lack",
+   "scope": "local",
+   "releases": {
+    "bookworm": {
+     "status": "open",
+     "repositories": {
+      "bookworm": "1:9.2p1-2+deb12u10",
+      "bookworm-security": "1:9.2p1-2+deb12u9"
+     },
+     "urgency": "unimportant"
+    },
+    "trixie": {
+     "status": "open",
+     "repositories": {
+      "trixie": "1:10.0p1-7+deb13u4",
+      "trixie-security": "1:10.0p1-7+deb13u2"
+     },
+     "urgency": "unimportant"
+    }
+   }
+  }
+ }
+}

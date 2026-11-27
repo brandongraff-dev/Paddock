@@ -623,7 +623,8 @@ def _strip_timestamps(value: Any) -> Any:
 def digest_view(name: str, entry: Any) -> Any:
     """What of one collector entry counts as its MEANING (the fact digest and ``graph_loader.doc_sha`` both read it):
     every key except the top-level provenance (``FACT_DIGEST_SKIP``), ``*_at`` inside the conflict records, and for
-    the ``host_agent`` summary the provenance copied into ``data`` (``HOST_AGENT_DATA_DIGEST_SKIP``)."""
+    the ``host_agent`` summary the provenance copied into ``data`` (``HOST_AGENT_DATA_DIGEST_SKIP``) and the ``*_at`` keys
+    of its ``conflicts`` and ``conflicts_acknowledged`` records."""
     if not isinstance(entry, dict):
         return entry
     d = {k: v for k, v in entry.items() if k not in FACT_DIGEST_SKIP}
@@ -631,8 +632,9 @@ def digest_view(name: str, entry: Any) -> Any:
         d["conflict"] = _strip_timestamps(d["conflict"])
     if name == "host_agent" and isinstance(d.get("data"), dict):
         data = {k: v for k, v in d["data"].items() if k not in HOST_AGENT_DATA_DIGEST_SKIP}
-        if "conflicts" in data:
-            data["conflicts"] = _strip_timestamps(data["conflicts"])
+        for key in ("conflicts", "conflicts_acknowledged"):     # when a scan saw a port and when an ack ends is no change of state
+            if key in data:
+                data[key] = _strip_timestamps(data[key])
         d["data"] = data
     return d
 

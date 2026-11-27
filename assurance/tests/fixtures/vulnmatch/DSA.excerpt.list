@@ -1,0 +1,11 @@
+[09 Apr 2026] DSA-6204-1 openssh - security update
+	{CVE-2026-3497}
+	[bookworm] - openssh 1:9.2p1-2+deb12u9
+	[trixie] - openssh 1:10.0p1-7+deb13u2
+[01 Jul 2024] DSA-5724-1 openssh - security update
+	{CVE-2024-6387}
+	[bookworm] - openssh 1:9.2p1-2+deb12u3
+[03 Oct 2023] DSA-5514-1 glibc - security update
+	{CVE-2023-4911}
+	[bullseye] - glibc 2.31-13+deb11u7
+	[bookworm] - glibc 2.36-9+deb12u3

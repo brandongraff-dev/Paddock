@@ -8,6 +8,7 @@ import signal
 import stat
 import subprocess
 import tarfile
+import types
 import zipfile
 
 import pytest
@@ -262,10 +263,12 @@ def test_root_not_owned_by_current_user_is_refused(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- extraction ----------------
 def _tar(entries):
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tf:
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tf:
         for spec in entries:
             name = spec["name"]
             ti = tarfile.TarInfo(name)
+            if "pax" in spec:
+                ti.pax_headers = spec["pax"]
             ti.type = spec.get("type", tarfile.REGTYPE)
             data = spec.get("data", b"")
             ti.mode = spec.get("mode", 0o644)
@@ -305,7 +308,7 @@ def test_extract_tar_good_archive_strips_special_bits(tmp_path):
     {"name": "../up.txt", "data": b"x"},
     {"name": "a/../../up.txt", "data": b"x"},
     {"name": "a\\b.txt", "data": b"x"},
-    {"name": "bad\x00name.txt", "data": b"x"},
+    {"name": "ok.txt", "data": b"x", "pax": {"path": "bad\x00name.txt"}},
     {"name": "sym", "type": tarfile.SYMTYPE, "linkname": "/etc/passwd"},
     {"name": "hard", "type": tarfile.LNKTYPE, "linkname": "a.txt"},
     {"name": "dev", "type": tarfile.CHRTYPE},
@@ -343,7 +346,7 @@ def test_extract_tar_header_size_that_lies_is_rejected(tmp_path):
     # header claims far more bytes than the stream holds
     ti = tarfile.TarInfo("big.bin")
     ti.size = 10_000_000
-    hdr = ti.tobytes()
+    hdr = ti.tobuf(tarfile.GNU_FORMAT)
     with pytest.raises(errors.GuardError):
         files.extract_tar_stream(io.BytesIO(hdr + b"short"), str(tmp_path / "out2"))
 
@@ -358,6 +361,7 @@ def _zip(entries):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data, *rest in entries:
             zi = zipfile.ZipInfo(name)
+            zi.compress_type = zipfile.ZIP_DEFLATED
             if rest:
                 zi.external_attr = rest[0]
             zf.writestr(zi, data)
@@ -387,6 +391,6 @@ def test_extract_zip_ratio_bomb_is_rejected(tmp_path):
 
 
 def test_extract_checks_free_disk_space_first(tmp_path, monkeypatch):
-    monkeypatch.setattr(files.shutil, "disk_usage", lambda p: (100, 99, 1))
+    monkeypatch.setattr(files.shutil, "disk_usage", lambda p: types.SimpleNamespace(total=100, used=99, free=1))
     with pytest.raises(errors.GuardError):
         files.extract_zip(_zip([("a.txt", b"x" * 1000)]), str(tmp_path / "o"))
