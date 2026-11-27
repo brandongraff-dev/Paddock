@@ -53,10 +53,11 @@ from uuid import UUID
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, StringConstraints, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, ValidationError
 
-from .. import audit, fleet_enroll, fleet_monitor, fleet_posture
+from .. import audit, fleet_enroll, fleet_monitor, fleet_pairing, fleet_posture
 from ..auth import Principal, client_ip, client_ip_strict, current_principal, require
+from ..billing import gate as billing_gate
 from ..db import get_pool
 
 logger = logging.getLogger(__name__)
@@ -325,6 +326,9 @@ class AgentOut(BaseModel):
     silent_after_s: int = 300
     key_id: str | None = Field(default=None, description="the agent's active signing key")
     last_posture_at: datetime | None = None
+    # P2.1 section 4
+    paired_asset_id: UUID | None = Field(
+        default=None, description="the cloud asset an admin paired this agent with (active pairing), else null")
 
 
 class InventorySnapshot(BaseModel):
@@ -360,6 +364,9 @@ class AgentDetailOut(AgentOut):
     action_counts: dict[str, int] = Field(default_factory=dict)
     keys: list[KeyOut] = Field(default_factory=list)
     identity: dict[str, Any] = Field(default_factory=dict, description="claimed identity (hostname, ips, basis)")
+    pairing: PairingOut | None = Field(
+        default=None, description="the viewer-safe subset of the agent's latest pairing: no justification, no "
+                                  "operator, no asset name, no address")
 
 
 class PostureOut(BaseModel):
@@ -886,7 +893,8 @@ _AGENT_COLS = (
     "a.id, a.hostname, a.platform, a.agent_version, a.labels, a.capabilities, a.status, a.last_seen, "
     "a.enrolled_at, a.online, a.legacy, a.node_ref, a.silent_after_s, a.last_posture_at, a.identity, "
     "(SELECT k.key_id FROM fleet_agent_keys k WHERE k.agent_id = a.id AND k.status = 'active' "
-    " ORDER BY k.created_at DESC LIMIT 1) AS key_id"
+    " ORDER BY k.created_at DESC LIMIT 1) AS key_id, "
+    "(SELECT p.asset_id FROM fleet_agent_pairings p WHERE p.agent_id = a.id AND p.status = 'active') AS paired_asset_id"
 )
 
 
@@ -899,6 +907,7 @@ def _agent_out(r: Any) -> AgentOut:
         last_seen=r["last_seen"], enrolled_at=r["enrolled_at"],
         stale=_stale(r["last_seen"]), online=r["online"], legacy=r["legacy"], node_ref=r["node_ref"],
         silent_after_s=r["silent_after_s"], key_id=r["key_id"], last_posture_at=r["last_posture_at"],
+        paired_asset_id=r["paired_asset_id"],
     )
 
 

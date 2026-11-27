@@ -23,7 +23,6 @@ builder, so the ingest, the column ``fleet_agents.node_ref`` and the graph canno
 from __future__ import annotations
 
 import datetime as dt
-import ipaddress
 import json
 import logging
 import uuid
