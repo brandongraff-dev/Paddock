@@ -512,3 +512,42 @@ def test_the_admin_script_has_the_four_documented_subcommands():
     for name in ("revoke-key", "suspend-tenant", "global-kill", "revoke-issuer"):
         assert f'"{name}"' in text
     assert callable(adm.main)
+
+
+# --------------------------------------------------------------------------- #
+# rework round: the 64-entry cap never wedges an estate on entries nobody can use any more
+# --------------------------------------------------------------------------- #
+
+async def test_entries_of_long_expired_keys_make_room_when_the_list_is_full(db_pool, tmp_path, monkeypatch):
+    p = fk.make_platform(tmp_path / "old", root_window=(T0 - 900 * DAY, T0 + 3000 * DAY), issuer_window=(T0 - 800 * DAY, T0 + 365 * DAY),
+                         revoker_window=(T0 - 800 * DAY, T0 + 365 * DAY))
+    fk.install(monkeypatch, p)
+    async with db_pool.acquire() as con:
+        old = await keys.create_key(con, "attest", now=T0 - 700 * DAY)             # key window ends T0 - 335 d
+        await keys.activate(con, old.kid, now=T0 - 700 * DAY)
+        await keys.revoke(con, old.kid, actor="a", justification="because reasons", resign=False, now=T0 - 690 * DAY)
+        for i in range(64):
+            await con.execute("INSERT INTO attest_revocations (kid, reason_code) VALUES ($1, 'cessation')", f"{i:032x}")
+        # 65 ledger rows: the one whose key can no longer sign anything fresh is left off the list, the rest stay
+        signed = await revocation.sign_list(con, now=T0)
+        listed = [e["kid"] for e in signed.doc["revoked"]]
+        assert len(listed) == 64 and old.kid not in listed
+        assert await con.fetchval("SELECT count(*) FROM attest_revocations") == 65         # the ledger keeps everything
+        assert await revocation.resign_if_due(con, now=T0 + 1) is None                     # and it is not retried forever
+        # a revocation of a key that is still in its window is never dropped: it errors rather than hide
+        await con.execute("INSERT INTO attest_revocations (kid, reason_code) VALUES ($1, 'key_compromise')", "f" * 32)
+        with pytest.raises(revocation.RevocationError) as ei:
+            await revocation.sign_list(con, now=T0 + 2)
+        assert ei.value.code == "revocation.too_many_revoked"
+
+
+async def test_below_the_cap_every_ledger_entry_is_listed_even_for_expired_keys(db_pool, tmp_path, monkeypatch):
+    p = fk.make_platform(tmp_path / "old", root_window=(T0 - 900 * DAY, T0 + 3000 * DAY), issuer_window=(T0 - 800 * DAY, T0 + 365 * DAY),
+                         revoker_window=(T0 - 800 * DAY, T0 + 365 * DAY))
+    fk.install(monkeypatch, p)
+    async with db_pool.acquire() as con:
+        old = await keys.create_key(con, "attest", now=T0 - 700 * DAY)
+        await keys.activate(con, old.kid, now=T0 - 700 * DAY)
+        await keys.revoke(con, old.kid, actor="a", justification="because reasons", resign=False, now=T0 - 690 * DAY)
+        signed = await revocation.sign_list(con, now=T0)
+        assert [e["kid"] for e in signed.doc["revoked"]] == [old.kid]                     # no pruning without need

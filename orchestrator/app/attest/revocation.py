@@ -261,10 +261,30 @@ async def _live_subjects(conn: Any, tenant: str, estate_id: str) -> set:
     return {(f"paddock-estate:{estate_id}" if r["subject_kind"] == "estate" else f"dns:{r['domain']}") for r in rows}
 
 
-async def _revoked_entries(conn: Any, tenant: str) -> list:
+#: A revoked key whose own window ended this long ago can sign nothing a verifier would still take as fresh: its
+#: certificate window (<= the key window) ends before ``valid_until`` of any statement, and ``verify_chain`` requires the
+#: window to contain ``valid_until``. Only such entries may be left off a FULL list (never otherwise).
+PRUNE_AFTER_S = 7 * 24 * 3600
+
+
+async def _revoked_entries(conn: Any, tenant: str, now: Optional[int] = None) -> list:
+    """The entries of the list: every ledger row, except that when there are more than ``MAX_REVOKED`` rows those of keys
+    whose window ended more than ``PRUNE_AFTER_S`` ago (oldest first) make room. The append-only ledger keeps them all;
+    an entry of a key without a row (or still inside its window) is never dropped: the caller then refuses to sign."""
     rows = await conn.fetch(
-        "SELECT kid, reason_code, revoked_at FROM attest_revocations WHERE tenant_id = $1::uuid "
-        "ORDER BY revoked_at, kid", tenant)
+        "SELECT r.kid, r.reason_code, r.revoked_at, k.not_after AS key_not_after FROM attest_revocations r "
+        "LEFT JOIN attest_keys k ON k.tenant_id = r.tenant_id AND k.kid = r.kid WHERE r.tenant_id = $1::uuid "
+        "ORDER BY r.revoked_at, r.kid", tenant)
+    over = len(rows) - MAX_REVOKED
+    if over > 0 and now is not None:
+        kept = []
+        for r in rows:
+            na = r["key_not_after"]
+            if over > 0 and na is not None and int(na.timestamp()) + PRUNE_AFTER_S < now:
+                over -= 1
+                continue
+            kept.append(r)
+        rows = kept
     return [{"kid": r["kid"], "reason": r["reason_code"], "revoked_at": timefmt.format(int(r["revoked_at"].timestamp()))}
             for r in rows]
 
@@ -299,7 +319,7 @@ async def _build(conn: Any, platform: Any, *, now: Any, signer: str, extra: dict
             raise RevocationError("revocation.too_many_subjects", f"more than {MAX_SUPERSEDED} live superseded subjects")
     issued_at = max(t, int(stored.get("issued_at", 0)))
     seq = int(row["revocation_seq"]) + 1
-    revoked = await _revoked_entries(conn, tenant)
+    revoked = await _revoked_entries(conn, tenant, t)
     if len(revoked) > MAX_REVOKED:
         raise RevocationError("revocation.too_many_revoked", f"more than {MAX_REVOKED} revoked keys: a new estate is needed")
     doc = {
@@ -396,7 +416,7 @@ async def resign_if_due(conn: Any, platform: Any = None, *, now: Any = None,
     if cur is None or when - int(_stored(row["revocation_doc"]).get("issued_at", 0)) >= max_age_s:
         return await sign_list(conn, platform, now=when)
     listed = {e["kid"] for e in cur.doc["revoked"]}
-    kids = {r["kid"] for r in await conn.fetch("SELECT kid FROM attest_revocations WHERE tenant_id = $1::uuid", tenant)}
+    kids = {e["kid"] for e in await _revoked_entries(conn, tenant, when)}      # what a new list would carry
     if kids - listed:
         return await sign_list(conn, platform, now=when)
     return None

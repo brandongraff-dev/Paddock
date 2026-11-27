@@ -148,6 +148,10 @@ def register() -> None:
 # Verification (audit.verify)
 # --------------------------------------------------------------------------- #
 
+#: Each listed signature costs a database lookup and a verification: a hostile sink line must not choose that bill.
+MAX_SIGS = 8
+
+
 def _shape_ok(entry: Any) -> bool:
     return (isinstance(entry, dict) and set(entry) == ENTRY_KEYS and entry["v"] == 2 and not isinstance(entry["v"], bool)
             and entry["alg"] == "ed25519" and isinstance(entry["kid"], str) and bool(_KID.match(entry["kid"]))
@@ -159,7 +163,7 @@ async def anchor_sig_status(pool: Any, anchor: Anchor, *, tenant_id: Optional[st
     tenant = str(tenant_id or anchor.tenant_id)
     if anchor.sigs is None:
         return await audit.legacy_anchor_status(pool, tenant)
-    if not isinstance(anchor.sigs, list) or not anchor.sigs or not all(_shape_ok(e) for e in anchor.sigs):
+    if not isinstance(anchor.sigs, list) or not 0 < len(anchor.sigs) <= MAX_SIGS or not all(_shape_ok(e) for e in anchor.sigs):
         return "bad_signature"
     try:
         roots = platform_keys.load_roots()
@@ -213,3 +217,32 @@ async def _entry_valid(con: Any, tenant: str, anchor: Anchor, entry: dict, row: 
         return ed25519.verify(cert.public_key, message, signature)
     except (certs.CertError, JsonError, ValueError, TypeError, KeyError):
         return False
+
+
+async def unsign(pool: Any, anchor: Anchor) -> None:
+    """Called by ``audit.anchor_head`` when ``sink.publish`` failed and the sink does not hold this anchor: forget the
+    signature that was never published. The stored public document goes, and ``anchor_v2_since`` returns to NULL only if
+    this anchor was what set it and no other document remains (the estate has published no v2 anchor, so the legacy
+    rule must not lock out its older legacy anchors). Never raises: if this fails the flag stays set, which fails closed."""
+    try:
+        if not anchor.sigs:
+            return
+        tenant = anchor.tenant_id
+        at = _at(anchor.ts)
+        with tenancy.tenant_context(tenant):
+            async with pool.acquire() as con:
+                async with con.transaction():
+                    await con.fetchval("SELECT 1 FROM attest_estates WHERE tenant_id = $1::uuid FOR UPDATE", tenant)
+                    await con.execute(
+                        "DELETE FROM attest_anchors WHERE tenant_id = $1::uuid AND max_id = $2 AND at = $3",
+                        tenant, anchor.max_id, at)
+                    left = await con.fetchval("SELECT count(*) FROM attest_anchors WHERE tenant_id = $1::uuid", tenant)
+                    if not left:
+                        await con.execute(
+                            "UPDATE attest_estates SET anchor_v2_since = NULL WHERE tenant_id = $1::uuid "
+                            "AND anchor_v2_since = $2", tenant, anchor.max_id)
+    except Exception as exc:  # noqa: BLE001 -- fail closed: the flag simply stays
+        logger.warning("attest_anchor_unsign_failed", extra={"tenant_id": anchor.tenant_id, "error": type(exc).__name__})
+
+
+sign_hook.unsign = unsign   # type: ignore[attr-defined]

@@ -1,0 +1,8 @@
+{
+  "name": "clean-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Paddock Guard fixture: a small app with nothing for the built-in checks to find.",
+  "scripts": { "start": "node src/server.js", "test": "node --test" },
+  "dependencies": { "express": "4.19.2" }
+}

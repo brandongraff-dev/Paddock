@@ -685,9 +685,33 @@ async def anchor_head(pool, sink: Any = _UNSET, *, tenant_id: str | None = None)
         except Exception as exc:  # noqa: BLE001 -- a signer never blocks the anchor; the legacy-only one is published
             anchor.sigs = before
             logger.warning("audit_anchor_signer_failed", extra={"tenant_id": tenant, "error": type(exc).__name__})
-    receipt = await sink.publish(anchor)
+    try:
+        receipt = await sink.publish(anchor)
+    except Exception:
+        if anchor.sigs:
+            await _forget_unpublished_sigs(pool, sink, tenant, anchor)
+        raise
     logger.info("audit_anchored", extra={"tenant_id": tenant, "max_id": head_id})
     return {"anchored": True, "anchor": anchor.to_dict(), "receipt": receipt}
+
+
+async def _forget_unpublished_sigs(pool, sink: Any, tenant: str, anchor: Anchor) -> None:
+    """``sink.publish`` failed after a signer stored its signature (and the sticky ``anchor_v2_since``): unless the sink
+    holds this anchor (a torn publish) or cannot be asked, let each signer forget it, so that a failed FIRST publish does
+    not make the estate's older legacy anchors read as a downgrade. Every doubt keeps the flag (fail closed)."""
+    try:
+        latest = await sink.latest(tenant)
+    except Exception:  # noqa: BLE001
+        return
+    if latest is not None and latest.max_id >= anchor.max_id:
+        return
+    for signer in list(ANCHOR_SIGNERS):
+        undo = getattr(signer, "unsign", None)
+        if undo is not None:
+            try:
+                await undo(pool, anchor)
+            except Exception:  # noqa: BLE001
+                logger.warning("audit_anchor_unsign_failed", extra={"tenant_id": tenant})
 
 
 async def anchor_all_tenants(pool, sink: Any = _UNSET) -> list[dict[str, Any]]:

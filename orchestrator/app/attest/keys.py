@@ -377,7 +377,10 @@ async def renew_certs(conn: Any, platform: Any = None, *, now: Any = None) -> li
                 "WHERE tenant_id = $1::uuid AND kid = $2", tenant, rec.kid, cert.envelope.decode("ascii"),
                 cert.serial, _dt(cert.not_after))
             await _audit(conn, tenant, "attest.cert.renewed", rec.kid, "system",
-                         {"kid": rec.kid, "serial": cert.serial, "not_after": cert.not_after})
+                         {"kid": rec.kid, "serial": cert.serial, "not_after": cert.not_after,
+                          "window_start_moved": cert.not_before != rec.cert.not_before})
+            if cert.not_before != rec.cert.not_before:   # a newer issuer cannot vouch for earlier instants (see doc)
+                logger.warning("attest_cert_window_start_moved", extra={"kid": rec.kid})
             renewed.append(rec.kid)
     return renewed
 
@@ -504,6 +507,10 @@ async def revoke(conn: Any, kid: str, *, reason: str = "key_compromise", actor: 
     tenant = await _tenant_of(conn)
     destroy_error: Optional[str] = None
     async with conn.transaction():
+        # lock order, here and in create_key/ensure_estate: the estate row FIRST, then key rows. The opposite order
+        # (key row, then the hold UPDATE on the estate) deadlocked against a concurrent create_key, and Postgres may pick
+        # the emergency revoke as the victim.
+        await conn.fetchval("SELECT 1 FROM attest_estates WHERE tenant_id = $1::uuid FOR UPDATE", tenant)
         row = await conn.fetchrow(
             f"SELECT {_COLUMNS} FROM attest_keys WHERE tenant_id = $1::uuid AND kid = $2 FOR UPDATE", tenant, kid)
         if row is None:
@@ -530,7 +537,7 @@ async def revoke(conn: Any, kid: str, *, reason: str = "key_compromise", actor: 
         try:
             async with conn.transaction():              # a savepoint: a failing destroy never undoes the revocation
                 await (backend or backend_for(rec.backend, pool)).destroy(rec.handle, conn=conn)
-        except BackendError as exc:
+        except Exception as exc:  # noqa: BLE001 -- ANY failure (backend, database, bug): the seed stays, sweep erases it
             destroy_error = type(exc).__name__
             logger.error("attest_key_destroy_failed", extra={"kid": kid, "error": destroy_error})
         await _audit(conn, tenant, "attest.key.revoked", kid, actor,

@@ -23,6 +23,9 @@ extend-exclude = [
     "**/.venv",
     "**/dist",
     "**/*.egg-info",
+    # Guard fixtures are deliberately wrong code (contract 3.5, 3.12).
+    "cli/tests/guard/fixtures",
+    "bench/**/fixtures",
 ]
 
 [lint]

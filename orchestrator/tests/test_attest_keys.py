@@ -795,3 +795,73 @@ def test_admin_main_requires_a_dsn_and_never_prints_secrets(monkeypatch, capsys)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     with pytest.raises(SystemExit):
         adm.main(["revoke-key", "--tenant", DEFAULT, "--kid", "f" * 32, "--justification", "long enough text"])
+
+
+# --------------------------------------------------------------------------- #
+# rework round: the emergency path never deadlocks and never rolls back
+# --------------------------------------------------------------------------- #
+
+async def test_revoke_and_create_key_never_deadlock_and_the_revocation_always_lands(db_pool, app_pool, plat):
+    """Lock order is the estate row first, then the key rows, in BOTH paths: a revoke may never be a deadlock victim."""
+    import uuid
+
+    for i in range(10):
+        tid = str(uuid.UUID(int=(0xD0 << 100) + i))
+        await tenancy.create_tenant(db_pool, slug=f"dl-{i}", name=f"dl-{i}", tenant_id=tid)
+        with tenancy.tenant_context(tid):
+            async with app_pool.acquire() as con:
+                k = await make_active(con, "attest", now=T0)
+
+            async def create():
+                async with app_pool.acquire() as c:
+                    try:
+                        return await keys.create_key(c, "attest", now=T0 + DAY)
+                    except keys.KeyStateError as exc:
+                        return exc.code
+
+            async def revoke():
+                async with app_pool.acquire() as c:
+                    return await keys.revoke(c, k.kid, actor="a", justification="because reasons", resign=False,
+                                             now=T0 + DAY)
+
+            out = await asyncio.gather(create(), revoke(), return_exceptions=True)
+            assert not any(isinstance(o, BaseException) for o in out), out
+            async with app_pool.acquire() as con:
+                assert (await keys.get_key(con, k.kid)).status == "revoked"
+
+
+@pytest.mark.parametrize("exc_factory", [
+    lambda: RuntimeError("boom"),
+    lambda: __import__("asyncpg").exceptions.QueryCanceledError("canceled"),
+    lambda: __import__("asyncpg").exceptions.DeadlockDetectedError("deadlock"),
+    lambda: ValueError("odd"),
+])
+async def test_any_failure_of_the_backend_destroy_never_undoes_the_revocation(db_pool, plat, exc_factory):
+    class Broken(LocalAesGcmBackend):
+        async def destroy(self, h, *, conn=None):
+            raise exc_factory()
+
+    async with db_pool.acquire() as con:
+        k = await make_active(con, "attest", now=T0)
+        res = await keys.revoke(con, k.kid, backend=Broken(db_pool), actor="a", justification="because reasons",
+                                resign=False, now=T0 + DAY)
+        assert res.key.status == "revoked" and res.destroy_error is not None
+        assert await con.fetchval("SELECT count(*) FROM attest_revocations WHERE kid = $1", k.kid) == 1
+        assert await con.fetchval("SELECT hold_reason FROM attest_estates") == "key_compromise"
+        assert await secrets_for(con, k.kid) == 1                                 # the seed is still there ...
+        out = await keys.sweep(con, now=T0 + 2 * DAY)                             # ... and the sweep erases it
+        assert k.kid in out["erased"] and await secrets_for(con, k.kid) == 0
+
+
+async def test_a_renewal_under_a_newer_issuer_says_when_the_window_start_had_to_move(db_pool, plat, tmp_path, monkeypatch):
+    async with db_pool.acquire() as con:
+        k = await make_active(con, "attest", now=T0)
+        newer = fk.make_platform(tmp_path / "newer", issuer_window=(T0 + 30 * DAY, T0 + 500 * DAY),
+                                 revoker_window=(T0 + 30 * DAY, T0 + 500 * DAY))
+        fk.install(monkeypatch, newer)
+        assert await keys.renew_certs(con, now=T0 + 61 * DAY) == [k.kid]
+        row = await con.fetchrow("SELECT details FROM audit_log WHERE action = 'attest.cert.renewed' ORDER BY id DESC LIMIT 1")
+        details = json.loads(row["details"]) if isinstance(row["details"], str) else row["details"]
+        assert details["window_start_moved"] is True and details["kid"] == k.kid
+        # an unchanged window start says so too
+        fk.install(monkeypatch, plat)

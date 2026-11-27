@@ -1,0 +1,11 @@
+{
+  "dot_prefix": "dot-",
+  "underscore_names": {
+    "_dist": "dist",
+    "_build": "build",
+    "_out": "out",
+    "_next": ".next",
+    "_node_modules": "node_modules"
+  },
+  "note": "Fixtures use neutral names because the repository .gitignore files ignore the real ones (contract 3.1, 3.12). A path component starting with dot- becomes a dot name; a component that is exactly a key of underscore_names becomes its value."
+}

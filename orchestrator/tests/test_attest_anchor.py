@@ -560,3 +560,77 @@ async def test_the_sticky_flag_is_per_tenant(db_pool, app_pool, plat, tenants):
     await anchor_sig.sign_hook(app_pool, fresh_anchor(tenant=TA, max_id=3))
     assert await anchor_sig.anchor_sig_status(app_pool, fresh_anchor(tenant=TA, max_id=9)) == "downgrade"
     assert await anchor_sig.anchor_sig_status(app_pool, fresh_anchor(tenant=TB, max_id=9)) == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# rework round: bounded sigs list, and a failed publish leaves no sticky v2 flag behind
+# --------------------------------------------------------------------------- #
+
+async def test_the_sigs_list_is_bounded_so_a_hostile_sink_line_cannot_burn_database_time(db_pool, world):
+    a = await signed(db_pool)
+    ok8 = Anchor.from_dict({**json.loads(a.to_json()), "sigs": [a.sigs[0]] * 8})
+    assert await anchor_sig.anchor_sig_status(db_pool, ok8) == "ok"
+    many = Anchor.from_dict({**json.loads(a.to_json()), "sigs": [a.sigs[0]] * 9})
+    assert await anchor_sig.anchor_sig_status(db_pool, many) == "bad_signature"
+    huge = Anchor.from_dict({**json.loads(a.to_json()), "sigs": [a.sigs[0]] * 5000})
+    assert await anchor_sig.anchor_sig_status(db_pool, huge) == "bad_signature"
+
+
+class _FailingSink(FileAnchorSink):
+    """A sink whose publish raises; with ``write_first`` the line is on disk before the error (a torn publish)."""
+
+    def __init__(self, path, write_first=False):
+        super().__init__(path)
+        self.write_first = write_first
+
+    async def publish(self, anchor):
+        if self.write_first:
+            await super().publish(anchor)
+        raise audit_anchor_error("sink down")
+
+
+def audit_anchor_error(msg):
+    from app.audit_anchor import AnchorSinkError
+
+    return AnchorSinkError(msg)
+
+
+async def v2_since(pool):
+    async with pool.acquire() as con:
+        return await con.fetchval("SELECT anchor_v2_since FROM attest_estates")
+
+
+async def test_a_failed_first_publish_leaves_no_v2_flag_and_legacy_anchors_keep_verifying(db_pool, world, tmp_path):
+    await audited(db_pool)
+    bad = _FailingSink(tmp_path / "bad.jsonl")
+    with pytest.raises(Exception):
+        await audit_svc.anchor_head(db_pool, bad)
+    assert await v2_since(db_pool) is None                                     # nothing v2 was ever published
+    async with db_pool.acquire() as con:
+        assert await con.fetchval("SELECT count(*) FROM attest_anchors") == 0
+    legacy = FileAnchorSink(tmp_path / "legacy.jsonl")
+    audit_svc.ANCHOR_SIGNERS.clear()
+    audit_svc._SIGNERS_BOOTSTRAPPED = True
+    await audit_svc.anchor_head(db_pool, legacy)
+    assert (await audit_svc.verify(db_pool, sink=legacy))["ok"] is True        # not a transient anchor_downgrade
+
+
+async def test_a_torn_publish_that_reached_the_sink_keeps_the_flag(db_pool, world, tmp_path):
+    await audited(db_pool)
+    torn = _FailingSink(tmp_path / "torn.jsonl", write_first=True)
+    with pytest.raises(Exception):
+        await audit_svc.anchor_head(db_pool, torn)
+    assert await v2_since(db_pool) is not None                                 # the v2 anchor is out there: sticky
+
+
+async def test_a_failed_later_publish_does_not_move_an_existing_flag(db_pool, world, tmp_path):
+    await audited(db_pool)
+    sink = FileAnchorSink(tmp_path / "a.jsonl")
+    await audit_svc.anchor_head(db_pool, sink)
+    first = await v2_since(db_pool)
+    assert first is not None
+    await audited(db_pool, 1)
+    with pytest.raises(Exception):
+        await audit_svc.anchor_head(db_pool, _FailingSink(tmp_path / "a.jsonl"))
+    assert await v2_since(db_pool) == first
+    assert (await audit_svc.verify(db_pool, sink=sink))["ok"] is True
