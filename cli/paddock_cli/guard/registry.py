@@ -8,7 +8,6 @@ proposal, ``data/tiers.json`` (written only by the precision study) and open UNV
 from __future__ import annotations
 
 import importlib
-import json
 import os
 import pkgutil
 import re
@@ -16,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Iterator
 
-from paddock_cli.guard import model
+from paddock_cli.guard import model, textsafe
 from paddock_cli.guard.errors import UsageError
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -226,11 +225,9 @@ def _read_json(path: str) -> Any:
             raw = fh.read(4 * 1024 * 1024)
     except OSError:
         return None
-    if raw.count(b"[") + raw.count(b"{") > 200000:
-        return None
     try:
-        return json.loads(raw.decode("utf-8", "replace"))
-    except (ValueError, RecursionError, MemoryError):
+        return textsafe.loads_bounded(raw.decode("utf-8", "replace"))
+    except ValueError:
         return None
 
 

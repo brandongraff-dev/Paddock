@@ -17,7 +17,7 @@ from typing import Any
 
 from paddock_cli.guard import files, textsafe
 from paddock_cli.guard.errors import GuardError
-from paddock_cli.guard.model import Hit, norm_relpath
+from paddock_cli.guard.model import Hit
 from paddock_cli.guard.registry import PACK_ID_RE, Check, template_fields
 
 try:  # the regex parser moved to a private module in 3.11
@@ -189,7 +189,7 @@ def _walk(sub: Any, st: _Stats, icase: bool, in_repeat: int, depth: int) -> int:
                         if _overlap(firsts[i], firsts[j]):
                             st.problem = st.problem or "alternation under a quantifier with overlapping branches"
         elif op == _sre_constants.SUBPATTERN:
-            add_flags, del_flags = av[1], av[2]
+            add_flags = av[1]
             if add_flags & ~_ALLOWED_FLAGS:
                 st.problem = st.problem or "inline flag not allowed"
             best = max(best, _walk(av[-1], st, icase or bool(add_flags & re.IGNORECASE), in_repeat, depth + 1))
@@ -199,6 +199,63 @@ def _walk(sub: Any, st: _Stats, icase: bool, in_repeat: int, depth: int) -> int:
             sub2 = av[-1] if isinstance(av, tuple) else av
             best = max(best, _walk(sub2, st, icase, in_repeat, depth + 1))
     return best
+
+
+_WIDE = 10  # a repeat spanning fewer than this many counts is too small to matter in a chain
+_CHAIN_LIMIT = 3  # this many mutually overlapping wide repeats in one run is a polynomial blow-up
+
+
+def _flatten(sub: Any, icase: bool, out: list[Any], depth: int) -> None:
+    """Flatten one sequence: groups are inlined; fixed items and alternations end a run."""
+    if depth > 30:
+        out.append(None)
+        return
+    for op, av in _items(sub):
+        if op == _sre_constants.SUBPATTERN:
+            _flatten(av[-1], icase, out, depth + 1)
+        elif op in _REPEATS:
+            lo, hi, body = av
+            if hi - lo >= _WIDE:
+                out.append(_first(body, icase)[0])
+            elif hi == 1 or lo < hi:
+                continue  # a short optional item is skipped over without ending the run
+            else:
+                out.append(None)
+        elif str(op) in ("AT", "ASSERT", "ASSERT_NOT"):
+            continue
+        else:
+            out.append(None)
+
+
+def _chains(sub: Any, icase: bool, depth: int) -> bool:
+    """True when some run of adjacent wide repeats has a member overlapping too many others."""
+    if depth > 30:
+        return True
+    flat: list[Any] = []
+    _flatten(sub, icase, flat, 0)
+    run: list[Any] = []
+    for item in flat + [None]:
+        if item is None:
+            for a in run:
+                if sum(1 for b in run if _overlap(a, b)) >= _CHAIN_LIMIT:
+                    return True
+            run = []
+        else:
+            run.append(item)
+    for op, av in _items(sub):
+        if op == _sre_constants.SUBPATTERN:
+            if _chains(av[-1], icase, depth + 1):
+                return True
+        elif op in _REPEATS:
+            if _chains(av[-1], icase, depth + 1):
+                return True
+        elif op == _sre_constants.BRANCH:
+            if any(_chains(br, icase, depth + 1) for br in av[1]):
+                return True
+        elif str(op) in ("ASSERT", "ASSERT_NOT", "ATOMIC_GROUP"):
+            if _chains(av[-1] if isinstance(av, tuple) else av, icase, depth + 1):
+                return True
+    return False
 
 
 def lint_pattern(pattern: str) -> str | None:
@@ -216,6 +273,8 @@ def lint_pattern(pattern: str) -> str | None:
         return "flags other than (?i) and (?m) are not allowed"
     st = _Stats()
     _walk(parsed, st, bool(flags & re.IGNORECASE), 0, 0)
+    if st.problem is None and _chains(parsed, bool(flags & re.IGNORECASE), 0):
+        st.problem = "chained overlapping repetitions"
     return st.problem
 
 
@@ -234,17 +293,67 @@ def _literal_prefix(pattern: str) -> str:
 
 _EXP_SIZES = (8, 10, 12, 14, 16, 18, 20)
 _EXP_ABORT = 0.2
+_RUN_CAP = 0.2       # CPU seconds one pumped match may take before it is interrupted
+LOAD_BUDGET = 2.0    # CPU seconds all pump probes of one load (all project packs together) may use
 
 
-def _pump_ok(pattern: str, flags: int) -> bool:
+class _PumpTimeout(BaseException):
+    """Raised from the SIGVTALRM handler when one pumped match runs too long."""
+
+
+class LoadBudget:
+    """CPU seconds the load-time pump may spend, shared by every pack of one load."""
+
+    def __init__(self, seconds: float = LOAD_BUDGET) -> None:
+        self.remaining = float(seconds)
+
+
+def _on_pump_timeout(_signum: int, _frame: Any) -> None:
+    raise _PumpTimeout()
+
+
+def _timed_search(rx: re.Pattern[str], text: str, budget: LoadBudget, hard: bool) -> float | None:
+    """Time one search in CPU seconds; None when it was interrupted. Charges the budget.
+
+    With ``hard`` a ``setitimer`` virtual timer interrupts the C matcher (CPython checks for
+    signals while matching), so even a pattern the lint missed costs at most ``_RUN_CAP``.
+    """
+    import signal
+    import time
+
+    if budget.remaining <= 0:
+        raise PackError("pattern rejected: the load-time check budget is used up")
+    t0 = time.process_time()
+    timed_out = False
+    if hard:
+        old_handler = signal.signal(signal.SIGVTALRM, _on_pump_timeout)
+        old_timer = signal.getitimer(signal.ITIMER_VIRTUAL)
+        signal.setitimer(signal.ITIMER_VIRTUAL, min(_RUN_CAP, max(budget.remaining, 0.001)))
+        try:
+            rx.search(text)
+        except _PumpTimeout:
+            timed_out = True
+        finally:
+            signal.setitimer(signal.ITIMER_VIRTUAL, 0)
+            signal.signal(signal.SIGVTALRM, old_handler)
+            if old_timer[0] > 0:
+                signal.setitimer(signal.ITIMER_VIRTUAL, old_timer[0], old_timer[1])
+    else:
+        rx.search(text)
+    spent = time.process_time() - t0
+    budget.remaining -= spent
+    return None if timed_out else spent
+
+
+def _pump_ok(pattern: str, flags: int, budget: LoadBudget | None = None, hard: bool = False) -> bool:
     """Run the pattern on inputs pumped from its own literal prefix and reject super-linear growth.
 
     Two probes: small sizes that expose exponential backtracking (stopped as soon as one run is
     slow, so a catastrophic pattern costs at most a fraction of a second) and large sizes that
-    expose quadratic growth (doubling n must not cost more than about 3.5x).
+    expose quadratic growth (doubling n must not cost more than about 3.5x). Every run is capped
+    (``_RUN_CAP``) and charged to ``budget`` when a hard timer is available.
     """
-    import time
-
+    budget = budget or LoadBudget()
     try:
         rx = re.compile(pattern, flags)
     except re.error:
@@ -253,19 +362,18 @@ def _pump_ok(pattern: str, flags: int) -> bool:
     for ch in ("a", " ", "0", "/", "=", "-", "x"):
         prev = None
         for n in _EXP_SIZES:
-            t0 = time.process_time()
-            rx.search(prefix + ch * n + "!\u00e9")
-            t = time.process_time() - t0
-            if t > _EXP_ABORT:
+            t = _timed_search(rx, prefix + ch * n + "!\u00e9", budget, hard)
+            if t is None or t > _EXP_ABORT:
                 return False
             if prev is not None and t > 0.005 and t / max(prev, 1e-6) > 3.0:
                 return False
             prev = t
         timings = []
         for n in _PUMP_SIZES:
-            t0 = time.process_time()
-            rx.search(prefix + ch * n + "!\u00e9")
-            timings.append(time.process_time() - t0)
+            t = _timed_search(rx, prefix + ch * n + "!\u00e9", budget, hard)
+            if t is None:
+                return False
+            timings.append(t)
         lo, hi = timings
         if hi > _PUMP_MIN_SECONDS and hi / max(lo, 1e-6) > 3.5:
             return False
@@ -310,7 +418,7 @@ def _make_run(rule_id: str, rx: re.Pattern[str], neg: re.Pattern[str] | None, ex
             return []
         hits: list[Hit] = []
         ordinal = 0
-        for i, line in enumerate(fv.lines, start=1):
+        for i, line in enumerate(fv.raw_lines, start=1):
             if len(line) > MAX_LINE:
                 continue
             m = rx.search(line)
@@ -325,8 +433,17 @@ def _make_run(rule_id: str, rx: re.Pattern[str], neg: re.Pattern[str] | None, ex
     return run
 
 
-def load_pack_text(text: str, *, trusted: bool, origin: str = "pack") -> list[Check]:
-    """Parse and validate one pack; returns its checks. Raises ``PackError`` naming the rule."""
+def load_pack_text(text: str, *, trusted: bool, origin: str = "pack",
+                   budget: LoadBudget | None = None) -> list[Check]:
+    """Parse and validate one pack; returns its checks. Raises ``PackError`` naming the rule.
+
+    An untrusted pack is only pumped under a hard CPU timer (and refused without one); ``budget``
+    bounds the pump CPU of everything loaded with it.
+    """
+    hard = timer_available()
+    if not trusted and not hard:
+        raise _fail(None, "an untrusted pack needs a hard timer to be checked and none is available")
+    budget = budget or LoadBudget()
     raw = text.encode("utf-8", "replace") if isinstance(text, str) else text
     if len(raw) > MAX_PACK_BYTES:
         raise _fail(None, "pack is larger than %d bytes" % MAX_PACK_BYTES)
@@ -388,7 +505,7 @@ def load_pack_text(text: str, *, trusted: bool, origin: str = "pack") -> list[Ch
             neg = re.compile(neg_pat) if neg_pat else None
         except (re.error, RecursionError, OverflowError, ValueError):
             raise _fail(rid, "pattern rejected: not a valid regular expression") from None
-        if not _pump_ok(pattern, flags & (re.I | re.M)):
+        if not _pump_ok(pattern, flags & (re.I | re.M), budget, hard):
             raise _fail(rid, "pattern rejected: super-linear on pumped input")
         for f in template_fields(prompt):
             if not re.match(r"^[a-z][a-z0-9_]{0,30}$", f):
@@ -400,7 +517,9 @@ def load_pack_text(text: str, *, trusted: bool, origin: str = "pack") -> list[Ch
             prompt_c = textsafe.cap(textsafe.clean(prompt, keep_newlines=True), 1200)
             sev_c = severity
         else:
-            title_c, why_c, fix_c, prompt_c = "Rule " + rid, UNTRUSTED_WHY, UNTRUSTED_FIX, UNTRUSTED_PROMPT
+            # the id is repository-chosen text: it is shown only when it passes the data-line filter
+            label = "Rule " + rid if textsafe.safe_ident(rid) else "Rule from a project pack"
+            title_c, why_c, fix_c, prompt_c = label, UNTRUSTED_WHY, UNTRUSTED_FIX, UNTRUSTED_PROMPT
             sev_c = severity if _SEV_RANK[severity] <= _SEV_RANK["medium"] else "medium"
         out.append(Check(
             id=rid, title=title_c, pack=pid.upper(), severity=sev_c, proposed_tier=confidence, scope="file",
@@ -450,6 +569,7 @@ def load_project_packs(root_real: str, *, trusted_hashes: tuple[str, ...] | list
         notes.append("pack-skipped-no-timer")
         return checks, notes, errs
     trusted_set = {h.lower() for h in trusted_hashes}
+    budget = LoadBudget()
     seen: set[str] = set()
     for name in names[:50]:
         rel = ".paddock/rules/" + name
@@ -462,7 +582,8 @@ def load_project_packs(root_real: str, *, trusted_hashes: tuple[str, ...] | list
         trusted = sha in trusted_set
         notes.append("pack-sha256 %s %s%s" % (textsafe.safe_text(name, cap=60), sha, " trusted" if trusted else ""))
         try:
-            loaded = load_pack_text(raw_view.decode("utf-8", "replace"), trusted=trusted, origin="project-pack")
+            loaded = load_pack_text(raw_view.decode("utf-8", "replace"), trusted=trusted, origin="project-pack",
+                                    budget=budget)
         except PackError as exc:
             errs.append("%s: %s" % (textsafe.safe_text(name, cap=60), textsafe.safe_text(str(exc), cap=160)))
             continue

@@ -89,6 +89,11 @@ BUILD_STEP_BUDGET = 100_000_000  # ... and all agents together (agents past it w
 MAX_BLOCKS = 32               # CIDR blocks one listener may name before the sources are widened
 MAX_EDGES_PER_AGENT = 4000
 MAX_CONFLICTS = 20
+#: how many scan conflicts one host enumerates before acknowledgements are applied. The DISPLAY cap (``MAX_CONFLICTS``)
+#: applies to what is still OPEN afterwards, so an acknowledgement can never clear a conflict that was cut off the
+#: list; beyond this limit an unacknowledgeable marker keeps the host without coverage.
+MAX_SCAN_CONFLICTS = 100
+TRUNCATED_KIND = "agent_scan_conflicts_truncated"
 MAX_LISTENERS = 2000
 MAX_DEPTH = 8                 # jump/goto depth (the model's own bound)
 CONF_ALLOW = 100
@@ -1372,9 +1377,14 @@ def _scan_conflicts_unbounded(fw: _Fw, lst: _Lst, ident: _Ident,
         if _agent_closed(fw, lst, p, port):
             out[(p, port)] = {"kind": "agent_closed_scan_open", "proto": p, "port": port,
                               "scan_seen_at": _iso(seen)}
-            if len(out) >= MAX_CONFLICTS:
+            if len(out) > MAX_SCAN_CONFLICTS:
                 break
-    return [out[k] for k in sorted(out)]
+    keys = sorted(out)
+    result = [out[k] for k in keys[:MAX_SCAN_CONFLICTS]]
+    if len(keys) > MAX_SCAN_CONFLICTS:
+        # more than can be listed and acknowledged one by one: a marker nobody can acknowledge keeps the host blocked
+        result.append({"kind": TRUNCATED_KIND, "proto": "any", "port": 0, "scan_seen_at": _iso(collected_at)})
+    return result
 
 
 def _agent_closed(fw: _Fw, lst: _Lst, proto: str, port: int) -> bool:
@@ -1420,6 +1430,16 @@ def _parse_time(v: Any) -> Optional[dt.datetime]:
 
 def _whole_second(t: dt.datetime) -> dt.datetime:
     return t.replace(microsecond=0)
+
+
+def _cap_open(open_: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The display cap, applied to what is still OPEN after the acknowledgements (never before them). Markers nobody
+    can acknowledge are kept first; the order of the rest is unchanged. A non-empty list stays non-empty."""
+    if len(open_) <= MAX_CONFLICTS:
+        return open_
+    fixed = [i for i, c in enumerate(open_) if c.get("kind") != ACKABLE_KIND][:MAX_CONFLICTS]
+    rest = [i for i, c in enumerate(open_) if c.get("kind") == ACKABLE_KIND][:MAX_CONFLICTS - len(fixed)]
+    return [open_[i] for i in sorted(fixed + rest)]
 
 
 def _apply_acks(conflicts: list[dict[str, Any]], acks: Iterable[Mapping[str, Any]],
@@ -1657,6 +1677,7 @@ def _agent_out(a: Mapping[str, Any], ident: _Ident, p: Optional[Mapping[str, Any
         if state == "fresh":
             conflicts, acked = _apply_acks(_scan_conflicts(fw, lst, ident, scans, _aware(p["collected_at"]), cover),
                                            acks, now)
+            conflicts = _cap_open(conflicts)
             if ident.conflict == _ipmap.PEER_MISMATCH:
                 # the peer address contradicts the pairing: no coverage, every fact in conflict, never acknowledgeable
                 conflicts.append({"kind": _ipmap.PEER_MISMATCH, "proto": "any", "port": 0,

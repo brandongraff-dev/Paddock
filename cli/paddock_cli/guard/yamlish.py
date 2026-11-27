@@ -114,6 +114,33 @@ class _Line:
         self.no, self.indent, self.text, self.raw = no, indent, text, raw
 
 
+def _fold(body: list[str]) -> str:
+    """Fold the lines of a ``>`` block scalar (YAML 1.2 8.1.3), without the final line break.
+
+    A single line break between two ordinary lines becomes a space, ``n`` blank lines become ``n``
+    line breaks, and a line that starts with a space or tab (more indented) keeps its breaks.
+    """
+    out: list[str] = []
+    prev: str | None = None
+    blanks = 0
+    for line in body:
+        if line == "":
+            blanks += 1
+            continue
+        more = line[0] in " \t"
+        if prev is None:
+            out.append("\n" * blanks)
+        else:
+            keep = more or prev[0] in " \t"
+            if blanks == 0:
+                out.append("\n" if keep else " ")
+            else:
+                out.append("\n" * (blanks + (1 if keep else 0)))
+        out.append(line)
+        prev, blanks = line, 0
+    return "".join(out)
+
+
 def _strip_comment(s: str) -> str:
     """Remove a trailing ``# comment`` (a ``#`` at the start or after whitespace, outside quotes)."""
     quote = ""
@@ -420,14 +447,15 @@ class _Parser:
                 raise YamlUnsupported("inconsistent block scalar indentation at line %d" % (self.pos + 1))
             body.append(raw[block_indent:])
             self.pos += 1
+        trailing = 0
         while body and body[-1] == "":
             body.pop()
-        if folded:
-            text = " ".join(x for x in body if x != "")
-        else:
-            text = "\n".join(body)
-        if chomp != "-" and body:
-            text += "\n" if not folded else ""
+            trailing += 1
+        text = _fold(body) if folded else "\n".join(body)
+        if chomp == "+":
+            text += "\n" * (trailing + (1 if body else 0)) if (body or trailing) else ""
+        elif chomp != "-" and body:
+            text += "\n"
         return YScalar(text, ln.no, "block", first_body if first_body else start)
 
     # -- sequences -----------------------------------------------------------------------------

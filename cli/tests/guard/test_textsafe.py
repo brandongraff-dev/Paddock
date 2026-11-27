@@ -176,3 +176,21 @@ def test_common_words_is_a_large_embedded_set():
 def test_no_value_hashing_api_exists():
     assert not hasattr(textsafe, "value_hash")
     assert not hasattr(textsafe, "hash_secret")
+
+
+def test_bracket_depth_is_string_aware_and_bounded():
+    assert textsafe.bracket_depth('{"a": [1, {"b": "[[[[["}]}') == 3
+    assert textsafe.bracket_depth("[" * 150000, limit=100) > 100
+    assert textsafe.bracket_depth('{"a":' * 5000 + "1" + "}" * 5000, limit=100) > 100
+    assert textsafe.bracket_depth('"' + "[" * 500 + '"', limit=100) == 0
+    assert textsafe.bracket_depth("plain") == 0
+
+
+def test_loads_bounded_refuses_deep_json_and_parses_normal_json():
+    assert textsafe.loads_bounded('{"a": [1, 2, {"b": null}]}') == {"a": [1, 2, {"b": None}]}
+    for hostile in ("[" * 100000, '{"a":' * 5000 + "1" + "}" * 5000):
+        with pytest.raises(ValueError):
+            textsafe.loads_bounded(hostile)
+    with pytest.raises(ValueError):
+        textsafe.loads_bounded("{not json")
+    assert textsafe.loads_bounded("[" * 90 + "]" * 90) is not None

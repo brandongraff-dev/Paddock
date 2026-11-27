@@ -92,6 +92,8 @@ AgentDetailOut = TypedDict(
         'legacy': NotRequired['bool'],
         'node_ref': NotRequired['str | None'],
         'online': NotRequired['bool'],
+        'paired_asset_id': NotRequired['str | None'],
+        'pairing': NotRequired['PairingOut | None'],
         'platform': Required['str | None'],
         'silent_after_s': NotRequired['int'],
         'stale': Required['bool'],
@@ -115,6 +117,7 @@ AgentOut = TypedDict(
         'legacy': NotRequired['bool'],
         'node_ref': NotRequired['str | None'],
         'online': NotRequired['bool'],
+        'paired_asset_id': NotRequired['str | None'],
         'platform': Required['str | None'],
         'silent_after_s': NotRequired['int'],
         'stale': Required['bool'],
@@ -149,6 +152,7 @@ AgentRevokeOut = TypedDict(
         'legacy': NotRequired['bool'],
         'node_ref': NotRequired['str | None'],
         'online': NotRequired['bool'],
+        'paired_asset_id': NotRequired['str | None'],
         'platform': Required['str | None'],
         'silent_after_s': NotRequired['int'],
         'stale': Required['bool'],
@@ -820,6 +824,65 @@ CompliancePack = TypedDict(
         'framework': Required['FrameworkSummary'],
         'generated_at': Required['str'],
         'org_name': Required['str'],
+    },
+    total=False,
+)
+
+ConflictAckIn = TypedDict(
+    'ConflictAckIn',
+    {
+        'justification': Required['str'],
+        'kind': NotRequired['str'],
+        'port': Required['int'],
+        'proto': Required["Literal['tcp', 'udp']"],
+        'scan_seen_at': Required['str'],
+        'ttl_hours': NotRequired['int'],
+    },
+    total=False,
+)
+
+ConflictAckOut = TypedDict(
+    'ConflictAckOut',
+    {
+        'acked_at': Required['str'],
+        'acked_by': Required['str'],
+        'agent_id': Required['str'],
+        'cleared_at': NotRequired['str | None'],
+        'cleared_by': NotRequired['str | None'],
+        'cleared_reason': NotRequired['str'],
+        'expires_at': Required['str'],
+        'id': Required['str'],
+        'justification': Required['str'],
+        'kind': Required['str'],
+        'port': Required['int'],
+        'proto': Required['str'],
+        'status': Required["Literal['active', 'cleared', 'superseded', 'expired']"],
+        'through_seen_at': Required['str'],
+    },
+    total=False,
+)
+
+ConflictOut = TypedDict(
+    'ConflictOut',
+    {
+        'ack': NotRequired['ConflictAckOut | None'],
+        'ackable': Required['bool'],
+        'kind': Required['str'],
+        'port': Required['int'],
+        'proto': Required['str'],
+        'scan_seen_at': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+ConflictsOut = TypedDict(
+    'ConflictsOut',
+    {
+        'agent_id': Required['str'],
+        'as_of': NotRequired['str | None'],
+        'conflicts': Required['list[ConflictOut]'],
+        'graph_built_at': NotRequired['str | None'],
+        'node_ref': Required['str'],
     },
     total=False,
 )
@@ -2242,6 +2305,76 @@ OwnerPatch = TypedDict(
         'name': NotRequired['str | None'],
         'priority': NotRequired['int | None'],
         'team': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+PairingCandidateOut = TypedDict(
+    'PairingCandidateOut',
+    {
+        'asset_canonical': Required['str'],
+        'asset_id': Required['str'],
+        'asset_last_seen': NotRequired['str | None'],
+        'checks': Required['PairingChecks'],
+        'paired_to': NotRequired['str | None'],
+    },
+    total=False,
+)
+
+PairingChecks = TypedDict(
+    'PairingChecks',
+    {
+        'acknowledged_mismatch': NotRequired['bool'],
+        'asset_ips': Required['list[str]'],
+        'asset_kind': NotRequired['str'],
+        'asset_last_seen': NotRequired['str | None'],
+        'claimed_ips': Required['list[str]'],
+        'claimed_subset': NotRequired['bool | None'],
+        'observed_peer': NotRequired['str | None'],
+        'peer_direct': NotRequired['bool'],
+        'peer_in_asset': NotRequired['bool | None'],
+    },
+    total=False,
+)
+
+PairingEffective = TypedDict(
+    'PairingEffective',
+    {
+        'basis': Required["Literal['paired', 'claimed']"],
+        'node_ref': Required['str'],
+        'note': NotRequired['str'],
+        'state': Required["Literal['active', 'inert_asset_missing', 'inert_asset_stale', 'inert_asset_not_vm', 'inert_agent_not_live', 'peer_mismatch', 'ended']"],
+    },
+    total=False,
+)
+
+PairingIn = TypedDict(
+    'PairingIn',
+    {
+        'acknowledge_mismatch': NotRequired['bool'],
+        'asset_id': Required['str'],
+        'justification': Required['str'],
+    },
+    total=False,
+)
+
+PairingOut = TypedDict(
+    'PairingOut',
+    {
+        'agent_id': Required['str'],
+        'asset_canonical': Required['str'],
+        'asset_id': Required['str'],
+        'changed': NotRequired['bool'],
+        'checks': Required['PairingChecks'],
+        'effective': Required['PairingEffective'],
+        'ended_at': NotRequired['str | None'],
+        'ended_by': NotRequired['str | None'],
+        'ended_reason': NotRequired['str | None'],
+        'id': Required['str'],
+        'justification': Required['str'],
+        'paired_at': Required['str'],
+        'paired_by': Required['str'],
+        'status': Required["Literal['active', 'ended']"],
     },
     total=False,
 )
@@ -4668,7 +4801,14 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'revert_action': ('POST', '/v1/fleet/actions/{action_id}/revert', False),
     'list_agents': ('GET', '/v1/fleet/agents', False),
     'get_agent': ('GET', '/v1/fleet/agents/{agent_id}', False),
+    'get_agent_conflicts': ('GET', '/v1/fleet/agents/{agent_id}/conflicts', False),
+    'post_conflict_ack': ('POST', '/v1/fleet/agents/{agent_id}/conflicts/acks', False),
+    'delete_conflict_ack': ('DELETE', '/v1/fleet/agents/{agent_id}/conflicts/acks/{ack_id}', False),
     'revoke_agent_key': ('POST', '/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke', False),
+    'get_agent_pairing': ('GET', '/v1/fleet/agents/{agent_id}/pairing', False),
+    'put_agent_pairing': ('PUT', '/v1/fleet/agents/{agent_id}/pairing', False),
+    'delete_agent_pairing': ('DELETE', '/v1/fleet/agents/{agent_id}/pairing', False),
+    'get_pairing_candidates': ('GET', '/v1/fleet/agents/{agent_id}/pairing/candidates', False),
     'get_agent_posture': ('GET', '/v1/fleet/agents/{agent_id}/posture', False),
     'revoke_agent': ('POST', '/v1/fleet/agents/{agent_id}/revoke', False),
     'enroll': ('POST', '/v1/fleet/enroll', False),
@@ -4681,6 +4821,7 @@ OPERATIONS: dict[str, tuple[str, str, bool]] = {
     'propose_from_finding': ('POST', '/v1/fleet/network-actions/from-finding', False),
     'action_evidence': ('GET', '/v1/fleet/network-actions/{action_id}/evidence', False),
     'execute': ('POST', '/v1/fleet/network-actions/{action_id}/execute', False),
+    'list_pairings': ('GET', '/v1/fleet/pairings', True),
     'heartbeat': ('POST', '/v1/fleet/{agent_id}/heartbeat', False),
     'post_inventory': ('POST', '/v1/fleet/{agent_id}/inventory', False),
     'rotate_key': ('POST', '/v1/fleet/{agent_id}/keys/rotate', False),
@@ -5649,6 +5790,35 @@ class GeneratedOperations:
         """
         return self._request('GET', '/v1/fleet/agents/{agent_id}', path_params={'agent_id': agent_id})
 
+    def get_agent_conflicts(self, agent_id: str) -> ConflictsOut:
+        """GET /v1/fleet/agents/{agent_id}/conflicts -- Get Agent Conflicts
+
+        The conflicts of the agent's node as of its last build (``as_of``: when that fact was observed), with the
+        acknowledgement that covers each. Acknowledged ones are listed too; nothing is hidden.
+        """
+        return self._request('GET', '/v1/fleet/agents/{agent_id}/conflicts', path_params={'agent_id': agent_id})
+
+    def post_conflict_ack(self, agent_id: str, body: ConflictAckIn | dict[str, Any]) -> ConflictAckOut:
+        """POST /v1/fleet/agents/{agent_id}/conflicts/acks -- Post Conflict Ack
+
+        Acknowledge ONE observation of ``agent_closed_scan_open`` for ``(proto, port)``: the external scan saw the port
+        open, the host's signed model says closed, and the operator has looked. It clears that conflict RECORD for coverage
+        purposes and nothing else. ``scan_seen_at`` must echo the observation shown by ``GET .../conflicts`` (409
+        ``conflict_changed`` otherwise; 409 ``no_such_conflict`` when there is none): a blind pre-acknowledgement is
+        impossible, and a LATER observation is not covered. Expires (default 168 h, at most 720 h).
+        """
+        return self._request('POST', '/v1/fleet/agents/{agent_id}/conflicts/acks', path_params={'agent_id': agent_id}, body=body)
+
+    def delete_conflict_ack(self, agent_id: str, ack_id: str, *, justification: str) -> ConflictAckOut:
+        """DELETE /v1/fleet/agents/{agent_id}/conflicts/acks/{ack_id} -- Delete Conflict Ack
+
+        Clear an acknowledgement at once: the conflict is back from the next build.
+
+        Args:
+            justification: why (3 to 1000 characters); REQUIRED
+        """
+        return self._request('DELETE', '/v1/fleet/agents/{agent_id}/conflicts/acks/{ack_id}', path_params={'agent_id': agent_id, 'ack_id': ack_id}, query={'justification': justification})
+
     def revoke_agent_key(self, agent_id: str, key_id: str, body: KeyRevokeIn | dict[str, Any]) -> Any:
         """POST /v1/fleet/agents/{agent_id}/keys/{key_id}/revoke -- Revoke Agent Key
 
@@ -5658,6 +5828,45 @@ class GeneratedOperations:
         changes. For an incident revoke the agent instead (``POST /agents/{id}/revoke``).
         """
         return self._request('POST', '/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke', path_params={'agent_id': agent_id, 'key_id': key_id}, body=body)
+
+    def get_agent_pairing(self, agent_id: str) -> PairingOut:
+        """GET /v1/fleet/agents/{agent_id}/pairing -- Get Agent Pairing
+
+        The agent's active pairing, else the last ended one, with what is EFFECTIVE now (``inert_*``: the asset is
+        missing, stale or not a VM, so the host is judged as ``agent:<uuid>``; ``peer_mismatch``: a conflict). ``triage``:
+        it shows the asset's addresses and the operator's justification.
+        """
+        return self._request('GET', '/v1/fleet/agents/{agent_id}/pairing', path_params={'agent_id': agent_id})
+
+    def put_agent_pairing(self, agent_id: str, body: PairingIn | dict[str, Any]) -> PairingOut:
+        """PUT /v1/fleet/agents/{agent_id}/pairing -- Put Agent Pairing
+
+        Pair this agent with a cloud VM asset: *this agent IS that machine*, asserted by an admin with a justification.
+        It changes IDENTITY only (the node becomes ``asset:<uuid>``, its addresses and zone come from the asset, never from
+        what the host claims) and never a trust level: the facts stay ``configured`` and every P2 gate still applies.
+        Idempotent for the same asset (``changed=false``); to move, DELETE then PUT. One agent per asset, enforced by the
+        database. Billing-gated like zone and label writes.
+        """
+        return self._request('PUT', '/v1/fleet/agents/{agent_id}/pairing', path_params={'agent_id': agent_id}, body=body)
+
+    def delete_agent_pairing(self, agent_id: str, *, justification: str) -> PairingOut:
+        """DELETE /v1/fleet/agents/{agent_id}/pairing -- Delete Agent Pairing
+
+        End the agent's active pairing (the host is judged as ``agent:<uuid>`` again; its findings follow it). Never
+        billing-gated. The ledger row is kept.
+
+        Args:
+            justification: why (3 to 1000 characters); REQUIRED
+        """
+        return self._request('DELETE', '/v1/fleet/agents/{agent_id}/pairing', path_params={'agent_id': agent_id}, query={'justification': justification})
+
+    def get_pairing_candidates(self, agent_id: str) -> list[PairingCandidateOut]:
+        """GET /v1/fleet/agents/{agent_id}/pairing/candidates -- Get Pairing Candidates
+
+        Up to 20 fresh cloud VM assets whose addresses intersect what the agent claims. Read only: it creates nothing
+        and proves nothing.
+        """
+        return self._request('GET', '/v1/fleet/agents/{agent_id}/pairing/candidates', path_params={'agent_id': agent_id})
 
     def get_agent_posture(self, agent_id: str) -> PostureOut:
         """GET /v1/fleet/agents/{agent_id}/posture -- Get Agent Posture
@@ -5752,6 +5961,13 @@ class GeneratedOperations:
         quarantined and marks that original ``reverted``.
         """
         return self._request('POST', '/v1/fleet/network-actions/{action_id}/execute', path_params={'action_id': action_id}, body=body)
+
+    def list_pairings(self, *, status: Literal['active', 'ended'] | None = None, asset_id: str | None = None, limit: int | None = None, offset: int | None = None) -> list[PairingOut]:
+        """GET /v1/fleet/pairings -- List Pairings
+
+        The pairing ledger, newest first (rows are never deleted or re-pointed).
+        """
+        return self._request('GET', '/v1/fleet/pairings', query={'status': status, 'asset_id': asset_id, 'limit': limit, 'offset': offset})
 
     def heartbeat(self, agent_id: str, body: dict[str, Any] | dict[str, Any]) -> HeartbeatOut:
         """POST /v1/fleet/{agent_id}/heartbeat -- Heartbeat

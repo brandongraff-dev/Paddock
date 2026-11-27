@@ -488,6 +488,16 @@ def _utc(t: dt.datetime) -> dt.datetime:
     return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
 
 
+def asset_is_stale(seen: Optional[dt.datetime], now: dt.datetime, max_age: dt.timedelta) -> bool:
+    """THE freshness predicate for a pairing's asset (the ingest, the builder, reconcile and ``PUT /pairing`` all use
+    it): undated, older than ``max_age`` or dated more than ``ASSET_FUTURE_SKEW`` in the future is stale. A date nothing
+    can age would otherwise pair for ever."""
+    if seen is None:
+        return True
+    now, seen = _utc(now), _utc(seen)
+    return now - seen > max_age or seen - now > ASSET_FUTURE_SKEW
+
+
 def pairing_decision(claim: Claim, row: Optional[PairingRow], now: dt.datetime, max_age: dt.timedelta,
                      peer_shared: bool) -> Decision:
     """What an agent's operator pairing decides. Pure; ingest and builder run this one function.
@@ -508,9 +518,7 @@ def pairing_decision(claim: Claim, row: Optional[PairingRow], now: dt.datetime, 
         return Decision(None, "pairing_inert:asset_missing")
     if row.node_kind != INSTANCE_KIND:
         return Decision(None, "pairing_inert:asset_not_vm")
-    seen = row.asset_last_seen
-    now = _utc(now)
-    if (seen is None or now - _utc(seen) > max_age or _utc(seen) - now > ASSET_FUTURE_SKEW):
+    if asset_is_stale(row.asset_last_seen, now, max_age):
         return Decision(None, "pairing_inert:asset_stale")
     conflict = ""
     if claim.direct and claim.peer is not None and not is_public_ip(claim.peer) and not peer_shared \

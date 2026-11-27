@@ -1595,7 +1595,7 @@ async def _claim_and_persist(con: Any, pool: Any, *, agent_id: uuid.UUID, tenant
             await _evict_postures(con, agent_id, agent["tenant_id"])
             ingest.update({"digest": digest, "stored_at": iso(now), "stored_seq": seq, "stored_kid": kid})
             node_ref, new_identity, ident_changed = await _resolve_node(
-                con, agent_id, new_identity, node_ref, client_ip)
+                con, agent_id, new_identity, node_ref, client_ip, now)
             asked = changed and rebuild_request_allowed(agent_id)       # always recorded: it spaces the NEXT request
             invalidate = ident_changed or key_changed or asked
     elif kind == "heartbeat":
@@ -1767,7 +1767,7 @@ def _norm_ips(values: Any) -> set[str]:
 
 
 async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any], node_ref: str,
-                        peer_ip: str | None) -> tuple[str, dict[str, Any], bool]:
+                        peer_ip: str | None, now: dt.datetime | None = None) -> tuple[str, dict[str, Any], bool]:
     """Decide ``node_ref`` and ``identity.basis`` for this agent. Default and fallback: ``agent:<uuid>`` /
     ``claimed``. The decision itself is :func:`app.assurance.builders._ipmap.corroborate`, THE function the
     ``host_fw`` builder runs over the same claims, so the graph and ``fleet_agents.node_ref`` cannot diverge
@@ -1781,9 +1781,15 @@ async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any],
     (never promoted: a promotion waits for their own posture, the graph is re-derived at every build either
     way). Findings of a host whose node changes follow it (``assurance.finding_follow``).
 
+    An operator PAIRING (docs/ASSURANCE_P2_1.md section 4) is decided FIRST, by the same
+    :func:`app.assurance.builders._ipmap.pairing_decision` the ``host_fw`` builder runs: an active pairing to a fresh VM
+    asset is ``asset:<uuid>`` / ``paired``; one whose asset is missing, stale or not a VM is inert (``agent:<uuid>`` /
+    ``claimed`` with the note ``pairing_inert:<why>``, never auto-ended). No pairing: corroboration, which stays inert.
+
     Returns ``(node_ref, identity, changed)``."""
     from .assurance import finding_follow
     from .assurance.builders import _ipmap
+    from .config import settings
 
     own = f"agent:{agent_id}"
     me = _ipmap.claim_of(str(agent_id), {**identity, "peer_ip": peer_ip,
@@ -1799,9 +1805,11 @@ async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any],
                 reach.update(first.ips_of(owner))
         for o in await con.fetch(_AGENTS_BY_IPS_SQL, agent_id, sorted(reach)):
             others[str(o["id"])] = o
+    peer_shared = False
     if me.peer:
         for o in await con.fetch(_AGENTS_BY_PEER_SQL, agent_id, _peer_forms(me.peer)):
             others.setdefault(str(o["id"]), o)
+            peer_shared = True
     claims = [me]
     for oid, o in sorted(others.items()):
         claims.append(_ipmap.claim_of(oid, _loads(o["identity"], {})))
@@ -1811,10 +1819,24 @@ async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any],
         rows = [dict(r) for r in await con.fetch(_IDENTITY_ASSETS_SQL, ips)]
         decided = _ipmap.corroborate(claims, _ipmap.build_ip_map(rows))
     mine = decided.get(str(agent_id), _ipmap.Decision(None, ""))
+    pairs = [dict(r) for r in await con.fetch(_ipmap.PAIRING_SELECT_SQL + " AND p.agent_id = $1", agent_id)]
+    if pairs:
+        row = _ipmap.pairing_row(pairs[0]) if len(pairs) == 1 else None      # two active rows cannot exist: inert
+        mine = (_ipmap.pairing_decision(
+                    me, row, now or dt.datetime.now(dt.timezone.utc),
+                    dt.timedelta(hours=settings.assurance_pairing_asset_max_age_h), peer_shared)
+                if row is not None else _ipmap.Decision(None, "pairing_inert:asset_missing"))
     moves: dict[str, str] = {}
+    node_moved: dict[str, tuple[str, str]] = {}      # agent id -> (old node_ref, new node_ref): its acks are void
+    # an agent with an ACTIVE PAIRING is decided by its pairing (``pairing_decision``), never by corroboration: another
+    # host that merely CLAIMS its addresses must not demote it (docs/ASSURANCE_P2_1.md 4.5 effect 7: claims never own
+    # addresses). Its own ingest and ``fleet_pairing.reconcile`` keep its columns right.
+    paired_others = {str(r["agent_id"]) for r in await con.fetch(
+        "SELECT agent_id FROM fleet_agent_pairings WHERE status = 'active' AND agent_id = ANY($1::uuid[])",
+        [uuid.UUID(k) for k in others])} if others else set()
     for oid, o in others.items():
         d = decided.get(oid)
-        if d is None or d.ref is not None or o["node_ref"] == f"agent:{oid}" or not o["node_ref"]:
+        if d is None or d.ref is not None or o["node_ref"] == f"agent:{oid}" or not o["node_ref"] or oid in paired_others:
             continue                                     # only a DEMOTION of another agent is applied here
         oi = dict(_loads(o["identity"], {}))
         oi["basis"] = "claimed"
@@ -1823,8 +1845,9 @@ async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any],
         await con.execute("UPDATE fleet_agents SET node_ref = $2, identity = $3::jsonb WHERE id = $1",
                           o["id"], f"agent:{oid}", json.dumps(oi))
         moves.setdefault(o["node_ref"], f"agent:{oid}")
+        node_moved[oid] = (o["node_ref"], f"agent:{oid}")
     new = dict(identity)
-    new["basis"] = "corroborated" if mine.ref else "claimed"
+    new["basis"] = (mine.basis if mine.basis == _ipmap.PAIRED else "corroborated") if mine.ref else "claimed"
     if mine.note:
         new["note"] = mine.note
     else:
@@ -1833,8 +1856,17 @@ async def _resolve_node(con: Any, agent_id: uuid.UUID, identity: dict[str, Any],
     changed = new_ref != node_ref or new.get("basis") != identity.get("basis")
     if new_ref != node_ref and node_ref:
         moves.setdefault(node_ref, new_ref)
+        node_moved[str(agent_id)] = (node_ref, new_ref)
     if moves:
         await finding_follow.migrate_targets(con, moves)
+    if node_moved:
+        # a conflict acknowledgement binds the observation seen on the node it was made on (docs/ASSURANCE_P2_1.md 4.6)
+        from . import fleet_pairing
+        tenant = await con.fetchval("SELECT tenant_id FROM fleet_agents WHERE id = $1", agent_id)
+        for oid, (was, now_ref) in sorted(node_moved.items()):
+            await fleet_pairing._clear_acks_audited(
+                con, uuid.UUID(oid), reason=fleet_pairing.NODE_CHANGED, by="system:ingest", actor="system:ingest",
+                actor_role="system", tenant_id=str(tenant), node_from=was, node_to=now_ref)
     return new_ref, new, changed
 
 
@@ -1933,6 +1965,11 @@ async def revoke_agent(pool: Any, agent_id: uuid.UUID, *, actor: str, actor_role
                             """UPDATE fleet_enroll_tokens SET revoked_at = NOW(), revoked_by = $2
                                 WHERE id = $1 AND revoked_at IS NULL AND uses < max_uses AND expires_at > NOW()
                             RETURNING TRUE""", origin, actor) is True
+                # P2.1 section 4.4: the pairing and the acknowledgements end in THIS transaction. The node_ref stays
+                # ``asset:X`` on purpose: ``TOMBSTONES_SQL`` matches it, so an open finding keeps its UNKNOWN tombstone
+                from . import fleet_pairing
+                await fleet_pairing.end_for_agent(con, agent_id, reason="agent_revoked", by=actor, actor=actor,
+                                                  actor_role=actor_role, client_ip=client_ip, request_id=request_id)
                 await invalidate_assurance(con)
                 await audit.record(
                     pool, action="fleet.agent.revoke", actor=actor, actor_role=actor_role,

@@ -4,8 +4,11 @@ One pass for one tenant, under the tenant's evaluation lease (``store.claim_eval
 replicas never build or evaluate the same tenant twice:
 
 1. **Build**: if the last full build is older than ``assurance_rebuild_min`` (or a caller asks),
-   run every builder: ``load`` -> ``build`` (pure, off the event loop) -> ``persist_build``. Each
-   builder is isolated; one that raises is logged and noted and the others still run.
+   first ``fleet_pairing.reconcile`` (expired scan-conflict acknowledgements are marked, and
+   ``fleet_agents.node_ref`` follows what each operator pairing now decides: docs/ASSURANCE_P2_1.md
+   4.5; a failure is logged and never stops the build), then run every builder: ``load`` -> ``build``
+   (pure, off the event loop) -> ``persist_build``. Each builder is isolated; one that raises is
+   logged and noted and the others still run.
 2. **Evaluate** the enabled invariants that are due: the graph version moved, the backstop
    (``assurance_backstop_min``) elapsed, a HOLDS outlived its evidence (``valid_until``), the
    definition changed or was never evaluated, or a caller forced it.
@@ -69,7 +72,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from .. import tenancy
+from .. import fleet_pairing, tenancy
 from ..config import settings
 from . import builders as builders_pkg
 from . import findings_sync, graph_loader, housekeeping, store
@@ -121,6 +124,20 @@ def _agent_posture_max_age() -> timedelta:
     except (TypeError, ValueError):
         hours = AGENT_POSTURE_MAX_AGE_H
     return timedelta(hours=hours if hours > 0 else AGENT_POSTURE_MAX_AGE_H)
+
+
+PAIRING_ASSET_MAX_AGE_H = 72     # ``settings.assurance_pairing_asset_max_age_h`` default (docs/ASSURANCE_P2_1.md D29)
+
+
+def _pairing_asset_max_age() -> timedelta:
+    """How old a paired asset's ``last_seen`` may be before the pairing is inert; junk or non-positive -> the default
+    (a bad setting must never widen it into "never stale", nor stop a build)."""
+    raw = getattr(settings, "assurance_pairing_asset_max_age_h", PAIRING_ASSET_MAX_AGE_H)
+    try:
+        hours = int(raw)
+    except (TypeError, ValueError):
+        hours = PAIRING_ASSET_MAX_AGE_H
+    return timedelta(hours=hours if hours > 0 else PAIRING_ASSET_MAX_AGE_H)
 
 
 def last_build(tenant_id: str) -> dict[str, dict[str, Any]]:
@@ -538,6 +555,7 @@ async def build_tenant(pool: Any, tenant_id: str, *, now: Optional[datetime] = N
         "max_age": timedelta(hours=settings.assurance_external_max_age_h),
         "window": timedelta(hours=settings.assurance_edge_window_h),
         "agent_posture_max_age": _agent_posture_max_age(),
+        "pairing_asset_max_age": _pairing_asset_max_age(),
     }
     with tenancy.tenant_context(tenant_id):
         # Stamp the build BEFORE the builders read anything. Ingest (a new agent posture) and the
@@ -553,6 +571,17 @@ async def build_tenant(pool: Any, tenant_id: str, *, now: Optional[datetime] = N
             raise
         except Exception:  # noqa: BLE001 -- the builders still run; the old stamp makes the next tick rebuild sooner
             logger.exception("assurance_build_stamp_failed", extra={"tenant": tenant_id})
+        # P2.1 section 4.5: before ANY builder reads, mark expired acknowledgements and bring ``fleet_agents.node_ref`` /
+        # ``identity.basis`` in line with what each active pairing now decides (an asset gone stale makes the pairing
+        # inert; findings follow the node). It must never stop the build: a failure leaves the columns as they were,
+        # and the builder decides the graph from the tables itself, never from those columns.
+        try:
+            async with pool.acquire() as conn:
+                await asyncio.wait_for(fleet_pairing.reconcile(conn, now), BUILDER_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("assurance_pairing_reconcile_failed", extra={"tenant": tenant_id})
         for mod in mods:
             name = getattr(mod, "SOURCE", getattr(mod, "__name__", "?"))
             try:

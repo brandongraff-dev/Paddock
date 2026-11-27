@@ -27,13 +27,14 @@ test = ["pytest>=7.4"]
 [project.scripts]
 paddock = "paddock_cli.main:main"
 paddock-cli = "paddock_cli.main:main"
+paddock-guard = "paddock_cli.guard.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["paddock_cli*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.json"]
+"*" = ["*.json", "*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

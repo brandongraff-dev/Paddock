@@ -28,8 +28,6 @@ _HARDENED = (
 
 _REF_BAD = re.compile(r"[\s\x00-\x1f\x7f\\:?*\[\u0080-￿]")
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
-_FILTER_SECTION = re.compile(r'^\s*\[\s*(filter|diff|merge)\s+"([^"]{1,100})"\s*\]', re.I | re.M)
-_INCLUDE_SECTION = re.compile(r"^\s*\[\s*include(?:If)?\b", re.I | re.M)
 _NAME_OK = re.compile(r"^[A-Za-z0-9_.+-]{1,100}$")
 
 _home_dir: str | None = None
@@ -39,6 +37,7 @@ def _reset_for_tests() -> None:
     """Forget the cached empty HOME (tests change PATH or the temp location)."""
     global _home_dir
     _home_dir = None
+    _CFG_CACHE.clear()
 
 
 def _empty_home() -> str:
@@ -65,68 +64,132 @@ def build_env() -> dict[str, str]:
     }
 
 
+def _read_small(path: str, limit: int = 262144) -> str | None:
+    """Read a file the repository controls without blocking or following a symlink."""
+    from paddock_cli.guard import files
+
+    text, why = files.read_abs_text(path, limit=limit)
+    if text is not None:
+        return text
+    if why in ("symlink", "not-regular", "oversize"):
+        raise GuardError("an unusual git file is present (%s); not read by Paddock Guard" % why)
+    return None
+
+
 def _git_dir_config(root: str) -> str | None:
     """Path of the repository's own config file, following a ``gitdir:`` pointer file."""
     dot = os.path.join(root, ".git")
     try:
-        if os.path.isdir(dot):
+        if os.path.isdir(dot) and not os.path.islink(dot):
             return os.path.join(dot, "config")
         if os.path.isfile(dot):
-            with open(dot, "rb") as fh:
-                head = fh.read(4096).decode("utf-8", "replace").strip()
+            head = (_read_small(dot, 4096) or "").strip()
             if head.startswith("gitdir:"):
                 target = head[len("gitdir:"):].strip()
                 if not os.path.isabs(target):
                     target = os.path.join(root, target)
                 gd = os.path.realpath(target)
-                common = os.path.join(gd, "commondir")
-                if os.path.isfile(common):
-                    with open(common, "rb") as fh:
-                        sub = fh.read(4096).decode("utf-8", "replace").strip()
-                    return os.path.join(os.path.realpath(os.path.join(gd, sub)), "config")
+                common = _read_small(os.path.join(gd, "commondir"), 4096)
+                if common is not None and common.strip():
+                    return os.path.join(os.path.realpath(os.path.join(gd, common.strip())), "config")
                 return os.path.join(gd, "config")
     except OSError:
         return None
     return None
 
 
+_CFG_CACHE: dict[tuple[str, tuple[Any, ...]], list[str]] = {}
+
+
+def _config_signature(root: str, cfg: str | None) -> tuple[Any, ...] | None:
+    """Stat signature of the config files git would read for ``root``; None when unknown."""
+    if not cfg:
+        return None
+    sig: list[Any] = []
+    for path in (cfg, cfg + ".worktree"):
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            sig.append(None)
+            continue
+        except OSError:
+            return None
+        sig.append((st.st_mtime_ns, st.st_size, st.st_ino, st.st_mode))
+    return tuple(sig)
+
+
+def _config_keys(root: str) -> list[str]:
+    """Every key git itself reads from the repository's config (parsed by git, not by a regex).
+
+    ``git config --list --name-only -z --no-includes`` lists the keys of the repository config and,
+    when ``extensions.worktreeConfig`` is on, of ``config.worktree``; the system and global files
+    are ``/dev/null`` in the scrubbed environment. Includes are not followed (their keys show up
+    as ``include.path`` and the repository is refused), so listing never reads outside the repo.
+    """
+    argv = ["git", "--no-optional-locks", *_HARDENED, "config", "--list", "--name-only", "-z", "--no-includes"]
+    try:
+        proc = subprocess.run(  # noqa: S603  (fixed argv, shell=False)
+            argv, cwd=root, env=build_env(), capture_output=True, timeout=15, check=False, shell=False)
+    except FileNotFoundError:
+        raise GuardError("git is not installed or not on PATH") from None
+    except subprocess.TimeoutExpired:
+        raise GuardError("git timed out") from None
+    except OSError as exc:
+        raise GuardError("git could not be started (%s)" % type(exc).__name__) from None
+    if proc.returncode != 0:
+        raise GuardError("git could not read the repository config; not read by Paddock Guard")
+    return [k for k in proc.stdout.decode("utf-8", "replace").split("\x00") if k]
+
+
 def _neutralise_repo_config(root: str) -> list[str]:
     """Extra ``-c`` arguments that blank filter, textconv and merge-driver commands.
 
-    The repository's ``.git/config`` is read by git even with a scrubbed environment. Commands
-    named there (``filter.X.clean``, ``diff.X.textconv``, ``merge.X.driver``) can run when
-    ``status`` or ``diff`` compares files, so every named section is overridden; a config that
-    uses ``include`` can pull in arbitrary further sections and is refused.
+    The repository's own config is read by git even with a scrubbed environment. Commands named
+    there (``filter.X.clean``, ``diff.X.textconv``, ``merge.X.driver``) can run when ``status``,
+    ``diff`` or ``archive`` handle files, so every driver name git reports is overridden on the
+    command line. The key list comes from git (every spelling of a section header, the worktree
+    config and sub-section quoting are git's business, not a regex's). A config that uses
+    ``include`` or ``includeIf``, a driver name that cannot be written safely as a ``-c`` key, or a
+    config that is a symlink, a FIFO or very large makes the repository refused.
     """
     cfg = _git_dir_config(root)
-    if not cfg:
-        return []
-    try:
-        with open(cfg, "rb") as fh:
-            text = fh.read(262144).decode("utf-8", "replace")
-    except OSError:
-        return []
-    if _INCLUDE_SECTION.search(text):
-        raise GuardError("git config uses include sections; not read by Paddock Guard")
+    if cfg:
+        # symlink / FIFO / oversize repository files are refused before git is asked to read them
+        _read_small(cfg)
+        _read_small(cfg + ".worktree")
+    sig = _config_signature(root, cfg)
+    cache_key = (root, sig) if sig is not None else None
+    if cache_key is not None and cache_key in _CFG_CACHE:
+        return list(_CFG_CACHE[cache_key])
     args: list[str] = []
     seen: set[tuple[str, str]] = set()
-    for m in _FILTER_SECTION.finditer(text):
-        kind, name = m.group(1).lower(), m.group(2)
-        if (kind, name) in seen:
+    for key in _config_keys(root):
+        parts = key.split(".")
+        section = parts[0].lower()
+        if section == "include" or section == "includeif":
+            raise GuardError("git config uses include sections; not read by Paddock Guard")
+        if section not in ("filter", "diff", "merge") or len(parts) < 3:
             continue
-        seen.add((kind, name))
+        name = ".".join(parts[1:-1])
+        if (section, name) in seen:
+            continue
+        seen.add((section, name))
         if not _NAME_OK.match(name):
             # A name that cannot be written safely on the command line: refuse the repository.
-            raise GuardError("git config has an unusual %s name; not read by Paddock Guard" % kind)
-        if kind == "filter":
-            for key in ("clean", "smudge", "process"):
-                args += ["-c", "filter.%s.%s=" % (name, key)]
+            raise GuardError("git config has an unusual %s name; not read by Paddock Guard" % section)
+        if section == "filter":
+            for k in ("clean", "smudge", "process"):
+                args += ["-c", "filter.%s.%s=" % (name, k)]
             args += ["-c", "filter.%s.required=false" % name]
-        elif kind == "diff":
-            for key in ("textconv", "command", "external"):
-                args += ["-c", "diff.%s.%s=" % (name, key)]
+        elif section == "diff":
+            for k in ("textconv", "command", "external"):
+                args += ["-c", "diff.%s.%s=" % (name, k)]
         else:
             args += ["-c", "merge.%s.driver=" % name]
+    if cache_key is not None:
+        if len(_CFG_CACHE) > 64:
+            _CFG_CACHE.clear()
+        _CFG_CACHE[cache_key] = list(args)
     return args
 
 

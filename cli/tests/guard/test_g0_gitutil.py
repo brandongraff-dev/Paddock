@@ -180,3 +180,125 @@ def test_archive_stream_yields_a_tar(repo):
             names = [m.name for m in tf]
     assert "x.txt" in names
     assert stream.returncode == 0
+
+
+def test_a_fifo_or_symlink_in_place_of_git_config_does_not_block(repo, tmp_path):
+    import signal
+
+    _commit(repo)
+    cfg = repo / ".git" / "config"
+    cfg.unlink()
+    os.mkfifo(cfg)
+
+    def on_alarm(*_):
+        raise AssertionError("blocked reading a FIFO as .git/config")
+
+    old = signal.signal(signal.SIGALRM, on_alarm)
+    signal.alarm(10)
+    try:
+        with pytest.raises(errors.GuardError):
+            gitutil.run_git(repo, ["status", "--porcelain"])
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+    cfg.unlink()
+    outside = tmp_path / "other.cfg"
+    outside.write_text("[core]\n\tbare = false\n")
+    os.symlink(outside, cfg)
+    with pytest.raises(errors.GuardError):
+        gitutil.run_git(repo, ["status", "--porcelain"])
+
+
+# ---- hostile repository config, other spellings (verifier round 1) -------------------------------
+_EVIL = "touch {s}"
+
+
+def _hostile_repo(repo, tmp_path, config_text, *, attrs="*.txt filter=evil diff=evil\n", worktree_cfg=None):
+    _commit(repo)
+    sentinel = tmp_path / "ran"
+    (repo / ".gitattributes").write_text(attrs)
+    with open(repo / ".git" / "config", "a") as fh:
+        fh.write(config_text.replace("{s}", str(sentinel)))
+    if worktree_cfg is not None:
+        (repo / ".git" / "config.worktree").write_text(worktree_cfg.replace("{s}", str(sentinel)))
+    # a different size and an older mtime forces git to look at the content
+    (repo / "a.txt").write_text("changed content with a different size, longer\n")
+    return sentinel
+
+
+def _drive_git(repo):
+    from paddock_cli.guard import gitutil as g
+
+    sha = None
+    for args in (["status", "--porcelain"], ["diff", "--name-only"], ["ls-files", "-m"], ["diff", "--cached"],
+                 ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]):
+        try:
+            g.run_git(repo, args)
+        except errors.GuardError:
+            return "refused"
+    try:
+        sha = g.resolve_ref(repo, "HEAD")
+        with g.archive_stream(repo, sha) as stream:
+            while stream.stdout.read(65536):
+                pass
+    except errors.GuardError:
+        return "refused"
+    return "ran"
+
+
+@pytest.mark.parametrize("config_text", [
+    '\n[filter.evil]\n\tclean = touch {s}\n\tsmudge = touch {s}\n',                    # dotted legacy form
+    '\n[filter "evil\\"x"]\n\tclean = touch {s}\n\tsmudge = touch {s}\n',               # escaped quote in the name
+    '\n[FILTER "evil"]\n\tclean = touch {s}\n\tsmudge = touch {s}\n',                    # upper case section
+    '\n[filter "evil"] clean = touch {s}\n[filter "evil"] smudge = touch {s}\n',        # key on the header line
+    '\n[ filter   "evil" ]\n\tclean = touch {s}\n\tsmudge = touch {s}\n',
+    '\n[diff "evil"]\n\ttextconv = touch {s}\n',
+    '\n[diff.evil]\n\ttextconv = touch {s}\n\tcommand = touch {s}\n',
+    '\n[filter "ev il=1"]\n\tclean = touch {s}\n\tsmudge = touch {s}\n',                 # a name that cannot be a -c key
+], ids=["dotted", "escaped-quote", "uppercase", "same-line", "spaced-header", "diff-textconv", "diff-dotted", "odd-name"])
+def test_hostile_git_config_spellings_run_nothing(repo, tmp_path, config_text):
+    attrs = "*.txt filter=evil diff=evil\n"
+    if "ev il=1" in config_text:
+        attrs = "*.txt filter=ev?il=1\n"
+    elif 'evil\\"x' in config_text:
+        attrs = '*.txt filter=evil"x\n'
+    sentinel = _hostile_repo(repo, tmp_path, config_text, attrs=attrs)
+    outcome = _drive_git(repo)
+    assert not sentinel.exists(), "a repository config command ran (%s)" % outcome
+
+
+def test_worktree_config_is_not_a_way_to_run_commands(repo, tmp_path):
+    sentinel = _hostile_repo(
+        repo, tmp_path, "\n[extensions]\n\tworktreeConfig = true\n",
+        worktree_cfg='[filter "evil"]\n\tclean = touch {s}\n\tsmudge = touch {s}\n')
+    outcome = _drive_git(repo)
+    assert not sentinel.exists(), "a worktree config command ran (%s)" % outcome
+
+
+def test_config_with_include_in_any_spelling_is_refused(repo, tmp_path):
+    _commit(repo)
+    extra = tmp_path / "extra.cfg"
+    extra.write_text("[core]\n\tbare = false\n")
+    with open(repo / ".git" / "config", "a") as fh:
+        fh.write("\n[core] x = 1\n[ INCLUDE ] path = %s\n" % extra)
+    with pytest.raises(errors.GuardError):
+        gitutil.run_git(repo, ["status", "--porcelain"])
+
+
+def test_includeif_is_refused(repo, tmp_path):
+    _commit(repo)
+    extra = tmp_path / "extra.cfg"
+    extra.write_text("[core]\n\tbare = false\n")
+    with open(repo / ".git" / "config", "a") as fh:
+        fh.write('\n[includeIf "gitdir:/"]\n\tpath = %s\n' % extra)
+    with pytest.raises(errors.GuardError):
+        gitutil.run_git(repo, ["status", "--porcelain"])
+
+
+def test_ordinary_named_filter_is_still_neutralised_not_refused(repo, tmp_path):
+    """A repository with git-lfs style config keeps working; the command is just never run."""
+    sentinel = _hostile_repo(
+        repo, tmp_path, '\n[filter "lfs"]\n\tclean = touch {s}\n\tsmudge = touch {s}\n\trequired = true\n',
+        attrs="*.txt filter=lfs\n")
+    assert _drive_git(repo) == "ran"
+    assert not sentinel.exists()

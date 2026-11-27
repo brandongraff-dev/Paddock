@@ -656,6 +656,20 @@ async def _insert_agent(con: Any, *, host: str, platform: str, version: str | No
     raise RuntimeError("could not allocate a unique agent credential prefix")  # pragma: no cover
 
 
+async def _end_trust_root(con: Any, agent_id: uuid.UUID, *, old_node_ref: str | None, token_prefix: str) -> None:
+    """A re-key token can rebind the row to a DIFFERENT host (docs/ASSURANCE_P2_1.md 4.4): the operator's pairing
+    ("this agent IS that machine") and every conflict acknowledgement are about the old host, so they end in the same
+    transaction (a signed key ROTATION keeps them: the old key vouches for the new one). The row's node is
+    ``agent:<id>`` again (the UPDATE above) and the host-config findings of the old node follow it."""
+    from . import fleet_pairing
+    from .assurance import finding_follow
+    own = _NODE_REF_PREFIX + str(agent_id)
+    await fleet_pairing.end_for_agent(con, agent_id, reason="rekeyed", by=f"system:rekey:{token_prefix}",
+                                      actor=f"system:rekey:{token_prefix}", actor_role="system")
+    if old_node_ref and old_node_ref != own:
+        await finding_follow.migrate_targets(con, {old_node_ref: own})
+
+
 async def _rekey(con: Any, for_agent: uuid.UUID, *, host: str, platform: str, version: str | None,
                  labels: list[str], caps: list[str], actor: str, identity: str,
                  token_prefix: str, token_created_at: datetime) -> tuple[uuid.UUID, dict[str, Any]]:
@@ -670,7 +684,7 @@ async def _rekey(con: Any, for_agent: uuid.UUID, *, host: str, platform: str, ve
     agent marked revoked without a ``revoked_at`` (a v1 row the migration could not date) is never re-keyed.
     """
     row = await con.fetchrow(
-        "SELECT id, status, revoked_at FROM fleet_agents WHERE id = $1 FOR UPDATE", for_agent)
+        "SELECT id, status, revoked_at, node_ref FROM fleet_agents WHERE id = $1 FOR UPDATE", for_agent)
     if row is None:
         raise _bad()                                # the agent was deleted since the token was minted
     if row["status"] == "revoked" or row["revoked_at"] is not None:
@@ -702,5 +716,6 @@ async def _rekey(con: Any, for_agent: uuid.UUID, *, host: str, platform: str, ve
                 continue
             raise EnrollError(409, "hostname already enrolled by another agent",
                               counts_failure=False) from exc
+        await _end_trust_root(con, for_agent, old_node_ref=row["node_ref"], token_prefix=token_prefix)
         return for_agent, {"cred": cred, "revoked_keys": sorted(r["key_id"] for r in revoked)}
     raise RuntimeError("could not allocate a unique agent credential prefix")  # pragma: no cover

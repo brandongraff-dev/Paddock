@@ -440,6 +440,30 @@
             "title": "Online",
             "type": "boolean"
           },
+          "paired_asset_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the cloud asset an admin paired this agent with (active pairing), else null",
+            "title": "Paired Asset Id"
+          },
+          "pairing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PairingOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the viewer-safe subset of the agent's latest pairing: no justification, no operator, no asset name, no address"
+          },
           "platform": {
             "anyOf": [
               {
@@ -578,6 +602,19 @@
             "default": true,
             "title": "Online",
             "type": "boolean"
+          },
+          "paired_asset_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the cloud asset an admin paired this agent with (active pairing), else null",
+            "title": "Paired Asset Id"
           },
           "platform": {
             "anyOf": [
@@ -760,6 +797,19 @@
             "default": true,
             "title": "Online",
             "type": "boolean"
+          },
+          "paired_asset_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the cloud asset an admin paired this agent with (active pairing), else null",
+            "title": "Paired Asset Id"
           },
           "platform": {
             "anyOf": [
@@ -3628,6 +3678,264 @@
           "controls"
         ],
         "title": "CompliancePack",
+        "type": "object"
+      },
+      "ConflictAckIn": {
+        "additionalProperties": false,
+        "properties": {
+          "justification": {
+            "maxLength": 1000,
+            "minLength": 10,
+            "title": "Justification",
+            "type": "string"
+          },
+          "kind": {
+            "default": "agent_closed_scan_open",
+            "description": "only agent_closed_scan_open can be acknowledged (anything else is 422 not_ackable)",
+            "maxLength": 64,
+            "title": "Kind",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "proto": {
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "scan_seen_at": {
+            "description": "echo of the observation the operator looked at (GET .../conflicts)",
+            "format": "date-time",
+            "title": "Scan Seen At",
+            "type": "string"
+          },
+          "ttl_hours": {
+            "default": 168,
+            "maximum": 720.0,
+            "minimum": 1.0,
+            "title": "Ttl Hours",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "proto",
+          "port",
+          "scan_seen_at",
+          "justification"
+        ],
+        "title": "ConflictAckIn",
+        "type": "object"
+      },
+      "ConflictAckOut": {
+        "properties": {
+          "acked_at": {
+            "format": "date-time",
+            "title": "Acked At",
+            "type": "string"
+          },
+          "acked_by": {
+            "title": "Acked By",
+            "type": "string"
+          },
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "cleared_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleared At"
+          },
+          "cleared_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleared By"
+          },
+          "cleared_reason": {
+            "default": "",
+            "title": "Cleared Reason",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "justification": {
+            "title": "Justification",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "proto": {
+            "title": "Proto",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "cleared",
+              "superseded",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "through_seen_at": {
+            "format": "date-time",
+            "title": "Through Seen At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "kind",
+          "proto",
+          "port",
+          "through_seen_at",
+          "status",
+          "justification",
+          "acked_by",
+          "acked_at",
+          "expires_at"
+        ],
+        "title": "ConflictAckOut",
+        "type": "object"
+      },
+      "ConflictOut": {
+        "properties": {
+          "ack": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConflictAckOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ackable": {
+            "title": "Ackable",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "proto": {
+            "title": "Proto",
+            "type": "string"
+          },
+          "scan_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Seen At"
+          }
+        },
+        "required": [
+          "kind",
+          "proto",
+          "port",
+          "ackable"
+        ],
+        "title": "ConflictOut",
+        "type": "object"
+      },
+      "ConflictsOut": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "when the host_fw fact the conflicts come from was observed",
+            "title": "As Of"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictOut"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "graph_built_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "when the reach graph was last built (null: a rebuild is pending)",
+            "title": "Graph Built At"
+          },
+          "node_ref": {
+            "title": "Node Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "node_ref",
+          "conflicts"
+        ],
+        "title": "ConflictsOut",
         "type": "object"
       },
       "ControlOut": {
@@ -9677,6 +9985,312 @@
           }
         },
         "title": "OwnerPatch",
+        "type": "object"
+      },
+      "PairingCandidateOut": {
+        "properties": {
+          "asset_canonical": {
+            "title": "Asset Canonical",
+            "type": "string"
+          },
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "asset_last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Last Seen"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/PairingChecks"
+          },
+          "paired_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the agent that already holds this asset, if any",
+            "title": "Paired To"
+          }
+        },
+        "required": [
+          "asset_id",
+          "asset_canonical",
+          "checks"
+        ],
+        "title": "PairingCandidateOut",
+        "type": "object"
+      },
+      "PairingChecks": {
+        "properties": {
+          "acknowledged_mismatch": {
+            "default": false,
+            "title": "Acknowledged Mismatch",
+            "type": "boolean"
+          },
+          "asset_ips": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Asset Ips",
+            "type": "array"
+          },
+          "asset_kind": {
+            "default": "",
+            "title": "Asset Kind",
+            "type": "string"
+          },
+          "asset_last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Last Seen"
+          },
+          "claimed_ips": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Claimed Ips",
+            "type": "array"
+          },
+          "claimed_subset": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed Subset"
+          },
+          "observed_peer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Peer"
+          },
+          "peer_direct": {
+            "default": false,
+            "title": "Peer Direct",
+            "type": "boolean"
+          },
+          "peer_in_asset": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peer In Asset"
+          }
+        },
+        "required": [
+          "claimed_ips",
+          "asset_ips"
+        ],
+        "title": "PairingChecks",
+        "type": "object"
+      },
+      "PairingEffective": {
+        "properties": {
+          "basis": {
+            "enum": [
+              "paired",
+              "claimed"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "node_ref": {
+            "title": "Node Ref",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "inert_asset_missing",
+              "inert_asset_stale",
+              "inert_asset_not_vm",
+              "inert_agent_not_live",
+              "peer_mismatch",
+              "ended"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_ref",
+          "basis",
+          "state"
+        ],
+        "title": "PairingEffective",
+        "type": "object"
+      },
+      "PairingIn": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledge_mismatch": {
+            "default": false,
+            "description": "store the pairing although the claimed addresses or the connecting peer disagree with the asset (an operator-mistake guard, not a proof)",
+            "title": "Acknowledge Mismatch",
+            "type": "boolean"
+          },
+          "asset_id": {
+            "description": "the cloud VM asset (assets.id) this agent IS",
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "justification": {
+            "description": "why the operator is sure (3 to 1000 characters)",
+            "maxLength": 1000,
+            "minLength": 3,
+            "title": "Justification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "justification"
+        ],
+        "title": "PairingIn",
+        "type": "object"
+      },
+      "PairingOut": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "asset_canonical": {
+            "title": "Asset Canonical",
+            "type": "string"
+          },
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "changed": {
+            "default": false,
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/PairingChecks"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/PairingEffective"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "ended_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended By"
+          },
+          "ended_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "justification": {
+            "title": "Justification",
+            "type": "string"
+          },
+          "paired_at": {
+            "format": "date-time",
+            "title": "Paired At",
+            "type": "string"
+          },
+          "paired_by": {
+            "title": "Paired By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "ended"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "asset_id",
+          "asset_canonical",
+          "status",
+          "justification",
+          "paired_by",
+          "paired_at",
+          "checks",
+          "effective"
+        ],
+        "title": "PairingOut",
         "type": "object"
       },
       "PathAssetRef": {
@@ -26199,6 +26813,170 @@
         ]
       }
     },
+    "/v1/fleet/agents/{agent_id}/conflicts": {
+      "get": {
+        "description": "The conflicts of the agent's node as of its last build (``as_of``: when that fact was observed), with the\nacknowledgement that covers each. Acknowledged ones are listed too; nothing is hidden.",
+        "operationId": "get_agent_conflicts_v1_fleet_agents__agent_id__conflicts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "agent, asset, pairing or acknowledgement not found (one generic body each)"
+          },
+          "409": {
+            "description": "a precondition failed: the body names a machine-readable `reason`"
+          },
+          "422": {
+            "description": "invalid body, or a conflict kind that cannot be acknowledged"
+          }
+        },
+        "summary": "Get Agent Conflicts",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/agents/{agent_id}/conflicts/acks": {
+      "post": {
+        "description": "Acknowledge ONE observation of ``agent_closed_scan_open`` for ``(proto, port)``: the external scan saw the port\nopen, the host's signed model says closed, and the operator has looked. It clears that conflict RECORD for coverage\npurposes and nothing else. ``scan_seen_at`` must echo the observation shown by ``GET .../conflicts`` (409\n``conflict_changed`` otherwise; 409 ``no_such_conflict`` when there is none): a blind pre-acknowledgement is\nimpossible, and a LATER observation is not covered. Expires (default 168 h, at most 720 h).",
+        "operationId": "post_conflict_ack_v1_fleet_agents__agent_id__conflicts_acks_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConflictAckIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictAckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "agent, asset, pairing or acknowledgement not found (one generic body each)"
+          },
+          "409": {
+            "description": "a precondition failed: the body names a machine-readable `reason`"
+          },
+          "422": {
+            "description": "invalid body, or a conflict kind that cannot be acknowledged"
+          }
+        },
+        "summary": "Post Conflict Ack",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/agents/{agent_id}/conflicts/acks/{ack_id}": {
+      "delete": {
+        "description": "Clear an acknowledgement at once: the conflict is back from the next build.",
+        "operationId": "delete_conflict_ack_v1_fleet_agents__agent_id__conflicts_acks__ack_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the acknowledgement id",
+            "in": "path",
+            "name": "ack_id",
+            "required": true,
+            "schema": {
+              "description": "the acknowledgement id",
+              "format": "uuid",
+              "title": "Ack Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "why (3 to 1000 characters); REQUIRED",
+            "in": "query",
+            "name": "justification",
+            "required": true,
+            "schema": {
+              "description": "why (3 to 1000 characters); REQUIRED",
+              "maxLength": 1000,
+              "minLength": 3,
+              "title": "Justification",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictAckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "agent, asset, pairing or acknowledgement not found (one generic body each)"
+          },
+          "409": {
+            "description": "a precondition failed: the body names a machine-readable `reason`"
+          },
+          "422": {
+            "description": "invalid body, or a conflict kind that cannot be acknowledged"
+          }
+        },
+        "summary": "Delete Conflict Ack",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
     "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke": {
       "post": {
         "description": "Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key\nleaves the agent unable to post until an admin mints it a re-key token. A ROTATED key whose successor is still\nactive needs ``successors``: 'revoke' (the whole chain, for a stolen key) or 'keep'; otherwise 409 and nothing\nchanges. For an incident revoke the agent instead (``POST /agents/{id}/revoke``).",
@@ -26256,6 +27034,201 @@
           }
         },
         "summary": "Revoke Agent Key",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/agents/{agent_id}/pairing": {
+      "delete": {
+        "description": "End the agent's active pairing (the host is judged as ``agent:<uuid>`` again; its findings follow it). Never\nbilling-gated. The ledger row is kept.",
+        "operationId": "delete_agent_pairing_v1_fleet_agents__agent_id__pairing_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "why (3 to 1000 characters); REQUIRED",
+            "in": "query",
+            "name": "justification",
+            "required": true,
+            "schema": {
+              "description": "why (3 to 1000 characters); REQUIRED",
+              "maxLength": 1000,
+              "minLength": 3,
+              "title": "Justification",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "agent, asset, pairing or acknowledgement not found (one generic body each)"
+          },
+          "409": {
+            "description": "a precondition failed: the body names a machine-readable `reason`"
+          },
+          "422": {
+            "description": "invalid body, or a conflict kind that cannot be acknowledged"
+          }
+        },
+        "summary": "Delete Agent Pairing",
+        "tags": [
+          "fleet"
+        ]
+      },
+      "get": {
+        "description": "The agent's active pairing, else the last ended one, with what is EFFECTIVE now (``inert_*``: the asset is\nmissing, stale or not a VM, so the host is judged as ``agent:<uuid>``; ``peer_mismatch``: a conflict). ``triage``:\nit shows the asset's addresses and the operator's justification.",
+        "operationId": "get_agent_pairing_v1_fleet_agents__agent_id__pairing_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "agent, asset, pairing or acknowledgement not found (one generic body each)"
+          },
+          "409": {
+            "description": "a precondition failed: the body names a machine-readable `reason`"
+          },
+          "422": {
+            "description": "invalid body, or a conflict kind that cannot be acknowledged"
+          }
+        },
+        "summary": "Get Agent Pairing",
+        "tags": [
+          "fleet"
+        ]
+      },
+      "put": {
+        "description": "Pair this agent with a cloud VM asset: *this agent IS that machine*, asserted by an admin with a justification.\nIt changes IDENTITY only (the node becomes ``asset:<uuid>``, its addresses and zone come from the asset, never from\nwhat the host claims) and never a trust level: the facts stay ``configured`` and every P2 gate still applies.\nIdempotent for the same asset (``changed=false``); to move, DELETE then PUT. One agent per asset, enforced by the\ndatabase. Billing-gated like zone and label writes.",
+        "operationId": "put_agent_pairing_v1_fleet_agents__agent_id__pairing_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "agent, asset, pairing or acknowledgement not found (one generic body each)"
+          },
+          "409": {
+            "description": "a precondition failed: the body names a machine-readable `reason`"
+          },
+          "422": {
+            "description": "invalid body, or a conflict kind that cannot be acknowledged"
+          }
+        },
+        "summary": "Put Agent Pairing",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/agents/{agent_id}/pairing/candidates": {
+      "get": {
+        "description": "Up to 20 fresh cloud VM assets whose addresses intersect what the agent claims. Read only: it creates nothing\nand proves nothing.",
+        "operationId": "get_pairing_candidates_v1_fleet_agents__agent_id__pairing_candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PairingCandidateOut"
+                  },
+                  "title": "Response Get Pairing Candidates V1 Fleet Agents  Agent Id  Pairing Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "agent, asset, pairing or acknowledgement not found (one generic body each)"
+          },
+          "409": {
+            "description": "a precondition failed: the body names a machine-readable `reason`"
+          },
+          "422": {
+            "description": "invalid body, or a conflict kind that cannot be acknowledged"
+          }
+        },
+        "summary": "Get Pairing Candidates",
         "tags": [
           "fleet"
         ]
@@ -26815,6 +27788,105 @@
           }
         },
         "summary": "Execute",
+        "tags": [
+          "fleet"
+        ]
+      }
+    },
+    "/v1/fleet/pairings": {
+      "get": {
+        "description": "The pairing ledger, newest first (rows are never deleted or re-pointed).",
+        "operationId": "list_pairings_v1_fleet_pairings_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "active",
+                    "ended"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "asset_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Asset Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PairingOut"
+                  },
+                  "title": "Response List Pairings V1 Fleet Pairings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pairings",
         "tags": [
           "fleet"
         ]

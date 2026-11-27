@@ -241,3 +241,30 @@ def test_fixer_names_constants_exist_without_imports():
 
 def test_require_tiers_agrees_with_guard_version():
     assert model.REQUIRE_TIERS == (".dev" not in GUARD_VERSION)
+
+
+def test_glob_matcher_is_polynomial_on_hostile_patterns():
+    import time
+
+    from paddock_cli.guard.files import match_glob
+
+    path = "a" * 300
+    t0 = time.process_time()
+    assert not match_glob("*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b", path)
+    assert not match_glob("**/**/**/**/**/**/**/**/*a*a*a*a*a*a*a*a*b", "/".join(["a"] * 40))
+    from support import perf
+
+    perf.within(time.process_time() - t0, 5, what="glob matcher")
+    assert not match_glob("x" * 500, "x" * 500) and not match_glob("", "a") and not match_glob("a/b", "")
+    assert match_glob("[a-c]?[!x]", "bzy") and not match_glob("[a-c]?[!x]", "bzx") and match_glob("a[", "a[")
+
+
+def test_tiers_json_with_hostile_nesting_is_ignored(tmp_path, monkeypatch):
+    p = tmp_path / "tiers.json"
+    p.write_text("[" * 150000 + "]" * 150000)
+    monkeypatch.setattr(registry, "TIERS_PATH", str(p))
+    registry.reset_caches()
+    assert registry.load_tiers() == {}
+    p.write_text('{"a":' * 5000 + "1" + "}" * 5000)
+    registry.reset_caches()
+    assert registry.load_tiers() == {}

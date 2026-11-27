@@ -429,6 +429,13 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--no-pre-commit", action="store_true")
     i.add_argument("--no-color", action="store_true")
     i.set_defaults(fn=cmd_init)
+    try:  # Paddock Guard: self-contained subpackage, registered lazily
+        from .guard.cli import register as _register_guard
+    except ModuleNotFoundError as exc:
+        if not (exc.name or "").startswith("paddock_cli.guard"):
+            raise
+    else:
+        _register_guard(sub)
     return ap
 
 

@@ -117,6 +117,8 @@ class GuardFinding:
     tier_evidence: str
     status: str = "open"
     data: dict[str, Any] = field(default_factory=dict)
+    # the real root-relative path (``file`` is cleaned for display); never serialised
+    source_path: str = field(default="", repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in _FINDING_KEYS}
@@ -183,7 +185,7 @@ class Report:
             "mode": dict(self.mode),
             "summary": self.summary(),
             "findings": [f.to_dict() for f in sorted(self.findings, key=GuardFinding.sort_key)],
-            "notes": list(self.notes),
+            "notes": list(self.first_line_notices) + list(self.notes),
             "skipped": list(self.skipped),
             "errors": list(self.errors),
             "checks_run": list(self.checks_run),

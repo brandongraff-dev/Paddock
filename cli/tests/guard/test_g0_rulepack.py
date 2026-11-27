@@ -9,6 +9,7 @@ import pytest
 
 from paddock_cli.guard import errors, registry, rulepack
 from paddock_cli.guard.files import FileView
+from support import perf
 
 PACK = """
 [pack]
@@ -238,3 +239,112 @@ def test_pack_error_never_echoes_pattern_text():
 
 def test_id_regex_for_packs():
     assert re.match(registry.PACK_ID_RE, "PGX-COMMUNITY-PYTHON-001")
+
+
+# ---- hostile packs: chained bounded repetitions and the load-time budget (verifier round 1) ---------
+_CHAINS = [
+    r"x{0,200}x{0,200}x{0,200}x{0,200}y",
+    r"a{0,200}a{0,200}a{0,200}b",
+    r"(x{0,200})(x{0,200})(x{0,200})y",
+    r"(?:x{0,100}x{0,100})(?:x{0,100})y",
+    r"a{0,50}b?a{0,50}a{0,50}c",
+]
+
+
+@pytest.mark.parametrize("pattern", _CHAINS)
+def test_lint_rejects_chains_of_overlapping_bounded_repetitions(pattern):
+    reason = rulepack.lint_pattern(pattern)
+    assert reason is not None and "repetition" in reason
+
+
+@pytest.mark.parametrize("pattern", [
+    r"a{0,200}a{0,200}b", r"\s{0,200}=\s{0,200}x", r"x{0,200}-x{0,200}-x{0,200}-y",
+    r"(?i)[a-z]{1,40}\.[a-z]{1,40}\.[a-z]{1,40}\(", r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
+])
+def test_lint_still_accepts_separated_or_short_chains(pattern):
+    assert rulepack.lint_pattern(pattern) is None
+
+
+def test_pump_is_interrupted_even_when_the_lint_misses_a_hostile_pattern(monkeypatch):
+    """Without a hard cap this pattern runs for minutes (verifier repro); with it the rule is refused fast."""
+    import signal
+    import time
+
+    if not rulepack.timer_available() or not hasattr(signal, "ITIMER_VIRTUAL"):
+        pytest.skip("needs setitimer")
+    monkeypatch.setattr(rulepack, "lint_pattern", lambda p: None)
+    t0 = time.monotonic()
+    with pytest.raises(rulepack.PackError):
+        _load(_rule(pattern=_CHAINS[0]), trusted=False, origin="project-pack")
+    perf.within(time.monotonic() - t0, 5, what="pack load")
+
+
+def test_pump_time_cap_is_absolute_and_the_timer_state_is_restored(monkeypatch):
+    import signal
+    import time
+
+    if not rulepack.timer_available() or not hasattr(signal, "ITIMER_VIRTUAL"):
+        pytest.skip("needs setitimer")
+    monkeypatch.setattr(rulepack, "lint_pattern", lambda p: None)
+    def outer(*_a):
+        pass
+
+    old = signal.signal(signal.SIGVTALRM, outer)
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(rulepack.PackError):
+            _load(_rule(pattern=_CHAINS[0]), trusted=False, origin="project-pack")
+        perf.within(time.monotonic() - t0, 5, what="pack load")
+        assert signal.getitimer(signal.ITIMER_VIRTUAL)[0] == 0
+        assert signal.getsignal(signal.SIGVTALRM) is outer
+    finally:
+        signal.signal(signal.SIGVTALRM, old)
+
+
+def test_untrusted_pack_without_a_timer_is_refused_not_pumped(monkeypatch):
+    monkeypatch.setattr(rulepack, "timer_available", lambda: False)
+    monkeypatch.setattr(rulepack, "lint_pattern", lambda p: None)
+    with pytest.raises(rulepack.PackError) as ei:
+        _load(_rule(pattern=_CHAINS[0]), trusted=False, origin="project-pack")
+    assert "timer" in str(ei.value)
+
+
+def test_many_hostile_packs_share_one_load_budget(tmp_path, monkeypatch):
+    import signal
+    import time
+
+    if not rulepack.timer_available() or not hasattr(signal, "ITIMER_VIRTUAL"):
+        pytest.skip("needs setitimer")
+    monkeypatch.setattr(rulepack, "lint_pattern", lambda p: None)
+    rules = tmp_path / ".paddock" / "rules"
+    rules.mkdir(parents=True)
+    for i in range(40):
+        (rules / ("p%02d.toml" % i)).write_text(_rule(pattern=_CHAINS[0]).replace("community-python", "evil-%02d" % i)
+                                                  .replace("PGX-COMMUNITY-PYTHON-001", "PGX-EVIL-%02d-001" % i))
+    t0 = time.monotonic()
+    checks, notes, errs = rulepack.load_project_packs(str(tmp_path), trusted_hashes=(), timer_ok=True)
+    perf.within(time.monotonic() - t0, 6, what="pack load")
+    assert checks == [] and len(errs) == 40
+    assert any("budget" in e for e in errs)
+
+
+def test_check_on_a_repo_with_a_hostile_pack_finishes(tmp_path):
+    import subprocess
+    import sys
+
+    root = tmp_path / "proj"
+    rules = root / ".paddock" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "evil.toml").write_text(
+        '[pack]\nid = "evil-pack"\nversion = 1\n[[rule]]\nid = "PGX-EVIL-PACK-001"\ntitle = "t"\n'
+        'severity = "high"\nfiles = ["**/*.py"]\npattern = \'' + _CHAINS[0] + "'\n")
+    (root / "a.py").write_text("x = 1\n")
+    proc = subprocess.run(
+        [sys.executable, "-m", "paddock_cli.guard", "check", str(root), "--no-cache", "--offline", "--format", "json"],
+        capture_output=True, text=True, timeout=30, check=False)
+    assert proc.returncode in (0, 1), proc.stderr[-300:]
+    import json
+
+    doc = json.loads(proc.stdout)
+    assert not any(f.get("check_id") == "PGX-EVIL-PACK-001" for f in doc["findings"])
+    assert any("evil.toml" in n and "not loaded" in n for n in doc["notes"] + doc["errors"])

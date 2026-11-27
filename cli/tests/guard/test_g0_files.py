@@ -87,7 +87,7 @@ def test_oversize_file_is_skipped_and_big_ok_raises_the_cap(tmp_path):
     fv, why = files.read_file(str(tmp_path), "big.js")
     assert fv is None and why == "oversize"
     fv, why = files.read_file(str(tmp_path), "big.js", big_ok=True)
-    assert why is None and fv.size == 1_000_001
+    assert why is None and fv.size == 1_000_001 and fv.streamed is True and fv.text == ""
     _w(tmp_path, "huge.js", b"a" * 4_000_001)
     assert files.read_file(str(tmp_path), "huge.js", big_ok=True)[1] == "oversize"
 
@@ -394,3 +394,49 @@ def test_extract_checks_free_disk_space_first(tmp_path, monkeypatch):
     monkeypatch.setattr(files.shutil, "disk_usage", lambda p: types.SimpleNamespace(total=100, used=99, free=1))
     with pytest.raises(errors.GuardError):
         files.extract_zip(_zip([("a.txt", b"x" * 1000)]), str(tmp_path / "o"))
+
+
+def test_stream_windows_overlap_offsets_and_cap(tmp_path):
+    body = "".join(chr(97 + (i % 26)) for i in range(20_000))
+    _w(tmp_path, "bundle.js", body)
+    wins = list(files.stream_windows(str(tmp_path), "bundle.js", window=4000, overlap=300))
+    assert wins[0][0] == 0 and len(wins[0][1]) == 4000
+    for (o1, t1), (o2, t2) in zip(wins, wins[1:]):
+        assert o2 == o1 + 3700 and t1[-300:] == t2[:300]
+    assert "".join(t[:3700] if i < len(wins) - 1 else t for i, (o, t) in enumerate(wins)) == body
+    capped = list(files.stream_windows(str(tmp_path), "bundle.js", window=4000, overlap=300, max_total=10_000))
+    assert sum(1 for _ in capped) < len(wins)
+    with pytest.raises(ValueError):
+        list(files.stream_windows(str(tmp_path), "bundle.js", window=100, overlap=100))
+
+
+def test_stream_windows_handles_multibyte_boundaries_and_symlinks(tmp_path):
+    _w(tmp_path, "m.js", ("\u00e9\u4e2d" * 40_000).encode())
+    text = "".join(t[:3700] for o, t in files.stream_windows(str(tmp_path), "m.js"))
+    assert "\ufffd" not in text
+    os.symlink(tmp_path / "m.js", tmp_path / "l.js")
+    assert list(files.stream_windows(str(tmp_path), "l.js")) == []
+
+
+def test_extract_collects_written_names(tmp_path):
+    names: list[str] = []
+    _extract([{"name": "a.txt", "data": b"1"}, {"name": "d/b.txt", "data": b"2"}], tmp_path / "out", collect=names)
+    assert sorted(names) == ["a.txt", "d/b.txt"]
+
+
+# ---- 3.9 item 8: lines over 4000 characters (verifier round 1) ---------------------------------------
+def test_fileview_lines_blank_over_long_lines_but_keep_numbering():
+    long = "a" * (files.LONG_LINE + 1)
+    fv = files.FileView(path="a.js", text="one\n" + long + "\nthree\r\n", size=1)
+    assert fv.lines == ["one", "", "three", ""]
+    assert fv.raw_lines == ["one", long, "three", ""]
+    assert fv.long_line_numbers == (2,)
+    exact = files.FileView(path="a.js", text="a" * files.LONG_LINE + "\n", size=1)
+    assert exact.lines[0] == "a" * files.LONG_LINE and exact.long_line_numbers == ()
+
+
+def test_fileview_with_long_lines_returns_every_line():
+    long = "b" * 5000
+    fv = files.FileView(path="a.js", text="x\n" + long + "\n", size=1)
+    wide = fv.with_long_lines()
+    assert wide.lines[1] == long and wide.path == fv.path and fv.lines[1] == ""

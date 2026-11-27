@@ -172,3 +172,9 @@ def test_baseline_with_too_many_entries_is_rejected(tmp_path):
 
 def test_files_module_still_reads_through_the_safe_reader():
     assert hasattr(files, "read_file")
+
+
+def test_suppression_on_a_line_that_is_long_is_read_from_the_raw_line():
+    text = "# paddock:ignore PG-WEB-005 generated bundle line " + "a" * 5000 + "\n"
+    sups, notes = suppress.scan_suppressions(_fv(text))
+    assert len(sups) == 1 and sups[0].line == 1

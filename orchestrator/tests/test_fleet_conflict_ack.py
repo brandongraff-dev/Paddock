@@ -225,7 +225,8 @@ async def test_only_agent_closed_scan_open_is_acknowledgeable(http, app_pool, db
 
 @pytest.mark.parametrize("payload", [
     {"justification": "too short"}, {"justification": " " * 20}, {"justification": "x" * 1001},
-    {"ttl_hours": 0}, {"ttl_hours": 721}, {"ttl_hours": -1}, {"ttl_hours": 1.5},
+    {"ttl_hours": 0}, {"ttl_hours": 721}, {"ttl_hours": -1}, {"ttl_hours": 1.5}, {"ttl_hours": True},
+    {"ttl_hours": "24"}, {"port": True},
     {"port": 0}, {"port": 65536}, {"proto": "any"}, {"proto": "sctp"}, {"scan_seen_at": "yesterday"},
     {"extra": True},
 ])
@@ -387,3 +388,116 @@ async def post_ack_direct(app_pool, w):
         return await fpair.create_ack(
             app_pool, w.h.id, kind="agent_closed_scan_open", proto="tcp", port=8080, scan_seen_at=w.seen,
             justification=WHY, ttl_hours=168, actor="x", actor_role="admin")
+
+
+# --------------------------------------------------------------------------- #
+# an acknowledgement belongs to the NODE it was made on (verifier finding): any node_ref change clears the agent's acks
+# --------------------------------------------------------------------------- #
+
+async def _active_acks(db, agent_id):
+    return [a for a in await acks(db, agent_id) if a["status"] == "active"]
+
+
+async def test_pairing_the_agent_clears_its_acks_because_the_node_changes(http, app_pool, db_pool):
+    w = await world(app_pool)
+    assert (await post_ack(http, w)).status_code == 201
+    asset = await seed_asset(db_pool)
+    r = await http.put(f"/v1/fleet/agents/{w.h.id}/pairing",
+                       json={"asset_id": str(asset), "justification": "verified in the cloud console",
+                             "acknowledge_mismatch": True})
+    assert r.status_code == 200, r.text
+    assert await _active_acks(db_pool, w.h.id) == []
+    (row,) = await acks(db_pool, w.h.id)
+    assert row["status"] == "cleared" and row["cleared_reason"] == "node_changed"
+    (aud,) = await audits(db_pool, "fleet.conflict.ack_clear", w.h.id)
+    assert aud["details"]["reason"] == "node_changed" and aud["details"]["ack_id"] == str(row["id"])
+
+
+async def test_an_idempotent_repeat_of_the_pairing_keeps_the_acks(http, app_pool, db_pool):
+    w = await world(app_pool)
+    asset = await seed_asset(db_pool)
+    b = {"asset_id": str(asset), "justification": "verified in the cloud console", "acknowledge_mismatch": True}
+    assert (await http.put(f"/v1/fleet/agents/{w.h.id}/pairing", json=b)).status_code == 200
+    await db_pool.execute(
+        "INSERT INTO fleet_conflict_acks (agent_id, kind, proto, port, through_seen_at, justification, acked_by, "
+        "expires_at, evidence) VALUES ($1,'agent_closed_scan_open','tcp',8080,NOW(),$2,'alice',NOW()+interval '1 hour','{}')",
+        w.h.id, WHY)
+    r = await http.put(f"/v1/fleet/agents/{w.h.id}/pairing", json=b)
+    assert r.status_code == 200 and r.json()["changed"] is False
+    assert len(await _active_acks(db_pool, w.h.id)) == 1
+
+
+async def test_unpairing_the_agent_clears_its_acks(http, app_pool, db_pool):
+    w = await world(app_pool)
+    asset = await seed_asset(db_pool)
+    b = {"asset_id": str(asset), "justification": "verified in the cloud console", "acknowledge_mismatch": True}
+    assert (await http.put(f"/v1/fleet/agents/{w.h.id}/pairing", json=b)).status_code == 200
+    await db_pool.execute(
+        "INSERT INTO fleet_conflict_acks (agent_id, kind, proto, port, through_seen_at, justification, acked_by, "
+        "expires_at, evidence) VALUES ($1,'agent_closed_scan_open','tcp',8080,NOW(),$2,'alice',NOW()+interval '1 hour','{}')",
+        w.h.id, WHY)
+    r = await http.delete(f"/v1/fleet/agents/{w.h.id}/pairing", params={"justification": "decommissioned old VM"})
+    assert r.status_code == 200, r.text
+    assert await _active_acks(db_pool, w.h.id) == []
+    assert (await acks(db_pool, w.h.id))[0]["cleared_reason"] == "node_changed"
+
+
+@pytest.mark.parametrize("hours,reason", [(100, "inert"), (0, "restored")])
+async def test_reconcile_moving_the_node_clears_the_acks(http, app_pool, db_pool, hours, reason):
+    from app import fleet_pairing as fpair
+    w = await world(app_pool)
+    asset = await seed_asset(db_pool)
+    b = {"asset_id": str(asset), "justification": "verified in the cloud console", "acknowledge_mismatch": True}
+    assert (await http.put(f"/v1/fleet/agents/{w.h.id}/pairing", json=b)).status_code == 200
+
+    async def run():
+        with tenancy.tenant_context(A):
+            async with app_pool.acquire() as con:
+                return await fpair.reconcile(con, now_())
+    if reason == "restored":
+        await db_pool.execute("UPDATE assets SET last_seen = NOW() - interval '100 hours' WHERE id = $1", asset)
+        assert (await run())["transitions"] == 1
+        await db_pool.execute("UPDATE assets SET last_seen = NOW() WHERE id = $1", asset)
+    await db_pool.execute(
+        "INSERT INTO fleet_conflict_acks (agent_id, kind, proto, port, through_seen_at, justification, acked_by, "
+        "expires_at, evidence) VALUES ($1,'agent_closed_scan_open','tcp',8080,NOW(),$2,'alice',NOW()+interval '1 hour','{}')",
+        w.h.id, WHY)
+    if reason == "inert":
+        await db_pool.execute("UPDATE assets SET last_seen = NOW() - interval '100 hours' WHERE id = $1", asset)
+    assert (await run())["transitions"] == 1
+    assert await _active_acks(db_pool, w.h.id) == []
+    assert (await acks(db_pool, w.h.id))[0]["cleared_reason"] == "node_changed"
+    assert len(await audits(db_pool, "fleet.conflict.ack_clear", w.h.id)) == 1
+
+
+async def test_a_reconcile_that_moves_nothing_keeps_the_acks(http, app_pool, db_pool):
+    from app import fleet_pairing as fpair
+    w = await world(app_pool)
+    asset = await seed_asset(db_pool)
+    b = {"asset_id": str(asset), "justification": "verified in the cloud console", "acknowledge_mismatch": True}
+    assert (await http.put(f"/v1/fleet/agents/{w.h.id}/pairing", json=b)).status_code == 200
+    await db_pool.execute(
+        "INSERT INTO fleet_conflict_acks (agent_id, kind, proto, port, through_seen_at, justification, acked_by, "
+        "expires_at, evidence) VALUES ($1,'agent_closed_scan_open','tcp',8080,NOW(),$2,'alice',NOW()+interval '1 hour','{}')",
+        w.h.id, WHY)
+    with tenancy.tenant_context(A):
+        async with app_pool.acquire() as con:
+            assert (await fpair.reconcile(con, now_()))["transitions"] == 0
+    assert len(await _active_acks(db_pool, w.h.id)) == 1
+
+
+async def test_an_ingest_that_moves_the_node_clears_the_acks_too(http, app_pool, db_pool):
+    w = await world(app_pool)
+    asset = await seed_asset(db_pool)
+    b = {"asset_id": str(asset), "justification": "verified in the cloud console", "acknowledge_mismatch": True}
+    assert (await http.put(f"/v1/fleet/agents/{w.h.id}/pairing", json=b)).status_code == 200
+    await db_pool.execute(
+        "INSERT INTO fleet_conflict_acks (agent_id, kind, proto, port, through_seen_at, justification, acked_by, "
+        "expires_at, evidence) VALUES ($1,'agent_closed_scan_open','tcp',8080,NOW(),$2,'alice',NOW()+interval '1 hour','{}')",
+        w.h.id, WHY)
+    await db_pool.execute("UPDATE assets SET last_seen = NOW() - interval '100 hours' WHERE id = $1", asset)
+    await post(app_pool, w.h, healthy(collected=now_(), seq=w.h.seq + 1, ips=["10.0.0.5"], security=3))
+    node = await db_pool.fetchval("SELECT node_ref FROM fleet_agents WHERE id = $1", w.h.id)
+    assert node == f"agent:{w.h.id}"                       # (precondition) the stale asset made the pairing inert
+    assert await _active_acks(db_pool, w.h.id) == []
+    assert (await acks(db_pool, w.h.id))[0]["cleared_reason"] == "node_changed"

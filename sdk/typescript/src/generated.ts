@@ -87,6 +87,14 @@ export interface AgentDetailOut {
   legacy?: boolean;
   node_ref?: string | null;
   online?: boolean;
+  /**
+   * the cloud asset an admin paired this agent with (active pairing), else null
+   */
+  paired_asset_id?: string | null;
+  /**
+   * the viewer-safe subset of the agent's latest pairing: no justification, no operator, no asset name, no address
+   */
+  pairing?: PairingOut | null;
   platform: string | null;
   silent_after_s?: number;
   stale: boolean;
@@ -112,6 +120,10 @@ export interface AgentOut {
   legacy?: boolean;
   node_ref?: string | null;
   online?: boolean;
+  /**
+   * the cloud asset an admin paired this agent with (active pairing), else null
+   */
+  paired_asset_id?: string | null;
   platform: string | null;
   silent_after_s?: number;
   stale: boolean;
@@ -153,6 +165,10 @@ export interface AgentRevokeOut {
   legacy?: boolean;
   node_ref?: string | null;
   online?: boolean;
+  /**
+   * the cloud asset an admin paired this agent with (active pairing), else null
+   */
+  paired_asset_id?: string | null;
   platform: string | null;
   silent_after_s?: number;
   stale: boolean;
@@ -630,6 +646,61 @@ export interface CompliancePack {
   framework: FrameworkSummary;
   generated_at: string;
   org_name: string;
+}
+
+export interface ConflictAckIn {
+  justification: string;
+  /**
+   * only agent_closed_scan_open can be acknowledged (anything else is 422 not_ackable)
+   */
+  kind?: string;
+  port: number;
+  proto: "tcp" | "udp";
+  /**
+   * echo of the observation the operator looked at (GET .../conflicts)
+   */
+  scan_seen_at: string;
+  ttl_hours?: number;
+}
+
+export interface ConflictAckOut {
+  acked_at: string;
+  acked_by: string;
+  agent_id: string;
+  cleared_at?: string | null;
+  cleared_by?: string | null;
+  cleared_reason?: string;
+  expires_at: string;
+  id: string;
+  justification: string;
+  kind: string;
+  port: number;
+  proto: string;
+  status: "active" | "cleared" | "superseded" | "expired";
+  through_seen_at: string;
+}
+
+export interface ConflictOut {
+  ack?: ConflictAckOut | null;
+  ackable: boolean;
+  kind: string;
+  port: number;
+  proto: string;
+  scan_seen_at?: string | null;
+}
+
+export interface ConflictsOut {
+  agent_id: string;
+  /**
+   * when the host_fw fact the conflicts come from was observed
+   */
+  as_of?: string | null;
+  conflicts: ConflictOut[];
+  /**
+   * when the reach graph was last built (null: a rebuild is pending)
+   */
+  graph_built_at?: string | null;
+  node_ref: string;
 }
 
 export interface ControlOut {
@@ -1726,6 +1797,68 @@ export interface OwnerPatch {
   name?: string | null;
   priority?: number | null;
   team?: string | null;
+}
+
+export interface PairingCandidateOut {
+  asset_canonical: string;
+  asset_id: string;
+  asset_last_seen?: string | null;
+  checks: PairingChecks;
+  /**
+   * the agent that already holds this asset, if any
+   */
+  paired_to?: string | null;
+}
+
+export interface PairingChecks {
+  acknowledged_mismatch?: boolean;
+  asset_ips: string[];
+  asset_kind?: string;
+  asset_last_seen?: string | null;
+  claimed_ips: string[];
+  claimed_subset?: boolean | null;
+  observed_peer?: string | null;
+  peer_direct?: boolean;
+  peer_in_asset?: boolean | null;
+}
+
+export interface PairingEffective {
+  basis: "paired" | "claimed";
+  node_ref: string;
+  note?: string;
+  state: "active" | "inert_asset_missing" | "inert_asset_stale" | "inert_asset_not_vm" | "inert_agent_not_live" | "peer_mismatch" | "ended";
+}
+
+export interface PairingIn {
+  /**
+   * store the pairing although the claimed addresses or the connecting peer disagree with the asset (an operator-mistake guard, not a proof)
+   */
+  acknowledge_mismatch?: boolean;
+  /**
+   * the cloud VM asset (assets.id) this agent IS
+   */
+  asset_id: string;
+  /**
+   * why the operator is sure (3 to 1000 characters)
+   */
+  justification: string;
+}
+
+export interface PairingOut {
+  agent_id: string;
+  asset_canonical: string;
+  asset_id: string;
+  changed?: boolean;
+  checks: PairingChecks;
+  effective: PairingEffective;
+  ended_at?: string | null;
+  ended_by?: string | null;
+  ended_reason?: string | null;
+  id: string;
+  justification: string;
+  paired_at: string;
+  paired_by: string;
+  status: "active" | "ended";
 }
 
 /**
@@ -3654,7 +3787,14 @@ export const OPERATIONS = {
   revertAction: ["POST", "/v1/fleet/actions/{action_id}/revert", false],
   listAgents: ["GET", "/v1/fleet/agents", false],
   getAgent: ["GET", "/v1/fleet/agents/{agent_id}", false],
+  getAgentConflicts: ["GET", "/v1/fleet/agents/{agent_id}/conflicts", false],
+  postConflictAck: ["POST", "/v1/fleet/agents/{agent_id}/conflicts/acks", false],
+  deleteConflictAck: ["DELETE", "/v1/fleet/agents/{agent_id}/conflicts/acks/{ack_id}", false],
   revokeAgentKey: ["POST", "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke", false],
+  getAgentPairing: ["GET", "/v1/fleet/agents/{agent_id}/pairing", false],
+  putAgentPairing: ["PUT", "/v1/fleet/agents/{agent_id}/pairing", false],
+  deleteAgentPairing: ["DELETE", "/v1/fleet/agents/{agent_id}/pairing", false],
+  getPairingCandidates: ["GET", "/v1/fleet/agents/{agent_id}/pairing/candidates", false],
   getAgentPosture: ["GET", "/v1/fleet/agents/{agent_id}/posture", false],
   revokeAgent: ["POST", "/v1/fleet/agents/{agent_id}/revoke", false],
   enroll: ["POST", "/v1/fleet/enroll", false],
@@ -3667,6 +3807,7 @@ export const OPERATIONS = {
   proposeFromFinding: ["POST", "/v1/fleet/network-actions/from-finding", false],
   actionEvidence: ["GET", "/v1/fleet/network-actions/{action_id}/evidence", false],
   execute: ["POST", "/v1/fleet/network-actions/{action_id}/execute", false],
+  listPairings: ["GET", "/v1/fleet/pairings", true],
   heartbeat: ["POST", "/v1/fleet/{agent_id}/heartbeat", false],
   postInventory: ["POST", "/v1/fleet/{agent_id}/inventory", false],
   rotateKey: ["POST", "/v1/fleet/{agent_id}/keys/rotate", false],
@@ -4822,6 +4963,38 @@ export abstract class GeneratedOperations {
   }
 
   /**
+   * GET /v1/fleet/agents/{agent_id}/conflicts — Get Agent Conflicts
+   *
+   * The conflicts of the agent's node as of its last build (``as_of``: when that fact was observed), with the
+   * acknowledgement that covers each. Acknowledged ones are listed too; nothing is hidden.
+   */
+  getAgentConflicts(agentId: string, options?: RequestOptions): Promise<ConflictsOut> {
+    return this._request<ConflictsOut>("GET", "/v1/fleet/agents/{agent_id}/conflicts", { pathParams: { agent_id: agentId }, options });
+  }
+
+  /**
+   * POST /v1/fleet/agents/{agent_id}/conflicts/acks — Post Conflict Ack
+   *
+   * Acknowledge ONE observation of ``agent_closed_scan_open`` for ``(proto, port)``: the external scan saw the port
+   * open, the host's signed model says closed, and the operator has looked. It clears that conflict RECORD for coverage
+   * purposes and nothing else. ``scan_seen_at`` must echo the observation shown by ``GET .../conflicts`` (409
+   * ``conflict_changed`` otherwise; 409 ``no_such_conflict`` when there is none): a blind pre-acknowledgement is
+   * impossible, and a LATER observation is not covered. Expires (default 168 h, at most 720 h).
+   */
+  postConflictAck(agentId: string, body: ConflictAckIn, options?: RequestOptions): Promise<ConflictAckOut> {
+    return this._request<ConflictAckOut>("POST", "/v1/fleet/agents/{agent_id}/conflicts/acks", { pathParams: { agent_id: agentId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/fleet/agents/{agent_id}/conflicts/acks/{ack_id} — Delete Conflict Ack
+   *
+   * Clear an acknowledgement at once: the conflict is back from the next build.
+   */
+  deleteConflictAck(agentId: string, ackId: string, query: { justification: string }, options?: RequestOptions): Promise<ConflictAckOut> {
+    return this._request<ConflictAckOut>("DELETE", "/v1/fleet/agents/{agent_id}/conflicts/acks/{ack_id}", { pathParams: { agent_id: agentId, ack_id: ackId }, query, options });
+  }
+
+  /**
    * POST /v1/fleet/agents/{agent_id}/keys/{key_id}/revoke — Revoke Agent Key
    *
    * Revoke one signing key. Evidence it signs is refused from the next call on; revoking the active key
@@ -4831,6 +5004,50 @@ export abstract class GeneratedOperations {
    */
   revokeAgentKey(agentId: string, keyId: string, body: KeyRevokeIn, options?: RequestOptions): Promise<unknown> {
     return this._request<unknown>("POST", "/v1/fleet/agents/{agent_id}/keys/{key_id}/revoke", { pathParams: { agent_id: agentId, key_id: keyId }, body, options });
+  }
+
+  /**
+   * GET /v1/fleet/agents/{agent_id}/pairing — Get Agent Pairing
+   *
+   * The agent's active pairing, else the last ended one, with what is EFFECTIVE now (``inert_*``: the asset is
+   * missing, stale or not a VM, so the host is judged as ``agent:<uuid>``; ``peer_mismatch``: a conflict). ``triage``:
+   * it shows the asset's addresses and the operator's justification.
+   */
+  getAgentPairing(agentId: string, options?: RequestOptions): Promise<PairingOut> {
+    return this._request<PairingOut>("GET", "/v1/fleet/agents/{agent_id}/pairing", { pathParams: { agent_id: agentId }, options });
+  }
+
+  /**
+   * PUT /v1/fleet/agents/{agent_id}/pairing — Put Agent Pairing
+   *
+   * Pair this agent with a cloud VM asset: *this agent IS that machine*, asserted by an admin with a justification.
+   * It changes IDENTITY only (the node becomes ``asset:<uuid>``, its addresses and zone come from the asset, never from
+   * what the host claims) and never a trust level: the facts stay ``configured`` and every P2 gate still applies.
+   * Idempotent for the same asset (``changed=false``); to move, DELETE then PUT. One agent per asset, enforced by the
+   * database. Billing-gated like zone and label writes.
+   */
+  putAgentPairing(agentId: string, body: PairingIn, options?: RequestOptions): Promise<PairingOut> {
+    return this._request<PairingOut>("PUT", "/v1/fleet/agents/{agent_id}/pairing", { pathParams: { agent_id: agentId }, body, options });
+  }
+
+  /**
+   * DELETE /v1/fleet/agents/{agent_id}/pairing — Delete Agent Pairing
+   *
+   * End the agent's active pairing (the host is judged as ``agent:<uuid>`` again; its findings follow it). Never
+   * billing-gated. The ledger row is kept.
+   */
+  deleteAgentPairing(agentId: string, query: { justification: string }, options?: RequestOptions): Promise<PairingOut> {
+    return this._request<PairingOut>("DELETE", "/v1/fleet/agents/{agent_id}/pairing", { pathParams: { agent_id: agentId }, query, options });
+  }
+
+  /**
+   * GET /v1/fleet/agents/{agent_id}/pairing/candidates — Get Pairing Candidates
+   *
+   * Up to 20 fresh cloud VM assets whose addresses intersect what the agent claims. Read only: it creates nothing
+   * and proves nothing.
+   */
+  getPairingCandidates(agentId: string, options?: RequestOptions): Promise<PairingCandidateOut[]> {
+    return this._request<PairingCandidateOut[]>("GET", "/v1/fleet/agents/{agent_id}/pairing/candidates", { pathParams: { agent_id: agentId }, options });
   }
 
   /**
@@ -4949,6 +5166,15 @@ export abstract class GeneratedOperations {
    */
   execute(actionId: string, body: ExecuteIn, options?: RequestOptions): Promise<ExecuteOut> {
     return this._request<ExecuteOut>("POST", "/v1/fleet/network-actions/{action_id}/execute", { pathParams: { action_id: actionId }, body, options });
+  }
+
+  /**
+   * GET /v1/fleet/pairings — List Pairings
+   *
+   * The pairing ledger, newest first (rows are never deleted or re-pointed).
+   */
+  listPairings(query?: { status?: ("active" | "ended") | null; asset_id?: string | null; limit?: number; offset?: number }, options?: RequestOptions): Promise<PairingOut[]> {
+    return this._request<PairingOut[]>("GET", "/v1/fleet/pairings", { query, options });
   }
 
   /**

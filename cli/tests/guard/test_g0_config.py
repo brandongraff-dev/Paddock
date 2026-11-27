@@ -7,7 +7,7 @@ import stat
 
 import pytest
 
-from paddock_cli.guard import config, errors, registry
+from paddock_cli.guard import config, errors
 from paddock_cli.guard.registry import Check, register
 from support import gitenv
 

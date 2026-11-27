@@ -288,6 +288,14 @@ def test_two_pairings_onto_one_asset_keep_neither_fact_row():
     assert any("two agents resolved" in n for n in out.notes)
 
 
+def test_two_active_rows_for_one_agent_are_inert_never_guessed():
+    """``uq_pairing_active_agent`` makes it impossible; a tampered table must not pick one."""
+    out = build(pairings=[prec(1, 100), prec(1, 101)])
+    assert [f.node_ref for f in out.facts] == [ref1()]
+    assert host_agent(out, ref1())["data"]["identity_note"] == "pairing_inert:pairing_ambiguous"
+    assert asset_ref(100) not in covered(out) and asset_ref(101) not in covered(out)
+
+
 def test_only_the_active_pairing_row_of_an_agent_counts_and_a_foreign_agent_row_is_ignored():
     out = build(pairings=[prec(agent=7, asset=100)])                   # a pairing for an agent that is not live here
     assert [f.node_ref for f in out.facts] == [ref1()]
@@ -459,3 +467,62 @@ def test_ack_rows_are_never_mutated_by_a_build():
     before = copy.deepcopy(a)
     build(scans=[scan_edge(8080)], acks=[a])
     assert a == before
+
+
+# --------------------------------------------------------------------------- #
+# 4.6: acknowledgements are applied BEFORE the display cap (verifier finding: truncation + acks cleared hidden ones)
+# --------------------------------------------------------------------------- #
+
+def _scans(lo, n):
+    return [scan_edge(p) for p in range(lo, lo + n)]
+
+
+def test_acking_every_visible_conflict_never_clears_the_ones_that_were_cut_off_the_list():
+    scans = _scans(8001, 25)
+    shown = host_agent(build(scans=scans), ref1())["data"]["conflicts"]
+    assert [c["port"] for c in shown] == list(range(8001, 8021))          # only 20 are shown
+    acks = [ack(n=i, port=p) for i, p in enumerate(range(8001, 8021), 1)]
+    out = build(scans=scans, acks=acks)
+    assert out.coverage == [] and covered(out) == []                       # five were never shown: still no coverage
+    data = host_agent(out, ref1())["data"]
+    assert [c["port"] for c in data["conflicts"]] == list(range(8021, 8026))     # they are now shown, open
+    assert len(data["conflicts_acknowledged"]) == 20
+    assert data["coverage"]["granted"] is False
+
+
+def test_the_open_list_is_capped_but_acknowledged_ones_do_not_use_up_the_cap():
+    scans = _scans(8001, 30)
+    acks = [ack(n=i, port=p) for i, p in enumerate(range(8001, 8011), 1)]    # 10 acked, 20 left open
+    data = host_agent(build(scans=scans, acks=acks), ref1())["data"]
+    assert [c["port"] for c in data["conflicts"]] == list(range(8011, 8031))
+    assert len(data["conflicts_acknowledged"]) == 10
+
+
+def test_every_conflict_acked_gives_coverage_again_even_when_there_were_more_than_the_display_cap():
+    scans = _scans(8001, 25)
+    out = build(scans=scans, acks=[ack(n=i, port=p) for i, p in enumerate(range(8001, 8026), 1)])
+    assert covered(out) == [ref1()]
+    assert out.coverage[0].detail["acknowledged_conflicts"] == 25
+
+
+def test_more_conflicts_than_can_be_enumerated_leave_an_unacknowledgeable_marker_and_no_coverage():
+    n = hf.MAX_SCAN_CONFLICTS + 30
+    scans = _scans(2001, n)
+    acks = [ack(n=i, port=p) for i, p in enumerate(range(2001, 2001 + n), 1)]       # even an ack of every port
+    out = build(scans=scans, acks=acks)
+    assert out.coverage == [] and covered(out) == []
+    data = host_agent(out, ref1())["data"]
+    kinds = {c["kind"] for c in data["conflicts"]}
+    assert "agent_scan_conflicts_truncated" in kinds and len(data["conflicts"]) <= hf.MAX_CONFLICTS
+    assert len(data["conflicts_acknowledged"]) <= hf.MAX_SCAN_CONFLICTS
+
+
+def test_the_truncation_marker_cannot_be_acknowledged():
+    c = conflict(kind="agent_scan_conflicts_truncated", port=0, proto="any")
+    assert hf._apply_acks([c], [ack(port=0, proto="any")], NOW)[0] == [c]
+
+
+def test_exactly_the_enumeration_limit_is_not_truncated():
+    scans = _scans(2001, hf.MAX_SCAN_CONFLICTS)
+    data = host_agent(build(scans=scans), ref1())["data"]
+    assert "agent_scan_conflicts_truncated" not in {c["kind"] for c in data["conflicts"]}

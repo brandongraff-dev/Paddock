@@ -147,6 +147,44 @@ def redact(value: object, public_prefix: str = "") -> str:
     return "%s****[%d]" % (prefix, len(v))
 
 
+def bracket_depth(text: str, limit: int = 100) -> int:
+    """Deepest ``[``/``{`` nesting in JSON-like text (string-aware); stops counting past ``limit``."""
+    depth = best = 0
+    in_str = esc = False
+    for ch in text:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "[{":
+            depth += 1
+            if depth > best:
+                best = depth
+                if best > limit:
+                    return best
+        elif ch in "]}" and depth:
+            depth -= 1
+    return best
+
+
+def loads_bounded(text: str, max_depth: int = 100) -> object:
+    """``json.loads`` after refusing text nested deeper than ``max_depth`` (3.11 H4); raises ValueError."""
+    import json
+
+    # fewer open brackets than the limit cannot nest deeper than it: skip the scan
+    if text.count("[") + text.count("{") > max_depth and bracket_depth(text, max_depth) > max_depth:
+        raise ValueError("JSON nested too deeply")
+    try:
+        return json.loads(text)
+    except (RecursionError, MemoryError, OverflowError) as exc:
+        raise ValueError("JSON could not be parsed safely") from exc
+
+
 _IDENT_RE = re.compile(r"^[A-Za-z0-9_@+=,~./:-]{1,120}$")
 _IDENT_SPLIT = re.compile(r"[-_./:@+=,~]+")
 

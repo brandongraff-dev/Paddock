@@ -225,3 +225,13 @@ def test_clean_app_fixture_is_neutral_and_secret_free():
     assert ".env" not in names and ".gitignore" not in names and "node_modules" not in names
     blob = "\n".join(p.read_text(errors="replace") for p in root.rglob("*") if p.is_file())
     assert not re.search(r"AKIA[0-9A-Z]{16}|gh[ps]_[A-Za-z0-9]{36}|sk_live_|BEGIN [A-Z ]*PRIVATE KEY", blob)
+
+
+def test_perf_helper_skips_absolute_timings_when_switched_off():
+    from support import perf
+
+    perf.within(1.0, 2.0, enabled=True)
+    with pytest.raises(AssertionError):
+        perf.within(3.0, 2.0, enabled=True)
+    perf.within(3.0, 2.0, enabled=False)  # PADDOCK_GUARD_PERF=0 on a loaded machine
+    assert perf.PERF_ENABLED in (True, False)

@@ -43,6 +43,8 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
 
 def _closed_value(name: str, value: Any, finding: Any, check: Check) -> str | None:
     """Inline value for a closed-vocabulary placeholder, or None when it must render as data."""
+    if not check.trusted and name in ("check_id", "title"):
+        return None  # an untrusted pack chose the id and the title: they are data, never inline
     if name == "check_id":
         return check.id
     if name == "fingerprint":
@@ -66,6 +68,12 @@ def render(check: Check, finding: Any) -> str:
     template = _FILE_LINE.sub("{file_line}", template)
     data_pairs: list[tuple[str, str]] = []
     seen: set[str] = set()
+    untrusted = not check.trusted
+    if untrusted:
+        # the rule id is chosen by the repository: it travels on the data line only, and only when it
+        # passes the same format filter as every other value (D21, D22)
+        rid = textsafe.safe_ident(check.id)
+        data_pairs.append(("rule_id", rid if rid is not None else OMITTED))
 
     def sub(m: re.Match[str]) -> str:
         name = m.group(1)
@@ -89,8 +97,10 @@ def render(check: Check, finding: Any) -> str:
     body = "\n".join(textsafe.collapse_ws(ln_) for ln_ in body.split("\n")).strip()
     body = textsafe.ascii_escape(body)
 
-    title = textsafe.safe_text(check.title, cap=200)
-    header = "Paddock Guard %s: %s" % (check.id, title)
+    if untrusted:
+        header = "Paddock Guard: a rule from a project rule pack flagged code"
+    else:
+        header = "Paddock Guard %s: %s" % (check.id, textsafe.safe_text(check.title, cap=200))
     header += " (line %d)" % ln if has_line else ""
     header += ", in the file named in the `file` field."
     data_line = DATA_PREFIX + " ".join("%s=%s" % kv for kv in data_pairs) if data_pairs else ""

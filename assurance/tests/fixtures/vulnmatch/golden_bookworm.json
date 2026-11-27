@@ -1,0 +1,93 @@
+{
+ "v": 1,
+ "scope": "debian:bookworm",
+ "manifest": {
+  "sha256": "abababababababababababababababababababababababababababababababab",
+  "count": 7
+ },
+ "snap": {
+  "primary": {
+   "id": 11,
+   "sha12": "cccccccccccc",
+   "fetched_at": "2026-11-26T18:00:00Z"
+  },
+  "dating": [
+   {
+    "source": "dla",
+    "id": 21,
+    "sha12": "dddddddddddd",
+    "fetched_at": "2026-11-26T18:00:00Z"
+   },
+   {
+    "source": "dsa",
+    "id": 20,
+    "sha12": "dddddddddddd",
+    "fetched_at": "2026-11-26T18:00:00Z"
+   }
+  ],
+  "kev": {
+   "id": 3,
+   "sha12": "eeeeeeeeeeee",
+   "catalog": "2026.11.25",
+   "fetched_at": "2026-11-26T19:00:00Z"
+  },
+  "valid_until": "2026-11-28T18:00:00Z"
+ },
+ "counts": {
+  "relevant": 3,
+  "open_fix": 3,
+  "no_fix": 0,
+  "undecided": 0
+ },
+ "open": [
+  {
+   "cve": "CVE-2023-4911",
+   "pkg": "glibc",
+   "inst": "2.36-9+deb12u2",
+   "fixed": "2.36-9+deb12u3",
+   "adv": "DSA-5514-1",
+   "fix_at": "2023-10-03T00:00:00Z",
+   "basis": "advisory",
+   "kev_at": "2023-11-21T00:00:00Z",
+   "due": "2023-12-12",
+   "ransom": false
+  },
+  {
+   "cve": "CVE-2024-6387",
+   "pkg": "openssh",
+   "inst": "1:9.2p1-2+deb12u2",
+   "fixed": "1:9.2p1-2+deb12u3",
+   "adv": "DSA-5724-1",
+   "fix_at": "2024-07-01T00:00:00Z",
+   "basis": "advisory",
+   "kev_at": "2024-07-05T00:00:00Z",
+   "due": null,
+   "ransom": false
+  },
+  {
+   "cve": "CVE-2024-1086",
+   "pkg": "linux",
+   "inst": "6.1.69-1",
+   "fixed": "6.1.76-1",
+   "adv": "",
+   "fix_at": "2026-11-20T06:00:00Z",
+   "basis": "first_seen",
+   "kev_at": "2024-05-30T00:00:00Z",
+   "due": "2024-06-20",
+   "ransom": true
+  }
+ ],
+ "open_truncated": false,
+ "unknown": [],
+ "unknown_total": 0,
+ "unknown_reasons": {},
+ "no_fix": [],
+ "no_fix_total": 0,
+ "third_party_sources": null,
+ "notes": [
+  "basis:distro_packages_only",
+  "basis:installed_versions",
+  "basis:advisory_feed_tls_only",
+  "basis:package_origin_unverified"
+ ]
+}

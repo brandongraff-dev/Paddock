@@ -117,6 +117,9 @@ def kern_ok(package="linux-image-6.1.0-18-amd64", version="6.1.76-1", running="6
     return KernelInfo(state="ok", running=running, package=package, package_version=version, livepatch=live)
 
 
+KOWN = ["linux-image-6.1.0-18-amd64", "6.1.76-1", "amd64", "linux-signed-amd64", "6.1.76+1"]
+
+
 def kern_unavailable(reason="unmanaged_kernel", live=False, running="6.1.0-18-amd64"):
     return KernelInfo(state="unavailable", reason=reason, running=running, livepatch=live)
 
@@ -131,6 +134,9 @@ def run(rows, fixes, kev, *, os=DEB12, scope=None, kernel=None, meta=None, now=N
         ev = evidence(scope, kev, now=now, **evkw)
     elif ev is None:
         ev = evidence("debian:bookworm", kev, now=now, **evkw)
+    if (kernel is not None and kernel.package == KOWN[0] and kernel.package_version == KOWN[1]
+            and not any(r[0] == KOWN[0] for r in rows)):
+        rows = list(rows) + [KOWN]                 # the default running kernel is an installed package, as on a real host
     h = host(rows, os=os, kernel=kernel, meta=meta, containerised=containerised, mgr=mgr, sha=sha, posture=posture)
     return match_host(h, scopes=scopes or SCOPES, fixes=fixes, kev=kev, evidence=ev, now=now, max_age=max_age)
 
@@ -575,15 +581,55 @@ def test_a_stale_or_missing_dating_source_makes_dated_rows_undated_not_unknown_h
     assert res.status == "ok"
     (it,) = res.open
     assert it.basis == "first_seen" and it.fix_at == FIRST                # dated fix demoted to our first sighting
-    assert leaf(res).value is True                                         # KEV 2023 and first sighting 6 days ago? see below
     # the clock is max(first_seen 2026-11-20, kev 2023) = 2026-11-20, so inside 14 d it is undecided
-    # (asserted precisely with an explicit now in the next test)
+    assert leaf(res).value is None
 
 
 def test_dating_demotion_precise_clock():
     res = run([GLIBC_OLD], DEB_FIXES, KEV, kernel=kern_ok(), dating=False)
     assert evaluate_leaf(res.to_data(), NOW, 14).value is None
     assert evaluate_leaf(res.to_data(), FIRST + days(15), 14).value is True
+
+
+def test_the_kev_set_must_be_the_set_the_snapshot_was_filtered_with():
+    extra = dict(KEV, **{"CVE-2024-6387": kevrow("CVE-2024-6387", D(2024, 7, 5))})
+    ev = evidence("debian:bookworm", extra)                       # snapshots filtered with the bigger, current set
+    res = run([GLIBC_OLD], DEB_FIXES, KEV, kernel=kern_ok(), ev=ev)    # ...but the caller hands over a smaller one
+    assert (res.status, res.reason) == ("error", "advisory_behind_kev")
+    h = host([GLIBC_OLD, KOWN], kernel=kern_ok())
+    ok = match_host(h, scopes=SCOPES, fixes=DEB_FIXES, kev=KEV, evidence=ev, now=NOW, kev_set_verified=True)
+    assert ok.status == "ok"                                      # only a caller that proved it may skip the re-hash
+
+
+def test_a_present_but_stale_dating_snapshot_demotes_like_a_missing_one():
+    ev = evidence("debian:bookworm", KEV)
+    old = tuple(dataclass_replace(d, fetched_at=NOW - hours(49)) for d in ev.dating)
+    res = run([GLIBC_OLD], DEB_FIXES, KEV, kernel=kern_ok(), ev=Evidence(ev.primary, old, ev.kev))
+    assert res.status == "ok" and res.open[0].basis == "first_seen"
+    other = tuple(dataclass_replace(d, scope="debian:trixie") for d in ev.dating)         # another scope's snapshot is no dating
+    res = run([GLIBC_OLD], DEB_FIXES, KEV, kernel=kern_ok(), ev=Evidence(ev.primary, other, ev.kev))
+    assert res.open[0].basis == "first_seen"
+    part = (ev.dating[0],)                                                                  # a required source missing
+    assert run([GLIBC_OLD], DEB_FIXES, KEV, kernel=kern_ok(), ev=Evidence(ev.primary, part, ev.kev)).open[0].basis == "first_seen"
+    assert run([GLIBC_OLD], DEB_FIXES, KEV, kernel=kern_ok(), ev=ev).open[0].basis == "advisory"
+
+
+def test_support_until_today_is_already_end_of_life():
+    today = dict(SCOPES, **{"debian:bookworm": _scope("debian:bookworm", "deb", "debian", "bookworm", until=NOW.date())})
+    assert resolve_scope(DEB12, today, NOW).reason == "release_eol"
+
+
+def test_fixes_must_be_fix_rows():
+    with pytest.raises(ValueError):
+        run([GLIBC_OLD], [{"cve": "CVE-2023-4911"}], KEV, kernel=kern_ok())
+
+
+def test_foreign_signature_outranks_modular_and_esm_outranks_both_in_the_reason():
+    fx = [fixrow("CVE-2023-4911", "openssl-libs", "1:3.2.2-6.el9_5.2", scope="alma:9", at=D(2024, 1, 1))]
+    rows = [row("openssl-libs", "1:3.2.2-6.el9_5.1~esm1", "openssl", "1:3.2.2-6.el9_5.1~esm1", "x86_64")]
+    meta = HostMeta(foreign=frozenset({"openssl-libs"}), modular=frozenset({"openssl-libs"}), apt_origins=None)
+    res = run(rows, fx, ALMA_KEV, os=ALMA9, kernel=kern_unavailable(), meta=meta)
+    assert unk_of(res) == {("CVE-2023-4911", "openssl-libs"): "esm_package"}
 
 
 # =============================================================================== 4. statements, dates, the clock
@@ -601,7 +647,7 @@ def test_fix_comparison_direction_installed_equal_or_newer_is_patched():
 
 
 def test_irrelevant_packages_cannot_make_a_host_unknown():
-    junk = [row("zzz", "v1.0-???"), row("yyy", "x" * 1000), row("curl", "1:" + "9" * 40 + "-1")]
+    junk = [row("zzz", "v1.0-???"), row("yyy", "x" * 400), row("curl", "1:" + "9" * 40 + "-1")]
     res = run([GLIBC_NEW] + junk, DEB_FIXES, KEV, kernel=kern_ok())
     assert res.unknown == () and res.open == ()
     assert leaf(res).value is False
@@ -720,7 +766,7 @@ def test_an_old_undated_fix_does_not_make_a_recent_kev_listing_undecided():
     (it,) = res.open
     assert it.basis == "advisory" and it.kev_at == NOW - days(5)
     r = leaf(res)
-    assert r.value is False and r.until == NOW - days(5) + days(14)
+    assert r.value is False and r.until == min(NOW - days(5) + days(14), res.valid_until)
 
 
 def test_the_binding_component_decides_the_basis():
@@ -763,7 +809,10 @@ def test_binary_kind_rows_match_by_binary_name_and_source_kind_by_source_name():
 def test_relevant_counts_distinct_matching_package_keys():
     rows = [GLIBC_OLD, row("libc-bin", "2.36-9+deb12u2", "glibc", "2.36-9+deb12u2"), row("bash", "5.2-1")]
     res = run(rows, DEB_FIXES, KEV, kernel=kern_ok())
-    assert res.to_data()["counts"] == {"relevant": 1, "open_fix": 1, "no_fix": 0, "undecided": 0}
+    # glibc (three binaries, one source key) + the running kernel's source key
+    assert res.to_data()["counts"] == {"relevant": 2, "open_fix": 1, "no_fix": 0, "undecided": 0}
+    only = [f for f in DEB_FIXES if f.pkg == "glibc"]
+    assert run(rows, only, KEV, kernel=kern_ok()).to_data()["counts"]["relevant"] == 1
 
 
 # =============================================================================== 5. the kernel rule
@@ -987,12 +1036,12 @@ def test_notes_are_fixed_ordered_and_conditional():
     assert list(res.notes) == sorted(res.notes, key=SC.NOTE_ORDER.index)
     # rpm: the note is only for a host without meta
     rrows = [row("glibc", "2.34-1.el9", arch="x86_64")]
-    assert "basis:package_origin_unverified" in run(rrows, [], ALMA_KEV, os=ALMA9, kernel=kern_unavailable()).notes
+    assert "basis:package_origin_unverified" in run(rrows, ALMA_FIXES, ALMA_KEV, os=ALMA9, kernel=kern_unavailable()).notes
     m2 = HostMeta(foreign=frozenset(), modular=frozenset(), apt_origins=None)
-    res = run(rrows, [], ALMA_KEV, os=ALMA9, kernel=kern_unavailable(), meta=m2)
+    res = run(rrows, ALMA_FIXES, ALMA_KEV, os=ALMA9, kernel=kern_unavailable(), meta=m2)
     assert "basis:package_origin_unverified" not in res.notes and res.third_party_sources is False
     m3 = HostMeta(foreign=frozenset({"x"}), modular=frozenset(), apt_origins=None)
-    assert run(rrows, [], ALMA_KEV, os=ALMA9, kernel=kern_unavailable(), meta=m3).third_party_sources is True
+    assert run(rrows, ALMA_FIXES, ALMA_KEV, os=ALMA9, kernel=kern_unavailable(), meta=m3).third_party_sources is True
 
 
 @pytest.mark.parametrize("origins,expect", [
@@ -1079,7 +1128,7 @@ def test_leaf_reason_is_the_single_shared_reason_else_kev_undecided():
 def test_leaf_until_is_the_earliest_flip_by_the_clock():
     soon = oi(cve="CVE-2024-1", kev_at=Z(NOW - days(10)))          # flips at NOW + 4 d
     later = oi(cve="CVE-2024-2", kev_at=Z(NOW - days(2)))
-    r = evaluate_leaf(mkdata([later, soon]), NOW, 14)
+    r = evaluate_leaf(mkdata([later, soon], valid_until=Z(NOW + days(30))), NOW, 14)
     assert r.value is False and r.until == NOW + days(4)
     r = evaluate_leaf(mkdata([later], valid_until=Z(NOW + days(1))), NOW, 14)
     assert r.until == NOW + days(1)                                 # the snapshot validity clamps it
@@ -1220,7 +1269,7 @@ def test_data_has_the_contract_keys_no_floats_and_sorted_deterministic_lists():
     d = res.to_data()
     assert list(d) == ["v", "scope", "manifest", "snap", "counts", "open", "open_truncated", "unknown", "unknown_total",
                        "unknown_reasons", "no_fix", "no_fix_total", "third_party_sources", "notes"]
-    assert d["v"] == 1 and d["scope"] == "debian:bookworm" and d["manifest"] == {"sha256": SHA, "count": 1}
+    assert d["v"] == 1 and d["scope"] == "debian:bookworm" and d["manifest"] == {"sha256": SHA, "count": 2}
     assert d["open"][0] == {"cve": "CVE-2023-4911", "pkg": "glibc", "inst": "2.36-9+deb12u2", "fixed": "2.36-9+deb12u3",
                             "adv": "DSA-5514-1", "fix_at": "2023-10-03T00:00:00Z", "basis": "advisory",
                             "kev_at": "2023-11-21T00:00:00Z", "due": "2023-12-12", "ransom": False}
@@ -1328,11 +1377,13 @@ def test_kev_entry_accepts_a_date_and_reads_it_as_midnight_utc():
 
 
 def test_hostile_version_strings_never_pass_for_patched():
-    big = "2.36-9+deb12u" + "9" * 9000
-    for v in ["v2.36-9+deb12u2", "２.36-9", "2.36-9+deb12u2\x00", "2.36-9;+deb12u2", "99999999999:2.36-9", "2.36-9+deb12u" + "9" * 300, big]:
+    for v in ["v2.36-9+deb12u2", "２.36-9", "2.36-9+deb12u2\x00", "2.36-9;+deb12u2", "99999999999:2.36-9", "2.36-9+deb12u" + "9" * 300]:
         res = run([row("libc6", v, "glibc", v)], DEB_FIXES, KEV, kernel=kern_ok())
         assert res.open == () and unk_of(res) == {("CVE-2023-4911", "glibc"): "version_unparsable"}, v[:30]
         assert leaf(res).value is None
+    big = "2.36-9+deb12u" + "9" * 9000                                        # a 9 KB field: the whole list is refused
+    res = run([row("libc6", big, "glibc", big)], DEB_FIXES, KEV, kernel=kern_ok())
+    assert (res.status, res.reason) == ("error", "manifest_missing") and leaf(res).value is None
 
 
 def test_epoch_and_tilde_tricks_get_the_real_dpkg_order():
@@ -1415,3 +1466,278 @@ def test_golden_file_is_byte_stable():
     got = json.dumps(res.to_data(), indent=1, sort_keys=False) + "\n"
     golden = FIX / "golden_bookworm.json"
     assert golden.read_text() == got
+
+
+# =============================================================================== 10. purity (contract 1.2: no I/O, no clock)
+def test_vulnmatch_is_pure_stdlib_only_no_io_and_no_clock_reads():
+    import ast
+    root = pathlib.Path(__file__).parent.parent / "paddock_assurance" / "vulnmatch"
+    allowed = {"__future__", "dataclasses", "datetime", "hashlib", "re", "typing", "collections"}
+    banned_calls = {"now", "utcnow", "today", "open", "print", "input", "exec", "eval", "__import__", "getenv",
+                    "system", "popen", "time", "monotonic", "perf_counter", "urandom", "random"}
+    files = sorted(root.glob("*.py"))
+    assert {f.name for f in files} == {"__init__.py", "leaf.py", "match.py", "model.py", "scopes.py", "vercmp.py"}
+    for f in files:
+        tree = ast.parse(f.read_text())
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    assert a.name.split(".")[0] in allowed, (f.name, a.name)
+            elif isinstance(n, ast.ImportFrom):
+                if n.level == 0:
+                    assert (n.module or "").split(".")[0] in allowed, (f.name, n.module)
+            elif isinstance(n, ast.Call):
+                fn = n.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+                assert name not in banned_calls, (f.name, name, n.lineno)
+                assert not (isinstance(fn, ast.Name) and fn.id == "compile"), (f.name, n.lineno)     # builtin compile()
+
+
+# =============================================================================== 11. rework round (verifier findings)
+KOWN_ROW = KOWN
+
+
+def _rpm_kernel_fix(key, evr="5.14.0-427.13.1.el9_4"):
+    return fixrow("CVE-2024-1086", key, evr, scope="alma:9", at=D(2024, 5, 1))
+
+
+@pytest.mark.parametrize("owner", ["kernel", "kernel-core", "kernel-rt-core"])
+@pytest.mark.parametrize("key", ["kernel", "kernel-core", "kernel-rt-core"])
+def test_rpm_running_kernel_matches_a_fix_row_under_any_image_alias(owner, key):
+    """The contract lists kernel, kernel-core and kernel-rt-core as aliases: how intel keys the row must not decide HOLDS."""
+    old = "5.14.0-162.6.1.el9_1"
+    rows = [row(owner, old, "kernel", old, "x86_64")]
+    res = run(rows, [_rpm_kernel_fix(key)], KEV, os=ALMA9, kernel=kern_ok(owner, old, old + ".x86_64"))
+    assert [(i.cve, i.pkg, i.inst) for i in res.open] == [("CVE-2024-1086", owner, old)], (owner, key)
+    assert leaf(res, 14).value is True
+    new = "5.14.0-570.12.1.el9_6"
+    rows = [row(owner, new, "kernel", new, "x86_64")]
+    res = run(rows, [_rpm_kernel_fix(key)], KEV, os=ALMA9, kernel=kern_ok(owner, new, new + ".x86_64"))
+    assert res.open == () and leaf(res, 14).value is False
+
+
+def test_rpm_kernel_alias_rows_for_one_cve_are_one_item():
+    old = "5.14.0-162.6.1.el9_1"
+    fx = [_rpm_kernel_fix("kernel"), _rpm_kernel_fix("kernel-core")]
+    rows = [row("kernel-core", old, "kernel", old, "x86_64"), row("kernel", old, "kernel", old, "x86_64")]
+    res = run(rows, fx, KEV, os=ALMA9, kernel=kern_ok("kernel-core", old, old + ".x86_64"))
+    assert len(res.open) == 1 and res.open[0].pkg == "kernel-core"
+
+
+def test_rpm_kernel_alias_other_installed_images_are_still_ignored():
+    old, new = "5.14.0-162.6.1.el9_1", "5.14.0-570.12.1.el9_6"
+    rows = [row("kernel-core", old, "kernel", old, "x86_64"), row("kernel", old, "kernel", old, "x86_64"),
+            row("kernel-core", new, "kernel", new, "x86_64")]
+    res = run(rows, [_rpm_kernel_fix("kernel")], KEV, os=ALMA9, kernel=kern_ok("kernel-core", new, new + ".x86_64"))
+    assert res.open == () and leaf(res, 14).value is False                 # the running one is the new one
+
+
+def test_a_kernel_with_livepatch_unknown_reads_kernel_unknown_not_judged():
+    """Mutation M14: dropping the ``livepatch is None`` arm made an unknown livepatch state read as 'no livepatch'."""
+    k = KernelInfo(state="ok", running="6.1.0-18-amd64", package="linux-image-6.1.0-18-amd64", package_version="6.1.76-1",
+                   livepatch=None)
+    res = run([GLIBC_NEW], DEB_FIXES, KEV, kernel=k)
+    assert unk_of(res) == {("CVE-2024-1086", "linux"): "kernel_unknown"}
+    assert leaf(res).value is None and res.exact is False
+
+
+def test_an_esm_source_version_alone_makes_the_item_unknown_esm_package():
+    """Mutation M23: only the binary version was checked for the ESM tag; the source version carries it here."""
+    r = row("libc6", "2.36-9+deb12u2", "glibc", "2.36-9+deb12u2~esm1")
+    res = run([r], DEB_FIXES, KEV, kernel=kern_ok())
+    assert res.open == () and unk_of(res) == {("CVE-2023-4911", "glibc"): "esm_package"}
+    assert leaf(res).value is None
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_a_violation_in_one_row_of_a_source_wins_over_an_unknown_row_of_the_same_source(order):
+    """Mutation M3 (unknown beat a violation across rows of one source): two binaries of glibc, one ESM-tagged."""
+    bad = row("libc6", "2.36-9+deb12u2", "glibc", "2.36-9+deb12u2")
+    esm = row("libc-bin", "2.36-9+deb12u2~esm1", "glibc", "2.36-9+deb12u2~esm1")
+    rows = [bad, esm] if order == 0 else [esm, bad]
+    res = run(rows, DEB_FIXES, KEV, kernel=kern_ok())
+    assert [(i.cve, i.pkg) for i in res.open] == [("CVE-2023-4911", "glibc")] and res.unknown == ()
+    assert leaf(res).value is True
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_a_violation_in_one_row_of_a_source_wins_over_a_patched_row_with_an_open_statement(order):
+    """Mutation M5 (no_fix sorted ahead of open): the new row only sees the no-fix statement, the old one the unmet fix."""
+    fx = [fixrow("CVE-2023-4911", "glibc", "2.36-9+deb12u3", at=D(2023, 10, 3), adv="DSA-1"),
+          fixrow("CVE-2023-4911", "glibc", state="open")]
+    old = row("libc6", "2.36-9+deb12u2", "glibc", "2.36-9+deb12u2")
+    new = row("libc-bin", "2.36-9+deb12u10", "glibc", "2.36-9+deb12u10")
+    rows = [old, new] if order == 0 else [new, old]
+    res = run(rows, fx, KEV, kernel=kern_ok())
+    assert [(i.cve, i.pkg) for i in res.open] == [("CVE-2023-4911", "glibc")] and res.no_fix == ()
+    assert leaf(res).value is True
+
+
+def test_an_unknown_row_beats_a_no_fix_row_of_the_same_source():
+    fx = [fixrow("CVE-2023-4911", "glibc", state="open")]
+    esm = row("libc-bin", "2.36-9+deb12u2~esm1", "glibc", "2.36-9+deb12u2~esm1")
+    plain = row("libc6", "2.36-9+deb12u2", "glibc", "2.36-9+deb12u2")
+    for rows in ([esm, plain], [plain, esm]):
+        res = run(rows, fx, KEV, kernel=kern_ok())
+        assert unk_of(res) == {("CVE-2023-4911", "glibc"): "esm_package"} and res.no_fix == ()
+
+
+# ---- an empty list or an empty scope is not evidence (closing by absence)
+def test_an_empty_package_list_is_not_evidence_it_reads_manifest_missing():
+    res = run([], DEB_FIXES, KEV)
+    assert (res.status, res.reason) == ("error", "manifest_missing")
+    assert leaf(res).value is None
+    res = run([], ALMA_FIXES, ALMA_KEV, os=ALMA9, kernel=kern_unavailable())
+    assert (res.status, res.reason) == ("error", "manifest_missing")
+
+
+def test_a_scope_with_no_advisory_rows_is_not_evidence_it_reads_advisory_stale():
+    for fixes in ([], [f for f in DEB_FIXES if f.scope != "debian:bookworm"],
+                  [fixrow("CVE-2023-4911", "glibc", "2.36-9+deb12u3", at=D(2023, 10, 3), scope="debian:trixie")]):
+        res = run([GLIBC_OLD], fixes, KEV, kernel=kern_ok())
+        assert (res.status, res.reason) == ("error", "advisory_stale"), fixes[:1]
+        assert leaf(res).value is None
+    removed = [dataclass_replace(f, removed=True) for f in DEB_FIXES]               # every row retracted: the same anomaly
+    assert run([GLIBC_OLD], removed, KEV, kernel=kern_ok()).reason == "advisory_stale"
+
+
+def test_an_empty_kev_catalog_is_not_evidence_it_reads_advisory_behind_kev():
+    res = run([GLIBC_OLD], DEB_FIXES, {}, kernel=kern_ok())
+    assert (res.status, res.reason) == ("error", "advisory_behind_kev") and leaf(res).value is None
+
+
+# ---- a row whose source is empty is not a package row (the agent always fills src/srcevr)
+def test_a_row_with_an_empty_source_version_is_unparsable_unknown_when_relevant_else_ignored():
+    res = run([["libc6", "2.36-9+deb12u2", "amd64", "glibc", ""]], DEB_FIXES, KEV, kernel=kern_ok())
+    assert res.status == "ok" and unk_of(res) == {("CVE-2023-4911", "glibc"): "version_unparsable"}
+    assert leaf(res).value is None
+    res = run([["libc6", "", "amd64", "glibc", "2.36-9+deb12u2"]], DEB_FIXES, KEV, kernel=kern_ok())
+    assert res.status == "ok" and len(res.open) == 1                       # deb judges the source version; the binary one is unused
+    junk = ["zzz", "", "amd64", "zzz", ""]
+    res = run([GLIBC_NEW, junk], DEB_FIXES, KEV, kernel=kern_ok())
+    assert res.status == "ok" and leaf(res).value is False
+
+
+@pytest.mark.parametrize("bad", [["libc6", "2.36-9+deb12u2", "amd64", "", "2.36-9+deb12u2"],
+                                 ["", "2.36-9+deb12u2", "amd64", "glibc", "2.36-9+deb12u2"]])
+def test_a_row_with_an_empty_name_or_source_makes_the_manifest_unusable(bad):
+    assert parse_rows([GLIBC_OLD, bad]) is None
+    res = run([GLIBC_OLD, bad], DEB_FIXES, KEV, kernel=kern_ok())
+    assert (res.status, res.reason) == ("error", "manifest_missing") and leaf(res).value is None
+    h = host([GLIBC_OLD, KOWN_ROW], kernel=kern_ok())                                # a HostInput built by hand is checked too
+    h2 = dataclass_replace(h, rows=tuple(sorted(h.rows + (SC.Row(*bad),))))
+    res = match_host(h2, scopes=SCOPES, fixes=DEB_FIXES, kev=KEV, evidence=evidence("debian:bookworm", KEV), now=NOW)
+    assert (res.status, res.reason) == ("error", "manifest_missing")
+
+
+# ---- the leaf never raises on a malformed fact: a missing key anywhere is Unknown
+def _paths(obj, prefix=()):
+    yield prefix
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _paths(v, prefix + (k,))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _paths(v, prefix + (i,))
+
+
+def _mutate(obj, path, how):
+    obj = copy.deepcopy(obj)
+    if not path:
+        return how(obj, None, None)
+    cur = obj
+    for p in path[:-1]:
+        cur = cur[p]
+    return_obj = obj
+    new = how(cur[path[-1]], cur, path[-1])
+    if new is _DELETE:
+        del cur[path[-1]]
+    else:
+        cur[path[-1]] = new
+    return return_obj
+
+
+_DELETE = object()
+_RETYPES = [lambda v, c, k: _DELETE, lambda v, c, k: None, lambda v, c, k: 7, lambda v, c, k: "x", lambda v, c, k: [],
+            lambda v, c, k: {}, lambda v, c, k: -1, lambda v, c, k: 1.5, lambda v, c, k: True]
+
+
+def _base_facts():
+    now_open = mkdata([oi(), oi(cve="CVE-2024-2", kev_at=Z(NOW - days(3)))], no_fix_total=0)
+    unk = mkdata([oi()], unknown=[ui()])
+    undec = mkdata([oi(kev_at=Z(NOW - days(40)), basis="first_seen")], unknown=[ui()])
+    return [("violation", now_open), ("unknown", unk), ("first_seen", undec)]
+
+
+def test_leaf_structural_fuzz_never_raises_and_never_invents_false():
+    for name, base in _base_facts():
+        want = evaluate_leaf(base, NOW, 14).value
+        assert want in (True, None)
+        for path in _paths(base):
+            for how in _RETYPES:
+                if not path:
+                    continue
+                try:
+                    d = _mutate(base, path, how)
+                except (KeyError, IndexError, TypeError):
+                    continue
+                r = evaluate_leaf(d, NOW, 14)                                      # must not raise
+                assert r.value is not False, (name, path)
+                if want is None:
+                    assert r.value is None or r.value is True, (name, path)        # (a violation may legitimately survive)
+
+
+@pytest.mark.parametrize("key", ["fix_at", "kev_at"])
+def test_leaf_open_item_without_a_date_is_unknown_not_an_exception(key):
+    d = mkdata([oi()])
+    del d["open"][0][key]
+    r = evaluate_leaf(d, NOW, 14)
+    assert r.value is None and r.reason == "kev_undecided"
+
+
+# ---- many rows of one source must not multiply the work (performance, contract 8.4 row 10)
+def _heavy(n_rows, ver_len=0):
+    pad = "9" * ver_len
+    fx, kev = [], {}
+    for c in range(25):
+        cve = "CVE-2024-%04d" % (1000 + c)
+        kev[cve] = kevrow(cve, D(2024, 1, 1 + c % 20))
+        for p in range(30):
+            fx.append(fixrow(cve, "src%02d" % p, "2.%d-1+deb12u%s" % (c, pad or "5"), at=D(2024, 2, 1), adv="DSA-%d" % c))
+            fx.append(fixrow(cve, "src%02d" % p, "2.%d-1+deb12u%s" % (c + 100, pad or "6"), at=D(2024, 3, 1), adv="DSA-x%d" % c))
+    rows = []
+    for i in range(n_rows):
+        p = i % 30
+        v = "2.5-1+deb12u%d%s" % (i % 3, pad)
+        rows.append(["bin%05d" % i, v, "amd64", "src%02d" % p, v])
+    return rows, fx, kev
+
+
+def test_many_rows_of_few_sources_share_the_work_and_stay_fast():
+    rows, fx, kev = _heavy(8000)
+    idx = FixIndex(fx)
+    t0 = time.perf_counter()
+    res = run(rows, idx, kev, kernel=None)
+    took = time.perf_counter() - t0
+    assert res.status == "ok" and len(res.open) > 0
+    small, _, _ = _heavy(90)
+    ref = run(small, idx, kev, kernel=None)
+    assert {(i.cve, i.pkg, i.inst) for i in ref.open} <= {(i.cve, i.pkg, i.inst) for i in res.open}      # same decisions, fewer repeats
+    assert took < 1.0, took
+
+
+def test_long_versions_are_compared_once_per_distinct_pair():
+    rows, fx, kev = _heavy(8000, ver_len=240)
+    t0 = time.perf_counter()
+    res = run(rows, FixIndex(fx), kev, kernel=None)
+    took = time.perf_counter() - t0
+    assert res.status == "ok" and took < 1.0, took
+
+
+def test_rpm_kernel_unknown_is_one_item_per_cve_even_when_rows_use_several_image_aliases():
+    old = "5.14.0-162.6.1.el9_1"
+    fx = [_rpm_kernel_fix("kernel"), _rpm_kernel_fix("kernel-core"), _rpm_kernel_fix("kernel-rt-core")]
+    rows = [row("kernel-core", old, "kernel", old, "x86_64")]
+    res = run(rows, fx, KEV, os=ALMA9, kernel=kern_unavailable())
+    assert unk_of(res) == {("CVE-2024-1086", "kernel-core"): "kernel_unknown"} and res.exact is False
+    assert res.relevant == 1 and leaf(res).value is None

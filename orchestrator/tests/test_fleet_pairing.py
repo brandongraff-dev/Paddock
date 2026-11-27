@@ -174,6 +174,7 @@ async def test_a_race_for_one_asset_has_exactly_one_winner(http, app_pool, db_po
     ({"rtype": "load_balancer"}, 422, "asset_not_a_vm"),
     ({"kind": "domain"}, 422, "asset_not_a_vm"),                     # VM-looking metadata on another kind is no VM
     ({"age": dt.timedelta(hours=73)}, 409, "asset_stale"),
+    ({"age": dt.timedelta(hours=-3)}, 409, "asset_stale"),            # a date in the future can never age: same as the decision
 ])
 async def test_the_asset_must_be_a_fresh_vm(http, app_pool, db_pool, kw, status, code):
     h = await live_host(app_pool)
@@ -215,6 +216,28 @@ async def test_an_asset_above_the_callers_clearance_is_a_plain_404(app_pool, db_
                                     actor_role="admin", clearance_rank=1)
     assert (hid.value.status, hid.value.body) == (gone.value.status, gone.value.body) == (404, {"detail": "asset not found"})
     assert await pairing_rows(db_pool, h.id) == []
+
+
+async def test_a_pairing_to_an_asset_above_the_callers_clearance_is_redacted_not_hidden(app_pool, db_pool):
+    """The pairing is the agent's, the asset is not the caller's to read: the shape stays, every field that could name
+    or describe the asset or carry the operator's reasoning is blank (also what ``AgentDetailOut.pairing`` shows)."""
+    from app import fleet_pairing as fpair
+    h = await live_host(app_pool)
+    asset = await seed_asset(db_pool, classification="restricted")
+    with tenancy.tenant_context(A):
+        await fpair.put_pairing(app_pool, h.id, asset_id=asset, justification="verified in the console", actor="adm",
+                                actor_role="admin", clearance_rank=3)
+        full = await fpair.get_pairing(app_pool, h.id, clearance_rank=3)
+        low = await fpair.get_pairing(app_pool, h.id, clearance_rank=1)
+    assert full["justification"] == "verified in the console" and full["asset_canonical"].startswith("arn:")
+    assert full["checks"]["asset_ips"] == [PRIV, PUB]
+    assert low["asset_id"] == asset and low["status"] == "active" and low["effective"]["state"] == "active"
+    assert low["justification"] == "" and low["asset_canonical"] == "" and low["paired_by"] == ""
+    assert low["checks"]["asset_ips"] == [] and low["checks"]["claimed_ips"] == [] and low["checks"]["observed_peer"] is None
+    assert PUB not in json.dumps(low, default=str) and "verified" not in json.dumps(low, default=str)
+    with tenancy.tenant_context(A):
+        rows = await fpair.list_pairings(app_pool, status=None, asset_id=None, limit=10, offset=0, clearance_rank=1)
+    assert rows[0]["asset_canonical"] == "" and rows[0]["checks"]["asset_ips"] == []
 
 
 async def test_agent_states_that_cannot_be_paired(http, app_pool, db_pool):
@@ -441,6 +464,13 @@ async def seed_finding(db, invariant, target):
         json.dumps({"invariant_id": invariant, "target_ref": target}))
 
 
+async def refresh_witness(db, fid, node):
+    """What the next evaluation does: the witness names the finding's new node (``finding_follow`` moves the target
+    only, and moves a finding again only while its witness names the node it is on)."""
+    await db.execute("UPDATE findings SET evidence = jsonb_set(evidence, '{witness,detail,node}', to_jsonb($2::text)) "
+                     "WHERE id = $1", fid, node)
+
+
 async def finding_target(db, fid):
     ev = await db.fetchval("SELECT evidence FROM findings WHERE id = $1", fid)
     return (json.loads(ev) if isinstance(ev, str) else ev)["target_ref"]
@@ -452,6 +482,7 @@ async def test_the_findings_of_the_host_follow_it_to_the_asset_and_back(http, ap
     fid = await seed_finding(db_pool, "std:server-ssh-hardened", f"agent:{h.id}")
     await pair(http, h, asset)
     assert await finding_target(db_pool, fid) == f"asset:{asset}"
+    await refresh_witness(db_pool, fid, f"asset:{asset}")
     await unpair(http, h)
     assert await finding_target(db_pool, fid) == f"agent:{h.id}"
     assert await db_pool.fetchval("SELECT count(*) FROM findings") == 1                # the same row, never a duplicate
@@ -571,6 +602,7 @@ async def test_a_posture_after_the_asset_went_stale_makes_the_pairing_inert_and_
     node, ident, _ = await agent_row(db_pool, h.id)
     assert node == f"agent:{h.id}" and ident["basis"] == "claimed" and ident["note"] == "pairing_inert:asset_stale"
     assert await finding_target(db_pool, fid) == f"agent:{h.id}"
+    await refresh_witness(db_pool, fid, f"agent:{h.id}")
     (row,) = await pairing_rows(db_pool, h.id)
     assert row["status"] == "active"                                          # never auto-ended
     eff = (await http.get(f"/v1/fleet/agents/{h.id}/pairing")).json()["effective"]
@@ -581,6 +613,28 @@ async def test_a_posture_after_the_asset_went_stale_makes_the_pairing_inert_and_
     node, ident, _ = await agent_row(db_pool, h.id)
     assert node == f"asset:{asset}" and ident["basis"] == "paired" and "note" not in ident
     assert await finding_target(db_pool, fid) == f"asset:{asset}"
+
+
+async def test_a_rogue_agent_claiming_the_assets_addresses_never_demotes_the_paired_one(http, app_pool, db_pool):
+    """4.5 effect 7: claims never own addresses. The rogue's own posture runs the ingest decision over every agent whose
+    claim overlaps; a PAIRED agent's node is decided by its pairing, so it must not be demoted (nor its findings moved)."""
+    h = await live_host(app_pool, 1)
+    asset = await seed_asset(db_pool)
+    await pair(http, h, asset)
+    fid = await seed_finding(db_pool, "std:server-ssh-hardened", f"asset:{asset}")
+    rogue = await seed_host(app_pool, 2)
+    await post(app_pool, rogue, healthy(collected=now_(), seq=1, ips=[PRIV]), ip="10.0.0.99")
+    node, ident, _ = await agent_row(db_pool, h.id)
+    assert node == f"asset:{asset}" and ident["basis"] == "paired"
+    assert await finding_target(db_pool, fid) == f"asset:{asset}"
+    rnode, rident, _ = await agent_row(db_pool, rogue.id)
+    assert rnode == f"agent:{rogue.id}" and rident["basis"] == "claimed"
+    # ... and the same through the builder: the rogue is its own node, the paired host keeps the asset
+    from app.assurance.builders import host_fw as hf
+    async with conn_for(app_pool, A) as con:
+        rows = await hf.load(con, now_() + dt.timedelta(seconds=30))
+    out = hf.build(rows, now_() + dt.timedelta(seconds=30))
+    assert sorted(f.node_ref for f in out.facts) == sorted([f"asset:{asset}", f"agent:{rogue.id}"])
 
 
 async def test_effective_states_inert_missing_not_vm_and_peer_mismatch(http, app_pool, db_pool):
@@ -620,6 +674,7 @@ async def test_reconcile_updates_the_columns_audits_each_transition_once_and_is_
     node, ident, _ = await agent_row(db_pool, h.id)
     assert node == f"agent:{h.id}" and ident["basis"] == "claimed" and ident["note"] == "pairing_inert:asset_stale"
     assert await finding_target(db_pool, fid) == f"agent:{h.id}"
+    await refresh_witness(db_pool, fid, f"agent:{h.id}")
     assert (await run())["transitions"] == 0
     (aud,) = await audits(db_pool, "fleet.pairing.inert", h.id)
     assert aud["details"]["state"] == "inert_asset_stale" and aud["details"]["asset_id"] == str(asset)
@@ -767,3 +822,16 @@ async def test_the_pairing_put_is_billing_gated_and_the_delete_never_is(enforced
     assert r.status_code == 200 and r.json()["status"] == "ended"
     assert (await enforced.get(f"/v1/fleet/agents/{h.id}/pairing", headers=hdr(k))).status_code == 200
     service.invalidate()
+
+
+@pytest.mark.parametrize("raw,hours", [(12, 12), (1, 1), (0, 72), (-4, 72), ("junk", 72), (None, 72), ("30", 30)])
+def test_the_runner_reads_the_asset_age_setting_and_fails_to_the_default(monkeypatch, raw, hours):
+    """A bad setting must neither widen the age into "never stale" nor stop a build (the settings object a test or an
+    older deployment supplies may lack it altogether)."""
+    from types import SimpleNamespace
+
+    from app.assurance import runner
+    monkeypatch.setattr(runner, "settings", SimpleNamespace(assurance_pairing_asset_max_age_h=raw))
+    assert runner._pairing_asset_max_age() == dt.timedelta(hours=hours)
+    monkeypatch.setattr(runner, "settings", SimpleNamespace())
+    assert runner._pairing_asset_max_age() == dt.timedelta(hours=72)

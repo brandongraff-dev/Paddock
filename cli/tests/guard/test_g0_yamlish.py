@@ -8,6 +8,7 @@ import pytest
 
 from paddock_cli.guard import yamlish
 from paddock_cli.guard.yamlish import YMap, YScalar, YSeq, YamlUnsupported, parse
+from support import perf
 
 WORKFLOW = """\
 # a workflow
@@ -134,10 +135,31 @@ def test_bounded_on_hostile_input():
         parse("a: " + "x" * 5000 + "\n")
     with pytest.raises(YamlUnsupported):
         parse("a: [" + "[" * 100000 + "]" * 100000 + "]\n")
-    assert time.process_time() - t0 < 10
+    perf.within(time.process_time() - t0, 10, what="hostile yaml")
 
 
 def test_scalar_and_node_types_exported():
     d = parse("a: b\n")
     assert isinstance(d.get("a"), YScalar) and d.get("missing") is None
     assert d.keys() == ["a"]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("a: >\n  folded\n  text\n\n  para\n", "folded text\npara\n"),
+    ("a: >\n  x\n\n\n  y\n", "x\n\ny\n"),
+    ("a: >\n  x\n   more\n  y\n", "x\n more\ny\n"),
+    ("c: |+\n  a\n\n\nd: 1\n", "a\n\n\n"),
+    ("c: |\n  a\n\n\nd: 1\n", "a\n"),
+    ("c: >-\n  a\n  b\n", "a b"),
+    ("c: >+\n  a\n\nd: 1\n", "a\n\n"),
+    ("c: |+\n\nd: 1\n", "\n"),
+    ("c: >\n  a\n   b\n\n  c\n", "a\n b\n\nc\n"),
+    ("c: >\n\n  a\n  b\n", "\na b\n"),
+])
+def test_block_scalars_follow_yaml_folding_and_chomping(text, expected):
+    """Expected values are what PyYAML returns for the same text (checked when it is installed)."""
+    node = parse(text)
+    key = "a" if text.startswith("a:") else "c"
+    assert node.get(key).value == expected
+    yaml = pytest.importorskip("yaml")
+    assert yaml.safe_load(text)[key] == expected

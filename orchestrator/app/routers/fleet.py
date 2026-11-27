@@ -53,7 +53,7 @@ from uuid import UUID
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints, ValidationError
 
 from .. import audit, fleet_enroll, fleet_monitor, fleet_pairing, fleet_posture
 from ..auth import Principal, client_ip, client_ip_strict, current_principal, require
@@ -306,6 +306,114 @@ class InventoryOut(BaseModel):
     inventory_id: UUID
     collected_at: datetime
     signed: bool = Field(default=False, description="always false: the v1 inventory is never evidence")
+
+
+# --------------------------------------------------------------------------- #
+# P2.1 section 4: pairing and conflict acknowledgement (logic in app/fleet_pairing.py)
+# --------------------------------------------------------------------------- #
+
+_Justification = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=1000)]
+_AckJustification = Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=1000)]
+
+
+class PairingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: UUID = Field(description="the cloud VM asset (assets.id) this agent IS")
+    justification: _Justification = Field(description="why the operator is sure (3 to 1000 characters)")
+    acknowledge_mismatch: StrictBool = Field(
+        default=False, description="store the pairing although the claimed addresses or the connecting peer disagree "
+                                   "with the asset (an operator-mistake guard, not a proof)")
+
+
+class PairingChecks(BaseModel):
+    claimed_ips: list[str]
+    asset_ips: list[str]
+    claimed_subset: bool | None = None
+    observed_peer: str | None = None
+    peer_direct: bool = False
+    peer_in_asset: bool | None = None
+    asset_kind: str = ""
+    asset_last_seen: datetime | None = None
+    acknowledged_mismatch: bool = False
+
+
+class PairingEffective(BaseModel):
+    node_ref: str
+    basis: Literal["paired", "claimed"]
+    state: Literal["active", "inert_asset_missing", "inert_asset_stale", "inert_asset_not_vm",
+                   "inert_agent_not_live", "peer_mismatch", "ended"]
+    note: str = ""
+
+
+class PairingOut(BaseModel):
+    id: UUID
+    agent_id: UUID
+    asset_id: UUID
+    asset_canonical: str
+    status: Literal["active", "ended"]
+    justification: str
+    paired_by: str
+    paired_at: datetime
+    ended_at: datetime | None = None
+    ended_by: str | None = None
+    ended_reason: str | None = None
+    checks: PairingChecks
+    effective: PairingEffective
+    changed: bool = False
+
+
+class PairingCandidateOut(BaseModel):
+    asset_id: UUID
+    asset_canonical: str
+    asset_last_seen: datetime | None = None
+    paired_to: UUID | None = Field(default=None, description="the agent that already holds this asset, if any")
+    checks: PairingChecks
+
+
+class ConflictAckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(default="agent_closed_scan_open", max_length=64,
+                      description="only agent_closed_scan_open can be acknowledged (anything else is 422 not_ackable)")
+    proto: Literal["tcp", "udp"]
+    port: StrictInt = Field(ge=1, le=65535)
+    scan_seen_at: datetime = Field(description="echo of the observation the operator looked at (GET .../conflicts)")
+    justification: _AckJustification
+    ttl_hours: StrictInt = Field(default=168, ge=1, le=720)
+
+
+class ConflictAckOut(BaseModel):
+    id: UUID
+    agent_id: UUID
+    kind: str
+    proto: str
+    port: int
+    through_seen_at: datetime
+    status: Literal["active", "cleared", "superseded", "expired"]
+    justification: str
+    acked_by: str
+    acked_at: datetime
+    expires_at: datetime
+    cleared_by: str | None = None
+    cleared_at: datetime | None = None
+    cleared_reason: str = ""
+
+
+class ConflictOut(BaseModel):
+    kind: str
+    proto: str
+    port: int
+    scan_seen_at: datetime | None = None
+    ackable: bool
+    ack: ConflictAckOut | None = None
+
+
+class ConflictsOut(BaseModel):
+    agent_id: UUID
+    node_ref: str
+    as_of: datetime | None = Field(default=None, description="when the host_fw fact the conflicts come from was observed")
+    graph_built_at: datetime | None = Field(
+        default=None, description="when the reach graph was last built (null: a rebuild is pending)")
+    conflicts: list[ConflictOut]
 
 
 class AgentOut(BaseModel):
@@ -891,7 +999,7 @@ async def _store_inventory(pool, agent_id: UUID, body: InventoryIn, posture: dic
 
 _AGENT_COLS = (
     "a.id, a.hostname, a.platform, a.agent_version, a.labels, a.capabilities, a.status, a.last_seen, "
-    "a.enrolled_at, a.online, a.legacy, a.node_ref, a.silent_after_s, a.last_posture_at, a.identity, "
+    "a.enrolled_at, a.online, a.legacy, a.node_ref, a.silent_after_s, a.last_posture_at, a.identity, a.revoked_at, "
     "(SELECT k.key_id FROM fleet_agent_keys k WHERE k.agent_id = a.id AND k.status = 'active' "
     " ORDER BY k.created_at DESC LIMIT 1) AS key_id, "
     "(SELECT p.asset_id FROM fleet_agent_pairings p WHERE p.agent_id = a.id AND p.status = 'active') AS paired_asset_id"
@@ -958,10 +1066,15 @@ async def get_agent(agent_id: UUID, pool=Depends(get_pool)):
             signed=False,
         )
     keys = [KeyOut(**k) for k in await fleet_posture.list_keys(pool, agent_id)]
+    async with pool.acquire() as con:
+        pairing = await fleet_pairing.agent_pairing_summary(
+            con, {"id": agent_id, "status": r["status"], "revoked_at": r["revoked_at"],
+                  "legacy": r["legacy"], "identity": r["identity"], "node_ref": r["node_ref"]})
     return AgentDetailOut(
         **_agent_out(r).model_dump(), inventory=snapshot,
         action_counts={c["status"]: int(c["c"]) for c in counts},
         keys=keys, identity=_public_identity(r["identity"]),
+        pairing=PairingOut(**pairing) if pairing is not None else None,
     )
 
 
@@ -1036,6 +1149,136 @@ async def revoke_agent_key(agent_id: UUID, request: Request, body: KeyRevokeIn,
             status_code=409)
     return {"ok": True, "agent_id": str(agent_id), "key_id": key_id, "status": "revoked",
             "revoked_successors": info.get("revoked_successors", [])}
+
+
+# --------------------------------------------------------------------------- #
+# P2.1 section 4: the identity trust root. RBAC (every rule is explicit in auth._RULES): PUT/DELETE pairing and POST/
+# DELETE acknowledgements are ``admin``; every GET is ``triage``. Only PUT is billing-gated: withdrawing trust never is.
+# A foreign agent id answers exactly like a random one (404 "agent not found"); a hidden asset like a missing one.
+# --------------------------------------------------------------------------- #
+
+_ERR = {404: {"description": "agent, asset, pairing or acknowledgement not found (one generic body each)"},
+        409: {"description": "a precondition failed: the body names a machine-readable `reason`"},
+        422: {"description": "invalid body, or a conflict kind that cannot be acknowledged"}}
+_AckId = Annotated[UUID, Path(description="the acknowledgement id")]
+_Why = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=1000),
+                 Query(description="why (3 to 1000 characters); REQUIRED")]
+
+
+def _pairing_error(exc: fleet_pairing.PairingError) -> JSONResponse:
+    return JSONResponse(exc.body, status_code=exc.status)
+
+
+def _req_ctx(request: Request) -> dict[str, Any]:
+    return {"client_ip": client_ip(request), "request_id": getattr(request.state, "request_id", None)}
+
+
+@router.put("/agents/{agent_id}/pairing", response_model=PairingOut, responses=_ERR,
+            dependencies=[Depends(require("admin")), Depends(billing_gate.require_paid("assurance"))])
+async def put_agent_pairing(agent_id: UUID, body: PairingIn, request: Request, pool=Depends(get_pool),
+                            principal: Principal = Depends(current_principal)):
+    """Pair this agent with a cloud VM asset: *this agent IS that machine*, asserted by an admin with a justification.
+    It changes IDENTITY only (the node becomes ``asset:<uuid>``, its addresses and zone come from the asset, never from
+    what the host claims) and never a trust level: the facts stay ``configured`` and every P2 gate still applies.
+    Idempotent for the same asset (``changed=false``); to move, DELETE then PUT. One agent per asset, enforced by the
+    database. Billing-gated like zone and label writes."""
+    try:
+        return await fleet_pairing.put_pairing(
+            pool, agent_id, asset_id=body.asset_id, justification=body.justification,
+            acknowledge_mismatch=body.acknowledge_mismatch, actor=principal.actor, actor_role=principal.role,
+            clearance_rank=principal.clearance_rank, **_req_ctx(request))
+    except fleet_pairing.PairingError as exc:
+        return _pairing_error(exc)
+
+
+@router.delete("/agents/{agent_id}/pairing", response_model=PairingOut, responses=_ERR,
+               dependencies=[Depends(require("admin"))])
+async def delete_agent_pairing(agent_id: UUID, request: Request, justification: _Why, pool=Depends(get_pool),
+                               principal: Principal = Depends(current_principal)):
+    """End the agent's active pairing (the host is judged as ``agent:<uuid>`` again; its findings follow it). Never
+    billing-gated. The ledger row is kept."""
+    try:
+        return await fleet_pairing.end_pairing(
+            pool, agent_id, justification=justification, actor=principal.actor, actor_role=principal.role,
+            clearance_rank=principal.clearance_rank, **_req_ctx(request))
+    except fleet_pairing.PairingError as exc:
+        return _pairing_error(exc)
+
+
+@router.get("/agents/{agent_id}/pairing", response_model=PairingOut, responses=_ERR)
+async def get_agent_pairing(agent_id: UUID, pool=Depends(get_pool),
+                            principal: Principal = Depends(current_principal)):
+    """The agent's active pairing, else the last ended one, with what is EFFECTIVE now (``inert_*``: the asset is
+    missing, stale or not a VM, so the host is judged as ``agent:<uuid>``; ``peer_mismatch``: a conflict). ``triage``:
+    it shows the asset's addresses and the operator's justification."""
+    try:
+        return await fleet_pairing.get_pairing(pool, agent_id, clearance_rank=principal.clearance_rank)
+    except fleet_pairing.PairingError as exc:
+        return _pairing_error(exc)
+
+
+@router.get("/agents/{agent_id}/pairing/candidates", response_model=list[PairingCandidateOut], responses=_ERR)
+async def get_pairing_candidates(agent_id: UUID, pool=Depends(get_pool),
+                                 principal: Principal = Depends(current_principal)):
+    """Up to 20 fresh cloud VM assets whose addresses intersect what the agent claims. Read only: it creates nothing
+    and proves nothing."""
+    try:
+        return await fleet_pairing.candidates(pool, agent_id, clearance_rank=principal.clearance_rank)
+    except fleet_pairing.PairingError as exc:
+        return _pairing_error(exc)
+
+
+@router.get("/pairings", response_model=list[PairingOut])
+async def list_pairings(status_: Annotated[Literal["active", "ended"] | None, Query(alias="status")] = None,
+                        asset_id: UUID | None = None, limit: int = Query(50, ge=1, le=200),
+                        offset: int = Query(0, ge=0, le=100_000), pool=Depends(get_pool),
+                        principal: Principal = Depends(current_principal)):
+    """The pairing ledger, newest first (rows are never deleted or re-pointed)."""
+    return await fleet_pairing.list_pairings(pool, status=status_, asset_id=asset_id, limit=limit, offset=offset,
+                                             clearance_rank=principal.clearance_rank)
+
+
+@router.get("/agents/{agent_id}/conflicts", response_model=ConflictsOut, responses=_ERR)
+async def get_agent_conflicts(agent_id: UUID, pool=Depends(get_pool)):
+    """The conflicts of the agent's node as of its last build (``as_of``: when that fact was observed), with the
+    acknowledgement that covers each. Acknowledged ones are listed too; nothing is hidden."""
+    try:
+        return await fleet_pairing.list_conflicts(pool, agent_id)
+    except fleet_pairing.PairingError as exc:
+        return _pairing_error(exc)
+
+
+@router.post("/agents/{agent_id}/conflicts/acks", response_model=ConflictAckOut, status_code=201, responses=_ERR,
+             dependencies=[Depends(require("admin"))])
+async def post_conflict_ack(agent_id: UUID, body: ConflictAckIn, request: Request, pool=Depends(get_pool),
+                            principal: Principal = Depends(current_principal)):
+    """Acknowledge ONE observation of ``agent_closed_scan_open`` for ``(proto, port)``: the external scan saw the port
+    open, the host's signed model says closed, and the operator has looked. It clears that conflict RECORD for coverage
+    purposes and nothing else. ``scan_seen_at`` must echo the observation shown by ``GET .../conflicts`` (409
+    ``conflict_changed`` otherwise; 409 ``no_such_conflict`` when there is none): a blind pre-acknowledgement is
+    impossible, and a LATER observation is not covered. Expires (default 168 h, at most 720 h)."""
+    try:
+        out = await fleet_pairing.create_ack(
+            pool, agent_id, kind=body.kind, proto=body.proto, port=body.port,
+            scan_seen_at=body.scan_seen_at if body.scan_seen_at.tzinfo else body.scan_seen_at.replace(tzinfo=timezone.utc),
+            justification=body.justification, ttl_hours=body.ttl_hours, actor=principal.actor,
+            actor_role=principal.role, **_req_ctx(request))
+    except fleet_pairing.PairingError as exc:
+        return _pairing_error(exc)
+    return JSONResponse(ConflictAckOut(**out).model_dump(mode="json"), status_code=201)
+
+
+@router.delete("/agents/{agent_id}/conflicts/acks/{ack_id}", response_model=ConflictAckOut, responses=_ERR,
+               dependencies=[Depends(require("admin"))])
+async def delete_conflict_ack(agent_id: UUID, ack_id: _AckId, request: Request, justification: _Why,
+                              pool=Depends(get_pool), principal: Principal = Depends(current_principal)):
+    """Clear an acknowledgement at once: the conflict is back from the next build."""
+    try:
+        return await fleet_pairing.clear_ack(
+            pool, agent_id, ack_id, justification=justification, actor=principal.actor, actor_role=principal.role,
+            **_req_ctx(request))
+    except fleet_pairing.PairingError as exc:
+        return _pairing_error(exc)
 
 
 def _as_dict_list(v: Any) -> list[dict[str, Any]]:

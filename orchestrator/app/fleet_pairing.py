@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 #: the only conflict that can be acknowledged (``host_fw.ACKABLE_KIND``).
 ACKABLE_KIND = "agent_closed_scan_open"
 MAX_TTL_H = 720
+#: why an ack was cleared because the agent's node_ref moved (paired, unpaired, inert, restored).
+NODE_CHANGED = "node_changed"
 DEFAULT_TTL_H = 168
 MAX_CANDIDATES = 20
 MAX_RECONCILE = 5000
@@ -251,7 +253,7 @@ async def put_pairing(pool: Any, agent_id: uuid.UUID, *, asset_id: uuid.UUID, ju
                     raise PairingError(422, "only a cloud virtual machine can be paired with an agent", "asset_not_a_vm")
                 seen = asset["last_seen"]
                 now = _now()
-                if seen is None or now - _aware(seen) > asset_max_age():
+                if _ipmap.asset_is_stale(seen, now, asset_max_age()):
                     raise PairingError(409, "the asset has not been seen recently enough to pair", "asset_stale",
                                        asset_last_seen=_iso(seen))
                 have = await con.fetchrow(
@@ -300,6 +302,10 @@ async def put_pairing(pool: Any, agent_id: uuid.UUID, *, asset_id: uuid.UUID, ju
                     "WHERE id = $1", agent_id, new_ref)
                 from .assurance import finding_follow
                 await finding_follow.migrate_targets(con, {old_ref: new_ref, f"agent:{agent_id}": new_ref})
+                # an ack binds the observation seen on the node it was made on; the node just changed
+                await _clear_acks_audited(con, agent_id, reason=NODE_CHANGED, by=actor, actor=actor,
+                                          actor_role=actor_role, client_ip=client_ip, request_id=request_id,
+                                          node_from=old_ref, node_to=new_ref)
                 await _invalidate(con)
                 await audit.record(
                     None, action="fleet.pairing.create", actor=actor, actor_role=actor_role,
@@ -334,6 +340,9 @@ async def end_pairing(pool: Any, agent_id: uuid.UUID, *, justification: str, act
                     "WHERE id = $1", agent_id, own)
                 from .assurance import finding_follow
                 await finding_follow.migrate_targets(con, {old_ref: own, f"asset:{ended['asset_id']}": own})
+                await _clear_acks_audited(con, agent_id, reason=NODE_CHANGED, by=actor, actor=actor,
+                                          actor_role=actor_role, client_ip=client_ip, request_id=request_id,
+                                          node_from=old_ref, node_to=own)
                 await _invalidate(con)
                 await audit.record(
                     None, action="fleet.pairing.end", actor=actor, actor_role=actor_role, resource_type="fleet_agent",
@@ -453,25 +462,37 @@ async def _clear_acks(con: Any, agent_id: uuid.UUID, *, by: str, reason: str) ->
         "WHERE agent_id = $1 AND status = 'active' RETURNING id, kind, proto, port", agent_id, by, reason))
 
 
-async def end_for_agent(con: Any, agent_id: uuid.UUID, *, reason: str, by: str, actor: str,
-                        actor_role: Optional[str] = None, client_ip: Any = None,
-                        request_id: Optional[str] = None) -> dict[str, Any]:
-    """Revoke and re-key cascade (same transaction as the caller, which holds the agent row lock): end the pairing and
-    clear the acks, one audit row each. Does NOT touch ``fleet_agents.node_ref`` (the revoke path leaves it so the
-    tombstone stays on the asset) and moves no findings (the caller decides). Returns what ended."""
-    ended = await _end_active(con, agent_id, ended_by=by, reason=reason)
-    if ended is not None:
-        await audit.record(
-            None, action="fleet.pairing.end", actor=actor, actor_role=actor_role, resource_type="fleet_agent",
-            resource_id=str(agent_id), ip=client_ip, request_id=request_id,
-            details={"asset_id": str(ended["asset_id"]), "pairing_id": str(ended["id"]), "reason": reason}, con=con)
+async def _clear_acks_audited(con: Any, agent_id: uuid.UUID, *, reason: str, by: str, actor: str,
+                              actor_role: Optional[str] = None, client_ip: Any = None, request_id: Optional[str] = None,
+                              tenant_id: Optional[str] = None, **extra: Any) -> list[Mapping[str, Any]]:
+    """Clear every active ack of the agent and audit each one (same connection, so same transaction)."""
     cleared = await _clear_acks(con, agent_id, by=by, reason=reason)
     for a in cleared:
         await audit.record(
             None, action="fleet.conflict.ack_clear", actor=actor, actor_role=actor_role, resource_type="fleet_agent",
             resource_id=str(agent_id), ip=client_ip, request_id=request_id,
             details={"ack_id": str(a["id"]), "kind": a["kind"], "proto": a["proto"], "port": a["port"],
-                     "reason": reason}, con=con)
+                     "reason": reason, **extra}, con=con, tenant_id=tenant_id)
+    return cleared
+
+
+async def end_for_agent(con: Any, agent_id: uuid.UUID, *, reason: str, by: str, actor: str,
+                        actor_role: Optional[str] = None, client_ip: Any = None,
+                        request_id: Optional[str] = None) -> dict[str, Any]:
+    """Revoke and re-key cascade (same transaction as the caller, which holds the agent row lock): end the pairing and
+    clear the acks, one audit row each. Does NOT touch ``fleet_agents.node_ref`` (the revoke path leaves it so the
+    tombstone stays on the asset) and moves no findings (the caller decides). Returns what ended."""
+    if await con.fetchval("SELECT to_regclass('fleet_agent_pairings') IS NOT NULL "
+                          "AND to_regclass('fleet_conflict_acks') IS NOT NULL") is not True:
+        return {"pairing": None, "acks": []}      # a database that has not run migration 045: nothing to end
+    ended = await _end_active(con, agent_id, ended_by=by, reason=reason)
+    if ended is not None:
+        await audit.record(
+            None, action="fleet.pairing.end", actor=actor, actor_role=actor_role, resource_type="fleet_agent",
+            resource_id=str(agent_id), ip=client_ip, request_id=request_id,
+            details={"asset_id": str(ended["asset_id"]), "pairing_id": str(ended["id"]), "reason": reason}, con=con)
+    cleared = await _clear_acks_audited(con, agent_id, reason=reason, by=by, actor=actor, actor_role=actor_role,
+                                        client_ip=client_ip, request_id=request_id)
     return {"pairing": ended, "acks": cleared}
 
 
@@ -687,6 +708,9 @@ async def _reconcile_one(con: Any, rec: Mapping[str, Any], now: dt.datetime) -> 
         transition = (have_ref, have_basis) != (want_ref, want_basis)
         if have_ref != want_ref:
             await finding_follow.migrate_targets(con, {have_ref: want_ref})
+            await _clear_acks_audited(con, agent["id"], reason=NODE_CHANGED, by="system:reconcile",
+                                      actor="system:reconcile", actor_role="system", node_from=have_ref,
+                                      node_to=want_ref)
         if not transition:
             return False                                           # only the note moved: no audit row, no count
         paired = want_basis == "paired"

@@ -22,7 +22,7 @@ import stat
 import tarfile
 import tempfile
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import IO, Iterator
 
@@ -74,60 +74,137 @@ _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 
 
 # ---- glob matching ---------------------------------------------------------------------------
-_GLOB_CACHE: dict[str, re.Pattern[str]] = {}
+# No regular expression is built from a glob: a pattern comes from config or a rule pack, and
+# ``*a*a*a*b`` compiled to a regex backtracks catastrophically. The matcher below is a two-pointer
+# wildcard match per path segment and a memoised walk over segments, polynomial by construction.
+_GLOBSTAR = object()
+_STAR = object()
+_GLOB_CACHE: dict[str, tuple | None] = {}
+MAX_GLOB = 400
+MAX_PATH = 4096
 
 
-def _glob_regex(pattern: str) -> re.Pattern[str]:
-    hit = _GLOB_CACHE.get(pattern)
-    if hit is not None:
-        return hit
-    pat = pattern
-    anywhere = "/" not in pat
-    out: list[str] = []
-    i, n = 0, len(pat)
+def _seg_tokens(seg: str) -> list:
+    toks: list = []
+    i, n = 0, len(seg)
     while i < n:
-        c = pat[i]
+        c = seg[i]
         if c == "*":
-            if pat[i:i + 3] == "**/":
-                out.append("(?:.*/)?")
-                i += 3
-                continue
-            if pat[i:i + 2] == "**":
-                out.append(".*")
-                i += 2
-                continue
-            out.append("[^/]*")
+            if not toks or toks[-1] is not _STAR:
+                toks.append(_STAR)
         elif c == "?":
-            out.append("[^/]")
+            toks.append(("any",))
         elif c == "[":
-            j = pat.find("]", i + 2)
+            j = seg.find("]", i + 2)
             if j == -1:
-                out.append(re.escape(c))
+                toks.append(("lit", c))
             else:
-                body = pat[i + 1:j]
-                if body.startswith("!"):
-                    body = "^" + body[1:]
-                out.append("[" + body.replace("\\", "\\\\") + "]")
+                body = seg[i + 1:j]
+                neg = body.startswith("!") or body.startswith("^")
+                if neg:
+                    body = body[1:]
+                items: list[tuple[str, str]] = []
+                k = 0
+                while k < len(body):
+                    if k + 2 < len(body) and body[k + 1] == "-":
+                        items.append((body[k], body[k + 2]))
+                        k += 3
+                    else:
+                        items.append((body[k], body[k]))
+                        k += 1
+                toks.append(("set", neg, tuple(items)))
                 i = j
         else:
-            out.append(re.escape(c))
+            toks.append(("lit", c))
         i += 1
-    core = "".join(out)
-    rx = re.compile(("(?:.*/)?" if anywhere else "") + core + r"\Z", re.S)
-    if len(_GLOB_CACHE) < 2048:
-        _GLOB_CACHE[pattern] = rx
-    return rx
+    return toks
+
+
+def _tok_ok(tok: tuple, ch: str) -> bool:
+    kind = tok[0]
+    if kind == "lit":
+        return tok[1] == ch
+    if kind == "any":
+        return True
+    hit = any(lo <= ch <= hi for lo, hi in tok[2])
+    return hit != tok[1]
+
+
+def _seg_match(toks: list, s: str) -> bool:
+    ti = si = 0
+    star_t, star_s = -1, 0
+    nt, ns = len(toks), len(s)
+    while si < ns:
+        if ti < nt and toks[ti] is not _STAR and _tok_ok(toks[ti], s[si]):
+            ti += 1
+            si += 1
+        elif ti < nt and toks[ti] is _STAR:
+            star_t, star_s = ti, si
+            ti += 1
+        elif star_t != -1:
+            star_s += 1
+            ti, si = star_t + 1, star_s
+        else:
+            return False
+    while ti < nt and toks[ti] is _STAR:
+        ti += 1
+    return ti == nt
+
+
+def _compile_glob(pattern: str):
+    if pattern in _GLOB_CACHE:
+        return _GLOB_CACHE[pattern]
+    out = None
+    if pattern and len(pattern) <= MAX_GLOB and "\x00" not in pattern:
+        anywhere = "/" not in pattern
+        segs = [x for x in pattern.split("/") if x != ""]
+        if segs:
+            comp = []
+            for seg in segs:
+                comp.append(_GLOBSTAR if set(seg) == {"*"} and len(seg) >= 2 else _seg_tokens(seg))
+            out = (anywhere, tuple(tuple(c) if isinstance(c, list) else c for c in comp))
+    if len(_GLOB_CACHE) < 4096:
+        _GLOB_CACHE[pattern] = out
+    return out
 
 
 def match_glob(pattern: str, path: str) -> bool:
     """Match a root-relative posix ``path``; ``**`` crosses directories, ``*`` does not.
 
-    A pattern without ``/`` matches the file name at any depth (gitignore style).
+    A pattern without ``/`` matches the file name at any depth (gitignore style); a trailing
+    ``/**`` needs at least one more path segment.
     """
-    try:
-        return _glob_regex(pattern).match(path) is not None
-    except re.error:
+    comp = _compile_glob(pattern)
+    if comp is None or not path or len(path) > MAX_PATH:
         return False
+    anywhere, psegs = comp
+    ssegs = [x for x in path.split("/") if x != ""]
+    if not ssegs:
+        return False
+    if anywhere:
+        ssegs = ssegs[-1:]
+    memo: dict[tuple[int, int], bool] = {}
+
+    def rec(i: int, j: int) -> bool:
+        key = (i, j)
+        hit = memo.get(key)
+        if hit is not None:
+            return hit
+        if i == len(psegs):
+            res = j == len(ssegs)
+        else:
+            seg = psegs[i]
+            if seg is _GLOBSTAR:
+                if i == len(psegs) - 1:
+                    res = j < len(ssegs)
+                else:
+                    res = any(rec(i + 1, k) for k in range(j, len(ssegs) + 1))
+            else:
+                res = j < len(ssegs) and _seg_match(list(seg), ssegs[j]) and rec(i + 1, j + 1)
+        memo[key] = res
+        return res
+
+    return rec(0, 0)
 
 
 def match_any(patterns, path: str) -> bool:
@@ -143,10 +220,33 @@ class FileView:
     text: str
     size: int
     bom: bool = False
+    streamed: bool = False  # big file (over MAX_FILE): text is empty, read it with stream_windows
+    long_ok: bool = False  # a long_lines_ok check's view: ``lines`` keeps lines over LONG_LINE
+
+    @cached_property
+    def raw_lines(self) -> list[str]:
+        """Every line, whatever its length (suppression comments, long_lines_ok checks)."""
+        return [ln[:-1] if ln.endswith("\r") else ln for ln in self.text.split("\n")]
 
     @cached_property
     def lines(self) -> list[str]:
-        return [ln[:-1] if ln.endswith("\r") else ln for ln in self.text.split("\n")]
+        """Lines for per-line checks (3.9 item 8): a line over ``LONG_LINE`` characters reads as empty.
+
+        Numbering is kept. Only a check that declares ``long_lines_ok`` is given the long lines
+        (``with_long_lines``) and must scan them through ``stream_windows``-style windows.
+        """
+        if self.long_ok:
+            return self.raw_lines
+        return ["" if len(ln) > LONG_LINE else ln for ln in self.raw_lines]
+
+    @cached_property
+    def long_line_numbers(self) -> tuple[int, ...]:
+        """1-based numbers of the lines that ``lines`` hides."""
+        return tuple(i for i, ln in enumerate(self.raw_lines, start=1) if len(ln) > LONG_LINE)
+
+    def with_long_lines(self) -> "FileView":
+        """The same file whose ``lines`` keeps lines over ``LONG_LINE`` (for ``long_lines_ok`` checks)."""
+        return replace(self, long_ok=True)
 
     @property
     def ext(self) -> str:
@@ -342,10 +442,29 @@ class RootHandle:
 
 def read_file(root_real: str, rel: str, *, limit: int | None = None, big_ok: bool = False,
               ) -> tuple[FileView | None, str | None]:
-    """Read one file under the root; returns (view, None) or (None, skip reason)."""
-    cap = limit if limit is not None else (MAX_BIG_FILE if big_ok else MAX_FILE)
+    """Read one file under the root; returns (view, None) or (None, skip reason).
+
+    With ``big_ok`` a file between ``MAX_FILE`` and ``MAX_BIG_FILE`` bytes is not read whole: the
+    view has empty text, ``streamed=True`` and the real size; read it with ``stream_windows``.
+    """
+    cap = limit if limit is not None else MAX_FILE
     with RootHandle(root_real) as h:
-        return h.read(rel, limit=cap)
+        view, why = h.read(rel, limit=cap)
+        if view is None and why == "oversize" and big_ok and limit is None:
+            fd, why2, st = h.open_file(rel)
+            if fd is None:
+                return None, why2
+            try:
+                size = os.fstat(fd).st_size
+                head = os.read(fd, BINARY_PROBE)
+            finally:
+                os.close(fd)
+            if size > MAX_BIG_FILE:
+                return None, "oversize"
+            if b"\x00" in head:
+                return None, "binary"
+            return FileView(path=norm_relpath(rel) or rel, text="", size=size, streamed=True), None
+        return view, why
 
 
 def read_abs_text(path: str, *, limit: int = 100 * 1024) -> tuple[str | None, str | None]:
@@ -1059,7 +1178,7 @@ class _StrictTarInfo(tarfile.TarInfo):
 
 
 def extract_tar_stream(fileobj: IO[bytes], dest: str, *, max_members: int = MAX_MEMBERS,
-                       max_bytes: int = MAX_EXTRACT_BYTES) -> int:
+                       max_bytes: int = MAX_EXTRACT_BYTES, collect: list[str] | None = None) -> int:
     """Extract a tar stream with the hardened rules of 3.9 item 9; returns the file count.
 
     Rejects absolute names, ``..``, NUL or backslash in names, symlinks, hardlinks, devices,
@@ -1100,6 +1219,8 @@ def extract_tar_stream(fileobj: IO[bytes], dest: str, *, max_members: int = MAX_
                 raise GuardError("archive member cannot be read")
             _write_member(dest_real, name, src, bool(member.mode & 0o111), budget, member.size)
             files_written += 1
+            if collect is not None:
+                collect.append(name)
         if getattr(tf, "_pg_bad_header", False):
             raise GuardError("archive has a malformed header")
     except GuardError:
@@ -1115,7 +1236,8 @@ def extract_tar_stream(fileobj: IO[bytes], dest: str, *, max_members: int = MAX_
 
 
 def extract_zip(fileobj: IO[bytes], dest: str, *, max_members: int = MAX_MEMBERS,
-                max_bytes: int = MAX_EXTRACT_BYTES, max_ratio: int = MAX_ZIP_RATIO) -> int:
+                max_bytes: int = MAX_EXTRACT_BYTES, max_ratio: int = MAX_ZIP_RATIO,
+                collect: list[str] | None = None) -> int:
     """Extract a zip with the same rules as ``extract_tar_stream`` plus a compression-ratio cap."""
     try:
         zf = zipfile.ZipFile(fileobj)
@@ -1156,6 +1278,8 @@ def extract_zip(fileobj: IO[bytes], dest: str, *, max_members: int = MAX_MEMBERS
                 _write_member(dest_real, name, src, bool((info.external_attr >> 16) & 0o111), budget,
                               info.file_size)
             n += 1
+            if collect is not None:
+                collect.append(name)
     except GuardError:
         raise
     except (zipfile.BadZipFile, OSError, ValueError, EOFError, RuntimeError, NotImplementedError,

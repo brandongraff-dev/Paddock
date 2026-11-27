@@ -20,7 +20,6 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 # Imported after the path tweak above so ``support`` and ``fakes`` resolve under every runner.
-import support  # noqa: E402
 from support import gitenv, launcher  # noqa: E402
 
 REPO = HERE.parents[2]

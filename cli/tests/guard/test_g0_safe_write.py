@@ -210,3 +210,21 @@ def test_private_tempdir_is_0700_and_removable(tmp_path):
     files.safe_write(d, "x/y.txt", "1")
     files.remove_tree(d)
     assert not os.path.exists(d)
+
+
+def test_state_dir_inside_the_project_through_a_symlink_or_equal_to_it_is_refused(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    (root / "sub").mkdir(parents=True)
+    link = tmp_path / "cachelink"
+    os.symlink(root / "sub", link)
+    for base in (link, root, root / "sub" / "deeper"):
+        monkeypatch.setenv("PADDOCK_CACHE_DIR", str(base))
+        assert files.state_dir(str(root)) is None, base
+    assert not (root / "sub" / "guard").exists() and not (root / "guard").exists()
+
+
+def test_state_dir_in_a_parent_of_the_project_is_allowed(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    root.mkdir()
+    monkeypatch.setenv("PADDOCK_CACHE_DIR", str(tmp_path / "cache"))
+    assert files.state_dir(str(root)) is not None

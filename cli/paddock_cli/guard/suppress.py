@@ -52,7 +52,7 @@ def scan_suppressions(fv: FileView) -> tuple[list[Suppression], list[str]]:
     notes: list[str] = []
     if "paddock:ignore" not in fv.text:
         return sups, notes
-    for i, raw in enumerate(fv.lines, start=1):
+    for i, raw in enumerate(fv.raw_lines, start=1):
         if "paddock:ignore" not in raw:
             continue
         line = raw[:_LINE_CAP]
@@ -151,12 +151,10 @@ def parse_baseline(text: str) -> tuple[Baseline | None, str | None]:
     """Parse and validate baseline JSON; returns (baseline, problem)."""
     if len(text) > MAX_BASELINE_BYTES:
         return None, "larger than %d MB" % (MAX_BASELINE_BYTES // (1024 * 1024))
-    if text.count("[") + text.count("{") > 100000 or text.lstrip().startswith("[" * 100):
-        return None, "nested too deeply"
     try:
-        doc = json.loads(text)
-    except (ValueError, RecursionError, MemoryError):
-        return None, "not valid JSON"
+        doc = textsafe.loads_bounded(text)
+    except ValueError:
+        return None, "not valid JSON or nested too deeply"
     if not isinstance(doc, dict) or doc.get("schema") != model.SCHEMA_BASELINE:
         return None, "unknown schema"
     entries = doc.get("entries")
